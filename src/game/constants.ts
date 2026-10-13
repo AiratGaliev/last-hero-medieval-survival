@@ -30,6 +30,15 @@ export const SCORE = {
   BOSS: 5000,
 } as const;
 
+// ============ СЕРИЯ УБИЙСТВ (комбо) ============
+export const COMBO = {
+  WINDOW: 3,        // сек без убийств — серия сбрасывается
+  MIN_DISPLAY: 5,   // показывать счётчик с 5 серии
+  BONUS_CAP: 2.0,   // максимум ×2 к очкам за убийство
+  BONUS_STEP: 0.01, // +1% к очкам за каждое убийство в серии
+  MILESTONES: [10, 25, 50, 100], // попапы на этапах
+} as const;
+
 export const FONT = '"Pixelify Sans", "Press Start 2P", "Courier New", monospace';
 
 // ============ СЛОИ ОТРИСОВКИ ============

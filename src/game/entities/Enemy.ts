@@ -145,7 +145,7 @@ export class Enemy extends Phaser.Physics.Arcade.Sprite {
     });
     if (this.def.isElite || this.def.isBoss || this.def.isMidboss) this.drawHpBar();
     if (this.hp <= 0) this.dead = true;
-    else if (this.kind === 'guard' && this.aiState !== 'enraged' && this.hp < this.maxHp * 0.4) {
+    else if (this.kind === 'guard' && this.aiState !== 'enraged' && this.hp < this.maxHp * 0.45) {
       this.breakShield();
     }
     return this.hp <= 0;

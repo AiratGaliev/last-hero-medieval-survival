@@ -288,10 +288,11 @@ export const ENEMIES: Record<EnemyKind, EnemyDef> = {
   },
   // --- Новые враги 5–9 минут (v1.8) ---
   guard: {
-    // Гвардеец: щит блокирует половину урона в лоб; при потере 60% HP щит
-    // ломается — гвардеец впадает в ярость (без брони, но быстрее)
+    // Гвардеец: щит гасит половину урона; при потере 55% HP щит ломается —
+    // ярость (без брони, но быстрее). HP понижено в R10: с 85 копились
+    // неразменными стенами к 13-й минуте (эфф. HP 525 против 212 у громилы)
     kind: 'guard', name: 'Гвардеец', texture: 'guard-idle', frameW: 192, scale: 0.58,
-    bodyRadius: 24, hp: 85, speed: 62, damage: 14, xp: 4, gem: 'gem-green',
+    bodyRadius: 24, hp: 62, speed: 62, damage: 14, xp: 4, gem: 'gem-green',
     armorFront: 0.5,
   },
   taskmaster: {

@@ -16,6 +16,7 @@ export interface GameOverStats {
   score: number;
   hero?: string;
   difficulty?: string;
+  bestCombo?: number;
   weapons?: { id: string; icon: string; name: string; dmg: number; kills: number }[];
   newAch?: { name: string; emoji: string }[];
 }
@@ -87,6 +88,7 @@ export class GameOverScene extends Phaser.Scene {
       `ВРЕМЯ: ${mm}:${ss}`,
       `УБИЙСТВ: ${s.kills}`,
       `УРОВЕНЬ: ${s.level}`,
+      (s.bestCombo ?? 0) >= 5 ? `ЛУЧШАЯ СЕРИЯ: ×${s.bestCombo}` : '',
       `ЗОЛОТО: ${s.gold}`,
       `СЧЁТ: ${s.score.toLocaleString('ru-RU')}`,
     ].filter((l) => l.length > 0);

@@ -1,5 +1,5 @@
 import Phaser from 'phaser';
-import { DEPTH, FONT, GAME_DURATION } from '../constants';
+import { DEPTH, FONT, GAME_DURATION, COMBO } from '../constants';
 import type { AchievementDef } from '../achievements';
 import { audio } from './Audio';
 import { makePanel } from './Ui';
@@ -65,6 +65,19 @@ export class HUD {
   private bossText!: Phaser.GameObjects.Text;
   /** Ширина полосы босса — не шире экрана (на мобильных 420px обрезалось) */
   private bossBarW = 420;
+
+  // Серия убийств (комбо): счётчик + полоса затухания окна
+  private comboText!: Phaser.GameObjects.Text;
+  private comboBarBg!: Phaser.GameObjects.Rectangle;
+  private comboBar!: Phaser.GameObjects.Rectangle;
+  private comboShown = -1;
+  private comboBaseY = 78;
+
+  // Индикаторы целей за экраном: сундук (золото) и босс/элита (красный)
+  private indChest!: Phaser.GameObjects.Graphics;
+  private indEnemy!: Phaser.GameObjects.Graphics;
+  private indChestShown = false;
+  private indEnemyShown = false;
 
   // Виньетка низкого HP + тег сложности + тосты ачивок
   private vignetteRects: Phaser.GameObjects.Rectangle[] = [];
@@ -181,6 +194,18 @@ export class HUD {
       stroke: '#7a1010', strokeThickness: 7,
     }).setOrigin(0.5).setAlpha(0);
 
+    // Комбо-счётчик серии убийств (топ-справа, под счётом)
+    this.comboText = this.scene.add.text(0, 0, '', {
+      fontFamily: FONT, fontSize: '20px', color: '#ffd76e',
+      stroke: '#7a1010', strokeThickness: 6,
+    }).setOrigin(1, 0.5).setVisible(false);
+    this.comboBarBg = this.scene.add.rectangle(0, 0, 68, 6, 0x1b1008, 0.85).setOrigin(1, 0.5).setVisible(false);
+    this.comboBar = this.scene.add.rectangle(0, 0, 64, 3, 0xffd76e).setOrigin(1, 0.5).setVisible(false);
+
+    // Стрелки-индикаторы за экраном (сундук/босс)
+    this.indChest = this.makeIndicator(0xffd76e);
+    this.indEnemy = this.makeIndicator(0xff5040);
+
     // Порядок добавления = порядок отрисовки (снизу вверх):
     // полосы/тексты → босс-бар → виньетка → анонс → тосты достижений
     // (добавляются динамически). Пауза — отдельным top-level объектом.
@@ -191,7 +216,11 @@ export class HUD {
       this.scoreText,
     ];
     if (this.diffTag) base.push(this.diffTag);
-    base.push(this.bossGroup, ...this.vignetteRects, this.announceText);
+    base.push(
+      this.bossGroup, ...this.vignetteRects, this.announceText,
+      this.comboBarBg, this.comboBar, this.comboText,
+      this.indChest, this.indEnemy,
+    );
     this.root.add(base);
 
     this.layout();
@@ -219,6 +248,11 @@ export class HUD {
     this.goldText.setPosition(30, 98);
     this.scoreText.setPosition(W - 12, 34);
     this.diffTag?.setPosition(W - 12, 54);
+    // Комбо: под счётом, выравнивание вправо
+    this.comboBaseY = 78;
+    this.comboText.setPosition(W - 12, this.comboBaseY);
+    this.comboBarBg.setPosition(W - 12, this.comboBaseY + 16);
+    this.comboBar.setPosition(W - 10, this.comboBaseY + 16);
     // Анонс: на низких экранах опускаем ниже, чтобы не наезжать на босс-бар
     this.announceText.setPosition(W / 2, H < 600 ? Math.max(126, H * 0.3) : H * 0.22);
     // Босс-бар: на узких экранах опускаем под строку золота — иначе
@@ -338,6 +372,96 @@ export class HUD {
       });
     }
     this.hpLastFrac = frac;
+  }
+
+  /** Обновление серии убийств: счётчик ×N + полоса окна */
+  updateCombo(combo: number, windowFrac: number): void {
+    const show = combo >= COMBO.MIN_DISPLAY;
+    this.comboText.setVisible(show);
+    this.comboBarBg.setVisible(show);
+    this.comboBar.setVisible(show);
+    if (!show) {
+      this.comboShown = -1;
+      return;
+    }
+    if (combo !== this.comboShown) {
+      // Поп-анимация при росте серии (y мог остаться от вспышки сброса)
+      this.comboText.setText(`×${combo}`);
+      this.comboText.y = this.comboBaseY;
+      this.comboText.setScale(1.3);
+      this.scene.tweens.killTweensOf(this.comboText);
+      this.scene.tweens.add({ targets: this.comboText, scale: 1, duration: 140, ease: 'Back.easeOut' });
+      this.comboShown = combo;
+    }
+    this.comboBar.width = Math.max(0, 64 * Phaser.Math.Clamp(windowFrac, 0, 1));
+    // Цвет: чем ближе к сбросу — тем краснее
+    const frac = Phaser.Math.Clamp(windowFrac, 0, 1);
+    this.comboBar.setFillStyle(frac > 0.4 ? 0xffd76e : frac > 0.18 ? 0xe0a030 : 0xd03028);
+  }
+
+  /** Серия сброшена: короткая красная вспышка ×N */
+  breakCombo(combo: number): void {
+    if (combo < COMBO.MIN_DISPLAY) return;
+    this.comboText.setText(`×${combo}`).setColor('#ff6b5e');
+    this.scene.tweens.killTweensOf(this.comboText);
+    this.scene.tweens.add({
+      targets: this.comboText, alpha: 0, y: this.comboBaseY - 18,
+      duration: 420, ease: 'Quad.easeIn',
+      onComplete: () => {
+        this.comboText.setColor('#ffd76e').setAlpha(1).setVisible(false);
+        this.comboText.y = this.comboBaseY;
+      },
+    });
+    this.comboShown = -1;
+  }
+
+  /** Стрелка-индикатор: треугольник, указывающий на цель за экраном */
+  private makeIndicator(color: number): Phaser.GameObjects.Graphics {
+    const g = this.scene.add.graphics();
+    // Треугольник, остриём вправо (+x), с тёмной обводкой для читаемости
+    g.fillStyle(0x1b1008, 0.7);
+    g.fillTriangle(16, 0, -8, -11, -8, 11);
+    g.lineStyle(2, 0x1b1008, 0.9);
+    g.strokeTriangle(16, 0, -8, -11, -8, 11);
+    g.fillStyle(color, 1);
+    g.fillTriangle(13, 0, -6, -8, -6, 8);
+    g.setVisible(false);
+    return g;
+  }
+
+  /** Индикаторы целей за экраном: позиции в экранных координатах */
+  updateIndicators(
+    targets: Array<{ x: number; y: number; kind: 'chest' | 'boss' | 'elite' }>,
+    toScreen: (wx: number, wy: number) => { x: number; y: number },
+  ): void {
+    const W = this.scene.scale.width;
+    const H = this.scene.scale.height;
+    const cx = W / 2, cy = H / 2;
+    const m = 30;
+    const place = (g: Phaser.GameObjects.Graphics, t: { x: number; y: number } | undefined, pulse: boolean): boolean => {
+      if (!t) return false;
+      const s = toScreen(t.x, t.y);
+      // Цель видима на экране — стрелка не нужна
+      if (s.x > m && s.x < W - m && s.y > m && s.y < H - m) return false;
+      const dx = s.x - cx || 0.001;
+      const dy = s.y - cy || 0.001;
+      const adx = Math.abs(dx), ady = Math.abs(dy);
+      // Луч от центра до рамки margin — пересечение с прямоугольником экрана
+      const kx = adx > 0.001 ? (W / 2 - m) / adx : Infinity;
+      const ky = ady > 0.001 ? (H / 2 - m) / ady : Infinity;
+      const k = Math.min(kx, ky);
+      g.setPosition(cx + dx * k, cy + dy * k);
+      g.setRotation(Math.atan2(dy, dx));
+      const a = pulse ? 0.55 + Math.abs(Math.sin(this.scene.time.now / 260)) * 0.45 : 1;
+      g.setAlpha(a);
+      return true;
+    };
+    const chest = targets.find((t) => t.kind === 'chest');
+    const enemy = targets.find((t) => t.kind === 'boss') ?? targets.find((t) => t.kind === 'elite');
+    this.indChestShown = place(this.indChest, chest, true);
+    this.indEnemyShown = place(this.indEnemy, enemy, true);
+    this.indChest.setVisible(this.indChestShown);
+    this.indEnemy.setVisible(this.indEnemyShown);
   }
 
   /** Кино-заставка босса: чёрные полосы + имя (не блокирует игру) */

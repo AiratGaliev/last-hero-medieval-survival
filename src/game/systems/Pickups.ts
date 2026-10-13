@@ -44,6 +44,12 @@ export class Pickups {
     return this.gems.length;
   }
 
+  /** Позиция активного сундука (для индикатора направления за экраном) */
+  chestPos(): { x: number; y: number } | null {
+    const c = this.gems.find((g) => g.kind === 'chest');
+    return c ? { x: c.img.x, y: c.img.y } : null;
+  }
+
   spawnGem(x: number, y: number, texture: string, xp: number): void {
     if (this.gems.length >= GEM_CAP) {
       // Переливаем в ближайший кристалл

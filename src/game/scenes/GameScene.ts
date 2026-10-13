@@ -1,6 +1,6 @@
 import Phaser from 'phaser';
 import {
-  WORLD, PLAYER_BASE, DEPTH, ENEMY_CAP, SCORE, XP_CURVE,
+  WORLD, PLAYER_BASE, DEPTH, ENEMY_CAP, SCORE, XP_CURVE, COMBO,
 } from '../constants';
 import {
   WEAPONS, PASSIVES, HEROES, ENEMIES, DIFFICULTIES,
@@ -75,6 +75,7 @@ export class GameScene extends Phaser.Scene {
   private lastHudUpdate = 0;
   private lastDespawn = 0;
   private lastDieSound = 0;
+  private lastIndicatorUpdate = 0;
   private sepGrid = new Map<number, Enemy[]>();
   private heroDef: HeroDef = HEROES.warrior;
   private diffDef: DifficultyDef = DIFFICULTIES.normal;
@@ -93,6 +94,10 @@ export class GameScene extends Phaser.Scene {
   /** Амбиентная тонировка суток (MULTIPLY-прямоугольник на весь экран) */
   private ambientRect: Phaser.GameObjects.Rectangle | null = null;
   private lastAmbientUpdate = -1;
+  // Серия убийств (комбо): множитель очков + HUD-счётчик
+  private combo = 0;
+  private comboTimer = 0;
+  private bestCombo = 0;
 
   constructor() {
     super('Game');
@@ -160,6 +165,9 @@ export class GameScene extends Phaser.Scene {
     this.ambientRect?.destroy();
     this.ambientRect = null;
     this.lastAmbientUpdate = -1;
+    this.combo = 0;
+    this.comboTimer = 0;
+    this.bestCombo = 0;
     this.registry.set('tss-freeze', 0);
     this.lastMove = { x: 1, y: 0 };
     this.sepGrid.clear();
@@ -541,6 +549,22 @@ export class GameScene extends Phaser.Scene {
     // Смена освещения (троттлировано внутри)
     this.updateAmbient();
 
+    // Серия убийств: окно 3с без убийств — серия сбрасывается
+    if (this.combo > 0) {
+      this.comboTimer -= dt;
+      if (this.comboTimer <= 0) {
+        this.hud.breakCombo(this.combo);
+        this.combo = 0;
+      }
+    }
+    this.hud.updateCombo(this.combo, this.comboTimer / COMBO.WINDOW);
+
+    // Индикаторы целей за экраном: сундук (золото) и крупные враги (красный)
+    if (time - this.lastIndicatorUpdate > 120) {
+      this.lastIndicatorUpdate = time;
+      this.updateIndicators();
+    }
+
     // Левел-ап
     if (this.pendingLevelUps > 0 && !this.overlayOpen && !this.gameEnded && !this.victoryPending) {
       this.openLevelUp();
@@ -621,7 +645,21 @@ export class GameScene extends Phaser.Scene {
     this.enemyGroup.remove(e, true, true);
 
     this.kills++;
-    this.score += SCORE.KILL;
+    // Серия убийств: множитель растёт с каждым убийством без паузы
+    this.combo++;
+    this.comboTimer = COMBO.WINDOW;
+    if (this.combo > this.bestCombo) this.bestCombo = this.combo;
+    const comboMult = 1 + Math.min(COMBO.BONUS_CAP - 1, this.combo * COMBO.BONUS_STEP);
+    this.score += Math.round(SCORE.KILL * comboMult);
+    if ((COMBO.MILESTONES as readonly number[]).includes(this.combo)) {
+      this.effects.popup(x, y - 30, `СЕРИЯ ×${this.combo}!`, '#ffd76e', 16);
+      if (this.combo >= 50) {
+        this.hud.announce(`НЕУДЕРЖИМ! СЕРИЯ ×${this.combo}`, '#ffd700');
+        audio.play('ach');
+      } else {
+        audio.play('levelup');
+      }
+    }
     this.ach?.event({ type: 'kills', value: this.kills });
     // Счётчики новых врагов → достижения
     if (e.kind === 'guard') {
@@ -964,12 +1002,51 @@ export class GameScene extends Phaser.Scene {
     }
   }
 
+  /** Индикаторы за экраном: конверсия мир→экран + список целей */
+  private updateIndicators(): void {
+    const cam = this.cameras.main;
+    const view = cam.worldView;
+    const z = cam.zoom;
+    const toScreen = (wx: number, wy: number) => ({
+      x: (wx - view.x) * z,
+      y: (wy - view.y) * z,
+    });
+    const targets: Array<{ x: number; y: number; kind: 'chest' | 'boss' | 'elite' }> = [];
+    const chest = this.pickups.chestPos();
+    if (chest) targets.push({ x: chest.x, y: chest.y, kind: 'chest' });
+    if (this.boss?.active) targets.push({ x: this.boss.x, y: this.boss.y, kind: 'boss' });
+    else if (this.midboss?.active) targets.push({ x: this.midboss.x, y: this.midboss.y, kind: 'boss' });
+    if (targets.filter((t) => t.kind === 'boss').length === 0) {
+      // ближайшая элита (если босса нет)
+      let best: Enemy | null = null;
+      let bestD = Infinity;
+      for (const e of this.activeEnemies()) {
+        if (!e.def.isElite) continue;
+        const d = (e.x - this.player.x) ** 2 + (e.y - this.player.y) ** 2;
+        if (d < bestD) { bestD = d; best = e; }
+      }
+      if (best) targets.push({ x: best.x, y: best.y, kind: 'elite' });
+    }
+    this.hud.updateIndicators(targets, toScreen);
+  }
+
   // ================= ПАУЗА / КОНЕЦ =================
 
   private openPause(): void {
     if (this.overlayOpen || this.gameEnded) return;
     this.overlayOpen = true;
     this.scene.pause();
+    // Снаряжение для панели паузы: оружия и пассивки с уровнями
+    const loadout = {
+      weapons: this.weapons.ownedIds().map((id) => ({
+        icon: WEAPONS[id].icon, name: WEAPONS[id].name, level: this.weapons.level(id),
+      })),
+      passives: [...this.passiveLevels.entries()]
+        .filter(([, lvl]) => lvl > 0)
+        .map(([id, lvl]) => ({ icon: PASSIVES[id].icon, name: PASSIVES[id].name, level: lvl })),
+      hero: { name: this.heroDef.name, hp: Math.round(this.player.hp), maxHp: this.player.maxHp },
+      stats: { kills: this.kills, elapsed: this.elapsed, gold: this.gold, level: this.level },
+    };
     this.scene.launch('Pause', {
       onResume: () => {
         this.scene.resume();
@@ -977,6 +1054,7 @@ export class GameScene extends Phaser.Scene {
       },
       muted: audio.muted,
       onToggleMute: () => audio.toggleMute(),
+      loadout,
     });
   }
 
@@ -1060,6 +1138,7 @@ export class GameScene extends Phaser.Scene {
       score: finalScore,
       hero: this.heroDef.name,
       difficulty: this.diffDef.name,
+      bestCombo: this.bestCombo,
       weapons,
       newAch: (this.ach?.newlyUnlocked ?? []).map((a) => ({ name: a.name, emoji: a.emoji })),
     };

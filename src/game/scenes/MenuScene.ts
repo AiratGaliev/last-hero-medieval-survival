@@ -260,7 +260,7 @@ export class MenuScene extends Phaser.Scene {
       });
     }
 
-    this.add.text(width / 2, height - 12, 'v1.8 • Phaser 4 • ассеты Pixel Frog «Tiny Swords»', {
+    this.add.text(width / 2, height - 12, 'v1.9 • Phaser 4 • ассеты Pixel Frog «Tiny Swords»', {
       fontFamily: FONT, fontSize: '11px', color: '#3b2410',
     }).setOrigin(0.5).setAlpha(0.8);
 
