@@ -1,0 +1,93 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="UTF-8" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover"
+    />
+    <meta name="theme-color" content="#3f8ed0" />
+
+    <title>Tiny Sword Survivors — клон Vampire Survivors</title>
+    <meta
+      name="description"
+      content="Выживи 15 минут в толпе врагов! Bullet-heaven роглайт на Phaser 4 с ассетами Tiny Swords от Pixel Frog. 4 героя, 7 оружий, боссы, мета-магазин и достижения."
+    />
+    <meta
+      name="keywords"
+      content="игра, Phaser, Vampire Survivors, Tiny Swords, roguelite, bullet heaven"
+    />
+
+    <meta property="og:type" content="website" />
+    <meta property="og:locale" content="ru_RU" />
+    <meta property="og:title" content="Tiny Sword Survivors — выживи 15 минут!" />
+    <meta
+      property="og:description"
+      content="Bullet-heaven роглайк на Phaser 4: 4 героя, 7 оружий, элиты, бочки-камикадзе и Чёрный Копейщик на 15-й минуте. Ассеты Tiny Swords от Pixel Frog."
+    />
+    <meta property="og:image" content="./logo.svg" />
+
+    <meta name="twitter:card" content="summary" />
+    <meta name="twitter:title" content="Tiny Sword Survivors" />
+    <meta
+      name="twitter:description"
+      content="Выживи 15 минут в толпе врагов! Bullet-heaven роглайк на Phaser 4."
+    />
+
+    <link rel="icon" type="image/svg+xml" href="./favicon.svg" />
+    <link rel="apple-touch-icon" href="./favicon.svg" />
+
+    <!--
+      Шрифт Pixelify Sans лежит внутри архива и подключается из src/styles.css.
+      Внешние сервисы Google недоступны из России, а это основная аудитория
+      Yandex Games. Сетевых зависимостей у игры нет вообще.
+    -->
+
+    <style>
+      /* Инлайн-стили, чтобы экран загрузки не мигал до подключения CSS-модуля */
+      html,
+      body {
+        margin: 0;
+        height: 100%;
+        overflow: hidden;
+        background: #3f8ed0;
+      }
+      #boot {
+        display: flex;
+        height: 100dvh;
+        align-items: center;
+        justify-content: center;
+        flex-direction: column;
+        gap: 12px;
+        color: #ffe9b0;
+        font: 600 18px "Pixelify Sans", "Courier New", monospace;
+        text-align: center;
+      }
+      #boot .sword {
+        font-size: 48px;
+        animation: boot-pulse 1.6s ease-in-out infinite;
+      }
+      @keyframes boot-pulse {
+        0%,
+        100% {
+          opacity: 0.55;
+          transform: translateY(0);
+        }
+        50% {
+          opacity: 1;
+          transform: translateY(-4px);
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <!-- Загрузочный экран живёт здесь, пока не смонтируется канвас Phaser.
+         Элемент удаляется из src/main.ts перед созданием игры. -->
+    <div id="boot">
+      <span class="sword" aria-hidden="true">&#9876;</span>
+      <p>Загружаем игру...</p>
+    </div>
+    <div id="game"></div>
+    <script type="module" src="./src/main.ts"></script>
+  </body>
+</html>

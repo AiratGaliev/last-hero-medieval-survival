@@ -2,6 +2,7 @@ import Phaser from 'phaser';
 import { WORLD } from '../constants';
 import { WAVE_EVENTS, pickRegularKind, hpScale, dmgScale, DIFFICULTIES, type DifficultyId, type DifficultyDef, type EnemyKind } from '../data';
 import { audio } from './Audio';
+import { t } from '../../i18n';
 
 // ============ Директор волн: тайминг, состав, спец-события ============
 
@@ -56,10 +57,10 @@ export class Spawner {
             // Особые отряды анонсируем — игрок должен понять новую угрозу
             if (ev.note) {
               const labels: Record<string, string> = {
-                guard: '⚠ СТЕНА ЩИТОВ!',
-                taskmaster: '⚠ НАДЗИРАТЕЛИ ГОНЯТ ТОЛПУ!',
-                mercenary: '⚠ ОТРЯД НАЁМНИКОВ!',
-                bomber: '⚠ БОЧКОВЫЙ ЗАЛП!',
+                guard: t('spawn.guard'),
+                taskmaster: t('spawn.taskmaster'),
+                mercenary: t('spawn.mercenary'),
+                bomber: t('spawn.bomber'),
               };
               const label = labels[ev.enemy];
               if (label) this.ctx.announce(label, '#ffaa44');
@@ -73,8 +74,8 @@ export class Spawner {
             // дублирующий анонс не нужен
             if (ev.enemy !== 'midboss') {
               const label = ev.enemy === 'elite-lancer'
-                ? 'ЭЛИТА: КОПЕЙЩИК!'
-                : 'ЭЛИТА: ТЁМНЫЙ МОНАХ!';
+                ? t('spawn.eliteLancer')
+                : t('spawn.eliteMonk');
               this.ctx.announce(label, '#ff5544');
             }
             this.ctx.spawnElite(ev.enemy);

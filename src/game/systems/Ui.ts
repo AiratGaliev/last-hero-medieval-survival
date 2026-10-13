@@ -27,6 +27,41 @@ export function makePanel(
   return ns;
 }
 
+/**
+ * Подгоняет текст под ширину кнопки. Иначе длинный текст вылезает за
+ * девятислайс: русское «СОХРАНИТЬ РЕКОРД» шире английского «SAVE SCORE»
+ * и в кнопку 260 px не влезало. Уменьшаем кегль, а не масштаб — так
+ * сохраняется читаемая пиксельная сетка.
+ */
+function fitWidth(
+  txt: Phaser.GameObjects.Text,
+  maxW: number,
+  fontSize: number,
+  minSize = 9,
+): void {
+  if (txt.width <= maxW || txt.width === 0) return;
+  const fitted = Math.max(minSize, Math.floor(fontSize * (maxW / txt.width)));
+  if (fitted < fontSize) {
+    txt.setStyle({ fontSize: `${fitted}px`, strokeThickness: Math.max(3, fitted / 4) });
+  }
+  // Крайний случай: даже минимальный кегль не влезает — сжимаем по ширине
+  if (txt.width > maxW) txt.setScale(maxW / txt.width);
+}
+
+/**
+ * Подгоняет готовый Phaser-текст под ширину: уменьшает кегль, а если не
+ * помогло — сжимает по ширине. Нужен там, где подпись нельзя обрезать
+ * (имена в таблице рекордов, названия достижений), но и не влезает.
+ */
+export function fitTextWidth(
+  txt: Phaser.GameObjects.Text,
+  maxW: number,
+  fontSize: number,
+  minSize = 8,
+): void {
+  fitWidth(txt, maxW, fontSize, minSize);
+}
+
 /** Кнопка на NineSlice с текстом и хит-зоной */
 export function makeButton(
   scene: Phaser.Scene,
@@ -48,6 +83,13 @@ export function makeButton(
     stroke: '#2a1608',
     strokeThickness: Math.max(4, fontSize / 4),
   }).setOrigin(0.5);
+
+  /**
+   * Подгоняем подпись под ширину кнопки — иначе длинный текст вылезает за
+   * девятислайс (русское «СОХРАНИТЬ РЕКОРД» не влезало в 260 px).
+   */
+  fitWidth(txt, w - 28, fontSize);
+
   const hit = scene.add.zone(x, y, w + 36, h + 30).setInteractive({ useHandCursor: true });
   hit.on('pointerover', () => {
     scene.tweens.add({ targets: [img, txt], scale: 1.06, duration: 110 });

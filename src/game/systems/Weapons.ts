@@ -1,6 +1,6 @@
 import Phaser from 'phaser';
 import { DEPTH } from '../constants';
-import { WEAPONS, EVOLUTIONS, type WeaponId } from '../data';
+import { WEAPONS, type WeaponId } from '../data';
 import type { Enemy } from '../entities/Enemy';
 import type { Player } from '../entities/Player';
 import type { Projectiles } from './Projectiles';
@@ -201,7 +201,7 @@ export class WeaponSystem {
       const dx = e.x - p.x, dy = e.y - p.y;
       const d = Math.hypot(dx, dy);
       if (d > range + e.def.bodyRadius) continue;
-      let diff = Math.abs(Phaser.Math.Angle.Wrap(Math.atan2(dy, dx) - angle));
+      const diff = Math.abs(Phaser.Math.Angle.Wrap(Math.atan2(dy, dx) - angle));
       if (diff <= arcHalf) {
         this.ctx.damageEnemy(e, dmg, dx, dy, 130, 'sword');
         if (evolved && e.active) hitEnemies.push(e);

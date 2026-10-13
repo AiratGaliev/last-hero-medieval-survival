@@ -3,6 +3,7 @@ import { DEPTH, FONT, GAME_DURATION, COMBO } from '../constants';
 import type { AchievementDef } from '../achievements';
 import { audio } from './Audio';
 import { makePanel } from './Ui';
+import { num, t } from '../../i18n';
 
 // ============ HUD: XP-бар, таймер, счётчики, иконки, бар босса ============
 //
@@ -103,7 +104,7 @@ export class HUD {
       .setOrigin(0, 0.5);
     this.xpBarFill = this.scene.add.rectangle(2, 0, 10, 12, 0x54c2ff)
       .setOrigin(0, 0.5);
-    this.xpLabel = this.scene.add.text(0, 0, 'УР. 1', {
+    this.xpLabel = this.scene.add.text(0, 0, t('hud.level', { v: 1 }), {
       fontFamily: FONT, fontSize: '10px', color: '#ffffff',
       stroke: '#1b1008', strokeThickness: 3,
     }).setOrigin(0.5);
@@ -135,7 +136,7 @@ export class HUD {
       stroke: '#1b1008', strokeThickness: 3,
     }).setOrigin(0, 0.5);
 
-    this.scoreText = this.scene.add.text(0, 0, 'СЧЁТ 0', {
+    this.scoreText = this.scene.add.text(0, 0, t('hud.score', { v: 0 }), {
       fontFamily: FONT, fontSize: '11px', color: '#ffd76e',
       stroke: '#1b1008', strokeThickness: 3,
     }).setOrigin(1, 0);
@@ -176,7 +177,7 @@ export class HUD {
     this.bossBg = this.scene.add.rectangle(0, 0, barW, 18, 0x1b1008, 0.92).setOrigin(0.5);
     this.bossInner = this.scene.add.rectangle(0, 0, barW - 6, 12, 0x50120f).setOrigin(0.5);
     this.bossFill = this.scene.add.rectangle(-(barW - 6) / 2, 0, barW - 6, 12, 0xd03028).setOrigin(0, 0.5);
-    this.bossText = this.scene.add.text(0, -16, 'ЧЁРНЫЙ КОПЕЙЩИК', {
+    this.bossText = this.scene.add.text(0, -16, t('hud.bossName'), {
       fontFamily: FONT, fontSize: '10px', color: '#ff9a8a',
       stroke: '#1b1008', strokeThickness: 4,
     }).setOrigin(0.5);
@@ -306,12 +307,12 @@ export class HUD {
     const frac = Phaser.Math.Clamp(s.xp / Math.max(1, s.xpNext), 0, 1);
     const W = this.scene.scale.width;
     this.xpBarFill.setSize(Math.max(6, (W - 4) * frac), 12);
-    this.xpLabel.setText(`УР. ${s.level}`);
+    this.xpLabel.setText(t('hud.level', { v: s.level }));
 
     const remain = Math.max(0, GAME_DURATION - s.elapsed);
     if (remain <= 0) {
       // Время вышло — на арене финальный босс: честная индикация вместо «00:00»
-      this.timerText.setText('⚔ БОСС!');
+      this.timerText.setText(t('hud.bossIncoming'));
       this.timerText.setColor('#ff6b5e');
     } else {
       const mm = Math.floor(remain / 60);
@@ -320,9 +321,9 @@ export class HUD {
       this.timerText.setColor('#ffe9b0');
     }
 
-    this.statsText.setText(`УБИЙСТВ: ${s.kills}`);
+    this.statsText.setText(t('hud.kills', { v: num(s.kills) }));
     this.goldText.setText(`${s.gold}`);
-    this.scoreText.setText(`СЧЁТ ${s.score.toLocaleString('ru-RU')}`);
+    this.scoreText.setText(t('hud.score', { v: num(s.score) }));
 
     // HP-бар: полоса + «призрак» урона (медленно догоняет после удара)
     this.updateHpBar(s.hp, s.maxHp);
@@ -465,7 +466,7 @@ export class HUD {
   }
 
   /** Кино-заставка босса: чёрные полосы + имя (не блокирует игру) */
-  bossIntro(name: string, subtitle = 'ФИНАЛЬНЫЙ БОСС'): void {
+  bossIntro(name: string, subtitle = t('hud.bossSubtitleFinal')): void {
     const W = this.scene.scale.width;
     const H = this.scene.scale.height;
     const barH = Math.max(38, H * 0.085);
@@ -548,7 +549,7 @@ export class HUD {
     const c = this.scene.add.container(W + 150, 132);
     const paper = makePanel(this.scene, 0, 0, 'paper', 250, 58);
     const icon = this.scene.add.image(-95, 0, a.icon).setDisplaySize(38, 38);
-    const label = this.scene.add.text(-68, -14, 'ДОСТИЖЕНИЕ!', {
+    const label = this.scene.add.text(-68, -14, t('ach.toast'), {
       fontFamily: FONT, fontSize: '9px', color: '#8a5b12',
     }).setOrigin(0, 0.5);
     const name = this.scene.add.text(-68, 7, a.name, {

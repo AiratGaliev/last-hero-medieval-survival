@@ -18,6 +18,8 @@ import { HUD } from '../systems/HUD';
 import { Joystick } from '../systems/Joystick';
 import { AchTracker, commitMeta } from '../achievements';
 import { getShopLevels, type ShopLevels } from '../shop';
+import { t } from '../../i18n';
+import { gameplayStart, gameplayStop } from '../../platform/lifecycle';
 
 type Keys = Record<string, Phaser.Input.Keyboard.Key>;
 
@@ -140,9 +142,10 @@ export class GameScene extends Phaser.Scene {
     audio.unlock();
     audio.startMusic();
     this.started = true;
-    this.hud.announce(`ВЫЖИВИ 15 МИНУТ, ${this.heroDef.name.toUpperCase()}!`, '#ffe9b0');
+    gameplayStart();
+    this.hud.announce(t('game.survive', { v: this.heroDef.name.toUpperCase() }), '#ffe9b0');
     if (this.diffDef.id === 'nightmare') {
-      this.time.delayedCall(2100, () => this.hud.announce('⚔ КОШМАР: ВРАГИ СВИРЕПЕЕ, ОЧКИ ×1.6', '#ff8866'));
+      this.time.delayedCall(2100, () => this.hud.announce(t('game.nightmareIntro'), '#ff8866'));
     }
   }
 
@@ -487,7 +490,7 @@ export class GameScene extends Phaser.Scene {
     }
     if (Phaser.Input.Keyboard.JustDown(this.keys.m)) {
       const muted = audio.toggleMute();
-      this.hud.announce(muted ? 'ЗВУК ВЫКЛ' : 'ЗВУК ВКЛ', '#ffe9b0');
+      this.hud.announce(muted ? t('hud.soundOff') : t('hud.soundOn'), '#ffe9b0');
     }
 
     this.elapsed += dt;
@@ -686,9 +689,9 @@ export class GameScene extends Phaser.Scene {
     const comboMult = 1 + Math.min(COMBO.BONUS_CAP - 1, this.combo * COMBO.BONUS_STEP);
     this.score += Math.round(SCORE.KILL * comboMult);
     if ((COMBO.MILESTONES as readonly number[]).includes(this.combo)) {
-      this.effects.popup(x, y - 30, `СЕРИЯ ×${this.combo}!`, '#ffd76e', 16);
+      this.effects.popup(x, y - 30, t('game.combo', { v: this.combo }), '#ffd76e', 16);
       if (this.combo >= 50) {
-        this.hud.announce(`НЕУДЕРЖИМ! СЕРИЯ ×${this.combo}`, '#ffd700');
+        this.hud.announce(t('game.unstoppable', { v: this.combo }), '#ffd700');
         audio.play('ach');
       } else {
         audio.play('levelup');
@@ -729,7 +732,7 @@ export class GameScene extends Phaser.Scene {
     if (e.def.isElite) {
       this.pickups.spawnMeat(x + 30, y);
       this.pickups.spawnMeat(x - 30, y);
-      this.hud.announce('ЭЛИТА ПОВЕРЖЕНА! +25 XP', '#7CFC00');
+      this.hud.announce(t('game.eliteDown'), '#7CFC00');
       this.elitesSlain++;
       this.ach?.event({ type: 'elites', value: this.elitesSlain });
     }
@@ -742,7 +745,7 @@ export class GameScene extends Phaser.Scene {
       for (let i = 0; i < 3; i++) {
         this.pickups.spawnGem(x + Phaser.Math.Between(-50, 50), y + Phaser.Math.Between(-50, 50), 'gem-red', 12);
       }
-      this.hud.announce('ТЁМНЫЙ МОНАХ ПОВЕРЖЕН! +1500 ОЧКОВ', '#ffd700');
+      this.hud.announce(t('game.midbossDown'), '#ffd700');
     }
 
     if (e === this.boss) {
@@ -780,10 +783,11 @@ export class GameScene extends Phaser.Scene {
     this.pickups.spawnChest(x, y);
     // Подсказка направления: игроку проще найти сокровище
     // atan2: 0 = восток, π/2 = юг (ось Y вниз)
-    const octants = ['НА ВОСТОКЕ', 'НА ЮГО-ВОСТОКЕ', 'НА ЮГЕ', 'НА ЮГО-ЗАПАДЕ', 'НА ЗАПАДЕ', 'НА СЕВЕРО-ЗАПАДЕ', 'НА СЕВЕРЕ', 'НА СЕВЕРО-ВОСТОКЕ'];
+    const octants = ['east', 'southeast', 'south', 'southwest', 'west', 'northwest', 'north', 'northeast'];
     const ang = (Math.atan2(y - this.player.y, x - this.player.x) + Math.PI * 2) % (Math.PI * 2);
-    const dir = octants[Math.round(ang / (Math.PI / 4)) % 8];
-    this.hud.announce(`ГДЕ-ТО ${dir} СПРЯТАНО СОКРОВИЩЕ...`, '#ffd76e');
+    const dir = octants[Math.round(ang / (Math.PI / 4)) % 8] as
+      | 'east' | 'southeast' | 'south' | 'southwest' | 'west' | 'northwest' | 'north' | 'northeast';
+    this.hud.announce(t('game.chestHidden', { v: t(`game.chestDir.${dir}`) }), '#ffd76e');
   }
 
   private openChest(x: number, y: number): void {
@@ -791,14 +795,14 @@ export class GameScene extends Phaser.Scene {
     audio.play('explosion');
     this.effects.explosion(x, y, 0.9, 2);
     this.cameras.main.shake(180, 0.004);
-    this.hud.announce('СОКРОВИЩЕ ОБРЕТЕНО!', '#ffd700');
+    this.hud.announce(t('game.chestFound'), '#ffd700');
     this.gold += 75;
     this.score += 250;
     this.chestsOpened++;
     this.ach?.event({ type: 'chests', value: this.chestsOpened });
     this.ach?.event({ type: 'gold', value: this.gold });
-    this.effects.popup(x, y - 14, '+75 ЗОЛОТА', '#ffd76e', 15);
-    this.effects.popup(x, y + 8, '+250 ОЧКОВ', '#ffffff', 12);
+    this.effects.popup(x, y - 14, t('game.goldPopup', { v: 75 }), '#ffd76e', 15);
+    this.effects.popup(x, y + 8, t('game.scorePopup', { v: 250 }), '#ffffff', 12);
     // Золотой дождь из кристаллов
     const minute = this.elapsed / 60;
     const tier = minute > 8 ? 'gem-green' : 'gem-blue';
@@ -827,7 +831,7 @@ export class GameScene extends Phaser.Scene {
     if (def.isMidboss) {
       this.midboss = e;
       this.hud.showBossBar(def.name);
-      this.hud.bossIntro(def.name, 'СТРАЖ КОШМАРА');
+      this.hud.bossIntro(def.name, t('hud.bossSubtitleGuardian'));
       this.cameras.main.shake(350, 0.007);
     }
   }
@@ -842,7 +846,10 @@ export class GameScene extends Phaser.Scene {
     this.boss.speed = Math.round(this.boss.speed * this.diffDef.speedMult);
     this.enemyGroup.add(this.boss);
     this.hud.showBossBar(ENEMIES.boss.name);
-    this.hud.bossIntro(ENEMIES.boss.name, this.diffDef.id === 'nightmare' ? 'КОШМАР: ФИНАЛЬНЫЙ БОСС' : 'ФИНАЛЬНЫЙ БОСС');
+    this.hud.bossIntro(
+      ENEMIES.boss.name,
+      this.diffDef.id === 'nightmare' ? t('hud.bossSubtitleNightmare') : t('hud.bossSubtitleFinal'),
+    );
     this.cameras.main.shake(400, 0.008);
   }
 
@@ -910,7 +917,7 @@ export class GameScene extends Phaser.Scene {
     this.gold += v;
     this.ach?.event({ type: 'gold', value: this.gold });
     if (x !== undefined && y !== undefined) {
-      this.effects.popup(x, y - 12, `+${v} ЗОЛОТА`, '#ffd76e', 12);
+      this.effects.popup(x, y - 12, t('game.goldPopup', { v }), '#ffd76e', 12);
     }
   }
 
@@ -922,13 +929,13 @@ export class GameScene extends Phaser.Scene {
       const lvl = this.weapons.level(w.id);
       if (lvl === 0 && this.weapons.ownedIds().length < 7) {
         pool.push({
-          kind: 'weapon-new', id: w.id, title: w.name, subtitle: 'НОВОЕ ОРУЖИЕ',
+          kind: 'weapon-new', id: w.id, title: w.name, subtitle: t('levelup.newWeapon'),
           desc: w.desc, icon: w.icon, levelFrom: 0, levelTo: 1,
         });
       } else if (lvl > 0 && lvl < 5) {
         const next = w.levels[lvl];
         pool.push({
-          kind: 'weapon-up', id: w.id, title: w.name, subtitle: `УРОВЕНЬ ${lvl} → ${lvl + 1}`,
+          kind: 'weapon-up', id: w.id, title: w.name, subtitle: t('levelup.levelTo', { a: lvl, b: lvl + 1 }),
           desc: this.weaponUpgradeDesc(w.id, lvl), icon: w.icon, levelFrom: lvl, levelTo: lvl + 1,
         });
         void next;
@@ -937,7 +944,7 @@ export class GameScene extends Phaser.Scene {
         const evo = EVOLUTIONS[w.id];
         if ((this.passiveLevels.get(evo.partner) ?? 0) > 0) {
           evolutions.push({
-            kind: 'weapon-evolve', id: w.id, title: evo.name, subtitle: '★ ЭВОЛЮЦИЯ ★',
+            kind: 'weapon-evolve', id: w.id, title: evo.name, subtitle: t('levelup.evolution'),
             desc: `${evo.desc}\n(${WEAPONS[w.id].name} + ${PASSIVES[evo.partner].name})`,
             icon: w.icon, levelFrom: 5, levelTo: 6,
           });
@@ -948,7 +955,7 @@ export class GameScene extends Phaser.Scene {
       const lvl = this.passiveLevels.get(p.id) ?? 0;
       if (lvl < p.max) {
         pool.push({
-          kind: 'passive', id: p.id, title: p.name, subtitle: lvl === 0 ? 'НОВЫЙ БОНУС' : `УРОВЕНЬ ${lvl} → ${lvl + 1}`,
+          kind: 'passive', id: p.id, title: p.name, subtitle: lvl === 0 ? t('levelup.newBonus') : t('levelup.levelTo', { a: lvl, b: lvl + 1 }),
           desc: p.desc(lvl + 1), icon: p.icon, levelFrom: lvl, levelTo: lvl + 1,
         });
       }
@@ -958,13 +965,13 @@ export class GameScene extends Phaser.Scene {
     const picked = [...evolutions.slice(0, 3), ...pool.slice(0, Math.max(0, 3 - evolutions.length))];
     if (picked.length === 0) {
       picked.push(
-        { kind: 'heal', title: 'Жареное мясо', subtitle: 'ЛЕЧЕНИЕ', desc: 'Восстановить 40 HP', icon: 'icon-meat' },
-        { kind: 'gold', title: 'Кошель золота', subtitle: 'ЗОЛОТО', desc: '+100 золота к счёту', icon: 'icon-coin' },
-        { kind: 'heal', title: 'Жареное мясо', subtitle: 'ЛЕЧЕНИЕ', desc: 'Восстановить 40 HP', icon: 'icon-meat' },
+        { kind: 'heal', title: t('levelup.cardHealTitle'), subtitle: t('levelup.cardHealSub'), desc: t('levelup.cardHealDesc'), icon: 'icon-meat' },
+        { kind: 'gold', title: t('levelup.cardGoldTitle'), subtitle: t('levelup.cardGoldSub'), desc: t('levelup.cardGoldDesc'), icon: 'icon-coin' },
+        { kind: 'heal', title: t('levelup.cardHealTitle'), subtitle: t('levelup.cardHealSub'), desc: t('levelup.cardHealDesc'), icon: 'icon-meat' },
       );
     }
     while (picked.length < 3) {
-      picked.push({ kind: 'heal', title: 'Жареное мясо', subtitle: 'ЛЕЧЕНИЕ', desc: 'Восстановить 40 HP', icon: 'icon-meat' });
+      picked.push({ kind: 'heal', title: t('levelup.cardHealTitle'), subtitle: t('levelup.cardHealSub'), desc: t('levelup.cardHealDesc'), icon: 'icon-meat' });
     }
     return picked;
   }
@@ -973,15 +980,16 @@ export class GameScene extends Phaser.Scene {
     const w = WEAPONS[id];
     const cur = w.levels[lvl - 1];
     const next = w.levels[lvl];
-    const parts: string[] = [`Урон ${cur.dmg} → ${next.dmg}`];
-    if (next.count && next.count !== cur.count) parts.push(`Количество: ${next.count}`);
-    if (next.radius && cur.radius && next.radius !== cur.radius) parts.push(`Радиус: ${next.radius}`);
-    if (next.pierce && cur.pierce && next.pierce !== cur.pierce) parts.push(`Пробитие: ${next.pierce}`);
+    const parts: string[] = [t('levelup.statDamage', { a: cur.dmg, b: next.dmg })];
+    if (next.count && next.count !== cur.count) parts.push(t('levelup.statCount', { v: next.count }));
+    if (next.radius && cur.radius && next.radius !== cur.radius) parts.push(t('levelup.statRadius', { v: next.radius }));
+    if (next.pierce && cur.pierce && next.pierce !== cur.pierce) parts.push(t('levelup.statPierce', { v: next.pierce }));
     return parts.join(', ');
   }
 
   private openLevelUp(): void {
     this.overlayOpen = true;
+    gameplayStop();
     audio.play('levelup');
     this.scene.pause();
     this.scene.launch('LevelUp', {
@@ -992,6 +1000,7 @@ export class GameScene extends Phaser.Scene {
         if (this.pendingLevelUps <= 0) {
           this.scene.resume();
           this.overlayOpen = false;
+          gameplayStart();
           return true; // готово
         }
         return false; // показать следующий выбор
@@ -1022,7 +1031,7 @@ export class GameScene extends Phaser.Scene {
         this.cameras.main.flash(220, 255, 215, 120, false);
         this.effects.goldBurst(this.player.x, this.player.y - 20, 22);
         this.effects.popup(this.player.x, this.player.y - 70, `★ ${evo.name.toUpperCase()} ★`, '#ffd700', 18);
-        this.hud.announce(`★ ЭВОЛЮЦИЯ: ${evo.name.toUpperCase()}!`, '#ffd700');
+        this.hud.announce(t('game.evolution', { v: evo.name.toUpperCase() }), '#ffd700');
         audio.play('evolve');
         this.ach?.event({ type: 'evolution' });
         break;
@@ -1096,6 +1105,7 @@ export class GameScene extends Phaser.Scene {
   private openPause(): void {
     if (this.overlayOpen || this.gameEnded) return;
     this.overlayOpen = true;
+    gameplayStop();
     this.scene.pause();
     // Снаряжение для панели паузы: оружия и пассивки с уровнями
     const loadout = {
@@ -1115,6 +1125,7 @@ export class GameScene extends Phaser.Scene {
       onResume: () => {
         this.scene.resume();
         this.overlayOpen = false;
+        gameplayStart();
       },
       muted: audio.muted,
       onToggleMute: () => audio.toggleMute(),
@@ -1137,7 +1148,7 @@ export class GameScene extends Phaser.Scene {
     this.player.setVelocity(0, 0);
     this.score += SCORE.BOSS;
     this.hud.hideBossBar();
-    this.hud.announce('ПОБЕДА!!! БОСС ПОВЕРЖЕН!', '#ffd700');
+    this.hud.announce(t('game.victory'), '#ffd700');
     audio.play('victory');
     this.cameras.main.shake(500, 0.006);
     this.hitstop(200);
@@ -1225,6 +1236,35 @@ export class GameScene extends Phaser.Scene {
     this.scene.pause();
   }
 
+  /**
+   * Воскрешение за rewarded-ролик (механика монетизации на Yandex Games).
+   *
+   * Сознательно слабое: 40% HP, серия обнуляется, спавн возобновляется с
+   * текущей сложности. Иначе бесплатные «жизни» ломали бы баланс и игрок
+   * получал бесконечное преимущество за просмотр рекламы.
+   *
+   * Вызывается из GameOverScene ДО scene.resume(): сцена на паузе, но прямые
+   * вызовы методов работают.
+   */
+  revive(): boolean {
+    if (!this.gameEnded) return false;
+    this.gameEnded = false;
+    this.spawner.stopped = false;
+
+    // Серия сбрасывается — награда за рекламу не должна идти в счёт очков
+    this.combo = 0;
+    this.comboTimer = 0;
+
+    this.player.hp = Math.round(this.player.maxHp * 0.4);
+    // Короткая неуязвимость, чтобы не погибнуть сразу тем же уроном
+    this.player.iframesUntil = this.time.now + 1500;
+
+    audio.startMusic();
+    gameplayStart();
+    this.hud.announce(t('over.revived'), '#7dc95e');
+    return true;
+  }
+
   private resizeZoom(): void {
     const w = this.scale.width;
     const h = this.scale.height;
@@ -1292,7 +1332,7 @@ export class GameScene extends Phaser.Scene {
           const a = (i / 6) * Math.PI * 2 + Math.random();
           this.spawnEnemy('boss-minion', x + Math.cos(a) * 170, y + Math.sin(a) * 170);
         }
-        this.hud.announce('БОСС ЗОВЁТ СВИТУ!', '#ff8866');
+        this.hud.announce(t('game.bossSummon'), '#ff8866');
       },
       onBomberExplode: (x, y, self, selfDestruct) => {
         // Уничтожаем бочку ДО взрыва: взрыв не должен бить саму бочку (иначе рекурсия)

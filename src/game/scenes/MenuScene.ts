@@ -2,22 +2,27 @@ import Phaser from 'phaser';
 import { FONT } from '../constants';
 import { HEROES, WEAPONS, PASSIVES, DIFFICULTIES, EVOLUTIONS, type HeroId, type DifficultyId } from '../data';
 import { audio } from '../systems/Audio';
-import { makePanel, makeButton } from '../systems/Ui';
+import { makePanel, makeButton, fitTextWidth } from '../systems/Ui';
 import { loadShop, buyUpgrade, SHOP_UPGRADES } from '../shop';
 import { ACHIEVEMENTS, loadUnlocked, loadMeta } from '../achievements';
+import { t, num, clock } from '../../i18n';
+import { topScores } from '../../platform/leaderboard';
+import { notifyReady } from '../../platform/lifecycle';
 
 // ============ Главное меню: герой + сложность + вся мета-навигация ============
-// Вся оболочка игры живёт здесь: «Как играть», «Рекорды» (API), «Лавка
-// торговца» (покупки за золото), «Достижения» и «Хроника воина» (localStorage).
+// Вся оболочка игры живёт здесь: «Как играть», «Зал славы», «Лавка торговца»
+// (покупки за золото), «Достижения» и «Хроника воина» (localStorage).
 
+/** Строка зала славы. Формат единый для локальной таблицы и данных SDK. */
 interface ScoreRow {
-  id: number;
+  rank: number;
   name: string;
   score: number;
   kills: number;
   level: number;
   timeSurvived: number;
   victory: boolean;
+  online: boolean;
 }
 
 interface HeroCard {
@@ -58,9 +63,11 @@ export class MenuScene extends Phaser.Scene {
   private shopRowEls: Phaser.GameObjects.Container[] = [];
   private shopBalanceText: Phaser.GameObjects.Text | null = null;
   private shopRowsY = 0;
-  // Рекорды: фильтр (все/победы) + кэш строк API для перерисовки без refetch
+  // Зал славы: фильтр (все/победы) + кэш строк для перерисовки без повторного запроса
   private recordsFilter: 'all' | 'win' = 'all';
   private recordsRows: ScoreRow[] = [];
+  /** Данные пришли из общего зала Яндекса (true) или из локальной таблицы. */
+  private recordsOnline = false;
   private recordsListEls: Phaser.GameObjects.GameObject[] = [];
 
   // Достижения
@@ -201,7 +208,7 @@ export class MenuScene extends Phaser.Scene {
     const heroTop = cardsY - blockH / 2;
     const heroBottom = cardsY + blockH / 2;
 
-    const label = this.add.text(width / 2, heroTop - 26, '— ВЫБЕРИ ГЕРОЯ —', {
+    const label = this.add.text(width / 2, heroTop - 26, t('menu.chooseHero'), {
       fontFamily: FONT, fontSize: '14px', color: '#3b2410',
       stroke: '#ffe9c0', strokeThickness: 4,
     }).setOrigin(0.5).setAlpha(0.9);
@@ -225,7 +232,7 @@ export class MenuScene extends Phaser.Scene {
 
     // ---------- Кнопки ----------
     const btnY = Math.min(height * 0.85, chipsY + 34 + 30);
-    makeButton(this, width / 2, btnY, Math.min(320, width - 80), 58, 'ИГРАТЬ', () => {
+    makeButton(this, width / 2, btnY, Math.min(320, width - 80), 58, t('menu.play'), () => {
       audio.unlock();
       window.localStorage.setItem('tss-hero', this.selectedHero);
       window.localStorage.setItem('tss-diff', this.selectedDiff);
@@ -234,11 +241,11 @@ export class MenuScene extends Phaser.Scene {
 
     // Навигация по мета-экранам — всё внутри Phaser
     const navItems: Array<[string, () => void]> = [
-      ['КАК ИГРАТЬ', () => this.showHowTo()],
-      ['РЕКОРДЫ', () => { void this.showRecords(); }],
-      ['ЛАВКА', () => this.showShop()],
-      ['ДОСТИЖЕНИЯ', () => this.showAchievements()],
-      ['ХРОНИКА', () => this.showChronicle()],
+      [t('menu.howTo'), () => this.showHowTo()],
+      [t('menu.records'), () => { void this.showRecords(); }],
+      [t('menu.shop'), () => this.showShop()],
+      [t('menu.achievements'), () => this.showAchievements()],
+      [t('menu.chronicle'), () => this.showChronicle()],
     ];
     const navY = btnY + 58;
     if (mobile) {
@@ -260,7 +267,7 @@ export class MenuScene extends Phaser.Scene {
       });
     }
 
-    this.add.text(width / 2, height - 12, 'v1.10 • Phaser 4 • ассеты Pixel Frog «Tiny Swords»', {
+    this.add.text(width / 2, height - 12, t('menu.version'), {
       fontFamily: FONT, fontSize: '11px', color: '#3b2410',
     }).setOrigin(0.5).setAlpha(0.8);
 
@@ -271,6 +278,11 @@ export class MenuScene extends Phaser.Scene {
     // Тихая тема меню (заставка живёт и после возврата из матча)
     audio.unlock();
     audio.startMusic(true);
+
+    // Требование Yandex Games 1.19.2: LoadingAPI.ready() вызывается ровно
+    // тогда, когда игрок уже может нажать «Играть». Раньше площадка держит
+    // свою заставку поверх игры, позже — считает вызов некорректным.
+    notifyReady();
   }
 
   private createHeroCard(x: number, y: number, heroId: HeroId, cardW: number, cardH: number): void {
@@ -432,7 +444,7 @@ export class MenuScene extends Phaser.Scene {
     const width = this.vw;
     const height = this.vh;
     const by = Math.min(y ?? height / 2 + Math.min(300, height * 0.36), height - 38);
-    const b = makeButton(this, width / 2, by, 170, 54, 'НАЗАД', () => this.closeOverlay(), 'red', 16);
+    const b = makeButton(this, width / 2, by, 170, 54, t('common.back'), () => this.closeOverlay(), 'red', 16);
     this.overlayExtras.push(b.img, b.txt, b.hit);
   }
 
@@ -459,15 +471,15 @@ export class MenuScene extends Phaser.Scene {
     const paperH = Math.min(paperW * 1.24, height - 40);
     const paper = makePanel(this, width / 2, height / 2, 'paper', paperW, paperH);
     const top = height / 2 - paperH / 2;
-    const header = this.add.text(width / 2, top + 34, 'КАК ИГРАТЬ', {
+    const header = this.add.text(width / 2, top + 34, t('howto.title'), {
       fontFamily: FONT, fontSize: '26px', color: '#3b2410',
     }).setOrigin(0.5);
     const lines = [
-      'Выбери героя и сложность («Кошмар» — ×1.6 очков).',
-      'WASD / стрелки — движение, на телефоне — джойстик.',
+      t('howto.hero'),
+      t('howto.move'),
       '',
-      'Оружие атакует автоматически. Собирай кристаллы',
-      'опыта, золото и сокровища, выбирай улучшения.',
+      t('howto.auto'),
+      t('howto.loot'),
     ];
     const body = this.add.text(width / 2, top + 64, lines.join('\n'), {
       fontFamily: FONT, fontSize: '14px', color: '#57431f', align: 'center', lineSpacing: 6,
@@ -475,11 +487,11 @@ export class MenuScene extends Phaser.Scene {
     this.overlay?.add([paper, header, body]);
 
     // ===== Раздел «Эволюции оружия» с рецептами =====
-    const evoTitle = this.add.text(width / 2, top + 172, '★ ЭВОЛЮЦИИ ОРУЖИЯ', {
+    const evoTitle = this.add.text(width / 2, top + 172, t('howto.evoTitle'), {
       fontFamily: FONT, fontSize: '16px', color: '#9a6a08',
     }).setOrigin(0.5);
     const evoHint = this.add.text(width / 2, top + 194,
-      'Меч 5-го уровня + пассивка-партнёр → мощнейшая форма', {
+      t('howto.evoRecipe'), {
       fontFamily: FONT, fontSize: '11px', color: '#8a5b12',
     }).setOrigin(0.5);
     this.overlay?.add([evoTitle, evoHint]);
@@ -515,9 +527,9 @@ export class MenuScene extends Phaser.Scene {
 
     const footerY = recipeY0 + 7 * recipeGap + 14;
     const footer = this.add.text(width / 2, footerY, [
-      'Выживи 15 минут и убей ЧЁРНОГО КОПЕЙЩИКА!',
-      'На «Кошмаре» на 10-й минуте ждёт ТЁМНЫЙ МОНАХ.',
-      'ESC / P — пауза, M — звук. Бочки-камикадзе взрываются!',
+      t('howto.goal1'),
+      t('howto.goal2'),
+      t('howto.goal3'),
     ].join('\n'), {
       fontFamily: FONT, fontSize: '13px', color: '#57431f', align: 'center', lineSpacing: 6,
     }).setOrigin(0.5, 0);
@@ -549,12 +561,12 @@ export class MenuScene extends Phaser.Scene {
     container.add(paper);
     const top = cy - paperH / 2;
 
-    container.add(this.add.text(cx, top + 38, 'ЗАЛ СЛАВЫ', {
+    container.add(this.add.text(cx, top + 38, t('records.title'), {
       fontFamily: FONT, fontSize: '24px', color: '#ffe9c0',
       stroke: '#1b1008', strokeThickness: 5,
     }).setOrigin(0.5));
 
-    const loading = this.add.text(cx, cy, 'загрузка...', {
+    const loading = this.add.text(cx, cy, t('records.loading'), {
       fontFamily: FONT, fontSize: '15px', color: '#cbb389',
     }).setOrigin(0.5);
     container.add(loading);
@@ -570,10 +582,10 @@ export class MenuScene extends Phaser.Scene {
       fontFamily: FONT, fontSize: '10px', color: '#cbb389',
     };
     container.add(this.add.text(left, top + 100, '#', { ...headerStyle }).setOrigin(0, 0.5));
-    container.add(this.add.text(colName, top + 100, 'ГЕРОЙ', { ...headerStyle }).setOrigin(0, 0.5));
-    container.add(this.add.text(colScore, top + 100, 'СЧЁТ', { ...headerStyle }).setOrigin(1, 0.5));
-    container.add(this.add.text(colKills, top + 100, 'УБ.', { ...headerStyle }).setOrigin(1, 0.5));
-    container.add(this.add.text(right, top + 100, 'ВРЕМЯ', { ...headerStyle }).setOrigin(1, 0.5));
+    container.add(this.add.text(colName, top + 100, t('records.colHero'), { ...headerStyle }).setOrigin(0, 0.5));
+    container.add(this.add.text(colScore, top + 100, t('records.colScore'), { ...headerStyle }).setOrigin(1, 0.5));
+    container.add(this.add.text(colKills, top + 100, t('records.colKills'), { ...headerStyle }).setOrigin(1, 0.5));
+    container.add(this.add.text(right, top + 100, t('records.colTime'), { ...headerStyle }).setOrigin(1, 0.5));
     const hr = this.add.graphics();
     hr.lineStyle(1, 0x8a6d3b, 0.6).lineBetween(left, top + 114, right, top + 114);
     container.add(hr);
@@ -582,8 +594,8 @@ export class MenuScene extends Phaser.Scene {
     const chipY = top + 76;
     const chipW = 96;
     const chips: Array<{ key: 'all' | 'win'; label: string }> = [
-      { key: 'all', label: 'ВСЕ' },
-      { key: 'win', label: '★ ПОБЕДЫ' },
+      { key: 'all', label: t('records.filterAll') },
+      { key: 'win', label: t('records.filterWins') },
     ];
     const chipEls: Array<{ bg: Phaser.GameObjects.Rectangle; txt: Phaser.GameObjects.Text }> = [];
     chips.forEach((c, i) => {
@@ -611,24 +623,29 @@ export class MenuScene extends Phaser.Scene {
     });
 
     try {
-      const res = await fetch('/api/scores?limit=10');
-      if (!res.ok) throw new Error('load failed');
-      const rows: ScoreRow[] = await res.json();
+      // Общий зал Яндекс Игр для авторизованных, локальная таблица — для гостей
+      const res = await topScores(10);
       if (!container.active) return; // оверлей закрыли, пока грузился ответ
       loading.destroy();
-      this.recordsRows = rows;
+      this.recordsRows = res.entries;
+      this.recordsOnline = res.online;
       this.renderRecords(container, left, right, colName, colScore, colKills, top);
     } catch {
       if (!container.active) return;
       loading.destroy();
-      container.add(this.add.text(cx, cy, 'не удалось загрузить рекорды', {
+      container.add(this.add.text(cx, cy, t('records.failed'), {
         fontFamily: FONT, fontSize: '15px', color: '#ff8a7a',
       }).setOrigin(0.5));
     }
 
+    // Подсказка об источнике данных: локальный рейтинг vs общий зал Яндекса
+    container.add(this.add.text(cx, top + paperH - 100, this.recordsOnline ? t('records.onlineHint') : t('records.localHint'), {
+      fontFamily: FONT, fontSize: '9px', color: '#8a7a5c', align: 'center',
+    }).setOrigin(0.5).setScrollFactor(0));
+
     container.add(this.add.text(cx, top + paperH - 78, [
-      'очки: 10 за убийство • 100 за минуту • 50 за уровень',
-      '+5000 за босса • золото и «Кошмар» — множители • ★ — победа',
+      t('records.formula1'),
+      t('records.formula2'),
     ].join('\n'), {
       fontFamily: FONT, fontSize: '10px', color: '#cbb389', align: 'center', lineSpacing: 6,
     }).setOrigin(0.5));
@@ -651,8 +668,8 @@ export class MenuScene extends Phaser.Scene {
       : this.recordsRows;
     if (rows.length === 0) {
       const empty = this.add.text(cx, cy + 20, this.recordsFilter === 'win'
-        ? 'пока никто не одолел босса...\nстань первым!'
-        : 'пока никто не выживал...\nстань первым героем!', {
+        ? t('records.emptyWin')
+        : t('records.emptyAll'), {
         fontFamily: FONT, fontSize: '15px', color: '#cbb389', align: 'center', lineSpacing: 8,
       }).setOrigin(0.5);
       container.add(empty);
@@ -662,24 +679,27 @@ export class MenuScene extends Phaser.Scene {
     const style: Phaser.Types.GameObjects.Text.TextStyle = {
       fontFamily: FONT, fontSize: '13px', color: '#ffe9c0',
     };
+    // Имя занимает всё свободное место до колонки «СЧЁТ»
+    const nameMaxW = Math.max(60, colScore - colName - 30);
     rows.forEach((r, i) => {
       const y = top + 136 + i * 26;
       const medal = i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : `${i + 1}.`;
+      // Длинные имена ужимаем под колонку, а не обрезаем по 13 символов
+      const nameText = this.add.text(colName, y, `${r.name}${r.victory ? ' ★' : ''}`, {
+        ...style, color: i === 0 ? '#ffd76e' : '#ffe9c0',
+      }).setOrigin(0, 0.5);
+      fitTextWidth(nameText, nameMaxW, 13);
       const els: Phaser.GameObjects.GameObject[] = [
         this.add.text(left, y, medal, {
           ...style, color: i < 3 ? '#ffd76e' : '#cbb389',
         }).setOrigin(0, 0.5),
-        this.add.text(colName, y, `${r.name.slice(0, 13)}${r.victory ? ' ★' : ''}`, {
-          ...style, color: i === 0 ? '#ffd76e' : '#ffe9c0',
-        }).setOrigin(0, 0.5),
-        this.add.text(colScore, y, r.score.toLocaleString('ru-RU'), {
+        nameText,
+        this.add.text(colScore, y, num(r.score), {
           ...style, color: '#ffd76e',
         }).setOrigin(1, 0.5),
         this.add.text(colKills, y, `${r.kills}`, { ...style }).setOrigin(1, 0.5),
       ];
-      const m = Math.floor(r.timeSurvived / 60);
-      const s = Math.floor(r.timeSurvived % 60).toString().padStart(2, '0');
-      els.push(this.add.text(right, y, `${m}:${s}`, { ...style }).setOrigin(1, 0.5));
+      els.push(this.add.text(right, y, clock(r.timeSurvived), { ...style }).setOrigin(1, 0.5));
       container.add(els);
       this.recordsListEls.push(...els);
     });
@@ -701,10 +721,10 @@ export class MenuScene extends Phaser.Scene {
     this.overlay?.add(paper);
     const top = cy - paperH / 2;
 
-    this.overlay?.add(this.add.text(cx, top + 38, 'ЛАВКА ТОРГОВЦА', {
+    this.overlay?.add(this.add.text(cx, top + 38, t('shop.title'), {
       fontFamily: FONT, fontSize: '26px', color: '#3b2410',
     }).setOrigin(0.5));
-    this.overlay?.add(this.add.text(cx, top + 62, 'золото из матчей → вечные усиления героя', {
+    this.overlay?.add(this.add.text(cx, top + 62, t('shop.subtitle'), {
       fontFamily: FONT, fontSize: '11px', color: '#8a5b12',
     }).setOrigin(0.5));
 
@@ -722,7 +742,7 @@ export class MenuScene extends Phaser.Scene {
     this.shopRowsY = top + 132;
     this.renderShopRows();
 
-    this.overlay?.add(this.add.text(cx, top + paperH - 28, 'золото падает в кошелёк в конце каждого матча', {
+    this.overlay?.add(this.add.text(cx, top + paperH - 28, t('shop.footer'), {
       fontFamily: FONT, fontSize: '10px', color: '#8a5b12',
     }).setOrigin(0.5));
 
@@ -772,7 +792,7 @@ export class MenuScene extends Phaser.Scene {
       row.add(dots);
 
       if (maxed) {
-        row.add(this.add.text(rowW / 2 - 56, 0, 'МАКС', {
+        row.add(this.add.text(rowW / 2 - 56, 0, t('shop.max'), {
           fontFamily: FONT, fontSize: '13px', color: '#2e7d32',
           stroke: '#dcecc9', strokeThickness: 3,
         }).setOrigin(0.5));
@@ -843,7 +863,7 @@ export class MenuScene extends Phaser.Scene {
     this.overlay?.add(paper);
     const top = cy - paperH / 2;
 
-    this.overlay?.add(this.add.text(cx, top + 38, 'ДОСТИЖЕНИЯ', {
+    this.overlay?.add(this.add.text(cx, top + 38, t('ach.title'), {
       fontFamily: FONT, fontSize: '26px', color: '#3b2410',
     }).setOrigin(0.5));
     this.overlay?.add(this.add.text(cx, top + 64, `${count} / ${total}`, {
@@ -866,7 +886,7 @@ export class MenuScene extends Phaser.Scene {
     const gridTop = top + 112;
     const small = width < 500;
 
-    this.achDesc = this.add.text(cx, top + paperH - 86, 'наведи на достижение — увидишь условие', {
+    this.achDesc = this.add.text(cx, top + paperH - 86, t('ach.hint'), {
       fontFamily: FONT, fontSize: '11px', color: '#57431f', align: 'center',
       wordWrap: { width: paperW - 70 }, lineSpacing: 5,
     }).setOrigin(0.5);
@@ -894,11 +914,16 @@ export class MenuScene extends Phaser.Scene {
       if (!has) icon.setTint(0x8d8577);
       cell.add(icon);
 
-      cell.add(this.add.text(0, cellH * 0.24, a.name, {
-        fontFamily: FONT, fontSize: small ? '9px' : '10px',
+      const achFont = small ? 9 : 10;
+      const achText = this.add.text(0, cellH * 0.26, a.name, {
+        fontFamily: FONT, fontSize: `${achFont}px`,
         color: has ? '#3b2410' : '#8d8577', align: 'center',
-        wordWrap: { width: cellW - 10 }, lineSpacing: 3,
-      }).setOrigin(0.5));
+        wordWrap: { width: cellW - 12 }, lineSpacing: 2,
+      }).setOrigin(0.5);
+      // Название не должно обрезаться по краю ячейки
+      if (achText.height <= achFont * 2.4) fitTextWidth(achText, cellW - 12, achFont, 7);
+      else achText.setWordWrapWidth(cellW - 12);
+      cell.add(achText);
 
       cell.setSize(cellW, cellH);
       cell.setInteractive({ useHandCursor: true });
@@ -913,7 +938,7 @@ export class MenuScene extends Phaser.Scene {
     });
 
     if (count === total && count > 0) {
-      this.overlay?.add(this.add.text(cx, top + paperH - 52, '👑 Все достижения собраны!', {
+      this.overlay?.add(this.add.text(cx, top + paperH - 52, t('ach.allDone'), {
         fontFamily: FONT, fontSize: '13px', color: '#8a5b12',
       }).setOrigin(0.5));
     }
@@ -941,15 +966,15 @@ export class MenuScene extends Phaser.Scene {
     this.overlay?.add(paper);
     const top = cy - paperH / 2;
 
-    this.overlay?.add(this.add.text(cx, top + 38, 'ХРОНИКА ВОИНА', {
+    this.overlay?.add(this.add.text(cx, top + 38, t('chron.title'), {
       fontFamily: FONT, fontSize: '26px', color: '#3b2410',
     }).setOrigin(0.5));
 
     if (meta.matches === 0 && meta.kills === 0) {
       this.overlay?.add(this.add.text(cx, cy + 10, [
-        'Статистика появится после первого матча.',
-        'Матчи, победы, золото и рекорды',
-        'хранятся в этом браузере.',
+        t('chron.empty1'),
+        t('chron.empty2'),
+        t('chron.empty3'),
       ].join('\n'), {
         fontFamily: FONT, fontSize: '14px', color: '#57431f', align: 'center', lineSpacing: 10,
       }).setOrigin(0.5));
@@ -960,7 +985,7 @@ export class MenuScene extends Phaser.Scene {
         chip.fillStyle(0xdff0d8, 1).fillRoundedRect(cx - 74, top + 56, 148, 26, 13);
         chip.lineStyle(2, 0x5b8a51, 1).strokeRoundedRect(cx - 74, top + 56, 148, 26, 13);
         this.overlay?.add(chip);
-        this.overlay?.add(this.add.text(cx, top + 69, `винрейт ${winRate}%`, {
+        this.overlay?.add(this.add.text(cx, top + 69, t('chron.winRate', { v: winRate }), {
           fontFamily: FONT, fontSize: '12px', color: '#2e5d28',
         }).setOrigin(0.5));
       }
@@ -969,17 +994,17 @@ export class MenuScene extends Phaser.Scene {
       const h = Math.floor(meta.playTime / 3600);
       const m = Math.floor((meta.playTime % 3600) / 60);
       const timeStr = h > 0
-        ? `${h} ч ${m} м`
+        ? t('chron.hoursMins', { h, m })
         : m > 0
-          ? `${m} мин`
-          : `${meta.playTime} сек`;
+          ? t('chron.mins', { m })
+          : t('chron.secs', { s: meta.playTime });
       const items: Array<[string, string]> = [
-        ['МАТЧЕЙ', fmt(meta.matches)],
-        ['ПОБЕД', fmt(meta.victories)],
-        ['УБИЙСТВ', fmt(meta.kills)],
-        ['ЗОЛОТА', fmt(meta.gold)],
-        ['РЕКОРД', fmt(meta.bestScore)],
-        ['В ИГРЕ', timeStr],
+        [t('chron.matches'), fmt(meta.matches)],
+        [t('chron.victories'), fmt(meta.victories)],
+        [t('chron.kills'), fmt(meta.kills)],
+        [t('chron.gold'), fmt(meta.gold)],
+        [t('chron.best'), fmt(meta.bestScore)],
+        [t('chron.playtime'), timeStr],
       ];
 
       const cellGap = 10;
@@ -1004,7 +1029,7 @@ export class MenuScene extends Phaser.Scene {
         }).setOrigin(0.5));
       });
 
-      this.overlay?.add(this.add.text(cx, top + paperH - 26, 'данные хранятся в этом браузере', {
+      this.overlay?.add(this.add.text(cx, top + paperH - 26, t('chron.footer'), {
         fontFamily: FONT, fontSize: '10px', color: '#8a5b12',
       }).setOrigin(0.5));
     }

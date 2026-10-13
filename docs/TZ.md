@@ -7,11 +7,24 @@
 | Название | Tiny Sword Survivors |
 | Жанр | Bullet-heaven / auto-shooter roguelite (экшен, выживание) |
 | Референс | Vampire Survivors |
-| Ассеты | Tiny Swords (Pixel Frog, itch.io, free) — `public/assets/tiny-swords/` |
+| Ассеты | Tiny Swords (Pixel Frog, itch.io, free) — `src/assets/tiny-swords/` |
 | Движок | Phaser 4.2.1 (последняя версия, WebGL) |
-| Платформа | Web (desktop + mobile), Next.js 16 / TypeScript |
-| Язык UI | Русский |
+| Платформа | Web (desktop + mobile), нативный Phaser 4 + Vite 8 / TypeScript |
+| Сборка | `npm run build` → статика в `dist/`, без SSR |
+| Площадка | Yandex Games (архив), SDK лежит внутри сборки |
+| Бэкенд | Отсутствует — площадка запрещает игры со своим сервером |
+| Локализация | RU + EN, автоопределение через SDK |
+| Языки UI | Русский и английский |
 | Длительность матча | 15 минут до победы (финальный босс) |
+
+> **История стека.** До раунда 12 проект был приложением на Next.js 16 +
+> React 19 + shadcn/ui + Tailwind + Prisma. Сама игра целиком писалась на Phaser:
+> React использовался только как монтировочная обёртка канваса, Prisma — ради
+> одной таблицы рекордов. Из ~70 зависимостей игра использовала ровно одну.
+> Раунд 12 перевёл проект на нативный Phaser 4 + Vite, раунд 13 — на Yandex
+> Games: серверная часть рекордов удалена (площадка запрещает игры со своим
+> бэкендом, п. 1.2), добавлены SDK, монетизация (п. 1.12) и локализация RU + EN
+> (п. 2.14). Подробности — в `README.md`.
 
 ---
 

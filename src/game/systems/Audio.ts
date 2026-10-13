@@ -14,6 +14,46 @@ class AudioSystem {
   private musicStep = 0;
   muted = false;
 
+  /**
+   * Приглушение не самим игроком, а внешним событием: уход вкладки из фокуса
+   * (требование площадки 1.3) или показ рекламы (4.7). Живёт отдельно от
+   * `muted`, чтобы выключатель звука в HUD не сбрасывался при возврате.
+   */
+  private silenced = false;
+
+  private static readonly MASTER_GAIN = 0.5;
+
+  /** Громкость с учётом ручного выключателя и внешнего приглушения. */
+  private get targetGain(): number {
+    if (this.muted || this.silenced) return 0;
+    return AudioSystem.MASTER_GAIN;
+  }
+
+  private applyGain(): void {
+    if (this.master && this.ctx) {
+      this.master.gain.setTargetAtTime(this.targetGain, this.ctx.currentTime, 0.03);
+    }
+  }
+
+  /** Заглушить снаружи (потеря фокуса, реклама). */
+  silence(): void {
+    if (this.silenced) return;
+    this.silenced = true;
+    this.applyGain();
+  }
+
+  /** Вернуть звук после внешнего приглушения. Ручной mute при этом сохраняется. */
+  unsilence(): void {
+    if (!this.silenced) return;
+    this.silenced = false;
+    this.applyGain();
+  }
+
+  /** Работает ли сейчас: контекст создан, не заглушён и не выключен игроком. */
+  get isAudible(): boolean {
+    return this.targetGain > 0;
+  }
+
   private ensure(): boolean {
     if (typeof window === 'undefined') return false;
     if (!this.ctx) {
@@ -21,7 +61,7 @@ class AudioSystem {
         const AC = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
         this.ctx = new AC();
         this.master = this.ctx.createGain();
-        this.master.gain.value = 0.5;
+        this.master.gain.value = this.targetGain;
         this.master.connect(this.ctx.destination);
         this.sfxGain = this.ctx.createGain();
         this.sfxGain.gain.value = 0.55;
@@ -43,9 +83,7 @@ class AudioSystem {
 
   toggleMute(): boolean {
     this.muted = !this.muted;
-    if (this.master && this.ctx) {
-      this.master.gain.setTargetAtTime(this.muted ? 0 : 0.5, this.ctx.currentTime, 0.02);
-    }
+    this.applyGain();
     return this.muted;
   }
 
@@ -53,7 +91,7 @@ class AudioSystem {
     freq: number, dur: number, type: OscillatorType,
     vol: number, delay = 0, slideTo?: number,
   ): void {
-    if (!this.ctx || !this.sfxGain || this.muted) return;
+    if (!this.ctx || !this.sfxGain || this.muted || this.silenced) return;
     const t0 = this.ctx.currentTime + delay;
     const osc = this.ctx.createOscillator();
     const g = this.ctx.createGain();
@@ -68,7 +106,7 @@ class AudioSystem {
   }
 
   private noise(dur: number, vol: number, delay = 0, lowpass = 1200): void {
-    if (!this.ctx || !this.sfxGain || this.muted) return;
+    if (!this.ctx || !this.sfxGain || this.muted || this.silenced) return;
     const t0 = this.ctx.currentTime + delay;
     const len = Math.floor(this.ctx.sampleRate * dur);
     const buf = this.ctx.createBuffer(1, len, this.ctx.sampleRate);
@@ -150,7 +188,7 @@ class AudioSystem {
     this.musicTimer = setInterval(() => {
       // Ключевая защита: пока контекст suspended (автозапрет браузера),
       // ноты НЕ планируются — иначе после первого клика они грянут все разом
-      if (!this.ctx || !this.musicGain || this.muted || this.ctx.state !== 'running') return;
+      if (!this.ctx || !this.musicGain || this.muted || this.silenced || this.ctx.state !== 'running') return;
       const m = AudioSystem.MELODY[this.musicStep % 32];
       const b = AudioSystem.BASS[this.musicStep % 32];
       const t0 = this.ctx.currentTime;

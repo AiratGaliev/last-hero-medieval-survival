@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" shape-rendering="crispEdges">
+  <rect width="32" height="32" fill="#3f8ed0"/>
+  <!-- клинок -->
+  <path fill="#e8ecf2" d="M14 4h4v16h-4z"/>
+  <path fill="#c3cad6" d="M18 4h1v16h-1z"/>
+  <!-- гарда -->
+  <path fill="#c9973f" d="M9 20h14v3H9z"/>
+  <!-- рукоять -->
+  <path fill="#7a4a22" d="M14 23h4v5h-4z"/>
+  <!-- навершие -->
+  <path fill="#c9973f" d="M13 28h6v2h-6z"/>
+</svg>

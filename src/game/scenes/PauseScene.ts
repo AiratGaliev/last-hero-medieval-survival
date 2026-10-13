@@ -2,6 +2,7 @@ import Phaser from 'phaser';
 import { FONT } from '../constants';
 import { audio } from '../systems/Audio';
 import { makeButton, makePanel } from '../systems/Ui';
+import { t } from '../../i18n';
 
 // ============ Пауза: меню + панель снаряжения (оружия/бонусы) ============
 
@@ -42,7 +43,7 @@ export class PauseScene extends Phaser.Scene {
     this.add.rectangle(width / 2, height / 2, width + 40, height + 40, 0x0a0a12, 0.7)
       .setScrollFactor(0);
 
-    const title = this.add.text(width / 2, compact ? height * 0.1 : height * 0.11, 'ПАУЗА', {
+    const title = this.add.text(width / 2, compact ? height * 0.1 : height * 0.11, t('pause.title'), {
       fontFamily: FONT, fontSize: compact ? '32px' : '40px', color: '#ffe9b0',
       stroke: '#5a2d05', strokeThickness: 9,
     }).setOrigin(0.5).setScrollFactor(0);
@@ -61,21 +62,21 @@ export class PauseScene extends Phaser.Scene {
       // Кнопки справа от панели на широких экранах, иначе под панелью
       if (wide) {
         const bx = width / 2 + panelW / 2 + 90;
-        this.menuBtn(bx, height * 0.34, 'ПРОДОЛЖИТЬ', 'blue', 250, 58, () => this.resume());
-        this.menuBtn(bx, height * 0.50, 'ЗАНОВО', 'red', 250, 58, () => this.restart());
-        this.menuBtn(bx, height * 0.66, 'В МЕНЮ', 'blue', 250, 50, () => this.toMenu());
+        this.menuBtn(bx, height * 0.34, t('pause.resume'), 'blue', 250, 58, () => this.resume());
+        this.menuBtn(bx, height * 0.50, t('pause.restart'), 'red', 250, 58, () => this.restart());
+        this.menuBtn(bx, height * 0.66, t('pause.toMenu'), 'blue', 250, 50, () => this.toMenu());
         this.buildSoundToggle(bx, height * 0.80);
       } else {
-        this.menuBtn(width / 2, height * 0.78, 'ПРОДОЛЖИТЬ', 'blue', 300, 56, () => this.resume());
-        this.menuBtn(width / 2, height * 0.875, 'ЗАНОВО', 'red', 240, 46, () => this.restart());
-        this.menuBtn(width / 2 + 96, height - 32, 'В МЕНЮ', 'blue', 180, 40, () => this.toMenu());
+        this.menuBtn(width / 2, height * 0.78, t('pause.resume'), 'blue', 300, 56, () => this.resume());
+        this.menuBtn(width / 2, height * 0.875, t('pause.restart'), 'red', 240, 46, () => this.restart());
+        this.menuBtn(width / 2 + 96, height - 32, t('pause.toMenu'), 'blue', 180, 40, () => this.toMenu());
         this.buildSoundToggle(width / 2 - 118, height - 32);
       }
     } else {
       // Компактный ландшафт / без данных — прежняя вертикальная раскладка
-      this.menuBtn(width / 2, height * 0.42, 'ПРОДОЛЖИТЬ', 'blue', 300, 66, () => this.resume());
-      this.menuBtn(width / 2, height * 0.58, 'ЗАНОВО', 'red', 300, 66, () => this.restart());
-      this.menuBtn(width / 2, height * 0.74, 'В МЕНЮ', 'blue', 220, 54, () => this.toMenu());
+      this.menuBtn(width / 2, height * 0.42, t('pause.resume'), 'blue', 300, 66, () => this.resume());
+      this.menuBtn(width / 2, height * 0.58, t('pause.restart'), 'red', 300, 66, () => this.restart());
+      this.menuBtn(width / 2, height * 0.74, t('pause.toMenu'), 'blue', 220, 54, () => this.toMenu());
       this.buildSoundToggle(width / 2, height * 0.87);
     }
 
@@ -116,7 +117,7 @@ export class PauseScene extends Phaser.Scene {
     const top = cy - h / 2;
 
     // Герой + HP
-    this.add.text(cx, top + 26, `${lo.hero.name.toUpperCase()}  ·  УР. ${lo.stats.level}`, {
+    this.add.text(cx, top + 26, `${lo.hero.name.toUpperCase()}  ·  ${t('hud.level', { v: lo.stats.level })}`, {
       fontFamily: FONT, fontSize: '15px', color: '#3b2410',
     }).setOrigin(0.5).setScrollFactor(0);
     const hpFrac = Phaser.Math.Clamp(lo.hero.hp / Math.max(1, lo.hero.maxHp), 0, 1);
@@ -132,10 +133,10 @@ export class PauseScene extends Phaser.Scene {
     const colW = (w - 60) / 2;
     const colL = cx - colW / 2 - 8;
     const colR = cx + colW / 2 + 8;
-    this.add.text(colL, top + 78, 'ОРУЖИЯ', {
+    this.add.text(colL, top + 78, t('pause.weapons'), {
       fontFamily: FONT, fontSize: '11px', color: '#8a5b12',
     }).setOrigin(0.5).setScrollFactor(0);
-    this.add.text(colR, top + 78, 'БОНУСЫ', {
+    this.add.text(colR, top + 78, t('pause.bonuses'), {
       fontFamily: FONT, fontSize: '11px', color: '#8a5b12',
     }).setOrigin(0.5).setScrollFactor(0);
 
@@ -189,7 +190,7 @@ export class PauseScene extends Phaser.Scene {
   };
 
   private updateMuteLabel(): void {
-    this.muteLabel.setText(audio.muted ? 'ЗВУК ВЫКЛ' : 'ЗВУК ВКЛ');
+    this.muteLabel.setText(audio.muted ? t('hud.soundOff') : t('hud.soundOn'));
   }
 
   private menuBtn(x: number, y: number, label: string, variant: 'blue' | 'red', w: number, h: number, onClick: () => void): void {

@@ -1,10 +1,9 @@
 import Phaser from 'phaser';
 import { FONT } from '../constants';
+import { asset } from '../assets';
+import { t } from '../../i18n';
 
 // ============ Загрузчик ассетов + анимации ============
-
-const A = '/assets/tiny-swords';
-const G = '/assets/game';
 
 export class BootScene extends Phaser.Scene {
   constructor() {
@@ -23,7 +22,7 @@ export class BootScene extends Phaser.Scene {
       fontFamily: FONT, fontSize: '16px', color: '#ffe9b0',
     }).setOrigin(0.5);
     const bar = this.add.rectangle(bx + 2, by + 1, 10, barH - 4, 0xe8c170).setOrigin(0, 0.5);
-    this.add.text(width / 2, by + 40, 'Загрузка...', {
+    this.add.text(width / 2, by + 40, t('boot.loading'), {
       fontFamily: FONT, fontSize: '10px', color: '#cbb389',
     }).setOrigin(0.5);
 
@@ -32,109 +31,109 @@ export class BootScene extends Phaser.Scene {
     });
 
     // ---- Игрок (синий воин) ----
-    this.load.spritesheet('player-idle', `${A}/units/blue/warrior/warrior-idle.png`, { frameWidth: 192, frameHeight: 192 });
-    this.load.spritesheet('player-run', `${A}/units/blue/warrior/warrior-run.png`, { frameWidth: 192, frameHeight: 192 });
-    this.load.spritesheet('player-atk1', `${A}/units/blue/warrior/warrior-attack1.png`, { frameWidth: 192, frameHeight: 192 });
-    this.load.spritesheet('player-atk2', `${A}/units/blue/warrior/warrior-attack2.png`, { frameWidth: 192, frameHeight: 192 });
+    this.load.spritesheet('player-idle', asset('tiny-swords', 'units/blue/warrior/warrior-idle.png'), { frameWidth: 192, frameHeight: 192 });
+    this.load.spritesheet('player-run', asset('tiny-swords', 'units/blue/warrior/warrior-run.png'), { frameWidth: 192, frameHeight: 192 });
+    this.load.spritesheet('player-atk1', asset('tiny-swords', 'units/blue/warrior/warrior-attack1.png'), { frameWidth: 192, frameHeight: 192 });
+    this.load.spritesheet('player-atk2', asset('tiny-swords', 'units/blue/warrior/warrior-attack2.png'), { frameWidth: 192, frameHeight: 192 });
 
     // ---- Герои: лучница, копейщик и монах (синяя фракция) ----
-    this.load.spritesheet('hero-archer-idle', `${A}/units/blue/archer/archer-idle.png`, { frameWidth: 192, frameHeight: 192 });
-    this.load.spritesheet('hero-archer-run', `${A}/units/blue/archer/archer-run.png`, { frameWidth: 192, frameHeight: 192 });
-    this.load.spritesheet('hero-archer-atk', `${A}/units/blue/archer/archer-shoot.png`, { frameWidth: 192, frameHeight: 192 });
-    this.load.spritesheet('hero-lancer-idle', `${A}/units/blue/lancer/lancer-idle.png`, { frameWidth: 320, frameHeight: 320 });
-    this.load.spritesheet('hero-lancer-run', `${A}/units/blue/lancer/lancer-run.png`, { frameWidth: 320, frameHeight: 320 });
-    this.load.spritesheet('hero-lancer-atk', `${A}/units/blue/lancer/lancer-right-attack.png`, { frameWidth: 320, frameHeight: 320 });
-    this.load.spritesheet('hero-monk-idle', `${A}/units/blue/monk/idle.png`, { frameWidth: 192, frameHeight: 192 });
-    this.load.spritesheet('hero-monk-run', `${A}/units/blue/monk/run.png`, { frameWidth: 192, frameHeight: 192 });
-    this.load.spritesheet('hero-monk-atk', `${A}/units/blue/monk/heal.png`, { frameWidth: 192, frameHeight: 192 });
+    this.load.spritesheet('hero-archer-idle', asset('tiny-swords', 'units/blue/archer/archer-idle.png'), { frameWidth: 192, frameHeight: 192 });
+    this.load.spritesheet('hero-archer-run', asset('tiny-swords', 'units/blue/archer/archer-run.png'), { frameWidth: 192, frameHeight: 192 });
+    this.load.spritesheet('hero-archer-atk', asset('tiny-swords', 'units/blue/archer/archer-shoot.png'), { frameWidth: 192, frameHeight: 192 });
+    this.load.spritesheet('hero-lancer-idle', asset('tiny-swords', 'units/blue/lancer/lancer-idle.png'), { frameWidth: 320, frameHeight: 320 });
+    this.load.spritesheet('hero-lancer-run', asset('tiny-swords', 'units/blue/lancer/lancer-run.png'), { frameWidth: 320, frameHeight: 320 });
+    this.load.spritesheet('hero-lancer-atk', asset('tiny-swords', 'units/blue/lancer/lancer-right-attack.png'), { frameWidth: 320, frameHeight: 320 });
+    this.load.spritesheet('hero-monk-idle', asset('tiny-swords', 'units/blue/monk/idle.png'), { frameWidth: 192, frameHeight: 192 });
+    this.load.spritesheet('hero-monk-run', asset('tiny-swords', 'units/blue/monk/run.png'), { frameWidth: 192, frameHeight: 192 });
+    this.load.spritesheet('hero-monk-atk', asset('tiny-swords', 'units/blue/monk/heal.png'), { frameWidth: 192, frameHeight: 192 });
 
     // ---- Враги ----
-    this.load.spritesheet('grunt-idle', `${A}/units/red/pawn/pawn-idle.png`, { frameWidth: 192, frameHeight: 192 });
-    this.load.spritesheet('grunt-run', `${A}/units/red/pawn/pawn-run.png`, { frameWidth: 192, frameHeight: 192 });
-    this.load.spritesheet('swarm-idle', `${A}/units/purple/pawn/pawn-idle.png`, { frameWidth: 192, frameHeight: 192 });
-    this.load.spritesheet('swarm-run', `${A}/units/purple/pawn/pawn-run.png`, { frameWidth: 192, frameHeight: 192 });
-    this.load.spritesheet('brute-idle', `${A}/units/yellow/warrior/warrior-idle.png`, { frameWidth: 192, frameHeight: 192 });
-    this.load.spritesheet('brute-run', `${A}/units/yellow/warrior/warrior-run.png`, { frameWidth: 192, frameHeight: 192 });
-    this.load.spritesheet('archer-idle', `${A}/units/red/archer/archer-idle.png`, { frameWidth: 192, frameHeight: 192 });
-    this.load.spritesheet('archer-run', `${A}/units/red/archer/archer-run.png`, { frameWidth: 192, frameHeight: 192 });
-    this.load.spritesheet('archer-shoot', `${A}/units/red/archer/archer-shoot.png`, { frameWidth: 192, frameHeight: 192 });
-    this.load.spritesheet('lancer-idle', `${A}/units/purple/lancer/lancer-idle.png`, { frameWidth: 320, frameHeight: 320 });
-    this.load.spritesheet('lancer-run', `${A}/units/purple/lancer/lancer-run.png`, { frameWidth: 320, frameHeight: 320 });
+    this.load.spritesheet('grunt-idle', asset('tiny-swords', 'units/red/pawn/pawn-idle.png'), { frameWidth: 192, frameHeight: 192 });
+    this.load.spritesheet('grunt-run', asset('tiny-swords', 'units/red/pawn/pawn-run.png'), { frameWidth: 192, frameHeight: 192 });
+    this.load.spritesheet('swarm-idle', asset('tiny-swords', 'units/purple/pawn/pawn-idle.png'), { frameWidth: 192, frameHeight: 192 });
+    this.load.spritesheet('swarm-run', asset('tiny-swords', 'units/purple/pawn/pawn-run.png'), { frameWidth: 192, frameHeight: 192 });
+    this.load.spritesheet('brute-idle', asset('tiny-swords', 'units/yellow/warrior/warrior-idle.png'), { frameWidth: 192, frameHeight: 192 });
+    this.load.spritesheet('brute-run', asset('tiny-swords', 'units/yellow/warrior/warrior-run.png'), { frameWidth: 192, frameHeight: 192 });
+    this.load.spritesheet('archer-idle', asset('tiny-swords', 'units/red/archer/archer-idle.png'), { frameWidth: 192, frameHeight: 192 });
+    this.load.spritesheet('archer-run', asset('tiny-swords', 'units/red/archer/archer-run.png'), { frameWidth: 192, frameHeight: 192 });
+    this.load.spritesheet('archer-shoot', asset('tiny-swords', 'units/red/archer/archer-shoot.png'), { frameWidth: 192, frameHeight: 192 });
+    this.load.spritesheet('lancer-idle', asset('tiny-swords', 'units/purple/lancer/lancer-idle.png'), { frameWidth: 320, frameHeight: 320 });
+    this.load.spritesheet('lancer-run', asset('tiny-swords', 'units/purple/lancer/lancer-run.png'), { frameWidth: 320, frameHeight: 320 });
     // --- Новые враги v1.8 ---
-    this.load.spritesheet('guard-idle', `${A}/units/red/warrior/warrior-guard.png`, { frameWidth: 192, frameHeight: 192 });
-    this.load.spritesheet('guard-run', `${A}/units/red/warrior/warrior-run.png`, { frameWidth: 192, frameHeight: 192 });
-    this.load.spritesheet('taskmaster-idle', `${A}/units/red/pawn/pawn-idle-hammer.png`, { frameWidth: 192, frameHeight: 192 });
-    this.load.spritesheet('taskmaster-run', `${A}/units/red/pawn/pawn-run-hammer.png`, { frameWidth: 192, frameHeight: 192 });
-    this.load.spritesheet('merc-idle', `${A}/units/red/lancer/lancer-idle.png`, { frameWidth: 320, frameHeight: 320 });
-    this.load.spritesheet('merc-run', `${A}/units/red/lancer/lancer-run.png`, { frameWidth: 320, frameHeight: 320 });
-    this.load.spritesheet('monk-idle', `${A}/units/black/monk/idle.png`, { frameWidth: 192, frameHeight: 192 });
-    this.load.spritesheet('monk-run', `${A}/units/black/monk/run.png`, { frameWidth: 192, frameHeight: 192 });
-    this.load.spritesheet('monk-heal', `${A}/units/black/monk/heal.png`, { frameWidth: 192, frameHeight: 192 });
-    this.load.spritesheet('fx-heal', `${A}/units/black/monk/heal-effect.png`, { frameWidth: 192, frameHeight: 192 });
-    this.load.spritesheet('boss-idle', `${A}/units/black/lancer/lancer-idle.png`, { frameWidth: 320, frameHeight: 320 });
-    this.load.spritesheet('boss-run', `${A}/units/black/lancer/lancer-run.png`, { frameWidth: 320, frameHeight: 320 });
+    this.load.spritesheet('guard-idle', asset('tiny-swords', 'units/red/warrior/warrior-guard.png'), { frameWidth: 192, frameHeight: 192 });
+    this.load.spritesheet('guard-run', asset('tiny-swords', 'units/red/warrior/warrior-run.png'), { frameWidth: 192, frameHeight: 192 });
+    this.load.spritesheet('taskmaster-idle', asset('tiny-swords', 'units/red/pawn/pawn-idle-hammer.png'), { frameWidth: 192, frameHeight: 192 });
+    this.load.spritesheet('taskmaster-run', asset('tiny-swords', 'units/red/pawn/pawn-run-hammer.png'), { frameWidth: 192, frameHeight: 192 });
+    this.load.spritesheet('merc-idle', asset('tiny-swords', 'units/red/lancer/lancer-idle.png'), { frameWidth: 320, frameHeight: 320 });
+    this.load.spritesheet('merc-run', asset('tiny-swords', 'units/red/lancer/lancer-run.png'), { frameWidth: 320, frameHeight: 320 });
+    this.load.spritesheet('monk-idle', asset('tiny-swords', 'units/black/monk/idle.png'), { frameWidth: 192, frameHeight: 192 });
+    this.load.spritesheet('monk-run', asset('tiny-swords', 'units/black/monk/run.png'), { frameWidth: 192, frameHeight: 192 });
+    this.load.spritesheet('monk-heal', asset('tiny-swords', 'units/black/monk/heal.png'), { frameWidth: 192, frameHeight: 192 });
+    this.load.spritesheet('fx-heal', asset('tiny-swords', 'units/black/monk/heal-effect.png'), { frameWidth: 192, frameHeight: 192 });
+    this.load.spritesheet('boss-idle', asset('tiny-swords', 'units/black/lancer/lancer-idle.png'), { frameWidth: 320, frameHeight: 320 });
+    this.load.spritesheet('boss-run', asset('tiny-swords', 'units/black/lancer/lancer-run.png'), { frameWidth: 320, frameHeight: 320 });
 
     // ---- Эффекты ----
-    this.load.spritesheet('fx-explosion1', `${A}/particle-fx/explosion-01.png`, { frameWidth: 192, frameHeight: 192 });
-    this.load.spritesheet('fx-explosion2', `${A}/particle-fx/explosion-02.png`, { frameWidth: 192, frameHeight: 192 });
-    this.load.spritesheet('fx-dust', `${A}/particle-fx/dust-01.png`, { frameWidth: 64, frameHeight: 64 });
-    this.load.spritesheet('fx-fire', `${A}/particle-fx/fire-01.png`, { frameWidth: 64, frameHeight: 64 });
-    this.load.spritesheet('fx-foam', `${A}/terrain/tileset/water-foam.png`, { frameWidth: 192, frameHeight: 192 });
+    this.load.spritesheet('fx-explosion1', asset('tiny-swords', 'particle-fx/explosion-01.png'), { frameWidth: 192, frameHeight: 192 });
+    this.load.spritesheet('fx-explosion2', asset('tiny-swords', 'particle-fx/explosion-02.png'), { frameWidth: 192, frameHeight: 192 });
+    this.load.spritesheet('fx-dust', asset('tiny-swords', 'particle-fx/dust-01.png'), { frameWidth: 64, frameHeight: 64 });
+    this.load.spritesheet('fx-fire', asset('tiny-swords', 'particle-fx/fire-01.png'), { frameWidth: 64, frameHeight: 64 });
+    this.load.spritesheet('fx-foam', asset('tiny-swords', 'terrain/tileset/water-foam.png'), { frameWidth: 192, frameHeight: 192 });
 
     // ---- Тайлы, декорации ----
-    this.load.image('grass-tile', `${G}/grass-tile.png`);
-    this.load.image('water-tile', `${A}/terrain/tileset/water-background-color.png`);
-    this.load.spritesheet('tree1', `${A}/terrain/resources/trees/tree1.png`, { frameWidth: 192, frameHeight: 256 });
-    this.load.spritesheet('tree3', `${A}/terrain/resources/trees/tree3.png`, { frameWidth: 192, frameHeight: 192 });
-    this.load.spritesheet('bushe1', `${A}/terrain/decorations/bushes/bushe1.png`, { frameWidth: 128, frameHeight: 128 });
-    this.load.spritesheet('sheep', `${A}/terrain/resources/sheep/sheep-idle.png`, { frameWidth: 128, frameHeight: 128 });
-    this.load.image('rock1', `${A}/terrain/decorations/rocks/rock1.png`);
-    this.load.image('rock2', `${A}/terrain/decorations/rocks/rock2.png`);
-    this.load.image('rock3', `${A}/terrain/decorations/rocks/rock3.png`);
-    this.load.image('cloud1', `${A}/terrain/decorations/clouds/clouds-02.png`);
-    this.load.image('cloud2', `${A}/terrain/decorations/clouds/clouds-04.png`);
-    this.load.image('cloud3', `${A}/terrain/decorations/clouds/clouds-06.png`);
-    this.load.image('castle', `${A}/buildings/blue/castle.png`);
-    this.load.image('house1', `${A}/buildings/blue/house1.png`);
-    this.load.image('house2', `${A}/buildings/blue/house2.png`);
-    this.load.image('house3', `${A}/buildings/blue/house3.png`);
-    this.load.image('tower', `${A}/buildings/blue/tower.png`);
-    this.load.image('monastery', `${A}/buildings/blue/monastery.png`);
+    this.load.image('grass-tile', asset('game', 'grass-tile.png'));
+    this.load.image('water-tile', asset('tiny-swords', 'terrain/tileset/water-background-color.png'));
+    this.load.spritesheet('tree1', asset('tiny-swords', 'terrain/resources/trees/tree1.png'), { frameWidth: 192, frameHeight: 256 });
+    this.load.spritesheet('tree3', asset('tiny-swords', 'terrain/resources/trees/tree3.png'), { frameWidth: 192, frameHeight: 192 });
+    this.load.spritesheet('bushe1', asset('tiny-swords', 'terrain/decorations/bushes/bushe1.png'), { frameWidth: 128, frameHeight: 128 });
+    this.load.spritesheet('sheep', asset('tiny-swords', 'terrain/resources/sheep/sheep-idle.png'), { frameWidth: 128, frameHeight: 128 });
+    this.load.image('rock1', asset('tiny-swords', 'terrain/decorations/rocks/rock1.png'));
+    this.load.image('rock2', asset('tiny-swords', 'terrain/decorations/rocks/rock2.png'));
+    this.load.image('rock3', asset('tiny-swords', 'terrain/decorations/rocks/rock3.png'));
+    this.load.image('cloud1', asset('tiny-swords', 'terrain/decorations/clouds/clouds-02.png'));
+    this.load.image('cloud2', asset('tiny-swords', 'terrain/decorations/clouds/clouds-04.png'));
+    this.load.image('cloud3', asset('tiny-swords', 'terrain/decorations/clouds/clouds-06.png'));
+    this.load.image('castle', asset('tiny-swords', 'buildings/blue/castle.png'));
+    this.load.image('house1', asset('tiny-swords', 'buildings/blue/house1.png'));
+    this.load.image('house2', asset('tiny-swords', 'buildings/blue/house2.png'));
+    this.load.image('house3', asset('tiny-swords', 'buildings/blue/house3.png'));
+    this.load.image('tower', asset('tiny-swords', 'buildings/blue/tower.png'));
+    this.load.image('monastery', asset('tiny-swords', 'buildings/blue/monastery.png'));
 
     // ---- Игровые объекты ----
-    this.load.image('gem-blue', `${G}/gem-blue.png`);
-    this.load.image('gem-green', `${G}/gem-green.png`);
-    this.load.image('gem-red', `${G}/gem-red.png`);
-    this.load.image('gem-purple', `${G}/gem-purple.png`);
-    this.load.image('gem-gold', `${G}/gem-gold.png`);
-    this.load.image('meat', `${G}/meat.png`);
-    this.load.image('arrow', `${G}/arrow.png`);
-    this.load.image('spear', `${G}/spear.png`);
-    this.load.image('barrel', `${G}/barrel.png`);
-    this.load.image('slash', `${G}/slash.png`);
-    this.load.image('aoe-ring', `${G}/aoe-ring.png`);
-    this.load.image('shadow', `${G}/shadow.png`);
-    this.load.image('knife', `${G}/knife.png`);
-    this.load.image('treasure', `${A}/terrain/resources/gold-stones/gold-stone-6.png`);
-    this.load.spritesheet('fx-treasure', `${A}/terrain/resources/gold-stones/gold-stone-6-highlight.png`, { frameWidth: 128, frameHeight: 128 });
+    this.load.image('gem-blue', asset('game', 'gem-blue.png'));
+    this.load.image('gem-green', asset('game', 'gem-green.png'));
+    this.load.image('gem-red', asset('game', 'gem-red.png'));
+    this.load.image('gem-purple', asset('game', 'gem-purple.png'));
+    this.load.image('gem-gold', asset('game', 'gem-gold.png'));
+    this.load.image('meat', asset('game', 'meat.png'));
+    this.load.image('arrow', asset('game', 'arrow.png'));
+    this.load.image('spear', asset('game', 'spear.png'));
+    this.load.image('barrel', asset('game', 'barrel.png'));
+    this.load.image('slash', asset('game', 'slash.png'));
+    this.load.image('aoe-ring', asset('game', 'aoe-ring.png'));
+    this.load.image('shadow', asset('game', 'shadow.png'));
+    this.load.image('knife', asset('game', 'knife.png'));
+    this.load.image('treasure', asset('tiny-swords', 'terrain/resources/gold-stones/gold-stone-6.png'));
+    this.load.spritesheet('fx-treasure', asset('tiny-swords', 'terrain/resources/gold-stones/gold-stone-6-highlight.png'), { frameWidth: 128, frameHeight: 128 });
 
     // ---- Иконки ----
     for (const ic of ['icon-sword', 'icon-bow', 'icon-spear', 'icon-hammer', 'icon-bomb', 'icon-aura',
       'icon-boots', 'icon-shield', 'icon-magnet', 'icon-heart', 'icon-might', 'icon-haste', 'icon-meat', 'icon-coin',
       'icon-knives', 'icon-gem']) {
-      this.load.image(ic, `${G}/${ic}.png`);
+      this.load.image(ic, asset('game', `${ic}.png`));
     }
 
     // ---- UI ----
     // 9-slice версии (склеены из тайлов ассета) — все панели/кнопки строятся
     // из них; сырые крупные текстуры (paper/banner/bigbutton) не грузим.
-    this.load.image('btn-small-blue', `${A}/ui/buttons/smallbluesquarebutton-regular.png`);
-    this.load.image('swords', `${A}/ui/swords/swords.png`);
-    this.load.image('paper9', `${G}/paper9.png`);
-    this.load.image('paper-special9', `${G}/paper-special9.png`);
-    this.load.image('btn-blue9', `${G}/btn-blue9.png`);
-    this.load.image('btn-red9', `${G}/btn-red9.png`);
-    this.load.image('banner9', `${G}/banner9.png`);
+    this.load.image('btn-small-blue', asset('tiny-swords', 'ui/buttons/smallbluesquarebutton-regular.png'));
+    this.load.image('swords', asset('tiny-swords', 'ui/swords/swords.png'));
+    this.load.image('paper9', asset('game', 'paper9.png'));
+    this.load.image('paper-special9', asset('game', 'paper-special9.png'));
+    this.load.image('btn-blue9', asset('game', 'btn-blue9.png'));
+    this.load.image('btn-red9', asset('game', 'btn-red9.png'));
+    this.load.image('banner9', asset('game', 'banner9.png'));
   }
 
   create(): void {

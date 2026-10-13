@@ -1,7 +1,11 @@
 // ============ Достижения + мета-статистика (localStorage) ============
-// Модуль без Phaser-зависимостей: используется и игрой, и React-оболочкой.
+// Модуль без Phaser-зависимостей: используется и игрой, и платформенным слоем.
+//
+// Для игр, залитых архивом на Yandex Games, SDK сама подменяет localStorage
+// надёжным хранилищем — прогресс переживает перезагрузку и смену устройства.
 
 import { depositGold } from './shop';
+import { t } from '../i18n';
 
 export interface AchievementDef {
   id: string;
@@ -12,18 +16,18 @@ export interface AchievementDef {
 }
 
 export const ACHIEVEMENTS: AchievementDef[] = [
-  { id: 'first-blood', name: 'Первая кровь', desc: 'Повергнуть первого врага', icon: 'icon-sword', emoji: '🩸' },
-  { id: 'evolution-first', name: 'Кузнец судьбы', desc: 'Совершить первую эволюцию оружия', icon: 'icon-might', emoji: '⭐' },
-  { id: 'kills-100', name: 'Сотня павших', desc: '100 убийств за один матч', icon: 'icon-spear', emoji: '⚔️' },
-  { id: 'kills-500', name: 'Легенда поля боя', desc: '500 убийств за один матч', icon: 'icon-aura', emoji: '💀' },
-  { id: 'level-10', name: 'Десять ступеней', desc: 'Достичь 10-го уровня', icon: 'icon-gem', emoji: '📈' },
-  { id: 'gold-500', name: 'Золотая жила', desc: 'Собрать 500 золота за матч', icon: 'icon-coin', emoji: '💰' },
-  { id: 'chests-3', name: 'Кладоискатель', desc: 'Открыть 3 сокровища за матч', icon: 'icon-knives', emoji: '🗝️' },
-  { id: 'elites-2', name: 'Гроза элит', desc: 'Повергнуть обе элиты за матч', icon: 'icon-might', emoji: '🗡️' },
-  { id: 'shieldbreaker', name: 'Взломщик стен', desc: 'Повергнуть 12 гвардейцев за матч', icon: 'icon-shield', emoji: '🛡️' },
-  { id: 'riot-quell', name: 'Усмиритель бунта', desc: 'Повергнуть 8 приказчиков за матч', icon: 'icon-haste', emoji: '🔨' },
-  { id: 'boss-slayer', name: 'Повелитель поля', desc: 'Победить Чёрного Копейщика', icon: 'icon-hammer', emoji: '👑' },
-  { id: 'nightmare-win', name: 'Повелитель кошмара', desc: 'Победить на сложности «Кошмар»', icon: 'icon-bomb', emoji: '🔥' },
+  { id: 'first-blood', name: t('ach.first-blood.name'), desc: t('ach.first-blood.desc'), icon: 'icon-sword', emoji: '🩸' },
+  { id: 'evolution-first', name: t('ach.evolution-first.name'), desc: t('ach.evolution-first.desc'), icon: 'icon-might', emoji: '⭐' },
+  { id: 'kills-100', name: t('ach.kills-100.name'), desc: t('ach.kills-100.desc'), icon: 'icon-spear', emoji: '⚔️' },
+  { id: 'kills-500', name: t('ach.kills-500.name'), desc: t('ach.kills-500.desc'), icon: 'icon-aura', emoji: '💀' },
+  { id: 'level-10', name: t('ach.level-10.name'), desc: t('ach.level-10.desc'), icon: 'icon-gem', emoji: '📈' },
+  { id: 'gold-500', name: t('ach.gold-500.name'), desc: t('ach.gold-500.desc'), icon: 'icon-coin', emoji: '💰' },
+  { id: 'chests-3', name: t('ach.chests-3.name'), desc: t('ach.chests-3.desc'), icon: 'icon-knives', emoji: '🗝️' },
+  { id: 'elites-2', name: t('ach.elites-2.name'), desc: t('ach.elites-2.desc'), icon: 'icon-might', emoji: '🗡️' },
+  { id: 'shieldbreaker', name: t('ach.shieldbreaker.name'), desc: t('ach.shieldbreaker.desc'), icon: 'icon-shield', emoji: '🛡️' },
+  { id: 'riot-quell', name: t('ach.riot-quell.name'), desc: t('ach.riot-quell.desc'), icon: 'icon-haste', emoji: '🔨' },
+  { id: 'boss-slayer', name: t('ach.boss-slayer.name'), desc: t('ach.boss-slayer.desc'), icon: 'icon-hammer', emoji: '👑' },
+  { id: 'nightmare-win', name: t('ach.nightmare-win.name'), desc: t('ach.nightmare-win.desc'), icon: 'icon-bomb', emoji: '🔥' },
 ];
 
 const LS_ACH = 'tss-ach';

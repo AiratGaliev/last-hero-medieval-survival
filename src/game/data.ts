@@ -1,5 +1,10 @@
 // ============ Данные: оружия, пассивки, враги, волны ============
 // Источник баланса: docs/TZ.md
+//
+// Имена и описания берутся из словаря i18n. Этот модуль вычисляется на
+// этапе импорта, поэтому язык обязан быть определён раньше (см. src/main.ts).
+
+import { t } from '../i18n';
 
 export type WeaponId = 'sword' | 'bow' | 'spear' | 'hammer' | 'bomb' | 'aura' | 'knives';
 export type PassiveId = 'boots' | 'armor' | 'magnet' | 'regen' | 'might' | 'haste' | 'vitality' | 'luck' | 'wisdom';
@@ -16,13 +21,13 @@ export interface EvolutionDef {
 }
 
 export const EVOLUTIONS: Record<WeaponId, EvolutionDef> = {
-  sword:   { weapon: 'sword',   partner: 'might',    name: 'Клинок зари',     desc: 'Вихрь на 360° ×3 взмаха + молнии-цепи на врагов' },
-  bow:     { weapon: 'bow',     partner: 'haste',    name: 'Град стрел',      desc: 'Двойной залп: 12 самонаводящихся стрел с двойным пробитием' },
-  spear:   { weapon: 'spear',   partner: 'vitality', name: 'Гунгнир',         desc: 'Гигантское копьё пронзает всех и возвращается, бьёт дважды' },
-  hammer:  { weapon: 'hammer',  partner: 'armor',    name: 'Молот приговора', desc: 'Цепные эхо-удары: за каждым слэмом следуют два вторичных' },
-  bomb:    { weapon: 'bomb',    partner: 'luck',     name: 'Кластерный залп', desc: 'Каждый взрыв распадается на 4 мини-бомбы' },
-  aura:    { weapon: 'aura',    partner: 'regen',    name: 'Нимб искупления', desc: 'Нова-импульс каждые 2.6с + лечение при толпе в кольце' },
-  knives:  { weapon: 'knives',  partner: 'boots',    name: 'Танец клинков',   desc: '9 ножей рикошетят между врагами' },
+  sword:   { weapon: 'sword',   partner: 'might',    name: t('evo.sword.name'), desc: t('evo.sword.desc') },
+  bow:     { weapon: 'bow',     partner: 'haste',    name: t('evo.bow.name'), desc: t('evo.bow.desc') },
+  spear:   { weapon: 'spear',   partner: 'vitality', name: t('evo.spear.name'), desc: t('evo.spear.desc') },
+  hammer:  { weapon: 'hammer',  partner: 'armor',    name: t('evo.hammer.name'), desc: t('evo.hammer.desc') },
+  bomb:    { weapon: 'bomb',    partner: 'luck',     name: t('evo.bomb.name'), desc: t('evo.bomb.desc') },
+  aura:    { weapon: 'aura',    partner: 'regen',    name: t('evo.aura.name'), desc: t('evo.aura.desc') },
+  knives:  { weapon: 'knives',  partner: 'boots',    name: t('evo.knives.name'), desc: t('evo.knives.desc') },
 };
 
 export interface WeaponLevel {
@@ -44,8 +49,8 @@ export interface WeaponDef {
 export const WEAPONS: Record<WeaponId, WeaponDef> = {
   sword: {
     id: 'sword',
-    name: 'Меч воина',
-    desc: 'Вихревой взмах по дуге вокруг воина',
+    name: t('weapon.sword.name'),
+    desc: t('weapon.sword.desc'),
     icon: 'icon-sword',
     levels: [
       { dmg: 12, cd: 900, count: 1 },
@@ -59,8 +64,8 @@ export const WEAPONS: Record<WeaponId, WeaponDef> = {
   },
   bow: {
     id: 'bow',
-    name: 'Стрелы лучника',
-    desc: 'Самонаводящиеся стрелы в ближайших врагов',
+    name: t('weapon.bow.name'),
+    desc: t('weapon.bow.desc'),
     icon: 'icon-bow',
     levels: [
       { dmg: 10, cd: 1100, count: 1, pierce: 1 },
@@ -74,8 +79,8 @@ export const WEAPONS: Record<WeaponId, WeaponDef> = {
   },
   spear: {
     id: 'spear',
-    name: 'Копьё копейщика',
-    desc: 'Бросок копья по направлению движения, пробивает всех',
+    name: t('weapon.spear.name'),
+    desc: t('weapon.spear.desc'),
     icon: 'icon-spear',
     levels: [
       { dmg: 15, cd: 900, count: 1 },
@@ -89,8 +94,8 @@ export const WEAPONS: Record<WeaponId, WeaponDef> = {
   },
   hammer: {
     id: 'hammer',
-    name: 'Молот кузнеца',
-    desc: 'Мощный удар по земле с отбросом врагов',
+    name: t('weapon.hammer.name'),
+    desc: t('weapon.hammer.desc'),
     icon: 'icon-hammer',
     levels: [
       { dmg: 25, cd: 2500, radius: 110, count: 1 },
@@ -104,8 +109,8 @@ export const WEAPONS: Record<WeaponId, WeaponDef> = {
   },
   bomb: {
     id: 'bomb',
-    name: 'Пороховая бочка',
-    desc: 'Бочка летит в толпу и взрывается',
+    name: t('weapon.bomb.name'),
+    desc: t('weapon.bomb.desc'),
     icon: 'icon-bomb',
     levels: [
       { dmg: 30, cd: 3000, radius: 130, count: 1 },
@@ -119,8 +124,8 @@ export const WEAPONS: Record<WeaponId, WeaponDef> = {
   },
   aura: {
     id: 'aura',
-    name: 'Огненная аура',
-    desc: 'Пылающее кольцо, обжигающее всех вокруг',
+    name: t('weapon.aura.name'),
+    desc: t('weapon.aura.desc'),
     icon: 'icon-aura',
     levels: [
       { dmg: 4, cd: 600, radius: 90 },
@@ -134,8 +139,8 @@ export const WEAPONS: Record<WeaponId, WeaponDef> = {
   },
   knives: {
     id: 'knives',
-    name: 'Метательные ножи',
-    desc: 'Веер острых ножей в направлении движения',
+    name: t('weapon.knives.name'),
+    desc: t('weapon.knives.desc'),
     icon: 'icon-knives',
     levels: [
       { dmg: 8, cd: 1050, count: 3, pierce: 2 },
@@ -159,40 +164,40 @@ export interface PassiveDef {
 
 export const PASSIVES: Record<PassiveId, PassiveDef> = {
   boots: {
-    id: 'boots', name: 'Сапоги скорохода', max: 5, icon: 'icon-boots',
-    desc: (l) => `Скорость передвижения +${l * 10}%`,
+    id: 'boots', name: t('passive.boots.name'), max: 5, icon: 'icon-boots',
+    desc: (l) => t('passive.boots.desc', { v: l * 10 }),
   },
   armor: {
-    id: 'armor', name: 'Крепкий щит', max: 5, icon: 'icon-shield',
-    desc: (l) => `Входящий урон −${l * 8}%`,
+    id: 'armor', name: t('passive.armor.name'), max: 5, icon: 'icon-shield',
+    desc: (l) => t('passive.armor.desc', { v: l * 8 }),
   },
   magnet: {
-    id: 'magnet', name: 'Магнит жадности', max: 5, icon: 'icon-magnet',
-    desc: (l) => `Радиус подбора опыта +${l * 30}%`,
+    id: 'magnet', name: t('passive.magnet.name'), max: 5, icon: 'icon-magnet',
+    desc: (l) => t('passive.magnet.desc', { v: l * 30 }),
   },
   regen: {
-    id: 'regen', name: 'Сердце льва', max: 5, icon: 'icon-heart',
-    desc: (l) => `Регенерация +${(l * 0.5).toFixed(1)} HP/с`,
+    id: 'regen', name: t('passive.regen.name'), max: 5, icon: 'icon-heart',
+    desc: (l) => t('passive.regen.desc', { v: (l * 0.5).toFixed(1) }),
   },
   might: {
-    id: 'might', name: 'Мощь воина', max: 5, icon: 'icon-might',
-    desc: (l) => `Урон оружия +${l * 12}%`,
+    id: 'might', name: t('passive.might.name'), max: 5, icon: 'icon-might',
+    desc: (l) => t('passive.might.desc', { v: l * 12 }),
   },
   haste: {
-    id: 'haste', name: 'Молниеносность', max: 5, icon: 'icon-haste',
-    desc: (l) => `Перезарядка оружия −${l * 8}%`,
+    id: 'haste', name: t('passive.haste.name'), max: 5, icon: 'icon-haste',
+    desc: (l) => t('passive.haste.desc', { v: l * 8 }),
   },
   vitality: {
-    id: 'vitality', name: 'Пир мясника', max: 5, icon: 'icon-meat',
-    desc: (l) => `Максимум HP +${l * 25}`,
+    id: 'vitality', name: t('passive.vitality.name'), max: 5, icon: 'icon-meat',
+    desc: (l) => t('passive.vitality.desc', { v: l * 25 }),
   },
   luck: {
-    id: 'luck', name: 'Удача авантюриста', max: 5, icon: 'icon-coin',
-    desc: (l) => `Шанс критического удара +${l * 15}%`,
+    id: 'luck', name: t('passive.luck.name'), max: 5, icon: 'icon-coin',
+    desc: (l) => t('passive.luck.desc', { v: l * 15 }),
   },
   wisdom: {
-    id: 'wisdom', name: 'Мудрость искателя', max: 5, icon: 'icon-gem',
-    desc: (l) => `Получаемый опыт +${l * 15}%`,
+    id: 'wisdom', name: t('passive.wisdom.name'), max: 5, icon: 'icon-gem',
+    desc: (l) => t('passive.wisdom.desc', { v: l * 15 }),
   },
 };
 
@@ -216,29 +221,29 @@ export interface HeroDef {
 
 export const HEROES: Record<HeroId, HeroDef> = {
   warrior: {
-    id: 'warrior', name: 'Воин', title: 'Крепкий как скала',
-    traits: ['+10% HP', 'старт: Меч'],
+    id: 'warrior', name: t('hero.warrior.name'), title: t('hero.warrior.title'),
+    traits: [t('hero.warrior.t1'), t('hero.warrior.t2')],
     frameW: 192, scale: 0.55, startWeapon: 'sword',
     maxHp: 110, speed: 200, baseRegen: 0,
     anims: { idle: 'player-idle', run: 'player-run', atk1: 'player-atk1', atk2: 'player-atk2' },
   },
   archer: {
-    id: 'archer', name: 'Лучница', title: 'Быстрая стрела',
-    traits: ['+15% скорость', '−10 HP', 'старт: Лук'],
+    id: 'archer', name: t('hero.archer.name'), title: t('hero.archer.title'),
+    traits: [t('hero.archer.t1'), t('hero.archer.t2'), t('hero.archer.t3')],
     frameW: 192, scale: 0.55, startWeapon: 'bow',
     maxHp: 90, speed: 230, baseRegen: 0,
     anims: { idle: 'hero-archer-idle', run: 'hero-archer-run', atk1: 'hero-archer-atk', atk2: 'hero-archer-atk' },
   },
   lancer: {
-    id: 'lancer', name: 'Копейщик', title: 'Стена из стали',
-    traits: ['+30 HP', '−5% скорость', 'старт: Копьё'],
+    id: 'lancer', name: t('hero.lancer.name'), title: t('hero.lancer.title'),
+    traits: [t('hero.lancer.t1'), t('hero.lancer.t2'), t('hero.lancer.t3')],
     frameW: 320, scale: 0.34, startWeapon: 'spear',
     maxHp: 130, speed: 190, baseRegen: 0,
     anims: { idle: 'hero-lancer-idle', run: 'hero-lancer-run', atk1: 'hero-lancer-atk', atk2: 'hero-lancer-atk' },
   },
   monk: {
-    id: 'monk', name: 'Монах', title: 'Верный целитель',
-    traits: ['+0.5 HP/с регенерация', 'старт: Аура'],
+    id: 'monk', name: t('hero.monk.name'), title: t('hero.monk.title'),
+    traits: [t('hero.monk.t1'), t('hero.monk.t2')],
     frameW: 192, scale: 0.55, startWeapon: 'aura',
     maxHp: 100, speed: 195, baseRegen: 0.5,
     anims: { idle: 'hero-monk-idle', run: 'hero-monk-run', atk1: 'hero-monk-atk', atk2: 'hero-monk-atk' },
@@ -262,11 +267,11 @@ export interface DifficultyDef {
 
 export const DIFFICULTIES: Record<DifficultyId, DifficultyDef> = {
   normal: {
-    id: 'normal', name: 'Поход', tagline: 'классическое приключение',
+    id: 'normal', name: t('diff.normal.name'), tagline: t('diff.normal.tagline'),
     hpMult: 1, dmgMult: 1, speedMult: 1, rateMult: 1, scoreMult: 1,
   },
   nightmare: {
-    id: 'nightmare', name: 'Кошмар', tagline: 'враги свирепее, очки ×1.6',
+    id: 'nightmare', name: t('diff.nightmare.name'), tagline: t('diff.nightmare.tagline'),
     hpMult: 1.45, dmgMult: 1.25, speedMult: 1.1, rateMult: 0.85, scoreMult: 1.6,
   },
 };
@@ -301,23 +306,23 @@ export interface EnemyDef {
 
 export const ENEMIES: Record<EnemyKind, EnemyDef> = {
   grunt: {
-    kind: 'grunt', name: 'Пешка', texture: 'enemy-grunt', frameW: 192, scale: 0.5,
+    kind: 'grunt', name: t('enemy.grunt.name'), texture: 'enemy-grunt', frameW: 192, scale: 0.5,
     bodyRadius: 20, hp: 12, speed: 70, damage: 8, xp: 1, gem: 'gem-blue',
   },
   swarm: {
-    kind: 'swarm', name: 'Бегун', texture: 'enemy-swarm', frameW: 192, scale: 0.45,
+    kind: 'swarm', name: t('enemy.swarm.name'), texture: 'enemy-swarm', frameW: 192, scale: 0.45,
     bodyRadius: 18, hp: 8, speed: 130, damage: 6, xp: 1, gem: 'gem-blue',
   },
   brute: {
-    kind: 'brute', name: 'Громила', texture: 'enemy-brute', frameW: 192, scale: 0.62,
+    kind: 'brute', name: t('enemy.brute.name'), texture: 'enemy-brute', frameW: 192, scale: 0.62,
     bodyRadius: 26, hp: 55, speed: 55, damage: 16, xp: 3, gem: 'gem-green',
   },
   archer: {
-    kind: 'archer', name: 'Лучник', texture: 'enemy-archer', frameW: 192, scale: 0.5,
+    kind: 'archer', name: t('enemy.archer.name'), texture: 'enemy-archer', frameW: 192, scale: 0.5,
     bodyRadius: 20, hp: 20, speed: 60, damage: 8, xp: 3, gem: 'gem-green',
   },
   bomber: {
-    kind: 'bomber', name: 'Бочка-камикадзе', texture: 'barrel', frameW: 192, scale: 0.42,
+    kind: 'bomber', name: t('enemy.bomber.name'), texture: 'barrel', frameW: 192, scale: 0.42,
     bodyRadius: 17, hp: 16, speed: 105, damage: 4, xp: 2, gem: 'gem-green',
     explodeDmg: 24, explodeRadius: 150,
   },
@@ -326,40 +331,40 @@ export const ENEMIES: Record<EnemyKind, EnemyDef> = {
     // Гвардеец: щит гасит половину урона; при потере 55% HP щит ломается —
     // ярость (без брони, но быстрее). HP понижено в R10: с 85 копились
     // неразменными стенами к 13-й минуте (эфф. HP 525 против 212 у громилы)
-    kind: 'guard', name: 'Гвардеец', texture: 'guard-idle', frameW: 192, scale: 0.58,
+    kind: 'guard', name: t('enemy.guard.name'), texture: 'guard-idle', frameW: 192, scale: 0.58,
     bodyRadius: 24, hp: 62, speed: 62, damage: 14, xp: 4, gem: 'gem-green',
     armorFront: 0.5,
   },
   taskmaster: {
     // Приказчик с молотом: разгоняет толпу (аура +30% скорости союзникам).
     // Приоритетная цель — убей его и толпа замедлится
-    kind: 'taskmaster', name: 'Приказчик', texture: 'taskmaster-idle', frameW: 192, scale: 0.5,
+    kind: 'taskmaster', name: t('enemy.taskmaster.name'), texture: 'taskmaster-idle', frameW: 192, scale: 0.5,
     bodyRadius: 20, hp: 30, speed: 78, damage: 10, xp: 5, gem: 'gem-purple',
     auraSpeed: 250,
   },
   mercenary: {
     // Наёмник-копейщик: телеграф + рывок (облегчённая версия элиты)
-    kind: 'mercenary', name: 'Копейщик-наёмник', texture: 'merc-idle', frameW: 320, scale: 0.55,
+    kind: 'mercenary', name: t('enemy.mercenary.name'), texture: 'merc-idle', frameW: 320, scale: 0.55,
     bodyRadius: 24, hp: 48, speed: 88, damage: 18, xp: 4, gem: 'gem-green',
   },
   'elite-lancer': {
-    kind: 'elite-lancer', name: 'Копейщик-изгой', texture: 'enemy-lancer', frameW: 320, scale: 0.75,
+    kind: 'elite-lancer', name: t('enemy.elite-lancer.name'), texture: 'enemy-lancer', frameW: 320, scale: 0.75,
     bodyRadius: 34, hp: 400, speed: 90, damage: 25, xp: 25, gem: 'gem-red', isElite: true,
   },
   'elite-monk': {
-    kind: 'elite-monk', name: 'Тёмный монах', texture: 'enemy-monk', frameW: 192, scale: 0.6,
+    kind: 'elite-monk', name: t('enemy.elite-monk.name'), texture: 'enemy-monk', frameW: 192, scale: 0.6,
     bodyRadius: 24, hp: 350, speed: 75, damage: 12, xp: 25, gem: 'gem-red', isElite: true,
   },
   midboss: {
-    kind: 'midboss', name: 'ТЁМНЫЙ МОНАХ', texture: 'enemy-monk', frameW: 192, scale: 0.92,
+    kind: 'midboss', name: t('enemy.midboss.name'), texture: 'enemy-monk', frameW: 192, scale: 0.92,
     bodyRadius: 32, hp: 1500, speed: 82, damage: 20, xp: 0, gem: 'gem-red', isMidboss: true,
   },
   boss: {
-    kind: 'boss', name: 'ЧЁРНЫЙ КОПЕЙЩИК', texture: 'boss', frameW: 320, scale: 2.0,
+    kind: 'boss', name: t('enemy.boss.name'), texture: 'boss', frameW: 320, scale: 2.0,
     bodyRadius: 80, hp: 4000, speed: 110, damage: 40, xp: 0, gem: 'gem-red', isBoss: true,
   },
   'boss-minion': {
-    kind: 'boss-minion', name: 'Прислужник', texture: 'enemy-swarm', frameW: 192, scale: 0.5,
+    kind: 'boss-minion', name: t('enemy.boss-minion.name'), texture: 'enemy-swarm', frameW: 192, scale: 0.5,
     bodyRadius: 20, hp: 14, speed: 140, damage: 10, xp: 5, gem: 'gem-purple',
   },
 };
@@ -385,14 +390,14 @@ export const WAVE_EVENTS: WaveEvent[] = [
   { t: 240, type: 'ring', enemy: 'brute', count: 14 },
   { t: 300, type: 'elite', enemy: 'elite-lancer' },
   { t: 300, type: 'rate', interval: 500 },
-  { t: 330, type: 'ring', enemy: 'guard', count: 6, note: 'стена щитов' },
-  { t: 390, type: 'ring', enemy: 'bomber', count: 8, note: 'бочковый залп' },
-  { t: 410, type: 'ring', enemy: 'taskmaster', count: 3, note: 'надсмотрщики' },
+  { t: 330, type: 'ring', enemy: 'guard', count: 6, note: t('wave.note.shields') },
+  { t: 390, type: 'ring', enemy: 'bomber', count: 8, note: t('wave.note.bombardment') },
+  { t: 410, type: 'ring', enemy: 'taskmaster', count: 3, note: t('wave.note.overseers') },
   { t: 420, type: 'rate', interval: 450 },
-  { t: 450, type: 'ring', enemy: 'mercenary', count: 5, note: 'отряд наёмников' },
+  { t: 450, type: 'ring', enemy: 'mercenary', count: 5, note: t('wave.note.mercs') },
   { t: 480, type: 'ring', enemy: 'swarm', count: 32 },
   { t: 480, type: 'rate', interval: 400 },
-  { t: 540, type: 'ring', enemy: 'guard', count: 8, note: 'стена щитов' },
+  { t: 540, type: 'ring', enemy: 'guard', count: 8, note: t('wave.note.shields') },
   { t: 600, type: 'elite', enemy: 'elite-monk', diff: 'normal' },
   { t: 600, type: 'elite', enemy: 'midboss', diff: 'nightmare' },
   { t: 600, type: 'rate', interval: 370 },

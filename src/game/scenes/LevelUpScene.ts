@@ -3,6 +3,7 @@ import { FONT } from '../constants';
 import type { UpgradeCard } from '../data';
 import { audio } from '../systems/Audio';
 import { makePanel } from '../systems/Ui';
+import { t } from '../../i18n';
 
 // ============ Выбор улучшения при левел-апе ============
 
@@ -66,7 +67,7 @@ export class LevelUpScene extends Phaser.Scene {
     this.add.rectangle(width / 2, height / 2, width / this.overlayZoom + 80, height / this.overlayZoom + 80, 0x0a0a12, 0.72);
 
     // Заголовок
-    const title = this.add.text(width / 2, height * 0.1, 'НОВЫЙ УРОВЕНЬ!', {
+    const title = this.add.text(width / 2, height * 0.1, t('levelup.title'), {
       fontFamily: FONT, fontSize: '34px', color: '#ffd76e',
       stroke: '#5a2d05', strokeThickness: 8,
     }).setOrigin(0.5);
@@ -80,7 +81,7 @@ export class LevelUpScene extends Phaser.Scene {
     this.panel = this.add.container(0, 0);
     this.renderCards();
 
-    this.add.text(width / 2, height - 18, 'выбери улучшение • клик или 1 / 2 / 3', {
+    this.add.text(width / 2, height - 18, t('levelup.hint'), {
       fontFamily: FONT, fontSize: '13px', color: '#cbb389',
     }).setOrigin(0.5);
 

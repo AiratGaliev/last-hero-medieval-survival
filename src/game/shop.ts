@@ -2,6 +2,10 @@
 // Модуль без Phaser-зависимостей: используется игрой и React-оболочкой.
 // Золото зарабатывается в матчах (см. depositGold из commitMeta) и тратится
 // в «Лавке торговца» на постоянные (кросс-матчевые) апгрейды. Хранение — localStorage.
+//
+// import из '../i18n': этот модуль вычисляется до определения языка игровыми
+// сценами, а язык определяется в main.ts до их импорта.
+import { t } from '../i18n';
 
 export interface ShopUpgradeDef {
   id: ShopUpgradeId;
@@ -15,28 +19,28 @@ export type ShopUpgradeId = 'might' | 'vitality' | 'speed' | 'magnet' | 'luck';
 
 export const SHOP_UPGRADES: ShopUpgradeDef[] = [
   {
-    id: 'might', name: 'Сила предков', icon: 'icon-might',
-    desc: '+6% урона оружия за уровень',
+    id: 'might', name: t('shop.might.name'), icon: 'icon-might',
+    desc: t('shop.might.desc'),
     costs: [150, 350, 700],
   },
   {
-    id: 'vitality', name: 'Дублёная кожа', icon: 'icon-heart',
-    desc: '+15 макс. HP за уровень',
+    id: 'vitality', name: t('shop.vitality.name'), icon: 'icon-heart',
+    desc: t('shop.vitality.desc'),
     costs: [150, 350, 700],
   },
   {
-    id: 'speed', name: 'Сапоги из лавки', icon: 'icon-boots',
-    desc: '+4% скорости за уровень',
+    id: 'speed', name: t('shop.speed.name'), icon: 'icon-boots',
+    desc: t('shop.speed.desc'),
     costs: [120, 300, 600],
   },
   {
-    id: 'magnet', name: 'Жадный компас', icon: 'icon-magnet',
-    desc: '+20% радиуса подбора за уровень',
+    id: 'magnet', name: t('shop.magnet.name'), icon: 'icon-magnet',
+    desc: t('shop.magnet.desc'),
     costs: [120, 300, 600],
   },
   {
-    id: 'luck', name: 'Кроличья лапка', icon: 'icon-coin',
-    desc: '+5% шанса крита за уровень',
+    id: 'luck', name: t('shop.luck.name'), icon: 'icon-coin',
+    desc: t('shop.luck.desc'),
     costs: [180, 420, 800],
   },
 ];
