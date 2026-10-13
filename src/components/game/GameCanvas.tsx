@@ -42,7 +42,7 @@ export default function GameCanvas() {
   return (
     <div
       ref={hostRef}
-      className="h-full w-full overflow-hidden rounded-xl [&_canvas]:block [&_canvas]:h-full [&_canvas]:w-full"
+      className="h-full w-full overflow-hidden bg-[#3f8ed0] [&_canvas]:block [&_canvas]:h-full [&_canvas]:w-full"
       aria-label="Игровое поле Tiny Sword Survivors"
       role="img"
     />

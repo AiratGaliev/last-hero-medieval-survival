@@ -13,6 +13,8 @@ export function createGame(parent: HTMLElement): Phaser.Game {
     type: Phaser.AUTO,
     parent,
     backgroundColor: '#3f8ed0',
+    // DOM-контейнер нужен для нативного <input> ввода имени на экране рекорда
+    dom: { createContainer: true },
     scale: {
       mode: Phaser.Scale.RESIZE,
       width: '100%',

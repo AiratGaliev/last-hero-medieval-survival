@@ -982,10 +982,6 @@ export class GameScene extends Phaser.Scene {
     });
     this.scene.launch('GameOver', { stats });
     this.scene.pause();
-    // Уведомляем React-слой
-    if (typeof window !== 'undefined') {
-      window.dispatchEvent(new CustomEvent('tss-gameover', { detail: stats }));
-    }
   }
 
   private resizeZoom(): void {

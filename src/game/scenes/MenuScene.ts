@@ -3,8 +3,12 @@ import { FONT } from '../constants';
 import { HEROES, WEAPONS, DIFFICULTIES, type HeroId, type DifficultyId } from '../data';
 import { audio } from '../systems/Audio';
 import { makePanel, makeButton } from '../systems/Ui';
+import { loadShop, buyUpgrade, SHOP_UPGRADES } from '../shop';
+import { ACHIEVEMENTS, loadUnlocked, loadMeta } from '../achievements';
 
-// ============ Главное меню с выбором героя ============
+// ============ Главное меню: герой + сложность + вся мета-навигация ============
+// Вся оболочка игры живёт здесь: «Как играть», «Рекорды» (API), «Лавка
+// торговца» (покупки за золото), «Достижения» и «Хроника воина» (localStorage).
 
 interface ScoreRow {
   id: number;
@@ -12,6 +16,7 @@ interface ScoreRow {
   score: number;
   kills: number;
   level: number;
+  timeSurvived: number;
   victory: boolean;
 }
 
@@ -33,6 +38,8 @@ const DIFF_ORDER: DifficultyId[] = ['normal', 'nightmare'];
 
 export class MenuScene extends Phaser.Scene {
   private overlay: Phaser.GameObjects.Container | null = null;
+  /** Интерактивные элементы оверлея вне контейнера (кнопки, строки лавки) */
+  private overlayExtras: Phaser.GameObjects.GameObject[] = [];
   private logo!: Phaser.GameObjects.Text;
   private logo2!: Phaser.GameObjects.Text;
   private heroCards: HeroCard[] = [];
@@ -44,6 +51,14 @@ export class MenuScene extends Phaser.Scene {
   private vh = 0;
   private menuZoom = 1;
 
+  // Лавка
+  private shopRowEls: Phaser.GameObjects.Container[] = [];
+  private shopBalanceText: Phaser.GameObjects.Text | null = null;
+  private shopRowsY = 0;
+
+  // Достижения
+  private achDesc: Phaser.GameObjects.Text | null = null;
+
   constructor() {
     super('Menu');
   }
@@ -53,6 +68,10 @@ export class MenuScene extends Phaser.Scene {
     const realH = this.scale.height;
     this.heroCards = [];
     this.diffChips = [];
+    this.overlay = null;
+    this.overlayExtras = [];
+    this.shopRowEls = [];
+    this.shopBalanceText = null;
 
     // Мобильная раскладка: контент позиционируется на виртуальном полотне 460×800,
     // затем камера уменьшает его до реального размера экрана — ничего не обрезается.
@@ -131,6 +150,16 @@ export class MenuScene extends Phaser.Scene {
       this.add.image(width / 2 + 330, titleY + 20, 'swords').setDisplaySize(110, 158).setFlipX(true).setAlpha(0.85);
     }
 
+    // Кошелёк в углу — видно мета-золото до захода в лавку
+    const wallet = loadShop().balance;
+    if (wallet > 0) {
+      this.add.image(width - 52, titleY - 6, 'icon-coin').setDisplaySize(20, 20);
+      this.add.text(width - 38, titleY - 6, `${wallet.toLocaleString('ru-RU')}`, {
+        fontFamily: FONT, fontSize: '15px', color: '#7a4e0e',
+        stroke: '#ffe9c0', strokeThickness: 4,
+      }).setOrigin(0, 0.5);
+    }
+
     // ---------- Выбор героя ----------
     // Сетка карточек: 4 в ряд на десктопе, 2×2 на мобильном (виртуальное полотно)
     const cols = width < 760 ? 2 : 4;
@@ -174,12 +203,35 @@ export class MenuScene extends Phaser.Scene {
       this.scene.start('Game', { hero: this.selectedHero, diff: this.selectedDiff });
     }, 'blue', mobile ? 20 : 24);
 
-    const smallW = Math.min(185, (width - 100) / 2);
-    const smallY = btnY + 60;
-    makeButton(this, width / 2 - smallW / 2 - 10, smallY, smallW, 44, 'КАК ИГРАТЬ', () => this.showHowTo(), 'red', 14);
-    makeButton(this, width / 2 + smallW / 2 + 10, smallY, smallW, 44, 'РЕКОРДЫ', () => this.showRecords(), 'red', 14);
+    // Навигация по мета-экранам — всё внутри Phaser
+    const navItems: Array<[string, () => void]> = [
+      ['КАК ИГРАТЬ', () => this.showHowTo()],
+      ['РЕКОРДЫ', () => { void this.showRecords(); }],
+      ['ЛАВКА', () => this.showShop()],
+      ['ДОСТИЖЕНИЯ', () => this.showAchievements()],
+      ['ХРОНИКА', () => this.showChronicle()],
+    ];
+    const navY = btnY + 58;
+    if (mobile) {
+      const w1 = Math.min(190, (width - 60 - 12) / 2);
+      navItems.slice(0, 2).forEach(([lbl, action], i) => {
+        makeButton(this, width / 2 + (i === 0 ? -1 : 1) * (w1 / 2 + 6), navY, w1, 42, lbl, action, 'red', 12);
+      });
+      const w2 = Math.min(150, (width - 60 - 24) / 3);
+      navItems.slice(2).forEach(([lbl, action], i) => {
+        const x = width / 2 - (3 * w2 + 24) / 2 + i * (w2 + 12) + w2 / 2;
+        makeButton(this, x, navY + 48, w2, 42, lbl, action, 'red', 11);
+      });
+    } else {
+      const gapN = 10;
+      const bw = Math.min(185, (width - 80 - 4 * gapN) / 5);
+      navItems.forEach(([lbl, action], i) => {
+        const x = width / 2 - (5 * bw + 4 * gapN) / 2 + i * (bw + gapN) + bw / 2;
+        makeButton(this, x, navY, bw, 44, lbl, action, 'red', 12);
+      });
+    }
 
-    this.add.text(width / 2, height - 12, 'Phaser 4 • ассеты Pixel Frog «Tiny Swords»', {
+    this.add.text(width / 2, height - 12, 'v1.4 • Phaser 4 • ассеты Pixel Frog «Tiny Swords»', {
       fontFamily: FONT, fontSize: '11px', color: '#3b2410',
     }).setOrigin(0.5).setAlpha(0.8);
 
@@ -325,13 +377,51 @@ export class MenuScene extends Phaser.Scene {
     this.scene.restart();
   }
 
-  // ---------- Как играть ----------
-  private showHowTo(): void {
+  // ================================================================
+  // Общий каркас оверлеев (затемнение + блокировщик кликов)
+  // ================================================================
+
+  private beginOverlay(): void {
     this.closeOverlay();
     const width = this.vw;
     const height = this.vh;
+    const cover = Math.max(width / this.menuZoom, height / this.menuZoom) + 160;
     this.overlay = this.add.container(0, 0);
-    const dim = this.add.rectangle(width / 2, height / 2, width / this.menuZoom + 80, height / this.menuZoom + 80, 0x0a0a12, 0.72);
+    const dim = this.add.rectangle(width / 2, height / 2, cover, cover, 0x0a0a12, 0.72);
+    this.overlay.add(dim);
+    // Блокировщик: меню под оверлеем не должно реагировать на клики
+    const blocker = this.add.rectangle(width / 2, height / 2, cover, cover, 0x000000, 0.001)
+      .setInteractive({ useHandCursor: false });
+    this.overlayExtras.push(blocker);
+  }
+
+  private backButton(y?: number): void {
+    const width = this.vw;
+    const height = this.vh;
+    const by = Math.min(y ?? height / 2 + Math.min(300, height * 0.36), height - 38);
+    const b = makeButton(this, width / 2, by, 170, 54, 'НАЗАД', () => this.closeOverlay(), 'red', 16);
+    this.overlayExtras.push(b.img, b.txt, b.hit);
+  }
+
+  private closeOverlay(): void {
+    this.overlay?.destroy(true);
+    this.overlay = null;
+    for (const o of this.overlayExtras) o.destroy();
+    this.overlayExtras = [];
+    for (const r of this.shopRowEls) r.destroy(true);
+    this.shopRowEls = [];
+    this.shopBalanceText = null;
+    this.achDesc = null;
+  }
+
+  // ================================================================
+  // «Как играть»
+  // ================================================================
+
+  private showHowTo(): void {
+    this.beginOverlay();
+    const width = this.vw;
+    const height = this.vh;
     const paperW = Math.min(560, width - 50);
     const paper = makePanel(this, width / 2, height / 2, 'paper', paperW, paperW * 1.05);
     const header = this.add.text(width / 2, height / 2 - paperW * 0.5, 'КАК ИГРАТЬ', {
@@ -360,64 +450,436 @@ export class MenuScene extends Phaser.Scene {
     const body = this.add.text(width / 2, height / 2 - paperW * 0.34, lines.join('\n'), {
       fontFamily: FONT, fontSize: '15px', color: '#57431f', align: 'center', lineSpacing: 8,
     }).setOrigin(0.5, 0);
-    this.overlay.add([dim, paper, header, body]);
+    this.overlay?.add([paper, header, body]);
     this.backButton();
   }
 
-  // ---------- Рекорды ----------
+  // ================================================================
+  // «Рекорды» — таблица из /api/scores
+  // ================================================================
+
   private async showRecords(): Promise<void> {
-    this.closeOverlay();
+    this.beginOverlay();
     const width = this.vw;
     const height = this.vh;
     const container = this.add.container(0, 0);
+    // Переносим затемнение из каркасного контейнера в новый (для guard-проверки active)
+    this.overlay?.destroy(true);
     this.overlay = container;
-    const dim = this.add.rectangle(width / 2, height / 2, width / this.menuZoom + 80, height / this.menuZoom + 80, 0x0a0a12, 0.72);
-    const paperW = Math.min(560, width - 50);
-    const paper = makePanel(this, width / 2, height / 2, 'paperSpecial', paperW, paperW * 1.05);
-    const header = this.add.text(width / 2, height / 2 - paperW * 0.5, 'ТАБЛИЦА РЕКОРДОВ', {
-      fontFamily: FONT, fontSize: '22px', color: '#ffe9c0',
-    }).setOrigin(0.5);
-    const loading = this.add.text(width / 2, height / 2, 'загрузка...', {
+    const cover = Math.max(width / this.menuZoom, height / this.menuZoom) + 160;
+    const dim = this.add.rectangle(width / 2, height / 2, cover, cover, 0x0a0a12, 0.72);
+    container.add(dim);
+
+    const paperW = Math.min(600, width - 50);
+    const paperH = Math.min(470, height - 60);
+    const cx = width / 2;
+    const cy = height / 2;
+    const paper = makePanel(this, cx, cy, 'paperSpecial', paperW, paperH);
+    container.add(paper);
+    const top = cy - paperH / 2;
+
+    container.add(this.add.text(cx, top + 38, 'ЗАЛ СЛАВЫ', {
+      fontFamily: FONT, fontSize: '24px', color: '#ffe9c0',
+      stroke: '#1b1008', strokeThickness: 5,
+    }).setOrigin(0.5));
+
+    const loading = this.add.text(cx, cy, 'загрузка...', {
       fontFamily: FONT, fontSize: '15px', color: '#cbb389',
     }).setOrigin(0.5);
-    container.add([dim, paper, header, loading]);
+    container.add(loading);
+
+    // Колонки таблицы
+    const left = cx - paperW / 2 + 30;
+    const right = cx + paperW / 2 - 30;
+    const colName = left + 28;
+    const colScore = right - 92;
+    const colKills = right - 40;
+
+    const headerStyle: Phaser.Types.GameObjects.Text.TextStyle = {
+      fontFamily: FONT, fontSize: '10px', color: '#cbb389',
+    };
+    container.add(this.add.text(left, top + 76, '#', { ...headerStyle }).setOrigin(0, 0.5));
+    container.add(this.add.text(colName, top + 76, 'ГЕРОЙ', { ...headerStyle }).setOrigin(0, 0.5));
+    container.add(this.add.text(colScore, top + 76, 'СЧЁТ', { ...headerStyle }).setOrigin(1, 0.5));
+    container.add(this.add.text(colKills, top + 76, 'УБ.', { ...headerStyle }).setOrigin(1, 0.5));
+    container.add(this.add.text(right, top + 76, 'ВРЕМЯ', { ...headerStyle }).setOrigin(1, 0.5));
+    const hr = this.add.graphics();
+    hr.lineStyle(1, 0x8a6d3b, 0.6).lineBetween(left, top + 90, right, top + 90);
+    container.add(hr);
 
     try {
       const res = await fetch('/api/scores?limit=10');
+      if (!res.ok) throw new Error('load failed');
       const rows: ScoreRow[] = await res.json();
+      if (!container.active) return; // оверлей закрыли, пока грузился ответ
       loading.destroy();
+
       if (rows.length === 0) {
-        container.add(this.add.text(width / 2, height / 2, 'пока никто не выживал', {
-          fontFamily: FONT, fontSize: '15px', color: '#cbb389',
+        container.add(this.add.text(cx, cy, 'пока никто не выживал...\nстань первым героем!', {
+          fontFamily: FONT, fontSize: '15px', color: '#cbb389', align: 'center', lineSpacing: 8,
         }).setOrigin(0.5));
       } else {
-        const lines = rows.map((r, i) =>
-          `${i + 1}. ${r.name.slice(0, 14).padEnd(14, ' ')} ${String(r.score).padStart(7, ' ')}  ур.${r.level}${r.victory ? ' ★' : ''}`,
-        );
-        const body = this.add.text(width / 2, height / 2 - paperW * 0.36, lines.join('\n'), {
-          fontFamily: FONT, fontSize: '13px', color: '#ffe9c0', lineSpacing: 12,
-        }).setOrigin(0.5, 0);
-        container.add(body);
+        const style: Phaser.Types.GameObjects.Text.TextStyle = {
+          fontFamily: FONT, fontSize: '13px', color: '#ffe9c0',
+        };
+        rows.forEach((r, i) => {
+          const y = top + 112 + i * 26;
+          const medal = i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : `${i + 1}.`;
+          container.add(this.add.text(left, y, medal, {
+            ...style, color: i < 3 ? '#ffd76e' : '#cbb389',
+          }).setOrigin(0, 0.5));
+          container.add(this.add.text(colName, y, `${r.name.slice(0, 13)}${r.victory ? ' ★' : ''}`, {
+            ...style, color: i === 0 ? '#ffd76e' : '#ffe9c0',
+          }).setOrigin(0, 0.5));
+          container.add(this.add.text(colScore, y, r.score.toLocaleString('ru-RU'), {
+            ...style, color: '#ffd76e',
+          }).setOrigin(1, 0.5));
+          container.add(this.add.text(colKills, y, `${r.kills}`, { ...style }).setOrigin(1, 0.5));
+          const m = Math.floor(r.timeSurvived / 60);
+          const s = Math.floor(r.timeSurvived % 60).toString().padStart(2, '0');
+          container.add(this.add.text(right, y, `${m}:${s}`, { ...style }).setOrigin(1, 0.5));
+        });
       }
     } catch {
+      if (!container.active) return;
       loading.destroy();
-      container.add(this.add.text(width / 2, height / 2, 'не удалось загрузить', {
+      container.add(this.add.text(cx, cy, 'не удалось загрузить рекорды', {
         fontFamily: FONT, fontSize: '15px', color: '#ff8a7a',
       }).setOrigin(0.5));
     }
-    this.backButton();
+
+    container.add(this.add.text(cx, top + paperH - 78, [
+      'очки: 10 за убийство • 100 за минуту • 50 за уровень',
+      '+5000 за босса • золото и «Кошмар» — множители • ★ — победа',
+    ].join('\n'), {
+      fontFamily: FONT, fontSize: '10px', color: '#cbb389', align: 'center', lineSpacing: 6,
+    }).setOrigin(0.5));
+
+    this.backButton(top + paperH + 42);
   }
 
-  private backButton(): void {
+  // ================================================================
+  // «Лавка торговца» — мета-магазин за золото матчей
+  // ================================================================
+
+  private showShop(): void {
+    this.beginOverlay();
     const width = this.vw;
     const height = this.vh;
-    const y = height / 2 + Math.min(300, height * 0.36);
-    makeButton(this, width / 2, y, 170, 56, 'НАЗАД', () => this.closeOverlay(), 'red', 17);
+    const paperW = Math.min(560, width - 50);
+    const paperH = Math.min(590, height - 50);
+    const cx = width / 2;
+    const cy = height / 2;
+    const paper = makePanel(this, cx, cy, 'paper', paperW, paperH);
+    this.overlay?.add(paper);
+    const top = cy - paperH / 2;
+
+    this.overlay?.add(this.add.text(cx, top + 38, 'ЛАВКА ТОРГОВЦА', {
+      fontFamily: FONT, fontSize: '26px', color: '#3b2410',
+    }).setOrigin(0.5));
+    this.overlay?.add(this.add.text(cx, top + 62, 'золото из матчей → вечные усиления героя', {
+      fontFamily: FONT, fontSize: '11px', color: '#8a5b12',
+    }).setOrigin(0.5));
+
+    // Кошелёк
+    const balBg = this.add.graphics();
+    balBg.fillStyle(0xf7e7c3, 1).fillRoundedRect(cx - 112, top + 78, 224, 36, 9);
+    balBg.lineStyle(2, 0xc9a25e, 1).strokeRoundedRect(cx - 112, top + 78, 224, 36, 9);
+    this.overlay?.add(balBg);
+    this.overlay?.add(this.add.image(cx - 90, top + 96, 'icon-coin').setDisplaySize(22, 22));
+    this.shopBalanceText = this.add.text(cx + 16, top + 96, '0', {
+      fontFamily: FONT, fontSize: '18px', color: '#7a4e0e',
+    }).setOrigin(0.5);
+    this.overlay?.add(this.shopBalanceText);
+
+    this.shopRowsY = top + 132;
+    this.renderShopRows();
+
+    this.overlay?.add(this.add.text(cx, top + paperH - 28, 'золото падает в кошелёк в конце каждого матча', {
+      fontFamily: FONT, fontSize: '10px', color: '#8a5b12',
+    }).setOrigin(0.5));
+
+    this.backButton(top + paperH + 42);
+    this.refreshShopBalance();
   }
 
-  private closeOverlay(): void {
-    this.overlay?.destroy(true);
-    this.overlay = null;
+  private renderShopRows(flashIdx?: number): void {
+    for (const r of this.shopRowEls) r.destroy(true);
+    this.shopRowEls = [];
+    const st = loadShop();
+    const width = this.vw;
+    const paperW = Math.min(560, width - 50);
+    const rowW = paperW - 56;
+    const rowH = 64;
+    const gap = 10;
+
+    SHOP_UPGRADES.forEach((u, i) => {
+      const lvl = st.upgrades[u.id];
+      const maxed = lvl >= 3;
+      const price = maxed ? null : u.costs[lvl];
+      const affordable = price !== null && st.balance >= price;
+      const y = this.shopRowsY + i * (rowH + gap) + rowH / 2;
+
+      const row = this.add.container(width / 2, y);
+      const bg = this.add.graphics();
+      bg.fillStyle(0xfff6df, 1).fillRoundedRect(-rowW / 2, -rowH / 2, rowW, rowH, 10);
+      bg.lineStyle(2, 0xc9a25e, 1).strokeRoundedRect(-rowW / 2, -rowH / 2, rowW, rowH, 10);
+      row.add(bg);
+
+      const icon = this.add.image(-rowW / 2 + 26, 0, u.icon).setDisplaySize(32, 32);
+      row.add(icon);
+
+      const name = this.add.text(-rowW / 2 + 48, -14, u.name, {
+        fontFamily: FONT, fontSize: '14px', color: '#3b2410',
+      }).setOrigin(0, 0.5);
+      row.add(name);
+
+      const desc = this.add.text(-rowW / 2 + 48, 8, u.desc, {
+        fontFamily: FONT, fontSize: '9px', color: '#8a5b12',
+      }).setOrigin(0, 0.5);
+      row.add(desc);
+
+      const dots = this.add.text(rowW / 2 - 132, -2, '●'.repeat(lvl) + '○'.repeat(3 - lvl), {
+        fontFamily: FONT, fontSize: '11px', color: '#b0803a',
+      }).setOrigin(0.5);
+      row.add(dots);
+
+      if (maxed) {
+        row.add(this.add.text(rowW / 2 - 56, 0, 'МАКС', {
+          fontFamily: FONT, fontSize: '13px', color: '#2e7d32',
+          stroke: '#dcecc9', strokeThickness: 3,
+        }).setOrigin(0.5));
+      } else {
+        const btn = this.add.nineslice(rowW / 2 - 56, 0, 'btn-blue9', undefined, 92, 34, 45, 45, 47, 47);
+        if (!affordable) btn.setTint(0x9aa0a6);
+        row.add(btn);
+        row.add(this.add.text(rowW / 2 - 56, 0, `${price}`, {
+          fontFamily: FONT, fontSize: '12px', color: '#ffffff',
+          stroke: '#2a1608', strokeThickness: 3,
+        }).setOrigin(0.5));
+      }
+
+      row.setSize(rowW, rowH);
+      if (!maxed) {
+        row.setInteractive({ useHandCursor: affordable });
+        row.on('pointerover', () => {
+          if (affordable) this.tweens.add({ targets: row, scale: 1.02, duration: 100 });
+        });
+        row.on('pointerout', () => this.tweens.add({ targets: row, scale: 1, duration: 100 }));
+        row.on('pointerdown', () => {
+          if (maxed) return;
+          const res = buyUpgrade(u.id);
+          if (res.ok) {
+            audio.play('levelup');
+            this.renderShopRows(i);
+            this.refreshShopBalance();
+          } else if (res.reason === 'poor') {
+            audio.play('click');
+            this.tweens.add({ targets: row, x: { from: row.x - 5, to: row.x }, duration: 180 });
+          }
+        });
+      }
+
+      if (i === flashIdx) {
+        row.setScale(1.12);
+        this.tweens.add({ targets: row, scale: 1, duration: 260, ease: 'Back.easeOut' });
+      }
+      this.shopRowEls.push(row);
+    });
+  }
+
+  private refreshShopBalance(): void {
+    const st = loadShop();
+    this.shopBalanceText?.setText(st.balance.toLocaleString('ru-RU'));
+  }
+
+  // ================================================================
+  // «Достижения»
+  // ================================================================
+
+  private showAchievements(): void {
+    this.beginOverlay();
+    const width = this.vw;
+    const height = this.vh;
+    const unlocked = loadUnlocked();
+    const count = unlocked.size;
+    const total = ACHIEVEMENTS.length;
+
+    const paperW = Math.min(560, width - 50);
+    const paperH = Math.min(560, height - 50);
+    const cx = width / 2;
+    const cy = height / 2;
+    const paper = makePanel(this, cx, cy, 'paper', paperW, paperH);
+    this.overlay?.add(paper);
+    const top = cy - paperH / 2;
+
+    this.overlay?.add(this.add.text(cx, top + 38, 'ДОСТИЖЕНИЯ', {
+      fontFamily: FONT, fontSize: '26px', color: '#3b2410',
+    }).setOrigin(0.5));
+    this.overlay?.add(this.add.text(cx, top + 64, `${count} / ${total}`, {
+      fontFamily: FONT, fontSize: '15px', color: '#8a5b12',
+    }).setOrigin(0.5));
+
+    // Полоса прогресса
+    const barW = paperW - 130;
+    const bar = this.add.graphics();
+    bar.fillStyle(0x3b2a1a, 1).fillRoundedRect(cx - barW / 2, top + 82, barW, 12, 6);
+    if (count > 0) {
+      bar.fillStyle(0xd9a520, 1).fillRoundedRect(cx - barW / 2 + 2, top + 84, Math.max(8, (barW - 4) * (count / total)), 8, 4);
+    }
+    this.overlay?.add(bar);
+
+    // Сетка 3×3
+    const cellGap = 12;
+    const cellW = (paperW - 56 - 2 * cellGap) / 3;
+    const cellH = 100;
+    const gridTop = top + 112;
+    const small = width < 500;
+
+    this.achDesc = this.add.text(cx, top + paperH - 86, 'наведи на достижение — увидишь условие', {
+      fontFamily: FONT, fontSize: '11px', color: '#57431f', align: 'center',
+      wordWrap: { width: paperW - 70 }, lineSpacing: 5,
+    }).setOrigin(0.5);
+    this.overlay?.add(this.achDesc);
+
+    ACHIEVEMENTS.forEach((a, i) => {
+      const col = i % 3;
+      const rowI = Math.floor(i / 3);
+      const x = cx - (3 * cellW + 2 * cellGap) / 2 + col * (cellW + cellGap) + cellW / 2;
+      const y = gridTop + rowI * (cellH + cellGap) + cellH / 2;
+      const has = unlocked.has(a.id);
+
+      const cell = this.add.container(x, y);
+      const g = this.add.graphics();
+      if (has) {
+        g.fillStyle(0xffe9b0, 1).fillRoundedRect(-cellW / 2, -cellH / 2, cellW, cellH, 10);
+        g.lineStyle(3, 0xd9a520, 1).strokeRoundedRect(-cellW / 2, -cellH / 2, cellW, cellH, 10);
+      } else {
+        g.fillStyle(0xefe6d0, 1).fillRoundedRect(-cellW / 2, -cellH / 2, cellW, cellH, 10);
+        g.lineStyle(2, 0xbfa77a, 1).strokeRoundedRect(-cellW / 2, -cellH / 2, cellW, cellH, 10);
+      }
+      cell.add(g);
+
+      const icon = this.add.image(0, -cellH * 0.28, a.icon).setDisplaySize(34, 34);
+      if (!has) icon.setTint(0x8d8577);
+      cell.add(icon);
+
+      cell.add(this.add.text(0, cellH * 0.24, a.name, {
+        fontFamily: FONT, fontSize: small ? '9px' : '10px',
+        color: has ? '#3b2410' : '#8d8577', align: 'center',
+        wordWrap: { width: cellW - 10 }, lineSpacing: 3,
+      }).setOrigin(0.5));
+
+      cell.setSize(cellW, cellH);
+      cell.setInteractive({ useHandCursor: true });
+      const showDesc = (): void => {
+        this.achDesc?.setText(has
+          ? `${a.emoji} ${a.name} — ${a.desc}`
+          : `🔒 ${a.name} — ${a.desc}`);
+      };
+      cell.on('pointerover', showDesc);
+      cell.on('pointerdown', showDesc);
+      this.overlayExtras.push(cell);
+    });
+
+    if (count === total && count > 0) {
+      this.overlay?.add(this.add.text(cx, top + paperH - 52, '👑 Все достижения собраны!', {
+        fontFamily: FONT, fontSize: '13px', color: '#8a5b12',
+      }).setOrigin(0.5));
+    }
+
+    this.backButton(top + paperH + 42);
+  }
+
+  // ================================================================
+  // «Хроника воина» — мета-статистика
+  // ================================================================
+
+  private showChronicle(): void {
+    this.beginOverlay();
+    const width = this.vw;
+    const height = this.vh;
+    const meta = loadMeta();
+
+    const paperW = Math.min(520, width - 50);
+    const paperH = meta.matches === 0 && meta.kills === 0
+      ? Math.min(340, height - 60)
+      : Math.min(430, height - 50);
+    const cx = width / 2;
+    const cy = height / 2;
+    const paper = makePanel(this, cx, cy, 'paper', paperW, paperH);
+    this.overlay?.add(paper);
+    const top = cy - paperH / 2;
+
+    this.overlay?.add(this.add.text(cx, top + 38, 'ХРОНИКА ВОИНА', {
+      fontFamily: FONT, fontSize: '26px', color: '#3b2410',
+    }).setOrigin(0.5));
+
+    if (meta.matches === 0 && meta.kills === 0) {
+      this.overlay?.add(this.add.text(cx, cy + 10, [
+        'Статистика появится после первого матча.',
+        'Матчи, победы, золото и рекорды',
+        'хранятся в этом браузере.',
+      ].join('\n'), {
+        fontFamily: FONT, fontSize: '14px', color: '#57431f', align: 'center', lineSpacing: 10,
+      }).setOrigin(0.5));
+    } else {
+      const winRate = meta.matches > 0 ? Math.round((meta.victories / meta.matches) * 100) : 0;
+      if (meta.matches > 0) {
+        const chip = this.add.graphics();
+        chip.fillStyle(0xdff0d8, 1).fillRoundedRect(cx - 74, top + 56, 148, 26, 13);
+        chip.lineStyle(2, 0x5b8a51, 1).strokeRoundedRect(cx - 74, top + 56, 148, 26, 13);
+        this.overlay?.add(chip);
+        this.overlay?.add(this.add.text(cx, top + 69, `винрейт ${winRate}%`, {
+          fontFamily: FONT, fontSize: '12px', color: '#2e5d28',
+        }).setOrigin(0.5));
+      }
+
+      const fmt = (n: number): string => n.toLocaleString('ru-RU');
+      const h = Math.floor(meta.playTime / 3600);
+      const m = Math.floor((meta.playTime % 3600) / 60);
+      const timeStr = h > 0
+        ? `${h} ч ${m} м`
+        : m > 0
+          ? `${m} мин`
+          : `${meta.playTime} сек`;
+      const items: Array<[string, string]> = [
+        ['МАТЧЕЙ', fmt(meta.matches)],
+        ['ПОБЕД', fmt(meta.victories)],
+        ['УБИЙСТВ', fmt(meta.kills)],
+        ['ЗОЛОТА', fmt(meta.gold)],
+        ['РЕКОРД', fmt(meta.bestScore)],
+        ['В ИГРЕ', timeStr],
+      ];
+
+      const cellGap = 10;
+      const cellW = (paperW - 56 - cellGap) / 2;
+      const cellH = 58;
+      const gridTop = top + 100;
+      items.forEach(([lbl, val], i) => {
+        const col = i % 2;
+        const rowI = Math.floor(i / 2);
+        const x = cx - (2 * cellW + cellGap) / 2 + col * (cellW + cellGap) + cellW / 2;
+        const y = gridTop + rowI * (cellH + cellGap) + cellH / 2;
+        const g = this.add.graphics();
+        g.fillStyle(0xfff6df, 1).fillRoundedRect(-cellW / 2, -cellH / 2, cellW, cellH, 9);
+        g.lineStyle(2, 0xc9a25e, 0.8).strokeRoundedRect(-cellW / 2, -cellH / 2, cellW, cellH, 9);
+        this.overlay?.add(g);
+        g.setPosition(x, y);
+        this.overlay?.add(this.add.text(x, y - 14, lbl, {
+          fontFamily: FONT, fontSize: '9px', color: '#8a5b12',
+        }).setOrigin(0.5));
+        this.overlay?.add(this.add.text(x, y + 9, val, {
+          fontFamily: FONT, fontSize: '17px', color: '#3b2410',
+        }).setOrigin(0.5));
+      });
+
+      this.overlay?.add(this.add.text(cx, top + paperH - 26, 'данные хранятся в этом браузере', {
+        fontFamily: FONT, fontSize: '10px', color: '#8a5b12',
+      }).setOrigin(0.5));
+    }
+
+    this.backButton(top + paperH + 42);
   }
 
   update(): void {
