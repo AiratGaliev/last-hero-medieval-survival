@@ -51,23 +51,38 @@ export class Spawner {
           if (ev.interval) this.interval = ev.interval * this.diff.rateMult;
           break;
         case 'ring':
-          if (ev.enemy && ev.count) this.spawnRing(ev.enemy, ev.count);
+          if (ev.enemy && ev.count) {
+            this.spawnRing(ev.enemy, ev.count);
+            // Особые отряды анонсируем — игрок должен понять новую угрозу
+            if (ev.note) {
+              const labels: Record<string, string> = {
+                guard: '⚠ СТЕНА ЩИТОВ!',
+                taskmaster: '⚠ НАДЗИРАТЕЛИ ГОНЯТ ТОЛПУ!',
+                mercenary: '⚠ ОТРЯД НАЁМНИКОВ!',
+                bomber: '⚠ БОЧКОВЫЙ ЗАЛП!',
+              };
+              const label = labels[ev.enemy];
+              if (label) this.ctx.announce(label, '#ffaa44');
+            }
+          }
           break;
         case 'elite':
           if (ev.enemy) {
             audio.play('boss');
-            const label = ev.enemy === 'elite-lancer'
-              ? 'ЭЛИТА: КОПЕЙЩИК!'
-              : ev.enemy === 'midboss'
-                ? 'БОСС: ТЁМНЫЙ МОНАХ!'
+            // Мидбосс получает кино-заставку (HUD.bossIntro из GameScene) —
+            // дублирующий анонс не нужен
+            if (ev.enemy !== 'midboss') {
+              const label = ev.enemy === 'elite-lancer'
+                ? 'ЭЛИТА: КОПЕЙЩИК!'
                 : 'ЭЛИТА: ТЁМНЫЙ МОНАХ!';
-            this.ctx.announce(label, '#ff5544');
+              this.ctx.announce(label, '#ff5544');
+            }
             this.ctx.spawnElite(ev.enemy);
           }
           break;
         case 'boss':
           audio.play('boss');
-          this.ctx.announce('БОСС! ЧЁРНЫЙ КОПЕЙЩИК!', '#ff2222');
+          // Анонс — кино-заставка HUD.bossIntro (вызывается из spawnBoss)
           this.ctx.spawnBoss();
           this.stopped = true;
           break;

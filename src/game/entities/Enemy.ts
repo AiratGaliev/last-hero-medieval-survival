@@ -17,7 +17,7 @@ export interface EnemyContext {
   healEnemy(e: Phaser.Physics.Arcade.Sprite, hp: number): void;
 }
 
-type AiState = 'chase' | 'windup' | 'charge' | 'recover' | 'flee';
+type AiState = 'chase' | 'windup' | 'charge' | 'recover' | 'flee' | 'enraged';
 
 export class Enemy extends Phaser.Physics.Arcade.Sprite {
   readonly def: EnemyDef;
@@ -30,6 +30,9 @@ export class Enemy extends Phaser.Physics.Arcade.Sprite {
   dead = false;   // защита от повторной обработки смерти
   aiState: AiState = 'chase';
   stateTimer = 0;
+  /** Внешний буст скорости от Приказчика (до этого момента времени) */
+  hasteUntil = 0;
+  hasteMult = 1;
   private shootCd = 0;
   private healCd = 0;
   private summonCd = 8000; // мс до первого зова свиты
@@ -42,6 +45,8 @@ export class Enemy extends Phaser.Physics.Arcade.Sprite {
   private ctx: EnemyContext;
   private hpBar: Phaser.GameObjects.Graphics | null = null;
   private shadow: Phaser.GameObjects.Image;
+  /** Кольцо ауры Приказчика (создаётся только для kind === 'taskmaster') */
+  private auraRing: Phaser.GameObjects.Image | null = null;
 
   constructor(scene: Phaser.Scene, x: number, y: number, kind: EnemyKind, hpMult: number, dmgMult: number, ctx: EnemyContext) {
     const def = ENEMIES[kind];
@@ -85,6 +90,16 @@ export class Enemy extends Phaser.Physics.Arcade.Sprite {
       // Мир-координаты: слой HPBAR — над сущностями, под FX/HUD
       this.hpBar = scene.add.graphics().setDepth(DEPTH.HPBAR);
     }
+
+    // Приказчик: кольцо-аура на земле (слой GEM — под ногами сущностей)
+    if (kind === 'taskmaster') {
+      const R = def.auraSpeed ?? 250;
+      this.auraRing = scene.add.image(x, y + 6, 'aoe-ring')
+        .setScale(R / 110)
+        .setAlpha(0.25)
+        .setTint(0xffc040)
+        .setDepth(DEPTH.GEM);
+    }
   }
 
   private static animPrefixOf(kind: EnemyKind): string {
@@ -94,6 +109,9 @@ export class Enemy extends Phaser.Physics.Arcade.Sprite {
       case 'brute': return 'brute-';
       case 'archer': return 'archer-';
       case 'bomber': return 'swarm-';
+      case 'guard': return 'guard-';
+      case 'taskmaster': return 'taskmaster-';
+      case 'mercenary': return 'merc-';
       case 'elite-lancer': return 'lancer-';
       case 'elite-monk': case 'midboss': return 'monk-';
       case 'boss': return 'boss-';
@@ -106,7 +124,15 @@ export class Enemy extends Phaser.Physics.Arcade.Sprite {
 
   takeDamage(dmg: number): boolean {
     if (this.dead) return false;
-    this.hp -= dmg;
+    let final = dmg;
+    // Гвардеец: пока щит цел, гасит половину урона (все источники — со стороны
+    // игрока, «фланговый» обход в этой модели нереализуем). Слом щита при 40% HP
+    if (this.kind === 'guard' && this.aiState !== 'enraged' && this.def.armorFront) {
+      final = Math.max(1, final * (1 - this.def.armorFront));
+      // Звон щита — блок заметен и без чтения чисел урона
+      if (Math.random() < 0.3) audio.play('hit');
+    }
+    this.hp -= final;
     // Вспышка урона (белая заливка в Phaser 4: setTint + FILL режим)
     this.setTint(0xffffff);
     this.setTintMode(Phaser.TintModes.FILL);
@@ -119,7 +145,24 @@ export class Enemy extends Phaser.Physics.Arcade.Sprite {
     });
     if (this.def.isElite || this.def.isBoss || this.def.isMidboss) this.drawHpBar();
     if (this.hp <= 0) this.dead = true;
+    else if (this.kind === 'guard' && this.aiState !== 'enraged' && this.hp < this.maxHp * 0.4) {
+      this.breakShield();
+    }
     return this.hp <= 0;
+  }
+
+  /** Гвардеец теряет щит: ярость — без брони, но заметно быстрее */
+  private breakShield(): void {
+    this.aiState = 'enraged';
+    this.speed = Math.round(this.speed * 1.65);
+    this.damage = Math.round(this.damage * 1.2);
+    this.play('guard-run', true);
+    audio.play('slam');
+    this.setTint(0xffb0a0);
+    this.scene.time.delayedCall(140, () => {
+      if (this.active) this.clearTint();
+    });
+    this.scene.cameras.main.shake(90, 0.002);
   }
 
   knockback(vx: number, vy: number, force: number): void {
@@ -127,6 +170,8 @@ export class Enemy extends Phaser.Physics.Arcade.Sprite {
     if (this.def.isBoss) force *= 0.15;
     else if (this.def.isMidboss) force *= 0.25;
     else if (this.def.isElite) force *= 0.4;
+    // Гвардеец со щитом тяжело продавливается
+    else if (this.kind === 'guard' && this.aiState !== 'enraged') force *= 0.3;
     this.knockX += (vx / len) * force;
     this.knockY += (vy / len) * force;
   }
@@ -217,6 +262,71 @@ export class Enemy extends Phaser.Physics.Arcade.Sprite {
         break;
       }
 
+      case 'guard': {
+        // Щитоносец: неспешно надвигается стеной (стойка со щитом — guard-idle).
+        // Скорость растёт в breakShield() — ярость после поломки щита
+        vx = nx * this.speed; vy = ny * this.speed;
+        break;
+      }
+
+      case 'taskmaster': {
+        // Приказчик: держится поодаль и гонит толпу вперёд (аура скорости)
+        const want = 260;
+        if (dist > want + 60) { vx = nx * this.speed; vy = ny * this.speed; }
+        else if (dist < want - 80) { vx = -nx * this.speed * 0.8; vy = -ny * this.speed * 0.8; }
+        else {
+          vx = -ny * this.speed * 0.5;
+          vy = nx * this.speed * 0.5;
+        }
+        // Тик ауры: каждые 500мс помечаем союзников рядом
+        this.healCd -= delta;
+        if (this.healCd <= 0) {
+          this.healCd = 500;
+          const R = this.def.auraSpeed ?? 250;
+          for (const s of this.ctx.enemiesNear(this.x, this.y, R)) {
+            const e = s as Enemy;
+            if (e === this || !e.active) continue;
+            e.hasteUntil = time + 750;
+            e.hasteMult = 1.3;
+          }
+        }
+        // Кольцо ауры следует за приказчиком
+        if (this.auraRing) {
+          this.auraRing.setPosition(this.x, this.y + 6);
+          const pulse = 0.22 + Math.abs(Math.sin(time / 320)) * 0.2;
+          this.auraRing.setAlpha(pulse);
+        }
+        break;
+      }
+
+      case 'mercenary': {
+        // Наёмник: телеграф (дрожь + красный tint) → рывок → отдых
+        this.stateTimer -= delta;
+        switch (this.aiState) {
+          case 'chase':
+            vx = nx * this.speed; vy = ny * this.speed;
+            if (dist < 380) { this.aiState = 'windup'; this.stateTimer = 480; }
+            break;
+          case 'windup':
+            this.setTint(0xff9999);
+            if (this.stateTimer <= 0) {
+              this.clearTint();
+              this.chargeDirX = nx; this.chargeDirY = ny;
+              this.aiState = 'charge'; this.stateTimer = 560;
+            }
+            break;
+          case 'charge':
+            vx = this.chargeDirX * 400; vy = this.chargeDirY * 400;
+            if (this.stateTimer <= 0) { this.aiState = 'recover'; this.stateTimer = 850; }
+            break;
+          case 'recover':
+            if (this.stateTimer <= 0) this.aiState = 'chase';
+            break;
+          default: this.aiState = 'chase';
+        }
+        break;
+      }
+
       case 'elite-lancer': {
         this.stateTimer -= delta;
         switch (this.aiState) {
@@ -292,6 +402,12 @@ export class Enemy extends Phaser.Physics.Arcade.Sprite {
     // Затухание отброса
     const decay = Math.pow(0.5, dt / 0.13);
     this.knockX *= decay; this.knockY *= decay;
+
+    // Ускорение от ауры Приказчика — применяется к итоговой скорости
+    if (time < this.hasteUntil) {
+      vx *= this.hasteMult;
+      vy *= this.hasteMult;
+    }
 
     const body = this.body as Phaser.Physics.Arcade.Body;
     body.setVelocity(vx + this.knockX, vy + this.knockY);
@@ -415,6 +531,7 @@ export class Enemy extends Phaser.Physics.Arcade.Sprite {
   destroy(fromScene?: boolean): void {
     this.shadow.destroy();
     this.hpBar?.destroy();
+    this.auraRing?.destroy();
     super.destroy(fromScene);
   }
 }

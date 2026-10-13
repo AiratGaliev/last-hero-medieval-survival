@@ -60,6 +60,13 @@ export class BootScene extends Phaser.Scene {
     this.load.spritesheet('archer-shoot', `${A}/units/red/archer/archer-shoot.png`, { frameWidth: 192, frameHeight: 192 });
     this.load.spritesheet('lancer-idle', `${A}/units/purple/lancer/lancer-idle.png`, { frameWidth: 320, frameHeight: 320 });
     this.load.spritesheet('lancer-run', `${A}/units/purple/lancer/lancer-run.png`, { frameWidth: 320, frameHeight: 320 });
+    // --- Новые враги v1.8 ---
+    this.load.spritesheet('guard-idle', `${A}/units/red/warrior/warrior-guard.png`, { frameWidth: 192, frameHeight: 192 });
+    this.load.spritesheet('guard-run', `${A}/units/red/warrior/warrior-run.png`, { frameWidth: 192, frameHeight: 192 });
+    this.load.spritesheet('taskmaster-idle', `${A}/units/red/pawn/pawn-idle-hammer.png`, { frameWidth: 192, frameHeight: 192 });
+    this.load.spritesheet('taskmaster-run', `${A}/units/red/pawn/pawn-run-hammer.png`, { frameWidth: 192, frameHeight: 192 });
+    this.load.spritesheet('merc-idle', `${A}/units/red/lancer/lancer-idle.png`, { frameWidth: 320, frameHeight: 320 });
+    this.load.spritesheet('merc-run', `${A}/units/red/lancer/lancer-run.png`, { frameWidth: 320, frameHeight: 320 });
     this.load.spritesheet('monk-idle', `${A}/units/black/monk/idle.png`, { frameWidth: 192, frameHeight: 192 });
     this.load.spritesheet('monk-run', `${A}/units/black/monk/run.png`, { frameWidth: 192, frameHeight: 192 });
     this.load.spritesheet('monk-heal', `${A}/units/black/monk/heal.png`, { frameWidth: 192, frameHeight: 192 });
@@ -171,6 +178,13 @@ export class BootScene extends Phaser.Scene {
     this.once('archer-shoot', 'archer-shoot', 8, 14);
     this.sheet('lancer-idle', 'lancer-idle', 12, 8);
     this.sheet('lancer-run', 'lancer-run', 6, 10);
+    // Новые враги v1.8
+    this.sheet('guard-idle', 'guard-idle', 6, 7);
+    this.sheet('guard-run', 'guard-run', 6, 11);
+    this.sheet('taskmaster-idle', 'taskmaster-idle', 8, 7);
+    this.sheet('taskmaster-run', 'taskmaster-run', 6, 10);
+    this.sheet('merc-idle', 'merc-idle', 12, 8);
+    this.sheet('merc-run', 'merc-run', 6, 10);
     this.sheet('monk-idle', 'monk-idle', 6, 7);
     this.sheet('monk-run', 'monk-run', 4, 10);
     this.once('monk-heal', 'monk-heal', 11, 12);

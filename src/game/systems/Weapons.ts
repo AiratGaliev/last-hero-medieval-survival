@@ -12,7 +12,7 @@ import { audio } from './Audio';
 export interface WeaponCtx {
   player(): Phaser.Physics.Arcade.Sprite;
   enemies(): Enemy[];
-  damageEnemy(e: Enemy, dmg: number, kx?: number, ky?: number, force?: number): void;
+  damageEnemy(e: Enemy, dmg: number, kx?: number, ky?: number, force?: number, src?: WeaponId): void;
   projectiles(): Projectiles;
   effects(): Effects;
   moveDir(): { x: number; y: number };
@@ -145,7 +145,7 @@ export class WeaponSystem {
       if (d > range + e.def.bodyRadius) continue;
       let diff = Math.abs(Phaser.Math.Angle.Wrap(Math.atan2(dy, dx) - angle));
       if (diff <= arcHalf) {
-        this.ctx.damageEnemy(e, dmg, dx, dy, 130);
+        this.ctx.damageEnemy(e, dmg, dx, dy, 130, 'sword');
       }
     }
   }
@@ -210,7 +210,7 @@ export class WeaponSystem {
         for (const e of this.ctx.enemies()) {
           const dx = e.x - x, dy = e.y - y;
           if (Math.hypot(dx, dy) <= radius + e.def.bodyRadius) {
-            this.ctx.damageEnemy(e, dmg, dx, dy, 260);
+            this.ctx.damageEnemy(e, dmg, dx, dy, 260, 'hammer');
           }
         }
       },
@@ -251,7 +251,7 @@ export class WeaponSystem {
     for (const e of this.ctx.enemies()) {
       const dx = e.x - p.x, dy = e.y - p.y;
       if (Math.hypot(dx, dy) <= radius + e.def.bodyRadius) {
-        this.ctx.damageEnemy(e, dmg, 0, 0, 0);
+        this.ctx.damageEnemy(e, dmg, 0, 0, 0, 'aura');
       }
     }
   }

@@ -19,6 +19,8 @@ export const ACHIEVEMENTS: AchievementDef[] = [
   { id: 'gold-500', name: 'Золотая жила', desc: 'Собрать 500 золота за матч', icon: 'icon-coin', emoji: '💰' },
   { id: 'chests-3', name: 'Кладоискатель', desc: 'Открыть 3 сокровища за матч', icon: 'icon-knives', emoji: '🗝️' },
   { id: 'elites-2', name: 'Гроза элит', desc: 'Повергнуть обе элиты за матч', icon: 'icon-might', emoji: '🗡️' },
+  { id: 'shieldbreaker', name: 'Взломщик стен', desc: 'Повергнуть 12 гвардейцев за матч', icon: 'icon-shield', emoji: '🛡️' },
+  { id: 'riot-quell', name: 'Усмиритель бунта', desc: 'Повергнуть 8 приказчиков за матч', icon: 'icon-haste', emoji: '🔨' },
   { id: 'boss-slayer', name: 'Повелитель поля', desc: 'Победить Чёрного Копейщика', icon: 'icon-hammer', emoji: '👑' },
   { id: 'nightmare-win', name: 'Повелитель кошмара', desc: 'Победить на сложности «Кошмар»', icon: 'icon-bomb', emoji: '🔥' },
 ];
@@ -97,6 +99,8 @@ export type AchEvent =
   | { type: 'gold'; value: number }
   | { type: 'chests'; value: number }
   | { type: 'elites'; value: number }
+  | { type: 'guards'; value: number }
+  | { type: 'taskmasters'; value: number }
   | { type: 'victory'; difficulty: string };
 
 export class AchTracker {
@@ -126,6 +130,12 @@ export class AchTracker {
         break;
       case 'elites':
         if (!this.unlocked.has('elites-2') && ev.value >= 2) this.unlock('elites-2');
+        break;
+      case 'guards':
+        if (!this.unlocked.has('shieldbreaker') && ev.value >= 12) this.unlock('shieldbreaker');
+        break;
+      case 'taskmasters':
+        if (!this.unlocked.has('riot-quell') && ev.value >= 8) this.unlock('riot-quell');
         break;
       case 'victory':
         if (!this.unlocked.has('boss-slayer')) this.unlock('boss-slayer');

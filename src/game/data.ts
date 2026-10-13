@@ -240,6 +240,7 @@ export const DIFFICULTIES: Record<DifficultyId, DifficultyDef> = {
 
 export type EnemyKind =
   | 'grunt' | 'swarm' | 'brute' | 'archer' | 'bomber'
+  | 'guard' | 'taskmaster' | 'mercenary'
   | 'elite-lancer' | 'elite-monk' | 'boss' | 'boss-minion' | 'midboss';
 
 export interface EnemyDef {
@@ -259,6 +260,8 @@ export interface EnemyDef {
   isMidboss?: boolean;  // промежуточный босс «Кошмара» (10-я минута)
   explodeDmg?: number;   // для бочки-камикадзе
   explodeRadius?: number;
+  armorFront?: number;   // Гвардеец: доля урона, блокируемая щитом (0.5 = −50%)
+  auraSpeed?: number;    // Приказчик: радиус ауры ускорения союзников
 }
 
 export const ENEMIES: Record<EnemyKind, EnemyDef> = {
@@ -282,6 +285,26 @@ export const ENEMIES: Record<EnemyKind, EnemyDef> = {
     kind: 'bomber', name: 'Бочка-камикадзе', texture: 'barrel', frameW: 192, scale: 0.42,
     bodyRadius: 17, hp: 16, speed: 105, damage: 4, xp: 2, gem: 'gem-green',
     explodeDmg: 24, explodeRadius: 150,
+  },
+  // --- Новые враги 5–9 минут (v1.8) ---
+  guard: {
+    // Гвардеец: щит блокирует половину урона в лоб; при потере 60% HP щит
+    // ломается — гвардеец впадает в ярость (без брони, но быстрее)
+    kind: 'guard', name: 'Гвардеец', texture: 'guard-idle', frameW: 192, scale: 0.58,
+    bodyRadius: 24, hp: 85, speed: 62, damage: 14, xp: 4, gem: 'gem-green',
+    armorFront: 0.5,
+  },
+  taskmaster: {
+    // Приказчик с молотом: разгоняет толпу (аура +30% скорости союзникам).
+    // Приоритетная цель — убей его и толпа замедлится
+    kind: 'taskmaster', name: 'Приказчик', texture: 'taskmaster-idle', frameW: 192, scale: 0.5,
+    bodyRadius: 20, hp: 30, speed: 78, damage: 10, xp: 5, gem: 'gem-purple',
+    auraSpeed: 250,
+  },
+  mercenary: {
+    // Наёмник-копейщик: телеграф + рывок (облегчённая версия элиты)
+    kind: 'mercenary', name: 'Копейщик-наёмник', texture: 'merc-idle', frameW: 320, scale: 0.55,
+    bodyRadius: 24, hp: 48, speed: 88, damage: 18, xp: 4, gem: 'gem-green',
   },
   'elite-lancer': {
     kind: 'elite-lancer', name: 'Копейщик-изгой', texture: 'enemy-lancer', frameW: 320, scale: 0.75,
@@ -326,10 +349,14 @@ export const WAVE_EVENTS: WaveEvent[] = [
   { t: 240, type: 'ring', enemy: 'brute', count: 14 },
   { t: 300, type: 'elite', enemy: 'elite-lancer' },
   { t: 300, type: 'rate', interval: 500 },
+  { t: 330, type: 'ring', enemy: 'guard', count: 6, note: 'стена щитов' },
   { t: 390, type: 'ring', enemy: 'bomber', count: 8, note: 'бочковый залп' },
+  { t: 410, type: 'ring', enemy: 'taskmaster', count: 3, note: 'надсмотрщики' },
   { t: 420, type: 'rate', interval: 450 },
+  { t: 450, type: 'ring', enemy: 'mercenary', count: 5, note: 'отряд наёмников' },
   { t: 480, type: 'ring', enemy: 'swarm', count: 32 },
   { t: 480, type: 'rate', interval: 400 },
+  { t: 540, type: 'ring', enemy: 'guard', count: 8, note: 'стена щитов' },
   { t: 600, type: 'elite', enemy: 'elite-monk', diff: 'normal' },
   { t: 600, type: 'elite', enemy: 'midboss', diff: 'nightmare' },
   { t: 600, type: 'rate', interval: 370 },
@@ -345,6 +372,9 @@ export function pickRegularKind(minute: number, rng: () => number): EnemyKind {
   if (minute >= 5 && r < 0.38) return 'archer';
   if (minute >= 1 && r < 0.62) return 'swarm';
   if (minute >= 4 && r < 0.74) return 'bomber';
+  if (minute >= 5 && r < 0.86) return 'guard';
+  if (minute >= 6 && r < 0.92) return 'taskmaster';
+  if (minute >= 7 && r < 0.99) return 'mercenary';
   return 'grunt';
 }
 

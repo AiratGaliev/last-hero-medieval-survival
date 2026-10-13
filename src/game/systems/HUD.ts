@@ -44,6 +44,13 @@ export class HUD {
   private goldText!: Phaser.GameObjects.Text;
   private scoreText!: Phaser.GameObjects.Text;
   private announceText!: Phaser.GameObjects.Text;
+  // HP-бар: мгновенная полоса + «призрак» урона (медленно догоняет)
+  private hpIcon!: Phaser.GameObjects.Image;
+  private hpBarBg!: Phaser.GameObjects.Rectangle;
+  private hpGhost!: Phaser.GameObjects.Rectangle;
+  private hpFill!: Phaser.GameObjects.Rectangle;
+  private hpText!: Phaser.GameObjects.Text;
+  private hpLastFrac = -1;
   // Кнопка паузы: три РОВНЯХ top-level sf=0-объекта (без контейнера!) —
   // баг Phaser 4.2.1: hit-тест вложенных в sf-контейнер объектов не учитывает
   // scrollFactor контейнера → кнопка в контейнере некликабельна при скролле.
@@ -97,6 +104,17 @@ export class HUD {
       fontFamily: FONT, fontSize: '10px', color: '#d8c9a8',
       stroke: '#1b1008', strokeThickness: 3,
     });
+
+    // HP-бар игрока (v1.8): сердце + полоса с «призраком» урона
+    this.hpIcon = this.scene.add.image(0, 0, 'icon-heart').setDisplaySize(15, 15);
+    this.hpBarBg = this.scene.add.rectangle(0, 0, 154, 15, 0x1b1008, 0.9).setOrigin(0, 0.5)
+      .setStrokeStyle(1, 0x000000, 0.35);
+    this.hpGhost = this.scene.add.rectangle(0, 0, 150, 11, 0xffb090, 0.9).setOrigin(0, 0.5);
+    this.hpFill = this.scene.add.rectangle(0, 0, 150, 11, 0x53b44a).setOrigin(0, 0.5);
+    this.hpText = this.scene.add.text(0, 0, '', {
+      fontFamily: FONT, fontSize: '10px', color: '#ffffff',
+      stroke: '#1b1008', strokeThickness: 3,
+    }).setOrigin(0, 0.5);
 
     this.goldIcon = this.scene.add.image(0, 0, 'icon-coin').setDisplaySize(14, 14);
     this.goldText = this.scene.add.text(0, 0, '0', {
@@ -169,6 +187,7 @@ export class HUD {
     const base: Phaser.GameObjects.GameObject[] = [
       this.xpBarBg, this.xpBarFill, this.xpLabel,
       this.timerText, this.statsText, this.goldIcon, this.goldText,
+      this.hpIcon, this.hpBarBg, this.hpGhost, this.hpFill, this.hpText,
       this.scoreText,
     ];
     if (this.diffTag) base.push(this.diffTag);
@@ -189,9 +208,15 @@ export class HUD {
     this.xpBarFill.setPosition(2, 8);
     this.xpLabel.setPosition(W / 2, 8);
     this.timerText.setPosition(12, 34);
-    this.statsText.setPosition(12, 62);
-    this.goldIcon.setPosition(12, 82);
-    this.goldText.setPosition(30, 82);
+    // HP-бар: под таймером; полоса 150px + сердце + текст
+    this.hpIcon.setPosition(19, 55);
+    this.hpBarBg.setPosition(30, 55);
+    this.hpGhost.setPosition(32, 55);
+    this.hpFill.setPosition(32, 55);
+    this.hpText.setPosition(32 + 150 + 6, 55);
+    this.statsText.setPosition(12, 78);
+    this.goldIcon.setPosition(12, 98);
+    this.goldText.setPosition(30, 98);
     this.scoreText.setPosition(W - 12, 34);
     this.diffTag?.setPosition(W - 12, 54);
     // Анонс: на низких экранах опускаем ниже, чтобы не наезжать на босс-бар
@@ -265,6 +290,9 @@ export class HUD {
     this.goldText.setText(`${s.gold}`);
     this.scoreText.setText(`СЧЁТ ${s.score.toLocaleString('ru-RU')}`);
 
+    // HP-бар: полоса + «призрак» урона (медленно догоняет после удара)
+    this.updateHpBar(s.hp, s.maxHp);
+
     // Виньетка низкого HP
     const hpFrac = s.hp / Math.max(1, s.maxHp);
     if (hpFrac < 0.3) {
@@ -275,6 +303,80 @@ export class HUD {
     } else {
       for (const r of this.vignetteRects) r.setVisible(false);
     }
+  }
+
+  /** Полоса HP: быстрая полоса + медленный «призрак» (классика файтингов) */
+  private updateHpBar(hp: number, maxHp: number): void {
+    const frac = Phaser.Math.Clamp(hp / Math.max(1, maxHp), 0, 1);
+    const W = 150;
+    const color = frac > 0.5 ? 0x53b44a : frac > 0.25 ? 0xe0a030 : 0xd03028;
+    this.hpFill.setFillStyle(color);
+    this.hpText.setText(`${Math.ceil(hp)}/${maxHp}`);
+    this.hpText.setColor(frac > 0.25 ? '#ffffff' : '#ff9a8a');
+    if (this.hpLastFrac < 0) {
+      // первый кадр — без анимации
+      this.hpFill.width = W * frac;
+      this.hpGhost.width = Math.max(1, W * frac);
+      this.hpLastFrac = frac;
+      return;
+    }
+    this.scene.tweens.killTweensOf(this.hpFill);
+    this.scene.tweens.add({
+      targets: this.hpFill, width: Math.max(1, W * frac),
+      duration: 130, ease: 'Quad.easeOut',
+    });
+    if (frac >= this.hpLastFrac) {
+      // лечение/первый показ: призрак подтягивается сразу
+      this.scene.tweens.killTweensOf(this.hpGhost);
+      this.hpGhost.width = Math.max(1, W * frac);
+    } else {
+      // урон: призрак держится и медленно тает
+      this.scene.tweens.killTweensOf(this.hpGhost);
+      this.scene.tweens.add({
+        targets: this.hpGhost, width: Math.max(1, W * frac),
+        duration: 430, delay: 240, ease: 'Quad.easeIn',
+      });
+    }
+    this.hpLastFrac = frac;
+  }
+
+  /** Кино-заставка босса: чёрные полосы + имя (не блокирует игру) */
+  bossIntro(name: string, subtitle = 'ФИНАЛЬНЫЙ БОСС'): void {
+    const W = this.scene.scale.width;
+    const H = this.scene.scale.height;
+    const barH = Math.max(38, H * 0.085);
+    const c = this.scene.add.container(0, 0);
+    const topBar = this.scene.add.rectangle(W / 2, -barH / 2 - 2, W + 8, barH, 0x07070d, 0.94).setOrigin(0.5);
+    const botBar = this.scene.add.rectangle(W / 2, H + barH / 2 + 2, W + 8, barH, 0x07070d, 0.94).setOrigin(0.5);
+    const sub = this.scene.add.text(W / 2, H / 2 - 34, subtitle, {
+      fontFamily: FONT, fontSize: '13px', color: '#ff8a7a',
+      stroke: '#1b1008', strokeThickness: 5,
+    }).setOrigin(0.5).setAlpha(0);
+    const title = this.scene.add.text(W / 2, H / 2, name, {
+      fontFamily: FONT, fontSize: H < 600 ? '22px' : '30px', color: '#ffd700',
+      stroke: '#5a0808', strokeThickness: 8,
+    }).setOrigin(0.5).setAlpha(0).setScale(0.7);
+    c.add([topBar, botBar, sub, title]);
+    this.root.add(c);
+    // Полосы въезжают
+    this.scene.tweens.add({ targets: topBar, y: barH / 2 + 1, duration: 240, ease: 'Cubic.easeOut' });
+    this.scene.tweens.add({ targets: botBar, y: H - barH / 2 - 1, duration: 240, ease: 'Cubic.easeOut' });
+    // Имя вспыхивает
+    this.scene.tweens.add({ targets: [sub, title], alpha: 1, duration: 200, delay: 160 });
+    this.scene.tweens.add({ targets: title, scale: 1, duration: 340, delay: 160, ease: 'Back.easeOut' });
+    // ...и всё уезжает
+    this.scene.tweens.add({
+      targets: [sub, title], alpha: 0, duration: 260, delay: 1750,
+      onComplete: () => {
+        this.scene.tweens.add({
+          targets: topBar, y: -barH / 2 - 2, duration: 260, ease: 'Cubic.easeIn',
+        });
+        this.scene.tweens.add({
+          targets: botBar, y: H + barH / 2 + 2, duration: 260, ease: 'Cubic.easeIn',
+          onComplete: () => c.destroy(),
+        });
+      },
+    });
   }
 
   announce(text: string, color = '#ffffff'): void {

@@ -58,6 +58,10 @@ export class MenuScene extends Phaser.Scene {
   private shopRowEls: Phaser.GameObjects.Container[] = [];
   private shopBalanceText: Phaser.GameObjects.Text | null = null;
   private shopRowsY = 0;
+  // Рекорды: фильтр (все/победы) + кэш строк API для перерисовки без refetch
+  private recordsFilter: 'all' | 'win' = 'all';
+  private recordsRows: ScoreRow[] = [];
+  private recordsListEls: Phaser.GameObjects.GameObject[] = [];
 
   // Достижения
   private achDesc: Phaser.GameObjects.Text | null = null;
@@ -152,9 +156,21 @@ export class MenuScene extends Phaser.Scene {
       duration: 480,
       ease: 'Back.easeOut',
     });
+    // Живой логотип: мягкое парение (после входной анимации)
+    this.tweens.add({
+      targets: this.logo, y: '+=6',
+      duration: 2300, yoyo: true, repeat: -1, ease: 'Sine.easeInOut', delay: 500,
+    });
+    this.tweens.add({
+      targets: this.logo2, y: '+=6',
+      duration: 2300, yoyo: true, repeat: -1, ease: 'Sine.easeInOut', delay: 800,
+    });
     if (width >= 760) {
-      this.add.image(width / 2 - 330, titleY + 20, 'swords').setDisplaySize(110, 158).setAlpha(0.85);
-      this.add.image(width / 2 + 330, titleY + 20, 'swords').setDisplaySize(110, 158).setFlipX(true).setAlpha(0.85);
+      const swL = this.add.image(width / 2 - 330, titleY + 20, 'swords').setDisplaySize(110, 158).setAlpha(0.85);
+      const swR = this.add.image(width / 2 + 330, titleY + 20, 'swords').setDisplaySize(110, 158).setFlipX(true).setAlpha(0.85);
+      // Мечи дышат в противофазе с логотипом
+      this.tweens.add({ targets: swL, y: '-=5', duration: 2600, yoyo: true, repeat: -1, ease: 'Sine.easeInOut' });
+      this.tweens.add({ targets: swR, y: '+=5', duration: 2600, yoyo: true, repeat: -1, ease: 'Sine.easeInOut' });
     }
 
     // Кошелёк в углу — видно мета-золото до захода в лавку;
@@ -244,7 +260,7 @@ export class MenuScene extends Phaser.Scene {
       });
     }
 
-    this.add.text(width / 2, height - 12, 'v1.7 • Phaser 4 • ассеты Pixel Frog «Tiny Swords»', {
+    this.add.text(width / 2, height - 12, 'v1.8 • Phaser 4 • ассеты Pixel Frog «Tiny Swords»', {
       fontFamily: FONT, fontSize: '11px', color: '#3b2410',
     }).setOrigin(0.5).setAlpha(0.8);
 
@@ -515,14 +531,46 @@ export class MenuScene extends Phaser.Scene {
     const headerStyle: Phaser.Types.GameObjects.Text.TextStyle = {
       fontFamily: FONT, fontSize: '10px', color: '#cbb389',
     };
-    container.add(this.add.text(left, top + 76, '#', { ...headerStyle }).setOrigin(0, 0.5));
-    container.add(this.add.text(colName, top + 76, 'ГЕРОЙ', { ...headerStyle }).setOrigin(0, 0.5));
-    container.add(this.add.text(colScore, top + 76, 'СЧЁТ', { ...headerStyle }).setOrigin(1, 0.5));
-    container.add(this.add.text(colKills, top + 76, 'УБ.', { ...headerStyle }).setOrigin(1, 0.5));
-    container.add(this.add.text(right, top + 76, 'ВРЕМЯ', { ...headerStyle }).setOrigin(1, 0.5));
+    container.add(this.add.text(left, top + 100, '#', { ...headerStyle }).setOrigin(0, 0.5));
+    container.add(this.add.text(colName, top + 100, 'ГЕРОЙ', { ...headerStyle }).setOrigin(0, 0.5));
+    container.add(this.add.text(colScore, top + 100, 'СЧЁТ', { ...headerStyle }).setOrigin(1, 0.5));
+    container.add(this.add.text(colKills, top + 100, 'УБ.', { ...headerStyle }).setOrigin(1, 0.5));
+    container.add(this.add.text(right, top + 100, 'ВРЕМЯ', { ...headerStyle }).setOrigin(1, 0.5));
     const hr = this.add.graphics();
-    hr.lineStyle(1, 0x8a6d3b, 0.6).lineBetween(left, top + 90, right, top + 90);
+    hr.lineStyle(1, 0x8a6d3b, 0.6).lineBetween(left, top + 114, right, top + 114);
     container.add(hr);
+
+    // ---------- Фильтр: все заезды / только победы ----------
+    const chipY = top + 76;
+    const chipW = 96;
+    const chips: Array<{ key: 'all' | 'win'; label: string }> = [
+      { key: 'all', label: 'ВСЕ' },
+      { key: 'win', label: '★ ПОБЕДЫ' },
+    ];
+    const chipEls: Array<{ bg: Phaser.GameObjects.Rectangle; txt: Phaser.GameObjects.Text }> = [];
+    chips.forEach((c, i) => {
+      const x = cx + (i === 0 ? -chipW - 4 : 4) + chipW / 2;
+      const bg = this.add.rectangle(x, chipY, chipW, 24, 0x3b2410, 1)
+        .setStrokeStyle(2, this.recordsFilter === c.key ? 0xffd76e : 0x8a6d3b, 1);
+      const txt = this.add.text(x, chipY, c.label, {
+        fontFamily: FONT, fontSize: '11px', color: this.recordsFilter === c.key ? '#ffd76e' : '#cbb389',
+      }).setOrigin(0.5);
+      const hit = this.add.zone(x, chipY, chipW + 8, 30).setInteractive({ useHandCursor: true });
+      hit.on('pointerdown', () => {
+        if (this.recordsFilter === c.key) return;
+        audio.play('click');
+        this.recordsFilter = c.key;
+        this.renderRecords(container, left, right, colName, colScore, colKills, top);
+        // Перекрасить чипы
+        chipEls.forEach((els, j) => {
+          const active = this.recordsFilter === chips[j].key;
+          els.txt.setColor(active ? '#ffd76e' : '#cbb389');
+          els.bg.setStrokeStyle(2, active ? 0xffd76e : 0x8a6d3b, 1);
+        });
+      });
+      container.add([bg, txt, hit]);
+      chipEls.push({ bg, txt });
+    });
 
     try {
       const res = await fetch('/api/scores?limit=10');
@@ -530,33 +578,8 @@ export class MenuScene extends Phaser.Scene {
       const rows: ScoreRow[] = await res.json();
       if (!container.active) return; // оверлей закрыли, пока грузился ответ
       loading.destroy();
-
-      if (rows.length === 0) {
-        container.add(this.add.text(cx, cy, 'пока никто не выживал...\nстань первым героем!', {
-          fontFamily: FONT, fontSize: '15px', color: '#cbb389', align: 'center', lineSpacing: 8,
-        }).setOrigin(0.5));
-      } else {
-        const style: Phaser.Types.GameObjects.Text.TextStyle = {
-          fontFamily: FONT, fontSize: '13px', color: '#ffe9c0',
-        };
-        rows.forEach((r, i) => {
-          const y = top + 112 + i * 26;
-          const medal = i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : `${i + 1}.`;
-          container.add(this.add.text(left, y, medal, {
-            ...style, color: i < 3 ? '#ffd76e' : '#cbb389',
-          }).setOrigin(0, 0.5));
-          container.add(this.add.text(colName, y, `${r.name.slice(0, 13)}${r.victory ? ' ★' : ''}`, {
-            ...style, color: i === 0 ? '#ffd76e' : '#ffe9c0',
-          }).setOrigin(0, 0.5));
-          container.add(this.add.text(colScore, y, r.score.toLocaleString('ru-RU'), {
-            ...style, color: '#ffd76e',
-          }).setOrigin(1, 0.5));
-          container.add(this.add.text(colKills, y, `${r.kills}`, { ...style }).setOrigin(1, 0.5));
-          const m = Math.floor(r.timeSurvived / 60);
-          const s = Math.floor(r.timeSurvived % 60).toString().padStart(2, '0');
-          container.add(this.add.text(right, y, `${m}:${s}`, { ...style }).setOrigin(1, 0.5));
-        });
-      }
+      this.recordsRows = rows;
+      this.renderRecords(container, left, right, colName, colScore, colKills, top);
     } catch {
       if (!container.active) return;
       loading.destroy();
@@ -573,6 +596,55 @@ export class MenuScene extends Phaser.Scene {
     }).setOrigin(0.5));
 
     this.backButton(top + paperH + 42);
+  }
+
+  /** Отрисовка строк таблицы рекордов с учётом активного фильтра */
+  private renderRecords(
+    container: Phaser.GameObjects.Container,
+    left: number, right: number, colName: number, colScore: number, colKills: number,
+    top: number,
+  ): void {
+    for (const o of this.recordsListEls) o.destroy();
+    this.recordsListEls = [];
+    const cx = this.vw / 2;
+    const cy = this.vh / 2;
+    const rows = this.recordsFilter === 'win'
+      ? this.recordsRows.filter((r) => r.victory)
+      : this.recordsRows;
+    if (rows.length === 0) {
+      const empty = this.add.text(cx, cy + 20, this.recordsFilter === 'win'
+        ? 'пока никто не одолел босса...\nстань первым!'
+        : 'пока никто не выживал...\nстань первым героем!', {
+        fontFamily: FONT, fontSize: '15px', color: '#cbb389', align: 'center', lineSpacing: 8,
+      }).setOrigin(0.5);
+      container.add(empty);
+      this.recordsListEls.push(empty);
+      return;
+    }
+    const style: Phaser.Types.GameObjects.Text.TextStyle = {
+      fontFamily: FONT, fontSize: '13px', color: '#ffe9c0',
+    };
+    rows.forEach((r, i) => {
+      const y = top + 136 + i * 26;
+      const medal = i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : `${i + 1}.`;
+      const els: Phaser.GameObjects.GameObject[] = [
+        this.add.text(left, y, medal, {
+          ...style, color: i < 3 ? '#ffd76e' : '#cbb389',
+        }).setOrigin(0, 0.5),
+        this.add.text(colName, y, `${r.name.slice(0, 13)}${r.victory ? ' ★' : ''}`, {
+          ...style, color: i === 0 ? '#ffd76e' : '#ffe9c0',
+        }).setOrigin(0, 0.5),
+        this.add.text(colScore, y, r.score.toLocaleString('ru-RU'), {
+          ...style, color: '#ffd76e',
+        }).setOrigin(1, 0.5),
+        this.add.text(colKills, y, `${r.kills}`, { ...style }).setOrigin(1, 0.5),
+      ];
+      const m = Math.floor(r.timeSurvived / 60);
+      const s = Math.floor(r.timeSurvived % 60).toString().padStart(2, '0');
+      els.push(this.add.text(right, y, `${m}:${s}`, { ...style }).setOrigin(1, 0.5));
+      container.add(els);
+      this.recordsListEls.push(...els);
+    });
   }
 
   // ================================================================

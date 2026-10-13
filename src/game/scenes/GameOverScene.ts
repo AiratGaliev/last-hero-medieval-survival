@@ -16,6 +16,7 @@ export interface GameOverStats {
   score: number;
   hero?: string;
   difficulty?: string;
+  weapons?: { id: string; icon: string; name: string; dmg: number; kills: number }[];
   newAch?: { name: string; emoji: string }[];
 }
 
@@ -109,6 +110,9 @@ export class GameOverScene extends Phaser.Scene {
       cursor += compact ? 20 : 24;
     }
 
+    // ---------- Статистика оружия (v1.8) ----------
+    cursor = this.renderWeaponStats(s, cursor, compact, width);
+
     // ---------- Новые достижения (не в компактном режиме) ----------
     if (!compact && s.newAch && s.newAch.length > 0) {
       this.add.text(width / 2, cursor, 'НОВЫЕ ДОСТИЖЕНИЯ:', {
@@ -158,6 +162,68 @@ export class GameOverScene extends Phaser.Scene {
       this.nameInput = null;
       this.scale.off('resize', this.rebuild, this);
     });
+  }
+
+  // ================================================================
+  // Панель статистики оружия: урон/убийства каждого ствола матча
+  // ================================================================
+
+  private renderWeaponStats(s: GameOverStats, cursor: number, compact: boolean, width: number): number {
+    const list = (s.weapons ?? []).filter((w) => w.dmg > 0);
+    if (list.length === 0) return cursor;
+    const cx = width / 2;
+
+    if (compact) {
+      // Компактный ландшафт: одна строка с топ-3 оружием
+      const top = list.slice(0, 3)
+        .map((w) => `${w.name} ${this.fmtDmg(w.dmg)}⚡${w.kills}`)
+        .join(' • ');
+      this.add.text(cx, cursor, top, {
+        fontFamily: FONT, fontSize: '10px', color: '#ffd76e',
+        stroke: '#1b1008', strokeThickness: 3,
+      }).setOrigin(0.5).setScrollFactor(0)
+        .setWordWrapWidth(Math.min(460, width - 40));
+      return cursor + 26;
+    }
+
+    // Полный режим: заголовок + строки с полосами урона
+    this.add.text(cx, cursor, '⚔ УРОН ПО ОРУЖИЮ', {
+      fontFamily: FONT, fontSize: '11px', color: '#cbb389',
+      stroke: '#1b1008', strokeThickness: 4,
+    }).setOrigin(0.5).setScrollFactor(0);
+    cursor += 18;
+
+    const maxDmg = Math.max(...list.map((w) => w.dmg), 1);
+    const rowW = Math.min(380, width - 90);
+    const barMax = rowW - 150;
+    list.slice(0, 7).forEach((w, i) => {
+      const y = cursor + i * 22;
+      // Иконка + имя
+      this.add.image(cx - rowW / 2 + 10, y - 2, w.icon).setDisplaySize(20, 20).setScrollFactor(0);
+      this.add.text(cx - rowW / 2 + 26, y - 2, w.name, {
+        fontFamily: FONT, fontSize: '10px', color: '#ffe9b0',
+        stroke: '#1b1008', strokeThickness: 3,
+      }).setOrigin(0, 0.5).setScrollFactor(0);
+      // Полоса урона (относительно лучшего оружия)
+      const barW = Math.max(4, Math.round(barMax * (w.dmg / maxDmg)));
+      this.add.rectangle(cx - rowW / 2 + 128, y - 2, barMax, 8, 0x2a1c10, 0.9)
+        .setOrigin(0, 0.5).setScrollFactor(0);
+      const bar = this.add.rectangle(cx - rowW / 2 + 128, y - 2, 4, 6, i === 0 ? 0xffd76e : 0xd0883a)
+        .setOrigin(0, 0.5).setScrollFactor(0);
+      this.tweens.add({ targets: bar, width: barW, duration: 500, delay: 150 + i * 70, ease: 'Cubic.easeOut' });
+      // Числа: урон и убийства
+      this.add.text(cx + rowW / 2, y - 2, `${this.fmtDmg(w.dmg)}  ⚔${w.kills}`, {
+        fontFamily: FONT, fontSize: '10px', color: '#ffd76e',
+        stroke: '#1b1008', strokeThickness: 3,
+      }).setOrigin(1, 0.5).setScrollFactor(0);
+    });
+    return cursor + Math.min(list.length, 7) * 22 + 10;
+  }
+
+  private fmtDmg(v: number): string {
+    if (v >= 10000) return `${(v / 1000).toFixed(1)}k`;
+    if (v >= 1000) return `${(v / 1000).toFixed(2)}k`;
+    return `${Math.round(v)}`;
   }
 
   // ================================================================

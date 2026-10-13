@@ -21,6 +21,15 @@ import { getShopLevels, type ShopLevels } from '../shop';
 
 type Keys = Record<string, Phaser.Input.Keyboard.Key>;
 
+/** Статистика оружия за матч (для экрана результатов) */
+export interface WeaponStat {
+  id: WeaponId;
+  icon: string;
+  name: string;
+  dmg: number;
+  kills: number;
+}
+
 // ============ Основная игровая сцена ============
 
 export class GameScene extends Phaser.Scene {
@@ -76,6 +85,14 @@ export class GameScene extends Phaser.Scene {
   private hitstopUntil = 0;
   private ach: AchTracker | null = null;
   private shopLevels: ShopLevels = { might: 0, vitality: 0, speed: 0, magnet: 0, luck: 0 };
+  // Новые типы врагов: счётчики для достижений
+  private guardsSlain = 0;
+  private taskmastersSlain = 0;
+  /** Статистика урона/убийств по оружию */
+  private weaponStats = new Map<WeaponId, { dmg: number; kills: number }>();
+  /** Амбиентная тонировка суток (MULTIPLY-прямоугольник на весь экран) */
+  private ambientRect: Phaser.GameObjects.Rectangle | null = null;
+  private lastAmbientUpdate = -1;
 
   constructor() {
     super('Game');
@@ -99,6 +116,12 @@ export class GameScene extends Phaser.Scene {
     this.cameras.main.setBackgroundColor('#3a7bd5');
     this.cameras.main.setBounds(0, 0, WORLD.SIZE, WORLD.SIZE);
     this.cameras.main.startFollow(this.player, true, 0.12, 0.1);
+    // Амбиент суток: MULTIPLY-прямоугольник над миром, но ПОД HUD — смена
+    // освещения от полудня к ночи за 15 минут (финальный босс — ночью)
+    this.ambientRect = this.add.rectangle(
+      this.scale.width / 2, this.scale.height / 2,
+      this.scale.width + 4, this.scale.height + 4, 0xffffff,
+    ).setScrollFactor(0).setDepth(DEPTH.HUD - 50).setBlendMode(Phaser.BlendModes.MULTIPLY);
     this.events.once('shutdown', () => {
       this.scale.off('resize', this.resizeZoom, this);
       this.weapons?.destroy();
@@ -131,6 +154,12 @@ export class GameScene extends Phaser.Scene {
     this.chestsOpened = 0;
     this.elitesSlain = 0;
     this.hitstopUntil = 0;
+    this.guardsSlain = 0;
+    this.taskmastersSlain = 0;
+    this.weaponStats.clear();
+    this.ambientRect?.destroy();
+    this.ambientRect = null;
+    this.lastAmbientUpdate = -1;
     this.registry.set('tss-freeze', 0);
     this.lastMove = { x: 1, y: 0 };
     this.sepGrid.clear();
@@ -300,7 +329,7 @@ export class GameScene extends Phaser.Scene {
       (v, x, y) => this.addGold(v, x, y),
     );
     this.projectiles = new Projectiles(this, {
-      onExplode: (x, y, dmg, radius) => this.explode(x, y, dmg, radius),
+      onExplode: (x, y, dmg, radius) => this.explode(x, y, dmg, radius, 'bomb'),
     });
     this.enemyGroup = this.physics.add.group();
     this.enemyCtxStore = this.makeEnemyCtx();
@@ -325,7 +354,7 @@ export class GameScene extends Phaser.Scene {
     const weaponCtx: WeaponCtx = {
       player: () => this.player,
       enemies: () => this.activeEnemies(),
-      damageEnemy: (e, dmg, kx, ky, force) => this.damageEnemy(e, dmg, kx, ky, force),
+      damageEnemy: (e, dmg, kx, ky, force, src) => this.damageEnemy(e, dmg, kx, ky, force, src),
       projectiles: () => this.projectiles,
       effects: () => this.effects,
       moveDir: () => this.lastMove,
@@ -356,7 +385,7 @@ export class GameScene extends Phaser.Scene {
       if (!p.active || !enemy.active) return;
       if (p.hitSet?.has(enemy)) return;
       p.hitSet?.add(enemy);
-      this.damageEnemy(enemy, p.dmg, enemy.x - this.player.x, enemy.y - this.player.y, 90);
+      this.damageEnemy(enemy, p.dmg, enemy.x - this.player.x, enemy.y - this.player.y, 90, 'bow');
       this.projectiles.consumePierce(p);
     });
 
@@ -366,7 +395,7 @@ export class GameScene extends Phaser.Scene {
       if (!p.active || !enemy.active) return;
       if (p.hitSet?.has(enemy)) return;
       p.hitSet?.add(enemy);
-      this.damageEnemy(enemy, p.dmg, 0, 0, 40);
+      this.damageEnemy(enemy, p.dmg, 0, 0, 40, 'spear');
       this.projectiles.consumePierce(p);
     });
 
@@ -376,7 +405,7 @@ export class GameScene extends Phaser.Scene {
       if (!p.active || !enemy.active) return;
       if (p.hitSet?.has(enemy)) return;
       p.hitSet?.add(enemy);
-      this.damageEnemy(enemy, p.dmg, enemy.x - this.player.x, enemy.y - this.player.y, 70);
+      this.damageEnemy(enemy, p.dmg, enemy.x - this.player.x, enemy.y - this.player.y, 70, 'knives');
       this.projectiles.consumePierce(p);
     });
 
@@ -509,6 +538,9 @@ export class GameScene extends Phaser.Scene {
       });
     }
 
+    // Смена освещения (троттлировано внутри)
+    this.updateAmbient();
+
     // Левел-ап
     if (this.pendingLevelUps > 0 && !this.overlayOpen && !this.gameEnded && !this.victoryPending) {
       this.openLevelUp();
@@ -535,7 +567,7 @@ export class GameScene extends Phaser.Scene {
     this.registry.set('tss-freeze', this.hitstopUntil);
   }
 
-  private damageEnemy(e: Enemy, dmg: number, kx = 0, ky = 0, force = 0): void {
+  private damageEnemy(e: Enemy, dmg: number, kx = 0, ky = 0, force = 0, src?: WeaponId): void {
     if (!e.active || e.dead) return;
     let final = dmg * this.mightMult;
     const crit = Math.random() < this.critChance;
@@ -545,19 +577,26 @@ export class GameScene extends Phaser.Scene {
     if (Math.random() < 0.6) this.effects.hitSpark(e.x, e.y - 26 * e.def.scale);
     if (force > 0) e.knockback(kx, ky, force);
     this.effects.hitSound(this.time.now);
-    if (e.takeDamage(final)) {
-      this.onEnemyDeath(e);
+    const died = e.takeDamage(final);
+    if (src) {
+      const st = this.weaponStats.get(src) ?? { dmg: 0, kills: 0 };
+      st.dmg += final;
+      if (died) st.kills++;
+      this.weaponStats.set(src, st);
+    }
+    if (died) {
+      this.onEnemyDeath(e, src);
     }
   }
 
-  private explode(x: number, y: number, dmg: number, radius: number): void {
+  private explode(x: number, y: number, dmg: number, radius: number, src?: WeaponId): void {
     this.effects.explosion(x, y, 1.1, 2);
     audio.play('explosion');
     this.cameras.main.shake(160, 0.004);
     for (const e of this.activeEnemies()) {
       const dx = e.x - x, dy = e.y - y;
       if (Math.hypot(dx, dy) <= radius + e.def.bodyRadius) {
-        this.damageEnemy(e, dmg, dx, dy, 320);
+        this.damageEnemy(e, dmg, dx, dy, 320, src);
       }
     }
   }
@@ -575,7 +614,7 @@ export class GameScene extends Phaser.Scene {
     if (dead) this.gameOver(false);
   }
 
-  private onEnemyDeath(e: Enemy): void {
+  private onEnemyDeath(e: Enemy, src?: WeaponId): void {
     if (!e.active) return;
     // Убираем из мира СРАЗУ: цепные взрывы не должны повторно бить погибающего
     const x = e.x, y = e.y;
@@ -584,11 +623,19 @@ export class GameScene extends Phaser.Scene {
     this.kills++;
     this.score += SCORE.KILL;
     this.ach?.event({ type: 'kills', value: this.kills });
+    // Счётчики новых врагов → достижения
+    if (e.kind === 'guard') {
+      this.guardsSlain++;
+      this.ach?.event({ type: 'guards', value: this.guardsSlain });
+    } else if (e.kind === 'taskmaster') {
+      this.taskmastersSlain++;
+      this.ach?.event({ type: 'taskmasters', value: this.taskmastersSlain });
+    }
     const big = e.def.isElite || e.def.isBoss || e.def.isMidboss;
 
     // Бочка-камикадзе, убитая оружием: взрыв бьёт врагов (цепная реакция!)
     if (e.def.kind === 'bomber') {
-      this.bomberExplosion(x, y, false);
+      this.bomberExplosion(x, y, false, src);
     }
 
     this.effects.explosion(x, y, big ? 1.7 : e.def.scale * 1.15, big ? 2 : 1);
@@ -632,7 +679,7 @@ export class GameScene extends Phaser.Scene {
   }
 
   /** Взрыв бочки-камикадзе. selfDestruct=true — сама доехала до игрока. */
-  private bomberExplosion(x: number, y: number, selfDestruct: boolean): void {
+  private bomberExplosion(x: number, y: number, selfDestruct: boolean, src?: WeaponId): void {
     const def = ENEMIES.bomber;
     const dmg = def.explodeDmg ?? 24;
     const R = def.explodeRadius ?? 150;
@@ -648,7 +695,7 @@ export class GameScene extends Phaser.Scene {
     for (const s of this.enemiesNear(x, y, R + 40)) {
       const e = s as Enemy;
       if (!e.active || e.def.isBoss) continue;
-      this.damageEnemy(e, dmg * 0.8, e.x - x, e.y - y, 260);
+      this.damageEnemy(e, dmg * 0.8, e.x - x, e.y - y, 260, src);
     }
   }
 
@@ -708,6 +755,7 @@ export class GameScene extends Phaser.Scene {
     if (def.isMidboss) {
       this.midboss = e;
       this.hud.showBossBar(def.name);
+      this.hud.bossIntro(def.name, 'СТРАЖ КОШМАРА');
       this.cameras.main.shake(350, 0.007);
     }
   }
@@ -722,6 +770,7 @@ export class GameScene extends Phaser.Scene {
     this.boss.speed = Math.round(this.boss.speed * this.diffDef.speedMult);
     this.enemyGroup.add(this.boss);
     this.hud.showBossBar(ENEMIES.boss.name);
+    this.hud.bossIntro(ENEMIES.boss.name, this.diffDef.id === 'nightmare' ? 'КОШМАР: ФИНАЛЬНЫЙ БОСС' : 'ФИНАЛЬНЫЙ БОСС');
     this.cameras.main.shake(400, 0.008);
   }
 
@@ -998,6 +1047,10 @@ export class GameScene extends Phaser.Scene {
     audio.stopMusic();
 
     const finalScore = this.currentScore();
+    // Статистика оружия: сортировка по суммарному урону
+    const weapons: WeaponStat[] = [...this.weaponStats.entries()]
+      .map(([id, st]) => ({ id, icon: WEAPONS[id].icon, name: WEAPONS[id].name, dmg: st.dmg, kills: st.kills }))
+      .sort((a, b) => b.dmg - a.dmg);
     const stats = {
       victory,
       time: Math.floor(this.elapsed),
@@ -1007,6 +1060,7 @@ export class GameScene extends Phaser.Scene {
       score: finalScore,
       hero: this.heroDef.name,
       difficulty: this.diffDef.name,
+      weapons,
       newAch: (this.ach?.newlyUnlocked ?? []).map((a) => ({ name: a.name, emoji: a.emoji })),
     };
     // Мета-статистика (localStorage) для React-сайдбара
@@ -1026,6 +1080,42 @@ export class GameScene extends Phaser.Scene {
     const h = this.scale.height;
     const z = Math.min(w / 1152, h / 700);
     this.cameras.main.setZoom(Phaser.Math.Clamp(z, 0.55, 1.25));
+    if (this.ambientRect) {
+      this.ambientRect.setPosition(w / 2, h / 2).setSize(w + 4, h + 4);
+    }
+  }
+
+  /** Плавная смена освещения: полдень → закат → ночь (к боссу в 15:00) */
+  private updateAmbient(): void {
+    if (!this.ambientRect) return;
+    // Троттлинг: цвет меняется медленно, хватит обновления раз в 0.5с
+    if (this.lastAmbientUpdate >= 0 && this.elapsed - this.lastAmbientUpdate < 0.5) return;
+    this.lastAmbientUpdate = this.elapsed;
+    // Ключевые точки: [секунды, цвет]
+    const keys: Array<[number, number]> = [
+      [0, 0xffffff],
+      [300, 0xfff3da],   // тёплый день
+      [540, 0xffd9ae],   // предзакат
+      [720, 0xd8b8c0],   // сумерки
+      [840, 0xa8b0d8],   // ранний вечер
+      [900, 0x93a0c8],   // ночь — битва с боссом
+    ];
+    let color = keys[keys.length - 1][1];
+    for (let i = 0; i < keys.length - 1; i++) {
+      const [t0, c0] = keys[i];
+      const [t1, c1] = keys[i + 1];
+      if (this.elapsed >= t0 && this.elapsed <= t1) {
+        const f = (this.elapsed - t0) / (t1 - t0);
+        const lerpCh = (a: number, b: number) => Math.round(a + (b - a) * f);
+        color = Phaser.Display.Color.GetColor(
+          lerpCh((c0 >> 16) & 0xff, (c1 >> 16) & 0xff),
+          lerpCh((c0 >> 8) & 0xff, (c1 >> 8) & 0xff),
+          lerpCh(c0 & 0xff, c1 & 0xff),
+        );
+        break;
+      }
+    }
+    this.ambientRect.setFillStyle(color);
   }
 
   private makeEnemyCtx(): EnemyContext {
