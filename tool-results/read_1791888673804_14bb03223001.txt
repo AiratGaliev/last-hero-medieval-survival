@@ -1,0 +1,900 @@
+     1→import Phaser from 'phaser';
+     2→import { FONT } from '../constants';
+     3→import { HEROES, WEAPONS, DIFFICULTIES, type HeroId, type DifficultyId } from '../data';
+     4→import { audio } from '../systems/Audio';
+     5→import { makePanel, makeButton } from '../systems/Ui';
+     6→import { loadShop, buyUpgrade, SHOP_UPGRADES } from '../shop';
+     7→import { ACHIEVEMENTS, loadUnlocked, loadMeta } from '../achievements';
+     8→
+     9→// ============ Главное меню: герой + сложность + вся мета-навигация ============
+    10→// Вся оболочка игры живёт здесь: «Как играть», «Рекорды» (API), «Лавка
+    11→// торговца» (покупки за золото), «Достижения» и «Хроника воина» (localStorage).
+    12→
+    13→interface ScoreRow {
+    14→  id: number;
+    15→  name: string;
+    16→  score: number;
+    17→  kills: number;
+    18→  level: number;
+    19→  timeSurvived: number;
+    20→  victory: boolean;
+    21→}
+    22→
+    23→interface HeroCard {
+    24→  container: Phaser.GameObjects.Container;
+    25→  sprite: Phaser.GameObjects.Sprite;
+    26→  frame: Phaser.GameObjects.Graphics;
+    27→  heroId: HeroId;
+    28→}
+    29→
+    30→interface DiffChip {
+    31→  container: Phaser.GameObjects.Container;
+    32→  frame: Phaser.GameObjects.Graphics;
+    33→  diffId: DifficultyId;
+    34→}
+    35→
+    36→const HERO_ORDER: HeroId[] = ['warrior', 'archer', 'lancer', 'monk'];
+    37→const DIFF_ORDER: DifficultyId[] = ['normal', 'nightmare'];
+    38→
+    39→export class MenuScene extends Phaser.Scene {
+    40→  private overlay: Phaser.GameObjects.Container | null = null;
+    41→  /** Интерактивные элементы оверлея вне контейнера (кнопки, строки лавки) */
+    42→  private overlayExtras: Phaser.GameObjects.GameObject[] = [];
+    43→  private logo!: Phaser.GameObjects.Text;
+    44→  private logo2!: Phaser.GameObjects.Text;
+    45→  private heroCards: HeroCard[] = [];
+    46→  private diffChips: DiffChip[] = [];
+    47→  private selectedHero: HeroId = 'warrior';
+    48→  private selectedDiff: DifficultyId = 'normal';
+    49→  /** Виртуальное полотно (на мобильных меньше реального экрана — камера зумит) */
+    50→  private vw = 0;
+    51→  private vh = 0;
+    52→  private menuZoom = 1;
+    53→
+    54→  // Лавка
+    55→  private shopRowEls: Phaser.GameObjects.Container[] = [];
+    56→  private shopBalanceText: Phaser.GameObjects.Text | null = null;
+    57→  private shopRowsY = 0;
+    58→
+    59→  // Достижения
+    60→  private achDesc: Phaser.GameObjects.Text | null = null;
+    61→
+    62→  constructor() {
+    63→    super('Menu');
+    64→  }
+    65→
+    66→  create(): void {
+    67→    const realW = this.scale.width;
+    68→    const realH = this.scale.height;
+    69→    this.heroCards = [];
+    70→    this.diffChips = [];
+    71→    this.overlay = null;
+    72→    this.overlayExtras = [];
+    73→    this.shopRowEls = [];
+    74→    this.shopBalanceText = null;
+    75→
+    76→    // Мобильная раскладка: контент позиционируется на виртуальном полотне 460×800,
+    77→    // затем камера уменьшает его до реального размера экрана — ничего не обрезается.
+    78→    const mobile = realW < 760;
+    79→    this.menuZoom = mobile ? Math.min(realW / 460, realH / 800) : 1;
+    80→    this.vw = mobile ? 460 : realW;
+    81→    this.vh = mobile ? 800 : realH;
+    82→    // centerOn центрирует виртуальное полотно (с учётом origin 0.5 камеры)
+    83→    this.cameras.main.setZoom(this.menuZoom);
+    84→    this.cameras.main.centerOn(this.vw / 2, this.vh / 2);
+    85→    const width = this.vw;
+    86→    const height = this.vh;
+    87→    // Полотно фона — с запасом, чтобы при зуме < 1 закрыть весь экран
+    88→    const coverW = this.vw / this.menuZoom + 240;
+    89→    const coverH = this.vh / this.menuZoom + 240;
+    90→
+    91→    // Сохранённый герой + сложность
+    92→    const saved = window.localStorage.getItem('tss-hero');
+    93→    if (saved === 'warrior' || saved === 'archer' || saved === 'lancer' || saved === 'monk') {
+    94→      this.selectedHero = saved;
+    95→    }
+    96→    const savedDiff = window.localStorage.getItem('tss-diff');
+    97→    if (savedDiff === 'normal' || savedDiff === 'nightmare') {
+    98→      this.selectedDiff = savedDiff;
+    99→    }
+   100→
+   101→    // Фон: травка + вода (полосы шире видимой области — под зум)
+   102→    this.add.tileSprite(width / 2, height / 2, coverW, coverH, 'grass-tile');
+   103→    this.add.tileSprite(width / 2, -60, coverW + 400, 200, 'water-tile');
+   104→    this.add.tileSprite(width / 2, height + 60, coverW + 400, 200, 'water-tile');
+   105→    this.add.tileSprite(-80, height / 2, 200, coverH + 400, 'water-tile');
+   106→    this.add.tileSprite(width + 80, height / 2, 200, coverH + 400, 'water-tile');
+   107→
+   108→    // Облака
+   109→    for (let i = 0; i < 6; i++) {
+   110→      const c = this.add.image(
+   111→        Phaser.Math.Between(0, width),
+   112→        Phaser.Math.Between(30, height * 0.45),
+   113→        `cloud${Phaser.Math.Between(1, 3)}`,
+   114→      ).setAlpha(0.6);
+   115→      this.tweens.add({
+   116→        targets: c,
+   117→        x: '+=500',
+   118→        duration: Phaser.Math.Between(50, 90) * 1000,
+   119→        repeat: -1,
+   120→        onRepeat: () => { c.x = -200; },
+   121→      });
+   122→    }
+   123→
+   124→    // Замок на фоне
+   125→    this.add.image(width * 0.5, height * 0.28, 'castle').setScale(0.8).setAlpha(0.55);
+   126→    const sheep = this.add.sprite(width * 0.1, height * 0.9, 'sheep').setScale(0.65).setAlpha(0.9);
+   127→    sheep.play('sheep-idle');
+   128→    const pawn = this.add.sprite(width * 0.9, height * 0.92, 'grunt-idle').setScale(0.45).setAlpha(0.9);
+   129→    pawn.play('grunt-idle');
+   130→    void sheep; void pawn;
+   131→
+   132→    // Логотип
+   133→    const titleY = Math.max(52, height * 0.075);
+   134→    this.logo = this.add.text(width / 2, titleY, 'TINY SWORD', {
+   135→      fontFamily: FONT, fontSize: mobile ? '42px' : '52px', color: '#ffd76e',
+   136→      stroke: '#5a2d05', strokeThickness: 12,
+   137→    }).setOrigin(0.5);
+   138→    this.logo2 = this.add.text(width / 2, titleY + (mobile ? 48 : 54), 'SURVIVORS', {
+   139→      fontFamily: FONT, fontSize: mobile ? '36px' : '44px', color: '#ffffff',
+   140→      stroke: '#7a1010', strokeThickness: 11,
+   141→    }).setOrigin(0.5);
+   142→    this.tweens.add({
+   143→      targets: [this.logo, this.logo2],
+   144→      scale: { from: 0.7, to: 1 },
+   145→      duration: 480,
+   146→      ease: 'Back.easeOut',
+   147→    });
+   148→    if (width >= 760) {
+   149→      this.add.image(width / 2 - 330, titleY + 20, 'swords').setDisplaySize(110, 158).setAlpha(0.85);
+   150→      this.add.image(width / 2 + 330, titleY + 20, 'swords').setDisplaySize(110, 158).setFlipX(true).setAlpha(0.85);
+   151→    }
+   152→
+   153→    // Кошелёк в углу — видно мета-золото до захода в лавку
+   154→    const wallet = loadShop().balance;
+   155→    if (wallet > 0) {
+   156→      this.add.image(width - 52, titleY - 6, 'icon-coin').setDisplaySize(20, 20);
+   157→      this.add.text(width - 38, titleY - 6, `${wallet.toLocaleString('ru-RU')}`, {
+   158→        fontFamily: FONT, fontSize: '15px', color: '#7a4e0e',
+   159→        stroke: '#ffe9c0', strokeThickness: 4,
+   160→      }).setOrigin(0, 0.5);
+   161→    }
+   162→
+   163→    // ---------- Выбор героя ----------
+   164→    // Сетка карточек: 4 в ряд на десктопе, 2×2 на мобильном (виртуальное полотно)
+   165→    const cols = width < 760 ? 2 : 4;
+   166→    const rows = Math.ceil(HERO_ORDER.length / cols);
+   167→    const gap = 14;
+   168→    const cardW = Math.min(width < 760 ? 205 : 225, (width - 36 - (cols - 1) * gap) / cols);
+   169→    const cardH = width < 760 ? 178 : 214;
+   170→    const cardsY = height * (width < 760 ? 0.44 : 0.47);
+   171→    const blockH = rows * cardH + (rows - 1) * gap;
+   172→    const heroTop = cardsY - blockH / 2;
+   173→    const heroBottom = cardsY + blockH / 2;
+   174→
+   175→    const label = this.add.text(width / 2, heroTop - 26, '— ВЫБЕРИ ГЕРОЯ —', {
+   176→      fontFamily: FONT, fontSize: '14px', color: '#3b2410',
+   177→      stroke: '#ffe9c0', strokeThickness: 4,
+   178→    }).setOrigin(0.5).setAlpha(0.9);
+   179→    void label;
+   180→
+   181→    HERO_ORDER.forEach((id, i) => {
+   182→      const col = i % cols;
+   183→      const row = Math.floor(i / cols);
+   184→      const x = width / 2 - (cols * cardW + (cols - 1) * gap) / 2 + col * (cardW + gap) + cardW / 2;
+   185→      const y = heroTop + row * (cardH + gap) + cardH / 2;
+   186→      this.createHeroCard(x, y, id, cardW, cardH);
+   187→    });
+   188→
+   189→    // ---------- Выбор сложности ----------
+   190→    const chipsY = heroBottom + 34;
+   191→    const chipW = Math.min(200, (width - 90) / 2);
+   192→    DIFF_ORDER.forEach((id, i) => {
+   193→      const x = width / 2 + (i === 0 ? -chipW / 2 - 8 : chipW / 2 + 8);
+   194→      this.createDiffChip(x, chipsY, chipW, 40, id);
+   195→    });
+   196→
+   197→    // ---------- Кнопки ----------
+   198→    const btnY = Math.min(height * 0.85, chipsY + 34 + 30);
+   199→    makeButton(this, width / 2, btnY, Math.min(320, width - 80), 58, 'ИГРАТЬ', () => {
+   200→      audio.unlock();
+   201→      window.localStorage.setItem('tss-hero', this.selectedHero);
+   202→      window.localStorage.setItem('tss-diff', this.selectedDiff);
+   203→      this.scene.start('Game', { hero: this.selectedHero, diff: this.selectedDiff });
+   204→    }, 'blue', mobile ? 20 : 24);
+   205→
+   206→    // Навигация по мета-экранам — всё внутри Phaser
+   207→    const navItems: Array<[string, () => void]> = [
+   208→      ['КАК ИГРАТЬ', () => this.showHowTo()],
+   209→      ['РЕКОРДЫ', () => { void this.showRecords(); }],
+   210→      ['ЛАВКА', () => this.showShop()],
+   211→      ['ДОСТИЖЕНИЯ', () => this.showAchievements()],
+   212→      ['ХРОНИКА', () => this.showChronicle()],
+   213→    ];
+   214→    const navY = btnY + 58;
+   215→    if (mobile) {
+   216→      const w1 = Math.min(190, (width - 60 - 12) / 2);
+   217→      navItems.slice(0, 2).forEach(([lbl, action], i) => {
+   218→        makeButton(this, width / 2 + (i === 0 ? -1 : 1) * (w1 / 2 + 6), navY, w1, 42, lbl, action, 'red', 12);
+   219→      });
+   220→      const w2 = Math.min(150, (width - 60 - 24) / 3);
+   221→      navItems.slice(2).forEach(([lbl, action], i) => {
+   222→        const x = width / 2 - (3 * w2 + 24) / 2 + i * (w2 + 12) + w2 / 2;
+   223→        makeButton(this, x, navY + 48, w2, 42, lbl, action, 'red', 11);
+   224→      });
+   225→    } else {
+   226→      const gapN = 10;
+   227→      const bw = Math.min(185, (width - 80 - 4 * gapN) / 5);
+   228→      navItems.forEach(([lbl, action], i) => {
+   229→        const x = width / 2 - (5 * bw + 4 * gapN) / 2 + i * (bw + gapN) + bw / 2;
+   230→        makeButton(this, x, navY, bw, 44, lbl, action, 'red', 12);
+   231→      });
+   232→    }
+   233→
+   234→    this.add.text(width / 2, height - 12, 'v1.4 • Phaser 4 • ассеты Pixel Frog «Tiny Swords»', {
+   235→      fontFamily: FONT, fontSize: '11px', color: '#3b2410',
+   236→    }).setOrigin(0.5).setAlpha(0.8);
+   237→
+   238→    this.refreshSelection();
+   239→    this.scale.on('resize', this.layout, this);
+   240→    this.events.once('shutdown', () => this.scale.off('resize', this.layout, this));
+   241→  }
+   242→
+   243→  private createHeroCard(x: number, y: number, heroId: HeroId, cardW: number, cardH: number): void {
+   244→    const hero = HEROES[heroId];
+   245→    const container = this.add.container(x, y);
+   246→    const paper = makePanel(this, 0, 0, 'paper', cardW, cardH);
+   247→    container.add(paper);
+   248→
+   249→    // Живой спрайт героя
+   250→    const sprite = this.add.sprite(0, -cardH * 0.27, hero.anims.idle);
+   251→    sprite.setScale(hero.scale * 1.05);
+   252→    sprite.play(hero.anims.idle);
+   253→    container.add(sprite);
+   254→
+   255→    const name = this.add.text(0, cardH * 0.08, hero.name, {
+   256→      fontFamily: FONT, fontSize: '17px', color: '#3b2410',
+   257→    }).setOrigin(0.5);
+   258→    container.add(name);
+   259→
+   260→    const title = this.add.text(0, cardH * 0.21, hero.title, {
+   261→      fontFamily: FONT, fontSize: '11px', color: '#8a5b12',
+   262→    }).setOrigin(0.5);
+   263→    container.add(title);
+   264→
+   265→    const traits = hero.traits.map((t) => `• ${t}`).join('\n');
+   266→    const body = this.add.text(0, cardH * 0.30, traits, {
+   267→      fontFamily: FONT, fontSize: '10px', color: '#57431f',
+   268→      align: 'center', lineSpacing: 5, wordWrap: { width: cardW - 30 },
+   269→    }).setOrigin(0.5, 0);
+   270→    container.add(body);
+   271→
+   272→    // Иконка стартового оружия
+   273→    const wIcon = this.add.image(0, cardH * 0.44, WEAPONS[hero.startWeapon].icon).setDisplaySize(30, 30);
+   274→    container.add(wIcon);
+   275→
+   276→    // Рамка выделения
+   277→    const frame = this.add.graphics();
+   278→    container.add(frame);
+   279→
+   280→    container.setSize(cardW, cardH);
+   281→    container.setInteractive({ useHandCursor: true });
+   282→    container.on('pointerover', () => {
+   283→      if (this.selectedHero !== heroId) {
+   284→        this.tweens.add({ targets: container, scale: 1.04, duration: 110 });
+   285→      }
+   286→    });
+   287→    container.on('pointerout', () => {
+   288→      if (this.selectedHero !== heroId) {
+   289→        this.tweens.add({ targets: container, scale: 1, duration: 110 });
+   290→      }
+   291→    });
+   292→    container.on('pointerdown', () => {
+   293→      audio.play('click');
+   294→      this.selectHero(heroId);
+   295→    });
+   296→
+   297→    this.heroCards.push({ container, sprite, frame, heroId });
+   298→  }
+   299→
+   300→  private createDiffChip(x: number, y: number, w: number, h: number, diffId: DifficultyId): void {
+   301→    const def = DIFFICULTIES[diffId];
+   302→    const container = this.add.container(x, y);
+   303→    const paper = makePanel(this, 0, 0, 'paper', w, h);
+   304→    container.add(paper);
+   305→
+   306→    const isNightmare = diffId === 'nightmare';
+   307→    const icon = this.add.text(-w / 2 + 16, 0, isNightmare ? '☠' : '⚔', {
+   308→      fontFamily: FONT, fontSize: '16px', color: isNightmare ? '#7a1010' : '#3b2410',
+   309→    }).setOrigin(0.5);
+   310→    container.add(icon);
+   311→
+   312→    const name = this.add.text(-w / 2 + 34, -7, def.name.toUpperCase(), {
+   313→      fontFamily: FONT, fontSize: '13px', color: isNightmare ? '#7a1010' : '#3b2410',
+   314→    }).setOrigin(0, 0.5);
+   315→    container.add(name);
+   316→
+   317→    const tag = this.add.text(-w / 2 + 34, 7, def.tagline, {
+   318→      fontFamily: FONT, fontSize: '8px', color: '#8a5b12',
+   319→    }).setOrigin(0, 0.5);
+   320→    container.add(tag);
+   321→
+   322→    const frame = this.add.graphics();
+   323→    container.add(frame);
+   324→
+   325→    container.setSize(w, h);
+   326→    container.setInteractive({ useHandCursor: true });
+   327→    container.on('pointerover', () => {
+   328→      if (this.selectedDiff !== diffId) this.tweens.add({ targets: container, scale: 1.04, duration: 100 });
+   329→    });
+   330→    container.on('pointerout', () => {
+   331→      if (this.selectedDiff !== diffId) this.tweens.add({ targets: container, scale: 1, duration: 100 });
+   332→    });
+   333→    container.on('pointerdown', () => {
+   334→      audio.play('click');
+   335→      if (this.selectedDiff !== diffId) {
+   336→        this.selectedDiff = diffId;
+   337→        this.refreshSelection();
+   338→      }
+   339→    });
+   340→
+   341→    this.diffChips.push({ container, frame, diffId });
+   342→  }
+   343→
+   344→  private selectHero(heroId: HeroId): void {
+   345→    if (this.selectedHero === heroId) return;
+   346→    this.selectedHero = heroId;
+   347→    this.refreshSelection();
+   348→  }
+   349→
+   350→  private refreshSelection(): void {
+   351→    for (const c of this.heroCards) {
+   352→      const selected = c.heroId === this.selectedHero;
+   353→      c.frame.clear();
+   354→      if (selected) {
+   355→        c.frame.lineStyle(4, 0xd9a520, 1).strokeRect(-c.container.width / 2 + 4, -c.container.height / 2 + 4, c.container.width - 8, c.container.height - 8);
+   356→        c.container.setScale(1.07);
+   357→      } else {
+   358→        c.container.setScale(1);
+   359→      }
+   360→    }
+   361→    for (const d of this.diffChips) {
+   362→      const selected = d.diffId === this.selectedDiff;
+   363→      d.frame.clear();
+   364→      d.container.setAlpha(selected ? 1 : 0.72);
+   365→      if (selected) {
+   366→        const w = d.container.width, h = d.container.height;
+   367→        d.frame.lineStyle(3, d.diffId === 'nightmare' ? 0xc03028 : 0xd9a520, 1)
+   368→          .strokeRect(-w / 2 + 3, -h / 2 + 3, w - 6, h - 6);
+   369→        d.container.setScale(1.05);
+   370→      } else {
+   371→        d.container.setScale(1);
+   372→      }
+   373→    }
+   374→  }
+   375→
+   376→  private layout(): void {
+   377→    this.scene.restart();
+   378→  }
+   379→
+   380→  // ================================================================
+   381→  // Общий каркас оверлеев (затемнение + блокировщик кликов)
+   382→  // ================================================================
+   383→
+   384→  private beginOverlay(): void {
+   385→    this.closeOverlay();
+   386→    const width = this.vw;
+   387→    const height = this.vh;
+   388→    const cover = Math.max(width / this.menuZoom, height / this.menuZoom) + 160;
+   389→    this.overlay = this.add.container(0, 0);
+   390→    const dim = this.add.rectangle(width / 2, height / 2, cover, cover, 0x0a0a12, 0.72);
+   391→    this.overlay.add(dim);
+   392→    // Блокировщик: меню под оверлеем не должно реагировать на клики
+   393→    const blocker = this.add.rectangle(width / 2, height / 2, cover, cover, 0x000000, 0.001)
+   394→      .setInteractive({ useHandCursor: false });
+   395→    this.overlayExtras.push(blocker);
+   396→  }
+   397→
+   398→  private backButton(y?: number): void {
+   399→    const width = this.vw;
+   400→    const height = this.vh;
+   401→    const by = Math.min(y ?? height / 2 + Math.min(300, height * 0.36), height - 38);
+   402→    const b = makeButton(this, width / 2, by, 170, 54, 'НАЗАД', () => this.closeOverlay(), 'red', 16);
+   403→    this.overlayExtras.push(b.img, b.txt, b.hit);
+   404→  }
+   405→
+   406→  private closeOverlay(): void {
+   407→    this.overlay?.destroy(true);
+   408→    this.overlay = null;
+   409→    for (const o of this.overlayExtras) o.destroy();
+   410→    this.overlayExtras = [];
+   411→    for (const r of this.shopRowEls) r.destroy(true);
+   412→    this.shopRowEls = [];
+   413→    this.shopBalanceText = null;
+   414→    this.achDesc = null;
+   415→  }
+   416→
+   417→  // ================================================================
+   418→  // «Как играть»
+   419→  // ================================================================
+   420→
+   421→  private showHowTo(): void {
+   422→    this.beginOverlay();
+   423→    const width = this.vw;
+   424→    const height = this.vh;
+   425→    const paperW = Math.min(560, width - 50);
+   426→    const paper = makePanel(this, width / 2, height / 2, 'paper', paperW, paperW * 1.05);
+   427→    const header = this.add.text(width / 2, height / 2 - paperW * 0.5, 'КАК ИГРАТЬ', {
+   428→      fontFamily: FONT, fontSize: '26px', color: '#3b2410',
+   429→    }).setOrigin(0.5);
+   430→    const lines = [
+   431→      'Выбери героя: воин, лучница, копейщик или монах.',
+   432→      'Затем сложность: Поход или Кошмар (×1.6 очков).',
+   433→      'WASD / стрелки — движение',
+   434→      'на телефоне — виртуальный джойстик',
+   435→      '',
+   436→      'Оружие атакует автоматически.',
+   437→      'Собирай кристаллы опыта и золото,',
+   438→      'открывай сокровища и выбирай улучшения.',
+   439→      'Золото матча — валюта «Лавки торговца».',
+   440→      'Осторожно: бочки-камикадзе взрываются!',
+   441→      '',
+   442→      'Выживи 15 минут и убей',
+   443→      'ЧЁРНОГО КОПЕЙЩИКА!',
+   444→      '',
+   445→      'На «Кошмаре» на 10-й минуте ждёт',
+   446→      'ТЁМНЫЙ МОНАХ...',
+   447→      '',
+   448→      'ESC / P — пауза, M — звук',
+   449→    ];
+   450→    const body = this.add.text(width / 2, height / 2 - paperW * 0.34, lines.join('\n'), {
+   451→      fontFamily: FONT, fontSize: '15px', color: '#57431f', align: 'center', lineSpacing: 8,
+   452→    }).setOrigin(0.5, 0);
+   453→    this.overlay?.add([paper, header, body]);
+   454→    this.backButton();
+   455→  }
+   456→
+   457→  // ================================================================
+   458→  // «Рекорды» — таблица из /api/scores
+   459→  // ================================================================
+   460→
+   461→  private async showRecords(): Promise<void> {
+   462→    this.beginOverlay();
+   463→    const width = this.vw;
+   464→    const height = this.vh;
+   465→    const container = this.add.container(0, 0);
+   466→    // Переносим затемнение из каркасного контейнера в новый (для guard-проверки active)
+   467→    this.overlay?.destroy(true);
+   468→    this.overlay = container;
+   469→    const cover = Math.max(width / this.menuZoom, height / this.menuZoom) + 160;
+   470→    const dim = this.add.rectangle(width / 2, height / 2, cover, cover, 0x0a0a12, 0.72);
+   471→    container.add(dim);
+   472→
+   473→    const paperW = Math.min(600, width - 50);
+   474→    const paperH = Math.min(470, height - 60);
+   475→    const cx = width / 2;
+   476→    const cy = height / 2;
+   477→    const paper = makePanel(this, cx, cy, 'paperSpecial', paperW, paperH);
+   478→    container.add(paper);
+   479→    const top = cy - paperH / 2;
+   480→
+   481→    container.add(this.add.text(cx, top + 38, 'ЗАЛ СЛАВЫ', {
+   482→      fontFamily: FONT, fontSize: '24px', color: '#ffe9c0',
+   483→      stroke: '#1b1008', strokeThickness: 5,
+   484→    }).setOrigin(0.5));
+   485→
+   486→    const loading = this.add.text(cx, cy, 'загрузка...', {
+   487→      fontFamily: FONT, fontSize: '15px', color: '#cbb389',
+   488→    }).setOrigin(0.5);
+   489→    container.add(loading);
+   490→
+   491→    // Колонки таблицы
+   492→    const left = cx - paperW / 2 + 30;
+   493→    const right = cx + paperW / 2 - 30;
+   494→    const colName = left + 28;
+   495→    const colScore = right - 92;
+   496→    const colKills = right - 40;
+   497→
+   498→    const headerStyle: Phaser.Types.GameObjects.Text.TextStyle = {
+   499→      fontFamily: FONT, fontSize: '10px', color: '#cbb389',
+   500→    };
+   501→    container.add(this.add.text(left, top + 76, '#', { ...headerStyle }).setOrigin(0, 0.5));
+   502→    container.add(this.add.text(colName, top + 76, 'ГЕРОЙ', { ...headerStyle }).setOrigin(0, 0.5));
+   503→    container.add(this.add.text(colScore, top + 76, 'СЧЁТ', { ...headerStyle }).setOrigin(1, 0.5));
+   504→    container.add(this.add.text(colKills, top + 76, 'УБ.', { ...headerStyle }).setOrigin(1, 0.5));
+   505→    container.add(this.add.text(right, top + 76, 'ВРЕМЯ', { ...headerStyle }).setOrigin(1, 0.5));
+   506→    const hr = this.add.graphics();
+   507→    hr.lineStyle(1, 0x8a6d3b, 0.6).lineBetween(left, top + 90, right, top + 90);
+   508→    container.add(hr);
+   509→
+   510→    try {
+   511→      const res = await fetch('/api/scores?limit=10');
+   512→      if (!res.ok) throw new Error('load failed');
+   513→      const rows: ScoreRow[] = await res.json();
+   514→      if (!container.active) return; // оверлей закрыли, пока грузился ответ
+   515→      loading.destroy();
+   516→
+   517→      if (rows.length === 0) {
+   518→        container.add(this.add.text(cx, cy, 'пока никто не выживал...\nстань первым героем!', {
+   519→          fontFamily: FONT, fontSize: '15px', color: '#cbb389', align: 'center', lineSpacing: 8,
+   520→        }).setOrigin(0.5));
+   521→      } else {
+   522→        const style: Phaser.Types.GameObjects.Text.TextStyle = {
+   523→          fontFamily: FONT, fontSize: '13px', color: '#ffe9c0',
+   524→        };
+   525→        rows.forEach((r, i) => {
+   526→          const y = top + 112 + i * 26;
+   527→          const medal = i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : `${i + 1}.`;
+   528→          container.add(this.add.text(left, y, medal, {
+   529→            ...style, color: i < 3 ? '#ffd76e' : '#cbb389',
+   530→          }).setOrigin(0, 0.5));
+   531→          container.add(this.add.text(colName, y, `${r.name.slice(0, 13)}${r.victory ? ' ★' : ''}`, {
+   532→            ...style, color: i === 0 ? '#ffd76e' : '#ffe9c0',
+   533→          }).setOrigin(0, 0.5));
+   534→          container.add(this.add.text(colScore, y, r.score.toLocaleString('ru-RU'), {
+   535→            ...style, color: '#ffd76e',
+   536→          }).setOrigin(1, 0.5));
+   537→          container.add(this.add.text(colKills, y, `${r.kills}`, { ...style }).setOrigin(1, 0.5));
+   538→          const m = Math.floor(r.timeSurvived / 60);
+   539→          const s = Math.floor(r.timeSurvived % 60).toString().padStart(2, '0');
+   540→          container.add(this.add.text(right, y, `${m}:${s}`, { ...style }).setOrigin(1, 0.5));
+   541→        });
+   542→      }
+   543→    } catch {
+   544→      if (!container.active) return;
+   545→      loading.destroy();
+   546→      container.add(this.add.text(cx, cy, 'не удалось загрузить рекорды', {
+   547→        fontFamily: FONT, fontSize: '15px', color: '#ff8a7a',
+   548→      }).setOrigin(0.5));
+   549→    }
+   550→
+   551→    container.add(this.add.text(cx, top + paperH - 78, [
+   552→      'очки: 10 за убийство • 100 за минуту • 50 за уровень',
+   553→      '+5000 за босса • золото и «Кошмар» — множители • ★ — победа',
+   554→    ].join('\n'), {
+   555→      fontFamily: FONT, fontSize: '10px', color: '#cbb389', align: 'center', lineSpacing: 6,
+   556→    }).setOrigin(0.5));
+   557→
+   558→    this.backButton(top + paperH + 42);
+   559→  }
+   560→
+   561→  // ================================================================
+   562→  // «Лавка торговца» — мета-магазин за золото матчей
+   563→  // ================================================================
+   564→
+   565→  private showShop(): void {
+   566→    this.beginOverlay();
+   567→    const width = this.vw;
+   568→    const height = this.vh;
+   569→    const paperW = Math.min(560, width - 50);
+   570→    const paperH = Math.min(590, height - 50);
+   571→    const cx = width / 2;
+   572→    const cy = height / 2;
+   573→    const paper = makePanel(this, cx, cy, 'paper', paperW, paperH);
+   574→    this.overlay?.add(paper);
+   575→    const top = cy - paperH / 2;
+   576→
+   577→    this.overlay?.add(this.add.text(cx, top + 38, 'ЛАВКА ТОРГОВЦА', {
+   578→      fontFamily: FONT, fontSize: '26px', color: '#3b2410',
+   579→    }).setOrigin(0.5));
+   580→    this.overlay?.add(this.add.text(cx, top + 62, 'золото из матчей → вечные усиления героя', {
+   581→      fontFamily: FONT, fontSize: '11px', color: '#8a5b12',
+   582→    }).setOrigin(0.5));
+   583→
+   584→    // Кошелёк
+   585→    const balBg = this.add.graphics();
+   586→    balBg.fillStyle(0xf7e7c3, 1).fillRoundedRect(cx - 112, top + 78, 224, 36, 9);
+   587→    balBg.lineStyle(2, 0xc9a25e, 1).strokeRoundedRect(cx - 112, top + 78, 224, 36, 9);
+   588→    this.overlay?.add(balBg);
+   589→    this.overlay?.add(this.add.image(cx - 90, top + 96, 'icon-coin').setDisplaySize(22, 22));
+   590→    this.shopBalanceText = this.add.text(cx + 16, top + 96, '0', {
+   591→      fontFamily: FONT, fontSize: '18px', color: '#7a4e0e',
+   592→    }).setOrigin(0.5);
+   593→    this.overlay?.add(this.shopBalanceText);
+   594→
+   595→    this.shopRowsY = top + 132;
+   596→    this.renderShopRows();
+   597→
+   598→    this.overlay?.add(this.add.text(cx, top + paperH - 28, 'золото падает в кошелёк в конце каждого матча', {
+   599→      fontFamily: FONT, fontSize: '10px', color: '#8a5b12',
+   600→    }).setOrigin(0.5));
+   601→
+   602→    this.backButton(top + paperH + 42);
+   603→    this.refreshShopBalance();
+   604→  }
+   605→
+   606→  private renderShopRows(flashIdx?: number): void {
+   607→    for (const r of this.shopRowEls) r.destroy(true);
+   608→    this.shopRowEls = [];
+   609→    const st = loadShop();
+   610→    const width = this.vw;
+   611→    const paperW = Math.min(560, width - 50);
+   612→    const rowW = paperW - 56;
+   613→    const rowH = 64;
+   614→    const gap = 10;
+   615→
+   616→    SHOP_UPGRADES.forEach((u, i) => {
+   617→      const lvl = st.upgrades[u.id];
+   618→      const maxed = lvl >= 3;
+   619→      const price = maxed ? null : u.costs[lvl];
+   620→      const affordable = price !== null && st.balance >= price;
+   621→      const y = this.shopRowsY + i * (rowH + gap) + rowH / 2;
+   622→
+   623→      const row = this.add.container(width / 2, y);
+   624→      const bg = this.add.graphics();
+   625→      bg.fillStyle(0xfff6df, 1).fillRoundedRect(-rowW / 2, -rowH / 2, rowW, rowH, 10);
+   626→      bg.lineStyle(2, 0xc9a25e, 1).strokeRoundedRect(-rowW / 2, -rowH / 2, rowW, rowH, 10);
+   627→      row.add(bg);
+   628→
+   629→      const icon = this.add.image(-rowW / 2 + 26, 0, u.icon).setDisplaySize(32, 32);
+   630→      row.add(icon);
+   631→
+   632→      const name = this.add.text(-rowW / 2 + 48, -14, u.name, {
+   633→        fontFamily: FONT, fontSize: '14px', color: '#3b2410',
+   634→      }).setOrigin(0, 0.5);
+   635→      row.add(name);
+   636→
+   637→      const desc = this.add.text(-rowW / 2 + 48, 8, u.desc, {
+   638→        fontFamily: FONT, fontSize: '9px', color: '#8a5b12',
+   639→      }).setOrigin(0, 0.5);
+   640→      row.add(desc);
+   641→
+   642→      const dots = this.add.text(rowW / 2 - 132, -2, '●'.repeat(lvl) + '○'.repeat(3 - lvl), {
+   643→        fontFamily: FONT, fontSize: '11px', color: '#b0803a',
+   644→      }).setOrigin(0.5);
+   645→      row.add(dots);
+   646→
+   647→      if (maxed) {
+   648→        row.add(this.add.text(rowW / 2 - 56, 0, 'МАКС', {
+   649→          fontFamily: FONT, fontSize: '13px', color: '#2e7d32',
+   650→          stroke: '#dcecc9', strokeThickness: 3,
+   651→        }).setOrigin(0.5));
+   652→      } else {
+   653→        const btn = this.add.nineslice(rowW / 2 - 56, 0, 'btn-blue9', undefined, 92, 34, 45, 45, 47, 47);
+   654→        if (!affordable) btn.setTint(0x9aa0a6);
+   655→        row.add(btn);
+   656→        row.add(this.add.text(rowW / 2 - 56, 0, `${price}`, {
+   657→          fontFamily: FONT, fontSize: '12px', color: '#ffffff',
+   658→          stroke: '#2a1608', strokeThickness: 3,
+   659→        }).setOrigin(0.5));
+   660→      }
+   661→
+   662→      row.setSize(rowW, rowH);
+   663→      if (!maxed) {
+   664→        row.setInteractive({ useHandCursor: affordable });
+   665→        row.on('pointerover', () => {
+   666→          if (affordable) this.tweens.add({ targets: row, scale: 1.02, duration: 100 });
+   667→        });
+   668→        row.on('pointerout', () => this.tweens.add({ targets: row, scale: 1, duration: 100 }));
+   669→        row.on('pointerdown', () => {
+   670→          if (maxed) return;
+   671→          const res = buyUpgrade(u.id);
+   672→          if (res.ok) {
+   673→            audio.play('levelup');
+   674→            this.renderShopRows(i);
+   675→            this.refreshShopBalance();
+   676→          } else if (res.reason === 'poor') {
+   677→            audio.play('click');
+   678→            this.tweens.add({ targets: row, x: { from: row.x - 5, to: row.x }, duration: 180 });
+   679→          }
+   680→        });
+   681→      }
+   682→
+   683→      if (i === flashIdx) {
+   684→        row.setScale(1.12);
+   685→        this.tweens.add({ targets: row, scale: 1, duration: 260, ease: 'Back.easeOut' });
+   686→      }
+   687→      this.shopRowEls.push(row);
+   688→    });
+   689→  }
+   690→
+   691→  private refreshShopBalance(): void {
+   692→    const st = loadShop();
+   693→    this.shopBalanceText?.setText(st.balance.toLocaleString('ru-RU'));
+   694→  }
+   695→
+   696→  // ================================================================
+   697→  // «Достижения»
+   698→  // ================================================================
+   699→
+   700→  private showAchievements(): void {
+   701→    this.beginOverlay();
+   702→    const width = this.vw;
+   703→    const height = this.vh;
+   704→    const unlocked = loadUnlocked();
+   705→    const count = unlocked.size;
+   706→    const total = ACHIEVEMENTS.length;
+   707→
+   708→    const paperW = Math.min(560, width - 50);
+   709→    const paperH = Math.min(560, height - 50);
+   710→    const cx = width / 2;
+   711→    const cy = height / 2;
+   712→    const paper = makePanel(this, cx, cy, 'paper', paperW, paperH);
+   713→    this.overlay?.add(paper);
+   714→    const top = cy - paperH / 2;
+   715→
+   716→    this.overlay?.add(this.add.text(cx, top + 38, 'ДОСТИЖЕНИЯ', {
+   717→      fontFamily: FONT, fontSize: '26px', color: '#3b2410',
+   718→    }).setOrigin(0.5));
+   719→    this.overlay?.add(this.add.text(cx, top + 64, `${count} / ${total}`, {
+   720→      fontFamily: FONT, fontSize: '15px', color: '#8a5b12',
+   721→    }).setOrigin(0.5));
+   722→
+   723→    // Полоса прогресса
+   724→    const barW = paperW - 130;
+   725→    const bar = this.add.graphics();
+   726→    bar.fillStyle(0x3b2a1a, 1).fillRoundedRect(cx - barW / 2, top + 82, barW, 12, 6);
+   727→    if (count > 0) {
+   728→      bar.fillStyle(0xd9a520, 1).fillRoundedRect(cx - barW / 2 + 2, top + 84, Math.max(8, (barW - 4) * (count / total)), 8, 4);
+   729→    }
+   730→    this.overlay?.add(bar);
+   731→
+   732→    // Сетка 3×3
+   733→    const cellGap = 12;
+   734→    const cellW = (paperW - 56 - 2 * cellGap) / 3;
+   735→    const cellH = 100;
+   736→    const gridTop = top + 112;
+   737→    const small = width < 500;
+   738→
+   739→    this.achDesc = this.add.text(cx, top + paperH - 86, 'наведи на достижение — увидишь условие', {
+   740→      fontFamily: FONT, fontSize: '11px', color: '#57431f', align: 'center',
+   741→      wordWrap: { width: paperW - 70 }, lineSpacing: 5,
+   742→    }).setOrigin(0.5);
+   743→    this.overlay?.add(this.achDesc);
+   744→
+   745→    ACHIEVEMENTS.forEach((a, i) => {
+   746→      const col = i % 3;
+   747→      const rowI = Math.floor(i / 3);
+   748→      const x = cx - (3 * cellW + 2 * cellGap) / 2 + col * (cellW + cellGap) + cellW / 2;
+   749→      const y = gridTop + rowI * (cellH + cellGap) + cellH / 2;
+   750→      const has = unlocked.has(a.id);
+   751→
+   752→      const cell = this.add.container(x, y);
+   753→      const g = this.add.graphics();
+   754→      if (has) {
+   755→        g.fillStyle(0xffe9b0, 1).fillRoundedRect(-cellW / 2, -cellH / 2, cellW, cellH, 10);
+   756→        g.lineStyle(3, 0xd9a520, 1).strokeRoundedRect(-cellW / 2, -cellH / 2, cellW, cellH, 10);
+   757→      } else {
+   758→        g.fillStyle(0xefe6d0, 1).fillRoundedRect(-cellW / 2, -cellH / 2, cellW, cellH, 10);
+   759→        g.lineStyle(2, 0xbfa77a, 1).strokeRoundedRect(-cellW / 2, -cellH / 2, cellW, cellH, 10);
+   760→      }
+   761→      cell.add(g);
+   762→
+   763→      const icon = this.add.image(0, -cellH * 0.28, a.icon).setDisplaySize(34, 34);
+   764→      if (!has) icon.setTint(0x8d8577);
+   765→      cell.add(icon);
+   766→
+   767→      cell.add(this.add.text(0, cellH * 0.24, a.name, {
+   768→        fontFamily: FONT, fontSize: small ? '9px' : '10px',
+   769→        color: has ? '#3b2410' : '#8d8577', align: 'center',
+   770→        wordWrap: { width: cellW - 10 }, lineSpacing: 3,
+   771→      }).setOrigin(0.5));
+   772→
+   773→      cell.setSize(cellW, cellH);
+   774→      cell.setInteractive({ useHandCursor: true });
+   775→      const showDesc = (): void => {
+   776→        this.achDesc?.setText(has
+   777→          ? `${a.emoji} ${a.name} — ${a.desc}`
+   778→          : `🔒 ${a.name} — ${a.desc}`);
+   779→      };
+   780→      cell.on('pointerover', showDesc);
+   781→      cell.on('pointerdown', showDesc);
+   782→      this.overlayExtras.push(cell);
+   783→    });
+   784→
+   785→    if (count === total && count > 0) {
+   786→      this.overlay?.add(this.add.text(cx, top + paperH - 52, '👑 Все достижения собраны!', {
+   787→        fontFamily: FONT, fontSize: '13px', color: '#8a5b12',
+   788→      }).setOrigin(0.5));
+   789→    }
+   790→
+   791→    this.backButton(top + paperH + 42);
+   792→  }
+   793→
+   794→  // ================================================================
+   795→  // «Хроника воина» — мета-статистика
+   796→  // ================================================================
+   797→
+   798→  private showChronicle(): void {
+   799→    this.beginOverlay();
+   800→    const width = this.vw;
+   801→    const height = this.vh;
+   802→    const meta = loadMeta();
+   803→
+   804→    const paperW = Math.min(520, width - 50);
+   805→    const paperH = meta.matches === 0 && meta.kills === 0
+   806→      ? Math.min(340, height - 60)
+   807→      : Math.min(430, height - 50);
+   808→    const cx = width / 2;
+   809→    const cy = height / 2;
+   810→    const paper = makePanel(this, cx, cy, 'paper', paperW, paperH);
+   811→    this.overlay?.add(paper);
+   812→    const top = cy - paperH / 2;
+   813→
+   814→    this.overlay?.add(this.add.text(cx, top + 38, 'ХРОНИКА ВОИНА', {
+   815→      fontFamily: FONT, fontSize: '26px', color: '#3b2410',
+   816→    }).setOrigin(0.5));
+   817→
+   818→    if (meta.matches === 0 && meta.kills === 0) {
+   819→      this.overlay?.add(this.add.text(cx, cy + 10, [
+   820→        'Статистика появится после первого матча.',
+   821→        'Матчи, победы, золото и рекорды',
+   822→        'хранятся в этом браузере.',
+   823→      ].join('\n'), {
+   824→        fontFamily: FONT, fontSize: '14px', color: '#57431f', align: 'center', lineSpacing: 10,
+   825→      }).setOrigin(0.5));
+   826→    } else {
+   827→      const winRate = meta.matches > 0 ? Math.round((meta.victories / meta.matches) * 100) : 0;
+   828→      if (meta.matches > 0) {
+   829→        const chip = this.add.graphics();
+   830→        chip.fillStyle(0xdff0d8, 1).fillRoundedRect(cx - 74, top + 56, 148, 26, 13);
+   831→        chip.lineStyle(2, 0x5b8a51, 1).strokeRoundedRect(cx - 74, top + 56, 148, 26, 13);
+   832→        this.overlay?.add(chip);
+   833→        this.overlay?.add(this.add.text(cx, top + 69, `винрейт ${winRate}%`, {
+   834→          fontFamily: FONT, fontSize: '12px', color: '#2e5d28',
+   835→        }).setOrigin(0.5));
+   836→      }
+   837→
+   838→      const fmt = (n: number): string => n.toLocaleString('ru-RU');
+   839→      const h = Math.floor(meta.playTime / 3600);
+   840→      const m = Math.floor((meta.playTime % 3600) / 60);
+   841→      const timeStr = h > 0
+   842→        ? `${h} ч ${m} м`
+   843→        : m > 0
+   844→          ? `${m} мин`
+   845→          : `${meta.playTime} сек`;
+   846→      const items: Array<[string, string]> = [
+   847→        ['МАТЧЕЙ', fmt(meta.matches)],
+   848→        ['ПОБЕД', fmt(meta.victories)],
+   849→        ['УБИЙСТВ', fmt(meta.kills)],
+   850→        ['ЗОЛОТА', fmt(meta.gold)],
+   851→        ['РЕКОРД', fmt(meta.bestScore)],
+   852→        ['В ИГРЕ', timeStr],
+   853→      ];
+   854→
+   855→      const cellGap = 10;
+   856→      const cellW = (paperW - 56 - cellGap) / 2;
+   857→      const cellH = 58;
+   858→      const gridTop = top + 100;
+   859→      items.forEach(([lbl, val], i) => {
+   860→        const col = i % 2;
+   861→        const rowI = Math.floor(i / 2);
+   862→        const x = cx - (2 * cellW + cellGap) / 2 + col * (cellW + cellGap) + cellW / 2;
+   863→        const y = gridTop + rowI * (cellH + cellGap) + cellH / 2;
+   864→        const g = this.add.graphics();
+   865→        g.fillStyle(0xfff6df, 1).fillRoundedRect(-cellW / 2, -cellH / 2, cellW, cellH, 9);
+   866→        g.lineStyle(2, 0xc9a25e, 0.8).strokeRoundedRect(-cellW / 2, -cellH / 2, cellW, cellH, 9);
+   867→        this.overlay?.add(g);
+   868→        g.setPosition(x, y);
+   869→        this.overlay?.add(this.add.text(x, y - 14, lbl, {
+   870→          fontFamily: FONT, fontSize: '9px', color: '#8a5b12',
+   871→        }).setOrigin(0.5));
+   872→        this.overlay?.add(this.add.text(x, y + 9, val, {
+   873→          fontFamily: FONT, fontSize: '17px', color: '#3b2410',
+   874→        }).setOrigin(0.5));
+   875→      });
+   876→
+   877→      this.overlay?.add(this.add.text(cx, top + paperH - 26, 'данные хранятся в этом браузере', {
+   878→        fontFamily: FONT, fontSize: '10px', color: '#8a5b12',
+   879→      }).setOrigin(0.5));
+   880→    }
+   881→
+   882→    this.backButton(top + paperH + 42);
+   883→  }
+   884→
+   885→  update(): void {
+   886→    if (this.logo && this.logo.active) {
+   887→      const base = Math.max(52, this.vh * 0.075);
+   888→      this.logo.y = base + Math.sin(this.time.now / 700) * 5;
+   889→      this.logo2.y = base + (this.vw < 760 ? 48 : 54) + Math.sin(this.time.now / 700) * 5;
+   890→    }
+   891→    // Выбранный герой «дышит»
+   892→    for (const c of this.heroCards) {
+   893→      if (c.sprite.active && c.heroId === this.selectedHero) {
+   894→        const target = HEROES[c.heroId].scale * (1.05 + Math.sin(this.time.now / 600 + 1) * 0.03);
+   895→        c.sprite.setScale(target);
+   896→      }
+   897→    }
+   898→  }
+   899→}
+   900→

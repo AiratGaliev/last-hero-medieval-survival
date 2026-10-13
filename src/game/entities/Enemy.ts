@@ -32,7 +32,7 @@ export class Enemy extends Phaser.Physics.Arcade.Sprite {
   stateTimer = 0;
   private shootCd = 0;
   private healCd = 0;
-  private summonCd = 8;
+  private summonCd = 8000; // мс до первого зова свиты
   private chargeDirX = 0;
   private chargeDirY = 0;
   private chargeCount = 0;
@@ -257,7 +257,7 @@ export class Enemy extends Phaser.Physics.Arcade.Sprite {
         }
         if (isMid && this.summonCd <= 0 && this.hp < this.maxHp * 0.75) {
           this.ctx.onBossSummon(this.x, this.y);
-          this.summonCd = 13;
+          this.summonCd = 13000;
         }
         if (this.healCd <= 0 && this.aiState !== 'windup') {
           const allies = this.ctx.enemiesNear(this.x, this.y, isMid ? 320 : 260)
@@ -371,7 +371,7 @@ export class Enemy extends Phaser.Physics.Arcade.Sprite {
     // Зов свиты
     if (this.summonCd <= 0 && hpFrac < 0.65) {
       this.ctx.onBossSummon(this.x, this.y);
-      this.summonCd = 11;
+      this.summonCd = 11000;
     }
   }
 

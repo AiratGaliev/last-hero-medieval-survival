@@ -91,12 +91,14 @@ export class GameOverScene extends Phaser.Scene {
     ].filter((l) => l.length > 0);
 
     const statsTop = compact ? 62 : height * 0.19 + Math.min(240, height * 0.30) / 2 + 14;
-    this.add.text(width / 2, statsTop, lines.join('\n'), {
+    const statsText = this.add.text(width / 2, statsTop, lines.join('\n'), {
       fontFamily: FONT, fontSize: compact ? '13px' : '16px', color: '#ffe9b0',
       align: 'center', lineSpacing: compact ? 5 : 10,
       stroke: '#1b1008', strokeThickness: 5,
     }).setOrigin(0.5, 0).setScrollFactor(0);
-    let cursor = statsTop + (compact ? 19 : 26) * lines.length + (compact ? 12 : 18);
+    // Реальная высота текста (метрики шрифта > кегля) — чтобы строка
+    // сложности не наезжала на последнюю строку статистики
+    let cursor = statsTop + statsText.height + (compact ? 12 : 18);
 
     // ---------- Сложность ----------
     if (s.difficulty) {

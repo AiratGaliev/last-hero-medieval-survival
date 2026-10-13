@@ -48,6 +48,9 @@ export class GameScene extends Phaser.Scene {
   private pendingLevelUps = 0;
   private overlayOpen = false;
   private gameEnded = false;
+  /** Босс убит: идёт победный фейерверк — блокируем левел-апы/урон/спавн,
+ *  чтобы экран ПОБЕДЫ не перебивался и игрок не мог погибнуть «после победы». */
+  private victoryPending = false;
   private started = false;
 
   // Пассивки
@@ -85,6 +88,10 @@ export class GameScene extends Phaser.Scene {
     this.shopLevels = getShopLevels();
     this.buildWorld();
     this.buildPlayer();
+    // Зум камеры ДО создания HUD: HUD читает зум при постройке и
+    // компенсирует его (иначе первый кадр рисует HUD не на месте).
+    this.resizeZoom();
+    this.scale.on('resize', this.resizeZoom, this);
     this.buildSystems();
     this.recomputeStats();
     this.setupCollisions();
@@ -92,9 +99,6 @@ export class GameScene extends Phaser.Scene {
     this.cameras.main.setBackgroundColor('#3a7bd5');
     this.cameras.main.setBounds(0, 0, WORLD.SIZE, WORLD.SIZE);
     this.cameras.main.startFollow(this.player, true, 0.12, 0.1);
-    this.resizeZoom();
-
-    this.scale.on('resize', this.resizeZoom, this);
     this.events.once('shutdown', () => {
       this.scale.off('resize', this.resizeZoom, this);
       this.weapons?.destroy();
@@ -116,6 +120,7 @@ export class GameScene extends Phaser.Scene {
     this.elapsed = 0; this.kills = 0; this.level = 1;
     this.xp = 0; this.xpNext = XP_CURVE(1); this.gold = 0; this.score = 0;
     this.pendingLevelUps = 0; this.overlayOpen = false; this.gameEnded = false;
+    this.victoryPending = false;
     this.boss = null;
     this.midboss = null;
     this.passiveLevels.clear();
@@ -405,7 +410,7 @@ export class GameScene extends Phaser.Scene {
   // ================= ЦИКЛ =================
 
   update(time: number, delta: number): void {
-    if (!this.started || this.gameEnded) return;
+    if (!this.started || this.gameEnded || this.victoryPending) return;
 
     // Хитстоп: короткая заморозка мира (после убийств элит/взрывов/урона)
     if (time < this.hitstopUntil) {
@@ -505,7 +510,7 @@ export class GameScene extends Phaser.Scene {
     }
 
     // Левел-ап
-    if (this.pendingLevelUps > 0 && !this.overlayOpen && !this.gameEnded) {
+    if (this.pendingLevelUps > 0 && !this.overlayOpen && !this.gameEnded && !this.victoryPending) {
       this.openLevelUp();
     }
   }
@@ -558,7 +563,7 @@ export class GameScene extends Phaser.Scene {
   }
 
   private hurtPlayer(amount: number): void {
-    if (this.gameEnded) return;
+    if (this.gameEnded || this.victoryPending) return;
     // Эффекты урона (звук/тряска/хитстоп) — только когда удар реально прошёл
     if (this.time.now < this.player.iframesUntil) return;
     const dmg = Math.max(1, Math.round(amount * this.armorMult));
@@ -763,7 +768,7 @@ export class GameScene extends Phaser.Scene {
   // ================= XP / ЛЕВЕЛ-АП =================
 
   private addXp(v: number): void {
-    if (this.gameEnded) return;
+    if (this.gameEnded || this.victoryPending) return;
     this.xp += Math.max(1, Math.round(v * this.xpMult));
     while (this.xp >= this.xpNext) {
       this.xp -= this.xpNext;
@@ -930,7 +935,10 @@ export class GameScene extends Phaser.Scene {
   }
 
   private victory(): void {
-    if (this.gameEnded) return;
+    if (this.gameEnded || this.victoryPending) return;
+    this.victoryPending = true;
+    this.spawner.stopped = true;
+    this.player.setVelocity(0, 0);
     this.score += SCORE.BOSS;
     this.hud.hideBossBar();
     this.hud.announce('ПОБЕДА!!! БОСС ПОВЕРЖЕН!', '#ffd700');

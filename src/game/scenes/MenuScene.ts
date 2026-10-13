@@ -269,8 +269,8 @@ export class MenuScene extends Phaser.Scene {
     }).setOrigin(0.5, 0);
     container.add(body);
 
-    // Иконка стартового оружия
-    const wIcon = this.add.image(0, cardH * 0.44, WEAPONS[hero.startWeapon].icon).setDisplaySize(30, 30);
+    // Иконка стартового оружия — в углу карточки (не под текстом!)
+    const wIcon = this.add.image(cardW / 2 - 26, -cardH / 2 + 26, WEAPONS[hero.startWeapon].icon).setDisplaySize(30, 30);
     container.add(wIcon);
 
     // Рамка выделения
