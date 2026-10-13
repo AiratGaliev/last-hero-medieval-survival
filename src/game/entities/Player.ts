@@ -3,7 +3,6 @@ import { DEPTH } from '../constants';
 import type { HeroDef } from '../data';
 
 // ============ Игрок ============
-
 export class Player extends Phaser.Physics.Arcade.Sprite {
   hp: number;
   maxHp: number;
@@ -42,8 +41,9 @@ export class Player extends Phaser.Physics.Arcade.Sprite {
       .setAlpha(0.35)
       .setDepth(DEPTH.SHADOW);
 
-    // HP-бар (появляется при уроне)
-    this.hpBar = scene.add.graphics().setDepth(DEPTH.HUD);
+    // HP-бар (появляется при уроне); слой HPBAR — над всеми сущностями,
+    // но под снарядами/FX/HUD (мир-координаты, не экран)
+    this.hpBar = scene.add.graphics().setDepth(DEPTH.HPBAR);
 
     this.on('animationcomplete', (anim: Phaser.Animations.Animation) => {
       if (anim.key === this.hero.anims.atk1 || anim.key === this.hero.anims.atk2) {

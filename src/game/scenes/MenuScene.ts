@@ -150,13 +150,19 @@ export class MenuScene extends Phaser.Scene {
       this.add.image(width / 2 + 330, titleY + 20, 'swords').setDisplaySize(110, 158).setFlipX(true).setAlpha(0.85);
     }
 
-    // Кошелёк в углу — видно мета-золото до захода в лавку
+    // Кошелёк в углу — видно мета-золото до захода в лавку;
+    // на подложке-пергаменте, чтобы облака не мешали чтению
     const wallet = loadShop().balance;
     if (wallet > 0) {
-      this.add.image(width - 52, titleY - 6, 'icon-coin').setDisplaySize(20, 20);
-      this.add.text(width - 38, titleY - 6, `${wallet.toLocaleString('ru-RU')}`, {
-        fontFamily: FONT, fontSize: '15px', color: '#7a4e0e',
-        stroke: '#ffe9c0', strokeThickness: 4,
+      const wtxt = wallet.toLocaleString('ru-RU');
+      const chipW = 52 + wtxt.length * 10;
+      const chipX = width - 20 - chipW;
+      const walletChip = this.add.graphics();
+      walletChip.fillStyle(0xf7e7c3, 0.95).fillRoundedRect(chipX, titleY - 19, chipW, 30, 9);
+      walletChip.lineStyle(2, 0xc9a25e, 1).strokeRoundedRect(chipX, titleY - 19, chipW, 30, 9);
+      this.add.image(chipX + 16, titleY - 4, 'icon-coin').setDisplaySize(18, 18);
+      this.add.text(chipX + 30, titleY - 4, wtxt, {
+        fontFamily: FONT, fontSize: '14px', color: '#7a4e0e',
       }).setOrigin(0, 0.5);
     }
 
@@ -231,7 +237,7 @@ export class MenuScene extends Phaser.Scene {
       });
     }
 
-    this.add.text(width / 2, height - 12, 'v1.4 • Phaser 4 • ассеты Pixel Frog «Tiny Swords»', {
+    this.add.text(width / 2, height - 12, 'v1.6 • Phaser 4 • ассеты Pixel Frog «Tiny Swords»', {
       fontFamily: FONT, fontSize: '11px', color: '#3b2410',
     }).setOrigin(0.5).setAlpha(0.8);
 
@@ -264,8 +270,8 @@ export class MenuScene extends Phaser.Scene {
 
     const traits = hero.traits.map((t) => `• ${t}`).join('\n');
     const body = this.add.text(0, cardH * 0.30, traits, {
-      fontFamily: FONT, fontSize: '10px', color: '#57431f',
-      align: 'center', lineSpacing: 5, wordWrap: { width: cardW - 30 },
+      fontFamily: FONT, fontSize: '11px', color: '#4a3517',
+      align: 'center', lineSpacing: 5, wordWrap: { width: cardW - 26 },
     }).setOrigin(0.5, 0);
     container.add(body);
 
@@ -654,9 +660,12 @@ export class MenuScene extends Phaser.Scene {
         if (!affordable) btn.setTint(0x9aa0a6);
         row.add(btn);
         row.add(this.add.text(rowW / 2 - 56, 0, `${price}`, {
-          fontFamily: FONT, fontSize: '12px', color: '#ffffff',
+          fontFamily: FONT, fontSize: '12px',
+          color: affordable ? '#ffffff' : '#e8eaed',
           stroke: '#2a1608', strokeThickness: 3,
         }).setOrigin(0.5));
+        // Не по карману — вся строка приглушена: сразу видно, что купить нельзя
+        if (!affordable) row.setAlpha(0.55);
       }
 
       row.setSize(rowW, rowH);

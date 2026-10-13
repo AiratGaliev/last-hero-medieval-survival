@@ -1,4 +1,5 @@
 import Phaser from 'phaser';
+import { DEPTH } from '../constants';
 
 // ============ Виртуальный джойстик для мобильных ============
 
@@ -15,13 +16,15 @@ export class Joystick {
 
   constructor(scene: Phaser.Scene) {
     this.scene = scene;
-    this.base = scene.add.graphics().setDepth(3000).setVisible(false);
-    this.knob = scene.add.graphics().setDepth(3001).setVisible(false);
+    // Слой выше HUD: джойстик — самый верхний экранный элемент
+    this.base = scene.add.graphics().setDepth(DEPTH.HUD + 20).setVisible(false);
+    this.knob = scene.add.graphics().setDepth(DEPTH.HUD + 21).setVisible(false);
     scene.input.on('pointerdown', (p: Phaser.Input.Pointer) => {
       if (this.pointerId !== -1) return;
-      // Игнорируем клики по верхней зоне (кнопка паузы) и правому нижнему углу
+      // Игнорируем клики по зоне кнопки паузы (правый верхний угол) —
+      // зона шире самой кнопки, чтобы тап по краям хит-зоны не спавнил джойстик
       const { width } = scene.scale;
-      if (p.x > width - 90 && p.y < 120) return;
+      if (p.x > width - 100 && p.y < 140) return;
       this.pointerId = p.id;
       this.baseX = p.x; this.baseY = p.y;
       this.show();

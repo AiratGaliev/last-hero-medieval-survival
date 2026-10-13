@@ -1,0 +1,1038 @@
+     1→import Phaser from 'phaser';
+     2→import {
+     3→  WORLD, PLAYER_BASE, DEPTH, ENEMY_CAP, SCORE, XP_CURVE,
+     4→} from '../constants';
+     5→import {
+     6→  WEAPONS, PASSIVES, HEROES, ENEMIES, DIFFICULTIES,
+     7→  type WeaponId, type PassiveId, type EnemyKind, type UpgradeCard, type HeroId, type HeroDef, type DifficultyId, type DifficultyDef,
+     8→} from '../data';
+     9→import { Player } from '../entities/Player';
+    10→import { Enemy, type EnemyContext } from '../entities/Enemy';
+    11→import { audio } from '../systems/Audio';
+    12→import { Effects } from '../systems/Effects';
+    13→import { Pickups } from '../systems/Pickups';
+    14→import { Projectiles } from '../systems/Projectiles';
+    15→import { Spawner, type SpawnerCtx } from '../systems/Spawner';
+    16→import { WeaponSystem, type WeaponCtx } from '../systems/Weapons';
+    17→import { HUD } from '../systems/HUD';
+    18→import { Joystick } from '../systems/Joystick';
+    19→import { AchTracker, commitMeta } from '../achievements';
+    20→import { getShopLevels, type ShopLevels } from '../shop';
+    21→
+    22→type Keys = Record<string, Phaser.Input.Keyboard.Key>;
+    23→
+    24→// ============ Основная игровая сцена ============
+    25→
+    26→export class GameScene extends Phaser.Scene {
+    27→  private player!: Player;
+    28→  private keys!: Keys;
+    29→  private joystick!: Joystick;
+    30→  private enemyGroup!: Phaser.Physics.Arcade.Group;
+    31→  private effects!: Effects;
+    32→  private pickups!: Pickups;
+    33→  private projectiles!: Projectiles;
+    34→  private spawner!: Spawner;
+    35→  private weapons!: WeaponSystem;
+    36→  private hud!: HUD;
+    37→  private boss: Enemy | null = null;
+    38→  private midboss: Enemy | null = null;
+    39→
+    40→  // Состояние матча
+    41→  private elapsed = 0;
+    42→  private kills = 0;
+    43→  private level = 1;
+    44→  private xp = 0;
+    45→  private xpNext = XP_CURVE(1);
+    46→  private gold = 0;
+    47→  private score = 0;
+    48→  private pendingLevelUps = 0;
+    49→  private overlayOpen = false;
+    50→  private gameEnded = false;
+    51→  /** Босс убит: идёт победный фейерверк — блокируем левел-апы/урон/спавн,
+    52→ *  чтобы экран ПОБЕДЫ не перебивался и игрок не мог погибнуть «после победы». */
+    53→  private victoryPending = false;
+    54→  private started = false;
+    55→
+    56→  // Пассивки
+    57→  private passiveLevels = new Map<PassiveId, number>();
+    58→  private armorMult: number = 1;
+    59→  private magnetRadius: number = PLAYER_BASE.MAGNET_RADIUS;
+    60→  private regen: number = 0;
+    61→  private mightMult: number = 1;
+    62→  private cdMult: number = 1;
+    63→  private critChance: number = 0;
+    64→
+    65→  private lastMove = { x: 1, y: 0 };
+    66→  private lastHudUpdate = 0;
+    67→  private lastDespawn = 0;
+    68→  private lastDieSound = 0;
+    69→  private sepGrid = new Map<number, Enemy[]>();
+    70→  private heroDef: HeroDef = HEROES.warrior;
+    71→  private diffDef: DifficultyDef = DIFFICULTIES.normal;
+    72→  private xpMult = 1;
+    73→  private chestTimer = 40;
+    74→  private chestsOpened = 0;
+    75→  private elitesSlain = 0;
+    76→  private hitstopUntil = 0;
+    77→  private ach: AchTracker | null = null;
+    78→  private shopLevels: ShopLevels = { might: 0, vitality: 0, speed: 0, magnet: 0, luck: 0 };
+    79→
+    80→  constructor() {
+    81→    super('Game');
+    82→  }
+    83→
+    84→  create(payload?: { hero?: HeroId; diff?: DifficultyId }): void {
+    85→    this.resetState();
+    86→    this.initHero(payload?.hero);
+    87→    this.initDifficulty(payload?.diff);
+    88→    this.shopLevels = getShopLevels();
+    89→    this.buildWorld();
+    90→    this.buildPlayer();
+    91→    // Зум камеры ДО создания HUD: HUD читает зум при постройке и
+    92→    // компенсирует его (иначе первый кадр рисует HUD не на месте).
+    93→    this.resizeZoom();
+    94→    this.scale.on('resize', this.resizeZoom, this);
+    95→    this.buildSystems();
+    96→    this.recomputeStats();
+    97→    this.setupCollisions();
+    98→    this.setupInput();
+    99→    this.cameras.main.setBackgroundColor('#3a7bd5');
+   100→    this.cameras.main.setBounds(0, 0, WORLD.SIZE, WORLD.SIZE);
+   101→    this.cameras.main.startFollow(this.player, true, 0.12, 0.1);
+   102→    this.events.once('shutdown', () => {
+   103→      this.scale.off('resize', this.resizeZoom, this);
+   104→      this.weapons?.destroy();
+   105→      this.hud?.destroy();
+   106→      this.pickups?.destroy();
+   107→      audio.stopMusic();
+   108→    });
+   109→
+   110→    audio.unlock();
+   111→    audio.startMusic();
+   112→    this.started = true;
+   113→    this.hud.announce(`ВЫЖИВИ 15 МИНУТ, ${this.heroDef.name.toUpperCase()}!`, '#ffe9b0');
+   114→    if (this.diffDef.id === 'nightmare') {
+   115→      this.time.delayedCall(2100, () => this.hud.announce('⚔ КОШМАР: ВРАГИ СВИРЕПЕЕ, ОЧКИ ×1.6', '#ff8866'));
+   116→    }
+   117→  }
+   118→
+   119→  private resetState(): void {
+   120→    this.elapsed = 0; this.kills = 0; this.level = 1;
+   121→    this.xp = 0; this.xpNext = XP_CURVE(1); this.gold = 0; this.score = 0;
+   122→    this.pendingLevelUps = 0; this.overlayOpen = false; this.gameEnded = false;
+   123→    this.victoryPending = false;
+   124→    this.boss = null;
+   125→    this.midboss = null;
+   126→    this.passiveLevels.clear();
+   127→    this.armorMult = 1; this.magnetRadius = PLAYER_BASE.MAGNET_RADIUS;
+   128→    this.regen = 0; this.mightMult = 1; this.cdMult = 1; this.critChance = 0;
+   129→    this.xpMult = 1;
+   130→    this.chestTimer = 40;
+   131→    this.chestsOpened = 0;
+   132→    this.elitesSlain = 0;
+   133→    this.hitstopUntil = 0;
+   134→    this.registry.set('tss-freeze', 0);
+   135→    this.lastMove = { x: 1, y: 0 };
+   136→    this.sepGrid.clear();
+   137→  }
+   138→
+   139→  private initDifficulty(diffId?: DifficultyId): void {
+   140→    let id = diffId;
+   141→    if (!id && typeof window !== 'undefined') {
+   142→      const saved = window.localStorage.getItem('tss-diff');
+   143→      if (saved === 'normal' || saved === 'nightmare') id = saved;
+   144→    }
+   145→    this.diffDef = DIFFICULTIES[id ?? 'normal'];
+   146→  }
+   147→
+   148→  private initHero(heroId?: HeroId): void {
+   149→    let id = heroId;
+   150→    if (!id && typeof window !== 'undefined') {
+   151→      const saved = window.localStorage.getItem('tss-hero');
+   152→      if (saved === 'warrior' || saved === 'archer' || saved === 'lancer' || saved === 'monk') id = saved;
+   153→    }
+   154→    this.heroDef = HEROES[id ?? 'warrior'];
+   155→  }
+   156→
+   157→  // ================= МИР =================
+   158→
+   159→  private buildWorld(): void {
+   160→    const S = WORLD.SIZE;
+   161→    const m = WORLD.GRASS_MARGIN;
+   162→    // Вода (фон)
+   163→    const water = this.add.tileSprite(S / 2, S / 2, S, S, 'water-tile')
+   164→      .setDepth(DEPTH.WATER - 20);
+   165→    void water;
+   166→    // Трава (арена)
+   167→    const grass = this.add.tileSprite(S / 2, S / 2, S - m * 2, S - m * 2, 'grass-tile')
+   168→      .setDepth(DEPTH.GROUND);
+   169→    void grass;
+   170→
+   171→    // Анимированная пена по кромке воды
+   172→    const foamStep = 192;
+   173→    const foamAnim = this.anims.get('fx-foam');
+   174→    const foamRing = (x: number, y: number) => {
+   175→      const f = this.add.sprite(x, y, 'fx-foam').setDepth(DEPTH.WATER + 2);
+   176→      f.play('fx-foam');
+   177→      if (foamAnim) f.anims.setCurrentFrame(foamAnim.frames[Phaser.Math.Between(0, foamAnim.frames.length - 1)]);
+   178→    };
+   179→    for (let x = m; x < S - m; x += foamStep) {
+   180→      foamRing(x + foamStep / 2, m);
+   181→      foamRing(x + foamStep / 2, S - m);
+   182→    }
+   183→    for (let y = m; y < S - m; y += foamStep) {
+   184→      foamRing(m, y + foamStep / 2);
+   185→      foamRing(S - m, y + foamStep / 2);
+   186→    }
+   187→
+   188→    this.physics.world.setBounds(m, m, S - m * 2, S - m * 2);
+   189→
+   190→    // Детерминированный декор
+   191→    const rng = new Phaser.Math.RandomDataGenerator(['tiny-sword-survivors']);
+   192→    const cx = S / 2, cy = S / 2;
+   193→    const placed: { x: number; y: number; r: number }[] = [];
+   194→    const canPlace = (x: number, y: number, r: number): boolean => {
+   195→      if (Math.hypot(x - cx, y - cy) < 380) return false; // зона спавна
+   196→      for (const p of placed) {
+   197→        if (Math.hypot(x - p.x, y - p.y) < p.r + r) return false;
+   198→      }
+   199→      return true;
+   200→    };
+   201→    const place = (x: number, y: number, r: number) => placed.push({ x, y, r });
+   202→    const randPos = (margin = 260): [number, number] => [
+   203→      Phaser.Math.Clamp(rng.between(m + 80, S - m - 80), margin, S - margin),
+   204→      Phaser.Math.Clamp(rng.between(m + 80, S - m - 80), margin, S - margin),
+   205→    ];
+   206→
+   207→    // Замок — дом игрока
+   208→    const castle = this.add.image(cx, cy - 460, 'castle').setScale(0.9)
+   209→      .setDepth(DEPTH.ENTITY_BASE + cy - 460);
+   210→    void castle;
+   211→    place(cx, cy - 460, 200);
+   212→    this.add.image(cx - 240, cy - 420, 'house2').setScale(0.8).setDepth(DEPTH.ENTITY_BASE + cy - 420);
+   213→    this.add.image(cx + 230, cy - 430, 'house1').setScale(0.8).setDepth(DEPTH.ENTITY_BASE + cy - 430);
+   214→    this.add.image(cx - 320, cy - 300, 'tower').setScale(0.85).setDepth(DEPTH.ENTITY_BASE + cy - 300);
+   215→    this.add.image(cx + 320, cy - 280, 'tower').setScale(0.85).setDepth(DEPTH.ENTITY_BASE + cy - 280);
+   216→    this.add.image(cx + 60, cy + 470, 'monastery').setScale(0.8).setDepth(DEPTH.ENTITY_BASE + cy + 470);
+   217→    place(cx + 60, cy + 470, 160);
+   218→
+   219→    // Дома и башни по карте
+   220→    for (let i = 0; i < 8; i++) {
+   221→      const [x, y] = randPos();
+   222→      if (canPlace(x, y, 120)) {
+   223→        const k = Phaser.Math.RND.pick(['house1', 'house2', 'house3']);
+   224→        this.add.image(x, y, k).setScale(0.75).setDepth(DEPTH.ENTITY_BASE + y);
+   225→        place(x, y, 120);
+   226→      }
+   227→    }
+   228→    for (let i = 0; i < 6; i++) {
+   229→      const [x, y] = randPos();
+   230→      if (canPlace(x, y, 110)) {
+   231→        this.add.image(x, y, 'tower').setScale(0.8).setDepth(DEPTH.ENTITY_BASE + y);
+   232→        place(x, y, 110);
+   233→      }
+   234→    }
+   235→    // Деревья
+   236→    for (let i = 0; i < 70; i++) {
+   237→      const [x, y] = randPos();
+   238→      if (!canPlace(x, y, 80)) continue;
+   239→      const key = rng.frac() < 0.6 ? 'tree1' : 'tree3';
+   240→      const sc = 0.8 + rng.frac() * 0.35;
+   241→      const t = this.add.sprite(x, y, key).setScale(sc);
+   242→      t.play(key === 'tree1' ? 'tree1-sway' : 'tree3-sway');
+   243→      if (t.anims.currentAnim) t.setFrame(rng.between(0, 7));
+   244→      t.setDepth(DEPTH.ENTITY_BASE + y);
+   245→      place(x, y, 80);
+   246→    }
+   247→    // Камни и кусты
+   248→    for (let i = 0; i < 30; i++) {
+   249→      const [x, y] = randPos();
+   250→      if (!canPlace(x, y, 40)) continue;
+   251→      this.add.image(x, y, `rock${rng.between(1, 3)}`).setScale(0.8 + rng.frac() * 0.5)
+   252→        .setDepth(DEPTH.ENTITY_BASE + y - 4);
+   253→      place(x, y, 40);
+   254→    }
+   255→    for (let i = 0; i < 40; i++) {
+   256→      const [x, y] = randPos();
+   257→      if (!canPlace(x, y, 40)) continue;
+   258→      const b = this.add.sprite(x, y, 'bushe1').setScale(0.7 + rng.frac() * 0.4);
+   259→      b.play('bushe1-sway');
+   260→      b.setFrame(rng.between(0, 7));
+   261→      b.setDepth(DEPTH.ENTITY_BASE + y - 2);
+   262→      place(x, y, 40);
+   263→    }
+   264→    // Овечки
+   265→    for (let i = 0; i < 10; i++) {
+   266→      const [x, y] = randPos();
+   267→      if (!canPlace(x, y, 50)) continue;
+   268→      const sh = this.add.sprite(x, y, 'sheep').setScale(0.8);
+   269→      sh.play('sheep-idle');
+   270→      sh.setDepth(DEPTH.ENTITY_BASE + y);
+   271→      place(x, y, 50);
+   272→    }
+   273→    // Облака (дрейф вправо, относительный твин с переносом)
+   274→    for (let i = 0; i < 10; i++) {
+   275→      const [x, y] = [rng.between(0, S), rng.between(0, S)];
+   276→      const c = this.add.image(x, y, `cloud${rng.between(1, 3)}`)
+   277→        .setAlpha(0.5)
+   278→        .setDepth(DEPTH.FX + 50);
+   279→      this.tweens.add({
+   280→        targets: c,
+   281→        x: '+=700',
+   282→        duration: rng.between(60, 100) * 1000,
+   283→        repeat: -1,
+   284→        onRepeat: () => { c.x = -320; },
+   285→      });
+   286→    }
+   287→  }
+   288→
+   289→  private buildPlayer(): void {
+   290→    this.player = new Player(this, WORLD.SIZE / 2, WORLD.SIZE / 2 + 260, this.heroDef);
+   291→  }
+   292→
+   293→  private buildSystems(): void {
+   294→    this.effects = new Effects(this);
+   295→    this.pickups = new Pickups(
+   296→      this,
+   297→      (v) => this.addXp(v),
+   298→      (v) => this.player.heal(v),
+   299→      (x, y) => this.openChest(x, y),
+   300→      (v, x, y) => this.addGold(v, x, y),
+   301→    );
+   302→    this.projectiles = new Projectiles(this, {
+   303→      onExplode: (x, y, dmg, radius) => this.explode(x, y, dmg, radius),
+   304→    });
+   305→    this.enemyGroup = this.physics.add.group();
+   306→    this.enemyCtxStore = this.makeEnemyCtx();
+   307→
+   308→    const spawnCtx: SpawnerCtx = {
+   309→      spawn: (kind, x, y) => this.spawnEnemy(kind, x, y),
+   310→      spawnElite: (kind) => {
+   311→        const a = Math.random() * Math.PI * 2;
+   312→        this.spawnEnemy(kind, this.player.x + Math.cos(a) * 700, this.player.y + Math.sin(a) * 700);
+   313→      },
+   314→      spawnBoss: () => this.spawnBoss(),
+   315→      playerX: () => this.player.x,
+   316→      playerY: () => this.player.y,
+   317→      announce: (t, c) => this.hud.announce(t, c),
+   318→      spawnRadius: () => {
+   319→        const cam = this.cameras.main;
+   320→        return Math.hypot(cam.width, cam.height) / (2 * cam.zoom) + 80;
+   321→      },
+   322→    };
+   323→    this.spawner = new Spawner(this, spawnCtx, this.diffDef.id);
+   324→
+   325→    const weaponCtx: WeaponCtx = {
+   326→      player: () => this.player,
+   327→      enemies: () => this.activeEnemies(),
+   328→      damageEnemy: (e, dmg, kx, ky, force) => this.damageEnemy(e, dmg, kx, ky, force),
+   329→      projectiles: () => this.projectiles,
+   330→      effects: () => this.effects,
+   331→      moveDir: () => this.lastMove,
+   332→      mightMult: () => this.mightMult,
+   333→      cdMult: () => this.cdMult,
+   334→    };
+   335→    this.weapons = new WeaponSystem(this, weaponCtx);
+   336→    this.weapons.add(this.heroDef.startWeapon);
+   337→    const startId = this.heroDef.startWeapon;
+   338→
+   339→    this.hud = new HUD(this, () => this.openPause(), {
+   340→      scoreMult: this.diffDef.scoreMult,
+   341→      diffName: this.diffDef.name.toUpperCase(),
+   342→    });
+   343→    this.hud.setIcon(startId, WEAPONS[startId].icon, 1, false);
+   344→    this.ach = new AchTracker((a) => this.hud.achievementToast(a));
+   345→  }
+   346→
+   347→  private setupCollisions(): void {
+   348→    this.physics.add.overlap(this.player, this.enemyGroup, (_p, e) => {
+   349→      const enemy = e as Enemy;
+   350→      this.hurtPlayer(enemy.damage);
+   351→    });
+   352→
+   353→    this.physics.add.overlap(this.projectiles.arrows, this.enemyGroup, (proj, e) => {
+   354→      const p = proj as unknown as import('../systems/Projectiles').Proj;
+   355→      const enemy = e as Enemy;
+   356→      if (!p.active || !enemy.active) return;
+   357→      if (p.hitSet?.has(enemy)) return;
+   358→      p.hitSet?.add(enemy);
+   359→      this.damageEnemy(enemy, p.dmg, enemy.x - this.player.x, enemy.y - this.player.y, 90);
+   360→      this.projectiles.consumePierce(p);
+   361→    });
+   362→
+   363→    this.physics.add.overlap(this.projectiles.spears, this.enemyGroup, (proj, e) => {
+   364→      const p = proj as unknown as import('../systems/Projectiles').Proj;
+   365→      const enemy = e as Enemy;
+   366→      if (!p.active || !enemy.active) return;
+   367→      if (p.hitSet?.has(enemy)) return;
+   368→      p.hitSet?.add(enemy);
+   369→      this.damageEnemy(enemy, p.dmg, 0, 0, 40);
+   370→      this.projectiles.consumePierce(p);
+   371→    });
+   372→
+   373→    this.physics.add.overlap(this.projectiles.knives, this.enemyGroup, (proj, e) => {
+   374→      const p = proj as unknown as import('../systems/Projectiles').Proj;
+   375→      const enemy = e as Enemy;
+   376→      if (!p.active || !enemy.active) return;
+   377→      if (p.hitSet?.has(enemy)) return;
+   378→      p.hitSet?.add(enemy);
+   379→      this.damageEnemy(enemy, p.dmg, enemy.x - this.player.x, enemy.y - this.player.y, 70);
+   380→      this.projectiles.consumePierce(p);
+   381→    });
+   382→
+   383→    this.physics.add.overlap(this.player, this.projectiles.enemyArrows, (_p, proj) => {
+   384→      const p = proj as unknown as import('../systems/Projectiles').Proj;
+   385→      if (!p.active) return;
+   386→      this.projectiles.releaseEnemyArrow(p);
+   387→      this.hurtPlayer(p.dmg);
+   388→    });
+   389→  }
+   390→
+   391→  private setupInput(): void {
+   392→    const kb = this.input.keyboard!;
+   393→    this.keys = kb.addKeys({
+   394→      w: Phaser.Input.Keyboard.KeyCodes.W,
+   395→      a: Phaser.Input.Keyboard.KeyCodes.A,
+   396→      s: Phaser.Input.Keyboard.KeyCodes.S,
+   397→      d: Phaser.Input.Keyboard.KeyCodes.D,
+   398→      up: Phaser.Input.Keyboard.KeyCodes.UP,
+   399→      down: Phaser.Input.Keyboard.KeyCodes.DOWN,
+   400→      left: Phaser.Input.Keyboard.KeyCodes.LEFT,
+   401→      right: Phaser.Input.Keyboard.KeyCodes.RIGHT,
+   402→      esc: Phaser.Input.Keyboard.KeyCodes.ESC,
+   403→      p: Phaser.Input.Keyboard.KeyCodes.P,
+   404→      m: Phaser.Input.Keyboard.KeyCodes.M,
+   405→    }) as Keys;
+   406→    kb.addCapture('UP,DOWN,LEFT,RIGHT,SPACE');
+   407→    this.joystick = new Joystick(this);
+   408→  }
+   409→
+   410→  // ================= ЦИКЛ =================
+   411→
+   412→  update(time: number, delta: number): void {
+   413→    if (!this.started || this.gameEnded || this.victoryPending) return;
+   414→
+   415→    // Хитстоп: короткая заморозка мира (после убийств элит/взрывов/урона)
+   416→    if (time < this.hitstopUntil) {
+   417→      this.player.setVelocity(0, 0);
+   418→      return;
+   419→    }
+   420→
+   421→    const dt = Math.min(delta, 50) / 1000;
+   422→
+   423→    // Пауза
+   424→    if (Phaser.Input.Keyboard.JustDown(this.keys.esc) || Phaser.Input.Keyboard.JustDown(this.keys.p)) {
+   425→      this.openPause();
+   426→      return;
+   427→    }
+   428→    if (Phaser.Input.Keyboard.JustDown(this.keys.m)) {
+   429→      const muted = audio.toggleMute();
+   430→      this.hud.announce(muted ? 'ЗВУК ВЫКЛ' : 'ЗВУК ВКЛ', '#ffe9b0');
+   431→    }
+   432→
+   433→    this.elapsed += dt;
+   434→
+   435→    // Движение игрока
+   436→    let vx = 0, vy = 0;
+   437→    if (this.keys.a.isDown || this.keys.left.isDown) vx -= 1;
+   438→    if (this.keys.d.isDown || this.keys.right.isDown) vx += 1;
+   439→    if (this.keys.w.isDown || this.keys.up.isDown) vy -= 1;
+   440→    if (this.keys.s.isDown || this.keys.down.isDown) vy += 1;
+   441→    const jv = this.joystick.vector;
+   442→    vx += jv.x; vy += jv.y;
+   443→    const len = Math.hypot(vx, vy);
+   444→    if (len > 1) { vx /= len; vy /= len; }
+   445→    this.player.setVelocity(vx * this.player.speed, vy * this.player.speed);
+   446→    this.player.setAnimForVelocity();
+   447→    if (len > 0.1) this.lastMove = { x: vx / Math.max(0.001, len), y: vy / Math.max(0.001, len) };
+   448→    if (Math.abs(vx) > 0.05) this.player.setFlipX(vx < 0);
+   449→
+   450→    // Пыль под ногами
+   451→    if (len > 0.5 && Math.random() < dt * 6) {
+   452→      this.effects.dust(this.player.x, this.player.y + 14, 1);
+   453→    }
+   454→
+   455→    // Системы
+   456→    this.weapons.update(delta);
+   457→    this.projectiles.update(delta);
+   458→    this.spawner.update(dt);
+   459→
+   460→    // Сундуки с сокровищами
+   461→    if (!this.gameEnded) {
+   462→      this.chestTimer -= dt;
+   463→      if (this.chestTimer <= 0) {
+   464→        this.chestTimer = 75;
+   465→        this.spawnChest();
+   466→      }
+   467→    }
+   468→    this.pickups.update(delta, this.player.x, this.player.y, this.magnetRadius, time);
+   469→
+   470→    // Регенерация
+   471→    if (this.regen > 0 && this.player.hp < this.player.maxHp) {
+   472→      this.player.heal(this.regen * dt);
+   473→    }
+   474→
+   475→    // Сепарация врагов
+   476→    this.separateEnemies();
+   477→
+   478→    // Деспавн далёких
+   479→    if (time - this.lastDespawn > 700) {
+   480→      this.lastDespawn = time;
+   481→      this.despawnFar();
+   482→    }
+   483→
+   484→    // Босс / мидбосс — приоритет полосе HP: сначала финальный босс
+   485→    if (this.boss) {
+   486→      if (this.boss.active) {
+   487→        this.hud.updateBossBar(this.boss.hp / this.boss.maxHp);
+   488→      } else {
+   489→        this.boss = null;
+   490→        if (this.midboss && this.midboss.active) this.hud.showBossBar(ENEMIES.midboss.name);
+   491→        else this.hud.hideBossBar();
+   492→      }
+   493→    } else if (this.midboss) {
+   494→      if (this.midboss.active) {
+   495→        this.hud.updateBossBar(this.midboss.hp / this.midboss.maxHp);
+   496→      } else {
+   497→        this.midboss = null;
+   498→        this.hud.hideBossBar();
+   499→      }
+   500→    }
+   501→
+   502→    // HUD
+   503→    if (time - this.lastHudUpdate > 150) {
+   504→      this.lastHudUpdate = time;
+   505→      this.hud.update({
+   506→        hp: this.player.hp, maxHp: this.player.maxHp,
+   507→        level: this.level, xp: this.xp, xpNext: this.xpNext,
+   508→        kills: this.kills, score: this.currentScore(), elapsed: this.elapsed, gold: this.gold,
+   509→      });
+   510→    }
+   511→
+   512→    // Левел-ап
+   513→    if (this.pendingLevelUps > 0 && !this.overlayOpen && !this.gameEnded && !this.victoryPending) {
+   514→      this.openLevelUp();
+   515→    }
+   516→  }
+   517→
+   518→  // ================= БОЙ =================
+   519→
+   520→  private activeEnemies(): Enemy[] {
+   521→    return this.enemyGroup.getChildren().filter((e) => e.active) as Enemy[];
+   522→  }
+   523→
+   524→  private enemiesNear(x: number, y: number, r: number): Phaser.Physics.Arcade.Sprite[] {
+   525→    const out: Phaser.Physics.Arcade.Sprite[] = [];
+   526→    for (const e of this.enemyGroup.getChildren() as Enemy[]) {
+   527→      if (e.active && Math.hypot(e.x - x, e.y - y) <= r) out.push(e);
+   528→    }
+   529→    return out;
+   530→  }
+   531→
+   532→  /** Хитстоп: заморозить врагов на ms миллисекунд */
+   533→  private hitstop(ms: number): void {
+   534→    this.hitstopUntil = Math.max(this.hitstopUntil, this.time.now + ms);
+   535→    this.registry.set('tss-freeze', this.hitstopUntil);
+   536→  }
+   537→
+   538→  private damageEnemy(e: Enemy, dmg: number, kx = 0, ky = 0, force = 0): void {
+   539→    if (!e.active || e.dead) return;
+   540→    let final = dmg * this.mightMult;
+   541→    const crit = Math.random() < this.critChance;
+   542→    if (crit) final *= 2;
+   543→    final = Math.max(1, Math.round(final));
+   544→    this.effects.damage(e.x, e.y - 40 * e.def.scale, final, crit);
+   545→    if (Math.random() < 0.6) this.effects.hitSpark(e.x, e.y - 26 * e.def.scale);
+   546→    if (force > 0) e.knockback(kx, ky, force);
+   547→    this.effects.hitSound(this.time.now);
+   548→    if (e.takeDamage(final)) {
+   549→      this.onEnemyDeath(e);
+   550→    }
+   551→  }
+   552→
+   553→  private explode(x: number, y: number, dmg: number, radius: number): void {
+   554→    this.effects.explosion(x, y, 1.1, 2);
+   555→    audio.play('explosion');
+   556→    this.cameras.main.shake(160, 0.004);
+   557→    for (const e of this.activeEnemies()) {
+   558→      const dx = e.x - x, dy = e.y - y;
+   559→      if (Math.hypot(dx, dy) <= radius + e.def.bodyRadius) {
+   560→        this.damageEnemy(e, dmg, dx, dy, 320);
+   561→      }
+   562→    }
+   563→  }
+   564→
+   565→  private hurtPlayer(amount: number): void {
+   566→    if (this.gameEnded || this.victoryPending) return;
+   567→    // Эффекты урона (звук/тряска/хитстоп) — только когда удар реально прошёл
+   568→    if (this.time.now < this.player.iframesUntil) return;
+   569→    const dmg = Math.max(1, Math.round(amount * this.armorMult));
+   570→    const dead = this.player.damage(dmg, this.time.now);
+   571→    audio.play('hurt');
+   572→    this.cameras.main.shake(120, 0.0035);
+   573→    this.cameras.main.flash(110, 190, 40, 30, false);
+   574→    this.hitstop(80);
+   575→    if (dead) this.gameOver(false);
+   576→  }
+   577→
+   578→  private onEnemyDeath(e: Enemy): void {
+   579→    if (!e.active) return;
+   580→    // Убираем из мира СРАЗУ: цепные взрывы не должны повторно бить погибающего
+   581→    const x = e.x, y = e.y;
+   582→    this.enemyGroup.remove(e, true, true);
+   583→
+   584→    this.kills++;
+   585→    this.score += SCORE.KILL;
+   586→    this.ach?.event({ type: 'kills', value: this.kills });
+   587→    const big = e.def.isElite || e.def.isBoss || e.def.isMidboss;
+   588→
+   589→    // Бочка-камикадзе, убитая оружием: взрыв бьёт врагов (цепная реакция!)
+   590→    if (e.def.kind === 'bomber') {
+   591→      this.bomberExplosion(x, y, false);
+   592→    }
+   593→
+   594→    this.effects.explosion(x, y, big ? 1.7 : e.def.scale * 1.15, big ? 2 : 1);
+   595→    if (big) this.hitstop(110);
+   596→    if (this.time.now - this.lastDieSound > 120) {
+   597→      this.lastDieSound = this.time.now;
+   598→      audio.play('die');
+   599→    }
+   600→    // Дроп
+   601→    if (e.def.gem && e.xpValue > 0) {
+   602→      const n = big ? 3 : 1;
+   603→      for (let i = 0; i < n; i++) {
+   604→        const ox = big ? Phaser.Math.Between(-40, 40) : 0;
+   605→        const oy = big ? Phaser.Math.Between(-40, 40) : 0;
+   606→        this.pickups.spawnGem(x + ox, y + oy, e.def.gem, Math.ceil(e.xpValue / n));
+   607→      }
+   608→    }
+   609→    if (e.def.kind === 'brute' && Math.random() < 0.04) this.pickups.spawnMeat(x, y);
+   610→    if (e.def.isElite) {
+   611→      this.pickups.spawnMeat(x + 30, y);
+   612→      this.pickups.spawnMeat(x - 30, y);
+   613→      this.hud.announce('ЭЛИТА ПОВЕРЖЕНА! +25 XP', '#7CFC00');
+   614→      this.elitesSlain++;
+   615→      this.ach?.event({ type: 'elites', value: this.elitesSlain });
+   616→    }
+   617→    // Золотые кристаллы: теперь дают золото
+   618→    if (Math.random() < 0.03) this.pickups.spawnGoldGem(x, y, Phaser.Math.Between(3, 8));
+   619→    if (e.def.kind === 'midboss') {
+   620→      this.score += 1500;
+   621→      this.pickups.spawnGoldGem(x + 24, y, 40);
+   622→      this.pickups.spawnGoldGem(x - 24, y, 40);
+   623→      for (let i = 0; i < 3; i++) {
+   624→        this.pickups.spawnGem(x + Phaser.Math.Between(-50, 50), y + Phaser.Math.Between(-50, 50), 'gem-red', 12);
+   625→      }
+   626→      this.hud.announce('ТЁМНЫЙ МОНАХ ПОВЕРЖЕН! +1500 ОЧКОВ', '#ffd700');
+   627→    }
+   628→
+   629→    if (e === this.boss) {
+   630→      this.victory();
+   631→    }
+   632→  }
+   633→
+   634→  /** Взрыв бочки-камикадзе. selfDestruct=true — сама доехала до игрока. */
+   635→  private bomberExplosion(x: number, y: number, selfDestruct: boolean): void {
+   636→    const def = ENEMIES.bomber;
+   637→    const dmg = def.explodeDmg ?? 24;
+   638→    const R = def.explodeRadius ?? 150;
+   639→    this.effects.explosion(x, y, 1.05, 2);
+   640→    audio.play('explosion');
+   641→    this.cameras.main.shake(170, 0.0045);
+   642→    this.hitstop(70);
+   643→    // Урон игроку — только если бочка дошла сама
+   644→    if (selfDestruct && Math.hypot(this.player.x - x, this.player.y - y) < R) {
+   645→      this.hurtPlayer(dmg);
+   646→    }
+   647→    // Урон толпе врагов (в т.ч. другие бочки → цепная реакция)
+   648→    for (const s of this.enemiesNear(x, y, R + 40)) {
+   649→      const e = s as Enemy;
+   650→      if (!e.active || e.def.isBoss) continue;
+   651→      this.damageEnemy(e, dmg * 0.8, e.x - x, e.y - y, 260);
+   652→    }
+   653→  }
+   654→
+   655→  private spawnChest(): void {
+   656→    const a = Math.random() * Math.PI * 2;
+   657→    const r = Phaser.Math.Between(320, 520);
+   658→    const m = WORLD.GRASS_MARGIN + 120;
+   659→    const x = Phaser.Math.Clamp(this.player.x + Math.cos(a) * r, m, WORLD.SIZE - m);
+   660→    const y = Phaser.Math.Clamp(this.player.y + Math.sin(a) * r, m, WORLD.SIZE - m);
+   661→    this.pickups.spawnChest(x, y);
+   662→    this.hud.announce('ГДЕ-ТО СПРЯТАНО СОКРОВИЩЕ...', '#ffd76e');
+   663→  }
+   664→
+   665→  private openChest(x: number, y: number): void {
+   666→    audio.play('levelup');
+   667→    audio.play('explosion');
+   668→    this.effects.explosion(x, y, 0.9, 2);
+   669→    this.cameras.main.shake(180, 0.004);
+   670→    this.hud.announce('СОКРОВИЩЕ ОБРЕТЕНО!', '#ffd700');
+   671→    this.gold += 75;
+   672→    this.score += 250;
+   673→    this.chestsOpened++;
+   674→    this.ach?.event({ type: 'chests', value: this.chestsOpened });
+   675→    this.ach?.event({ type: 'gold', value: this.gold });
+   676→    this.effects.popup(x, y - 14, '+75 ЗОЛОТА', '#ffd76e', 15);
+   677→    this.effects.popup(x, y + 8, '+250 ОЧКОВ', '#ffffff', 12);
+   678→    // Золотой дождь из кристаллов
+   679→    const minute = this.elapsed / 60;
+   680→    const tier = minute > 8 ? 'gem-green' : 'gem-blue';
+   681→    for (let i = 0; i < 14; i++) {
+   682→      const a = Math.random() * Math.PI * 2;
+   683→      const d = Phaser.Math.Between(20, 110);
+   684→      this.pickups.spawnGem(x + Math.cos(a) * d, y + Math.sin(a) * d, tier, 1);
+   685→    }
+   686→    if (minute >= 3) {
+   687→      this.pickups.spawnGem(x, y - 20, 'gem-red', 10);
+   688→    }
+   689→    this.pickups.spawnMeat(x + 26, y);
+   690→    this.pickups.spawnMeat(x - 26, y);
+   691→  }
+   692→
+   693→  private spawnEnemy(kind: EnemyKind, x: number, y: number): void {
+   694→    const def = ENEMIES[kind];
+   695→    // Элиты/боссы не подпадают под лимит толпы
+   696→    if (!def.isElite && !def.isBoss && !def.isMidboss && this.enemyGroup.getLength() >= ENEMY_CAP) return;
+   697→    const m = WORLD.GRASS_MARGIN + 40;
+   698→    x = Phaser.Math.Clamp(x, m, WORLD.SIZE - m);
+   699→    y = Phaser.Math.Clamp(y, m, WORLD.SIZE - m);
+   700→    const e = new Enemy(this, x, y, kind, this.spawner.hpMult, this.spawner.dmgMult, this.enemyCtxStore!);
+   701→    if (this.diffDef.speedMult !== 1) e.speed = Math.round(e.speed * this.diffDef.speedMult);
+   702→    this.enemyGroup.add(e);
+   703→    if (def.isMidboss) {
+   704→      this.midboss = e;
+   705→      this.hud.showBossBar(def.name);
+   706→      this.cameras.main.shake(350, 0.007);
+   707→    }
+   708→  }
+   709→
+   710→  private enemyCtxStore: EnemyContext | null = null;
+   711→
+   712→  private spawnBoss(): void {
+   713→    const a = Math.random() * Math.PI * 2;
+   714→    const x = Phaser.Math.Clamp(this.player.x + Math.cos(a) * 640, 400, WORLD.SIZE - 400);
+   715→    const y = Phaser.Math.Clamp(this.player.y + Math.sin(a) * 640, 400, WORLD.SIZE - 400);
+   716→    this.boss = new Enemy(this, x, y, 'boss', 1, 1, this.enemyCtxStore!);
+   717→    this.boss.speed = Math.round(this.boss.speed * this.diffDef.speedMult);
+   718→    this.enemyGroup.add(this.boss);
+   719→    this.hud.showBossBar(ENEMIES.boss.name);
+   720→    this.cameras.main.shake(400, 0.008);
+   721→  }
+   722→
+   723→  private separateEnemies(): void {
+   724→    this.sepGrid.clear();
+   725→    const cell = 64;
+   726→    const px = this.player.x, py = this.player.y;
+   727→    const near: Enemy[] = [];
+   728→    for (const e of this.enemyGroup.getChildren() as Enemy[]) {
+   729→      if (!e.active) continue;
+   730→      if (Math.abs(e.x - px) > 900 || Math.abs(e.y - py) > 700) continue;
+   731→      near.push(e);
+   732→      const key = (Math.floor(e.x / cell) << 16) ^ Math.floor(e.y / cell);
+   733→      const arr = this.sepGrid.get(key);
+   734→      if (arr) arr.push(e);
+   735→      else this.sepGrid.set(key, [e]);
+   736→    }
+   737→    for (const e of near) {
+   738→      const cx = Math.floor(e.x / cell), cy = Math.floor(e.y / cell);
+   739→      for (let gx = cx - 1; gx <= cx + 1; gx++) {
+   740→        for (let gy = cy - 1; gy <= cy + 1; gy++) {
+   741→          const arr = this.sepGrid.get((gx << 16) ^ gy);
+   742→          if (!arr) continue;
+   743→          for (const o of arr) {
+   744→            if (o === e || o.x < e.x) continue; // каждая пара один раз
+   745→            const dx = o.x - e.x, dy = o.y - e.y;
+   746→            const d = Math.hypot(dx, dy);
+   747→            const min = (e.def.bodyRadius + o.def.bodyRadius) * 0.85;
+   748→            if (d > 0.001 && d < min) {
+   749→              const push = (min - d) / 2;
+   750→              const nx = dx / d, ny = dy / d;
+   751→              e.x -= nx * push; e.y -= ny * push;
+   752→              o.x += nx * push; o.y += ny * push;
+   753→            }
+   754→          }
+   755→        }
+   756→      }
+   757→    }
+   758→  }
+   759→
+   760→  private despawnFar(): void {
+   761→    for (const e of this.activeEnemies()) {
+   762→      if (e.tooFar()) {
+   763→        this.enemyGroup.remove(e, true, true);
+   764→      }
+   765→    }
+   766→  }
+   767→
+   768→  // ================= XP / ЛЕВЕЛ-АП =================
+   769→
+   770→  private addXp(v: number): void {
+   771→    if (this.gameEnded || this.victoryPending) return;
+   772→    this.xp += Math.max(1, Math.round(v * this.xpMult));
+   773→    while (this.xp >= this.xpNext) {
+   774→      this.xp -= this.xpNext;
+   775→      this.level++;
+   776→      this.xpNext = XP_CURVE(this.level);
+   777→      this.pendingLevelUps++;
+   778→      this.ach?.event({ type: 'level', value: this.level });
+   779→    }
+   780→  }
+   781→
+   782→  /** Пополнение золота (кристаллы/сокровища) с всплывающим текстом */
+   783→  private addGold(v: number, x?: number, y?: number): void {
+   784→    this.gold += v;
+   785→    this.ach?.event({ type: 'gold', value: this.gold });
+   786→    if (x !== undefined && y !== undefined) {
+   787→      this.effects.popup(x, y - 12, `+${v} ЗОЛОТА`, '#ffd76e', 12);
+   788→    }
+   789→  }
+   790→
+   791→  private generateChoices(): UpgradeCard[] {
+   792→    const pool: UpgradeCard[] = [];
+   793→    for (const w of Object.values(WEAPONS)) {
+   794→      const lvl = this.weapons.level(w.id);
+   795→      if (lvl === 0 && this.weapons.ownedIds().length < 7) {
+   796→        pool.push({
+   797→          kind: 'weapon-new', id: w.id, title: w.name, subtitle: 'НОВОЕ ОРУЖИЕ',
+   798→          desc: w.desc, icon: w.icon, levelFrom: 0, levelTo: 1,
+   799→        });
+   800→      } else if (lvl > 0 && lvl < 5) {
+   801→        const next = w.levels[lvl];
+   802→        pool.push({
+   803→          kind: 'weapon-up', id: w.id, title: w.name, subtitle: `УРОВЕНЬ ${lvl} → ${lvl + 1}`,
+   804→          desc: this.weaponUpgradeDesc(w.id, lvl), icon: w.icon, levelFrom: lvl, levelTo: lvl + 1,
+   805→        });
+   806→        void next;
+   807→      }
+   808→    }
+   809→    for (const p of Object.values(PASSIVES)) {
+   810→      const lvl = this.passiveLevels.get(p.id) ?? 0;
+   811→      if (lvl < p.max) {
+   812→        pool.push({
+   813→          kind: 'passive', id: p.id, title: p.name, subtitle: lvl === 0 ? 'НОВЫЙ БОНУС' : `УРОВЕНЬ ${lvl} → ${lvl + 1}`,
+   814→          desc: p.desc(lvl + 1), icon: p.icon, levelFrom: lvl, levelTo: lvl + 1,
+   815→        });
+   816→      }
+   817→    }
+   818→    Phaser.Utils.Array.Shuffle(pool);
+   819→    const picked = pool.slice(0, 3);
+   820→    if (picked.length === 0) {
+   821→      picked.push(
+   822→        { kind: 'heal', title: 'Жареное мясо', subtitle: 'ЛЕЧЕНИЕ', desc: 'Восстановить 40 HP', icon: 'icon-meat' },
+   823→        { kind: 'gold', title: 'Кошель золота', subtitle: 'ЗОЛОТО', desc: '+100 золота к счёту', icon: 'icon-coin' },
+   824→        { kind: 'heal', title: 'Жареное мясо', subtitle: 'ЛЕЧЕНИЕ', desc: 'Восстановить 40 HP', icon: 'icon-meat' },
+   825→      );
+   826→    }
+   827→    while (picked.length < 3) {
+   828→      picked.push({ kind: 'heal', title: 'Жареное мясо', subtitle: 'ЛЕЧЕНИЕ', desc: 'Восстановить 40 HP', icon: 'icon-meat' });
+   829→    }
+   830→    return picked;
+   831→  }
+   832→
+   833→  private weaponUpgradeDesc(id: WeaponId, lvl: number): string {
+   834→    const w = WEAPONS[id];
+   835→    const cur = w.levels[lvl - 1];
+   836→    const next = w.levels[lvl];
+   837→    const parts: string[] = [`Урон ${cur.dmg} → ${next.dmg}`];
+   838→    if (next.count && next.count !== cur.count) parts.push(`Количество: ${next.count}`);
+   839→    if (next.radius && cur.radius && next.radius !== cur.radius) parts.push(`Радиус: ${next.radius}`);
+   840→    if (next.pierce && cur.pierce && next.pierce !== cur.pierce) parts.push(`Пробитие: ${next.pierce}`);
+   841→    return parts.join(', ');
+   842→  }
+   843→
+   844→  private openLevelUp(): void {
+   845→    this.overlayOpen = true;
+   846→    audio.play('levelup');
+   847→    this.scene.pause();
+   848→    this.scene.launch('LevelUp', {
+   849→      getChoices: () => this.generateChoices(),
+   850→      onChoose: (card: UpgradeCard) => {
+   851→        this.applyCard(card);
+   852→        this.pendingLevelUps--;
+   853→        if (this.pendingLevelUps <= 0) {
+   854→          this.scene.resume();
+   855→          this.overlayOpen = false;
+   856→          return true; // готово
+   857→        }
+   858→        return false; // показать следующий выбор
+   859→      },
+   860→    });
+   861→  }
+   862→
+   863→  private applyCard(card: UpgradeCard): void {
+   864→    switch (card.kind) {
+   865→      case 'weapon-new': {
+   866→        const id = card.id as WeaponId;
+   867→        this.weapons.add(id);
+   868→        this.hud.setIcon(id, WEAPONS[id].icon, this.weapons.level(id), false);
+   869→        break;
+   870→      }
+   871→      case 'weapon-up': {
+   872→        const id = card.id as WeaponId;
+   873→        this.weapons.upgrade(id);
+   874→        this.hud.setIcon(id, WEAPONS[id].icon, this.weapons.level(id), false);
+   875→        break;
+   876→      }
+   877→      case 'passive': {
+   878→        const id = card.id as PassiveId;
+   879→        const lvl = (this.passiveLevels.get(id) ?? 0) + 1;
+   880→        this.passiveLevels.set(id, lvl);
+   881→        this.hud.setIcon(id, PASSIVES[id].icon, lvl, true);
+   882→        this.recomputeStats();
+   883→        if (id === 'vitality') this.player.heal(25);
+   884→        break;
+   885→      }
+   886→      case 'heal': this.player.heal(40); break;
+   887→      case 'gold':
+   888→        this.gold += 100;
+   889→        this.ach?.event({ type: 'gold', value: this.gold });
+   890→        break;
+   891→    }
+   892→  }
+   893→
+   894→  private recomputeStats(): void {
+   895→    const lvl = (id: PassiveId) => this.passiveLevels.get(id) ?? 0;
+   896→    const shop = this.shopLevels;
+   897→    this.player.speed = this.heroDef.speed * (1 + 0.04 * shop.speed + 0.1 * lvl('boots'));
+   898→    this.armorMult = 1 - 0.08 * lvl('armor');
+   899→    this.magnetRadius = PLAYER_BASE.MAGNET_RADIUS * (1 + 0.2 * shop.magnet + 0.3 * lvl('magnet'));
+   900→    this.regen = this.heroDef.baseRegen + 0.5 * lvl('regen');
+   901→    this.mightMult = 1 + 0.06 * shop.might + 0.12 * lvl('might');
+   902→    this.cdMult = Math.max(0.6, 1 - 0.08 * lvl('haste'));
+   903→    this.critChance = 0.05 * shop.luck + 0.15 * lvl('luck');
+   904→    this.xpMult = 1 + 0.15 * lvl('wisdom');
+   905→    const newMax = this.heroDef.maxHp + 15 * shop.vitality + 25 * lvl('vitality');
+   906→    if (newMax !== this.player.maxHp) {
+   907→      const diff = newMax - this.player.maxHp;
+   908→      this.player.maxHp = newMax;
+   909→      this.player.hp = Math.min(newMax, this.player.hp + Math.max(0, diff));
+   910→    }
+   911→  }
+   912→
+   913→  // ================= ПАУЗА / КОНЕЦ =================
+   914→
+   915→  private openPause(): void {
+   916→    if (this.overlayOpen || this.gameEnded) return;
+   917→    this.overlayOpen = true;
+   918→    this.scene.pause();
+   919→    this.scene.launch('Pause', {
+   920→      onResume: () => {
+   921→        this.scene.resume();
+   922→        this.overlayOpen = false;
+   923→      },
+   924→      muted: audio.muted,
+   925→      onToggleMute: () => audio.toggleMute(),
+   926→    });
+   927→  }
+   928→
+   929→  private currentScore(): number {
+   930→    const base = this.score
+   931→      + Math.floor(this.elapsed / 60) * SCORE.MINUTE
+   932→      + this.level * SCORE.LEVEL
+   933→      + this.gold;
+   934→    return Math.round(base * this.diffDef.scoreMult);
+   935→  }
+   936→
+   937→  private victory(): void {
+   938→    if (this.gameEnded || this.victoryPending) return;
+   939→    this.victoryPending = true;
+   940→    this.spawner.stopped = true;
+   941→    this.player.setVelocity(0, 0);
+   942→    this.score += SCORE.BOSS;
+   943→    this.hud.hideBossBar();
+   944→    this.hud.announce('ПОБЕДА!!! БОСС ПОВЕРЖЕН!', '#ffd700');
+   945→    audio.play('victory');
+   946→    this.cameras.main.shake(500, 0.006);
+   947→    this.hitstop(200);
+   948→    this.ach?.event({ type: 'victory', difficulty: this.diffDef.id });
+   949→    // Финальный фейерверк
+   950→    for (let i = 0; i < 8; i++) {
+   951→      this.time.delayedCall(i * 160, () => {
+   952→        this.effects.explosion(
+   953→          this.player.x + Phaser.Math.Between(-300, 300),
+   954→          this.player.y + Phaser.Math.Between(-300, 300), 1.6, 2,
+   955→        );
+   956→      });
+   957→    }
+   958→    // Собрать все кристаллы
+   959→    this.pickups.vacuumAll(this.player.x, this.player.y);
+   960→    this.time.delayedCall(1900, () => this.gameOver(true));
+   961→  }
+   962→
+   963→  private gameOver(victory: boolean): void {
+   964→    if (this.gameEnded) return;
+   965→    this.gameEnded = true;
+   966→    this.spawner.stopped = true;
+   967→    this.player.setVelocity(0, 0);
+   968→    if (!victory) audio.play('gameover');
+   969→    audio.stopMusic();
+   970→
+   971→    const finalScore = this.currentScore();
+   972→    const stats = {
+   973→      victory,
+   974→      time: Math.floor(this.elapsed),
+   975→      kills: this.kills,
+   976→      level: this.level,
+   977→      gold: this.gold,
+   978→      score: finalScore,
+   979→      hero: this.heroDef.name,
+   980→      difficulty: this.diffDef.name,
+   981→      newAch: (this.ach?.newlyUnlocked ?? []).map((a) => ({ name: a.name, emoji: a.emoji })),
+   982→    };
+   983→    // Мета-статистика (localStorage) для React-сайдбара
+   984→    commitMeta({
+   985→      victory,
+   986→      kills: this.kills,
+   987→      gold: this.gold,
+   988→      score: finalScore,
+   989→      playTime: Math.floor(this.elapsed),
+   990→    });
+   991→    this.scene.launch('GameOver', { stats });
+   992→    this.scene.pause();
+   993→  }
+   994→
+   995→  private resizeZoom(): void {
+   996→    const w = this.scale.width;
+   997→    const h = this.scale.height;
+   998→    const z = Math.min(w / 1152, h / 700);
+   999→    this.cameras.main.setZoom(Phaser.Math.Clamp(z, 0.55, 1.25));
+  1000→  }
+  1001→
+  1002→  private makeEnemyCtx(): EnemyContext {
+  1003→    return {
+  1004→      playerX: () => this.player.x,
+  1005→      playerY: () => this.player.y,
+  1006→      onArcherShoot: (x, y, tx, ty) => {
+  1007→        const a = Math.atan2(ty - y, tx - x);
+  1008→        this.projectiles.enemyArrow(x, y, a, Math.round(ENEMIES.archer.damage * this.spawner.dmgMult));
+  1009→      },
+  1010→      onBossArrowRing: (x, y) => {
+  1011→        for (let i = 0; i < 14; i++) {
+  1012→          this.projectiles.enemyArrow(x, y, (i / 14) * Math.PI * 2, 14);
+  1013→        }
+  1014→      },
+  1015→      onMonkHeal: (x, y) => {
+  1016→        this.effects.heal(x, y);
+  1017→        for (const e of this.enemiesNear(x, y, 220)) {
+  1018→          if (e !== this.boss) (e as Enemy).heal(34);
+  1019→        }
+  1020→      },
+  1021→      onBossSummon: (x, y) => {
+  1022→        for (let i = 0; i < 6; i++) {
+  1023→          const a = (i / 6) * Math.PI * 2 + Math.random();
+  1024→          this.spawnEnemy('boss-minion', x + Math.cos(a) * 170, y + Math.sin(a) * 170);
+  1025→        }
+  1026→        this.hud.announce('БОСС ЗОВЁТ СВИТУ!', '#ff8866');
+  1027→      },
+  1028→      onBomberExplode: (x, y, self, selfDestruct) => {
+  1029→        // Уничтожаем бочку ДО взрыва: взрыв не должен бить саму бочку (иначе рекурсия)
+  1030→        this.enemyGroup.remove(self, true, true);
+  1031→        this.bomberExplosion(x, y, selfDestruct);
+  1032→      },
+  1033→      enemiesNear: (x, y, r) => this.enemiesNear(x, y, r),
+  1034→      healEnemy: (e, hp) => (e as Enemy).heal(hp),
+  1035→    };
+  1036→  }
+  1037→}
+  1038→

@@ -659,7 +659,12 @@ export class GameScene extends Phaser.Scene {
     const x = Phaser.Math.Clamp(this.player.x + Math.cos(a) * r, m, WORLD.SIZE - m);
     const y = Phaser.Math.Clamp(this.player.y + Math.sin(a) * r, m, WORLD.SIZE - m);
     this.pickups.spawnChest(x, y);
-    this.hud.announce('ГДЕ-ТО СПРЯТАНО СОКРОВИЩЕ...', '#ffd76e');
+    // Подсказка направления: игроку проще найти сокровище
+    // atan2: 0 = восток, π/2 = юг (ось Y вниз)
+    const octants = ['НА ВОСТОКЕ', 'НА ЮГО-ВОСТОКЕ', 'НА ЮГЕ', 'НА ЮГО-ЗАПАДЕ', 'НА ЗАПАДЕ', 'НА СЕВЕРО-ЗАПАДЕ', 'НА СЕВЕРЕ', 'НА СЕВЕРО-ВОСТОКЕ'];
+    const ang = (Math.atan2(y - this.player.y, x - this.player.x) + Math.PI * 2) % (Math.PI * 2);
+    const dir = octants[Math.round(ang / (Math.PI / 4)) % 8];
+    this.hud.announce(`ГДЕ-ТО ${dir} СПРЯТАНО СОКРОВИЩЕ...`, '#ffd76e');
   }
 
   private openChest(x: number, y: number): void {

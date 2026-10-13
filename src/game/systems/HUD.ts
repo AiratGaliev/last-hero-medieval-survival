@@ -53,7 +53,11 @@ export class HUD {
   private weaponIcons = new Map<string, Phaser.GameObjects.Container>();
   private bossGroup!: Phaser.GameObjects.Container;
   private bossFill!: Phaser.GameObjects.Rectangle;
+  private bossBg!: Phaser.GameObjects.Rectangle;
+  private bossInner!: Phaser.GameObjects.Rectangle;
   private bossText!: Phaser.GameObjects.Text;
+  /** Ширина полосы босса — не шире экрана (на мобильных 420px обрезалось) */
+  private bossBarW = 420;
 
   // Виньетка низкого HP + тег сложности + тосты ачивок
   private vignetteRects: Phaser.GameObjects.Rectangle[] = [];
@@ -135,17 +139,17 @@ export class HUD {
       onPause();
     });
 
-    // Босс-бар
+    // Босс-бар (ширина подгоняется под экран в layout())
     this.bossGroup = this.scene.add.container(0, 0).setVisible(false);
     const barW = 420;
-    const bg = this.scene.add.rectangle(0, 0, barW, 18, 0x1b1008, 0.92).setOrigin(0.5);
-    const inner = this.scene.add.rectangle(0, 0, barW - 6, 12, 0x50120f).setOrigin(0.5);
+    this.bossBg = this.scene.add.rectangle(0, 0, barW, 18, 0x1b1008, 0.92).setOrigin(0.5);
+    this.bossInner = this.scene.add.rectangle(0, 0, barW - 6, 12, 0x50120f).setOrigin(0.5);
     this.bossFill = this.scene.add.rectangle(-(barW - 6) / 2, 0, barW - 6, 12, 0xd03028).setOrigin(0, 0.5);
     this.bossText = this.scene.add.text(0, -16, 'ЧЁРНЫЙ КОПЕЙЩИК', {
       fontFamily: FONT, fontSize: '10px', color: '#ff9a8a',
       stroke: '#1b1008', strokeThickness: 4,
     }).setOrigin(0.5);
-    this.bossGroup.add([bg, inner, this.bossFill, this.bossText]);
+    this.bossGroup.add([this.bossBg, this.bossInner, this.bossFill, this.bossText]);
 
     // Виньетка низкого HP (пульсирующие красные края экрана)
     for (let i = 0; i < 4; i++) {
@@ -192,6 +196,12 @@ export class HUD {
     this.diffTag?.setPosition(W - 12, 52);
     this.announceText.setPosition(W / 2, H * 0.22);
     this.bossGroup.setPosition(W / 2, 64);
+    // Полоса босса не шире экрана: на мобильных (<430px) фиксированные 420px
+    // обрезались краями экрана
+    this.bossBarW = Math.min(420, W - 24);
+    this.bossBg.setSize(this.bossBarW, 18);
+    this.bossInner.setSize(this.bossBarW - 6, 12);
+    this.bossFill.setPosition(-(this.bossBarW - 6) / 2, 0);
     // Виньетка: красные полосы по краям
     const e = 26;
     const [top, bottom, left, right] = this.vignetteRects;
@@ -199,11 +209,22 @@ export class HUD {
     bottom?.setPosition(0, H - e).setSize(W, e);
     left?.setPosition(0, 0).setSize(e, H);
     right?.setPosition(W - e, 0).setSize(e, H);
-    // Иконки оружия
-    let x = 12;
+    // Иконки оружия: слева направо снизу, с переносом на новый ряд —
+    // на мобильных 16 иконок (7 оружий + 9 пассивок) не помещаются в один ряд
+    const perRow = Math.max(1, Math.floor((W - 24) / 40));
+    let ix = 12;
+    let iy = H - 16;
+    let inRow = 0;
     for (const c of this.weaponIcons.values()) {
-      c.setPosition(x, H - 16);
-      x += 40;
+      c.setPosition(ix, iy);
+      inRow++;
+      if (inRow >= perRow) {
+        inRow = 0;
+        ix = 12;
+        iy -= 44;
+      } else {
+        ix += 40;
+      }
     }
     // Компенсация зума игровой камеры: инверсная трансформация корня,
     // чтобы дети (в экранных координатах) рисовались ровно на своих местах.
@@ -269,8 +290,7 @@ export class HUD {
   }
 
   updateBossBar(frac: number): void {
-    const barW = 414;
-    this.bossFill.setSize(Math.max(0, barW * Phaser.Math.Clamp(frac, 0, 1)), 12);
+    this.bossFill.setSize(Math.max(0, (this.bossBarW - 6) * Phaser.Math.Clamp(frac, 0, 1)), 12);
   }
 
   hideBossBar(): void {
@@ -329,6 +349,8 @@ export class HUD {
       this.root.add(c);
       this.weaponIcons.set(id, c);
       void isPassive;
+      // Новая иконка могла выйти за экран (мобильный) — пересчитать раскладку
+      this.layout();
     }
     const lvlText = c.list[2] as Phaser.GameObjects.Text;
     lvlText.setText(level > 0 ? `${level}` : '');

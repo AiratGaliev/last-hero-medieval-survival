@@ -1,5 +1,5 @@
 import Phaser from 'phaser';
-import { ENEMY_CAP, WORLD } from '../constants';
+import { WORLD } from '../constants';
 import { WAVE_EVENTS, pickRegularKind, hpScale, dmgScale, DIFFICULTIES, type DifficultyId, type DifficultyDef, type EnemyKind } from '../data';
 import { audio } from './Audio';
 
@@ -24,7 +24,6 @@ export class Spawner {
   private elapsed = 0;
   private diff: DifficultyDef;
   stopped = false;
-  activeCount = 0;
 
   constructor(scene: Phaser.Scene, ctx: SpawnerCtx, difficulty: DifficultyId = 'normal') {
     this.scene = scene;
@@ -75,14 +74,12 @@ export class Spawner {
       }
     }
 
-    // Регулярный спавн
+    // Регулярный спавн (лимит толпы ENEMY_CAP проверяется в GameScene.spawnEnemy)
     this.timer -= dtSec * 1000;
     if (this.timer <= 0) {
       this.timer += this.interval;
-      if (this.activeCount < ENEMY_CAP) {
-        const kind = pickRegularKind(this.minute, Math.random);
-        this.spawnAtEdge(kind);
-      }
+      const kind = pickRegularKind(this.minute, Math.random);
+      this.spawnAtEdge(kind);
     }
   }
 

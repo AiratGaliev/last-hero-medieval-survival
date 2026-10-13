@@ -297,7 +297,7 @@ export const ENEMIES: Record<EnemyKind, EnemyDef> = {
   },
   boss: {
     kind: 'boss', name: 'ЧЁРНЫЙ КОПЕЙЩИК', texture: 'boss', frameW: 320, scale: 2.0,
-    bodyRadius: 80, hp: 3000, speed: 110, damage: 40, xp: 0, gem: 'gem-red', isBoss: true,
+    bodyRadius: 80, hp: 4000, speed: 110, damage: 40, xp: 0, gem: 'gem-red', isBoss: true,
   },
   'boss-minion': {
     kind: 'boss-minion', name: 'Прислужник', texture: 'enemy-swarm', frameW: 192, scale: 0.5,

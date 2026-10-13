@@ -82,7 +82,8 @@ export class Enemy extends Phaser.Physics.Arcade.Sprite {
       .setDepth(DEPTH.SHADOW);
 
     if (this.def.isElite || this.def.isBoss || this.def.isMidboss) {
-      this.hpBar = scene.add.graphics().setDepth(DEPTH.HUD);
+      // Мир-координаты: слой HPBAR — над сущностями, под FX/HUD
+      this.hpBar = scene.add.graphics().setDepth(DEPTH.HPBAR);
     }
   }
 

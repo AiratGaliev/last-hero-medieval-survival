@@ -5,8 +5,20 @@ import { Toaster } from "@/components/ui/toaster";
 export const metadata: Metadata = {
   title: "Tiny Sword Survivors — клон Vampire Survivors",
   description:
-    "Выживи 15 минут в толпе врагов! Bullet-heaven роглайт на Phaser 4 с ассетами Tiny Swords от Pixel Frog.",
+    "Выживи 15 минут в толпе врагов! Bullet-heaven роглайт на Phaser 4 с ассетами Tiny Swords от Pixel Frog. 4 героя, 7 оружий, боссы, мета-магазин и достижения.",
   keywords: ["игра", "Phaser", "Vampire Survivors", "Tiny Swords", "roguelite", "bullet heaven"],
+  openGraph: {
+    title: "Tiny Sword Survivors — выживи 15 минут!",
+    description:
+      "Bullet-heaven роглайк на Phaser 4: 4 героя, 7 оружий, элиты, бочки-камикадзе и Чёрный Копейщик на 15-й минуте. Ассеты Tiny Swords от Pixel Frog.",
+    type: "website",
+    locale: "ru_RU",
+  },
+  twitter: {
+    card: "summary",
+    title: "Tiny Sword Survivors",
+    description: "Выживи 15 минут в толпе врагов! Bullet-heaven роглайк на Phaser 4.",
+  },
   icons: {
     icon: "https://z-cdn.chatglm.cn/z-ai/static/logo.svg",
   },
