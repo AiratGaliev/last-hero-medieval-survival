@@ -70,7 +70,16 @@ export class PauseScene extends Phaser.Scene {
         this.scene.stop();
       });
     }
+
+    // При изменении размера окна (поворот телефона) — перерисовать меню на новых координатах
+    this.scale.on('resize', this.rebuild, this);
+    this.events.once('shutdown', () => this.scale.off('resize', this.rebuild, this));
   }
+
+  private rebuild = (): void => {
+    // Перезапуск с теми же данными — кнопки встанут по новым размерам экрана
+    this.scene.restart(this.payload as any);
+  };
 
   private updateMuteLabel(): void {
     this.muteLabel.setText(audio.muted ? 'ЗВУК ВЫКЛ' : 'ЗВУК ВКЛ');

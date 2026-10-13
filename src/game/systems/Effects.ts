@@ -17,6 +17,7 @@ export class Effects {
   private dmgPool: DmgText[] = [];
   private fxPool: FxSprite[] = [];
   private dustEmitter: Phaser.GameObjects.Particles.ParticleEmitter;
+  private sparkEmitter: Phaser.GameObjects.Particles.ParticleEmitter;
   private lastHitSound = 0;
 
   constructor(scene: Phaser.Scene) {
@@ -32,6 +33,17 @@ export class Effects {
       emitting: false,
     });
     this.dustEmitter.setDepth(DEPTH.FX);
+    // Брызги ударов (тёмно-красные пульс-частицы)
+    this.sparkEmitter = scene.add.particles(0, 0, 'fx-dust', {
+      frame: [0, 1, 2, 3, 4, 5, 6, 7],
+      speed: { min: 60, max: 150 },
+      scale: { start: 0.34, end: 0.06 },
+      alpha: { start: 0.9, end: 0 },
+      lifespan: { min: 170, max: 300 },
+      tint: 0xc02830,
+      emitting: false,
+    });
+    this.sparkEmitter.setDepth(DEPTH.FX + 5);
   }
 
   /** Взрыв (вариант 1 маленький, 2 большой) */
@@ -48,6 +60,11 @@ export class Effects {
   /** Пыль из-под ног / удара */
   dust(x: number, y: number, count = 3): void {
     this.dustEmitter.explode(count, x, y);
+  }
+
+  /** Брызги при попадании по врагу */
+  hitSpark(x: number, y: number): void {
+    this.sparkEmitter.explode(3, x, y);
   }
 
   /** Эффект лечения */

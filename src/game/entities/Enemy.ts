@@ -50,10 +50,10 @@ export class Enemy extends Phaser.Physics.Arcade.Sprite {
     this.def = def;
     this.kind = kind;
     this.ctx = ctx;
-    this.maxHp = Math.round(def.hp * (def.isBoss || def.isElite ? 1 : hpMult));
+    this.maxHp = Math.round(def.hp * (def.isBoss || def.isElite || def.isMidboss ? 1 : hpMult));
     this.hp = this.maxHp;
     this.speed = def.speed;
-    this.damage = Math.round(def.damage * (def.isBoss || def.isElite ? 1 : dmgMult));
+    this.damage = Math.round(def.damage * (def.isBoss || def.isElite || def.isMidboss ? 1 : dmgMult));
     this.xpValue = def.xp;
 
     scene.add.existing(this);
@@ -81,7 +81,7 @@ export class Enemy extends Phaser.Physics.Arcade.Sprite {
       .setAlpha(0.3)
       .setDepth(DEPTH.SHADOW);
 
-    if (def.isElite) {
+    if (this.def.isElite || this.def.isBoss || this.def.isMidboss) {
       this.hpBar = scene.add.graphics().setDepth(DEPTH.HUD);
     }
   }
@@ -94,7 +94,7 @@ export class Enemy extends Phaser.Physics.Arcade.Sprite {
       case 'archer': return 'archer-';
       case 'bomber': return 'swarm-';
       case 'elite-lancer': return 'lancer-';
-      case 'elite-monk': return 'monk-';
+      case 'elite-monk': case 'midboss': return 'monk-';
       case 'boss': return 'boss-';
     }
   }
@@ -116,7 +116,7 @@ export class Enemy extends Phaser.Physics.Arcade.Sprite {
         if (this.kind === 'boss' && this.enraged) this.setTint(0xffb0b0);
       }
     });
-    if (this.def.isElite || this.def.isBoss) this.drawHpBar();
+    if (this.def.isElite || this.def.isBoss || this.def.isMidboss) this.drawHpBar();
     if (this.hp <= 0) this.dead = true;
     return this.hp <= 0;
   }
@@ -124,6 +124,7 @@ export class Enemy extends Phaser.Physics.Arcade.Sprite {
   knockback(vx: number, vy: number, force: number): void {
     const len = Math.max(1, Math.hypot(vx, vy));
     if (this.def.isBoss) force *= 0.15;
+    else if (this.def.isMidboss) force *= 0.25;
     else if (this.def.isElite) force *= 0.4;
     this.knockX += (vx / len) * force;
     this.knockY += (vy / len) * force;
@@ -242,24 +243,32 @@ export class Enemy extends Phaser.Physics.Arcade.Sprite {
         break;
       }
 
-      case 'elite-monk': {
+      case 'elite-monk':
+      case 'midboss': {
+        const isMid = this.kind === 'midboss';
         this.healCd -= delta;
         this.stateTimer -= delta;
-        if (dist < 240) { vx = -nx * this.speed * 1.3; vy = -ny * this.speed * 1.3; }
-        else if (dist > 420) { vx = nx * this.speed; vy = ny * this.speed; }
+        if (isMid) this.summonCd -= delta;
+        const keep = isMid ? 340 : 240;
+        if (dist < keep) { vx = -nx * this.speed * 1.3; vy = -ny * this.speed * 1.3; }
+        else if (dist > (isMid ? 460 : 420)) { vx = nx * this.speed; vy = ny * this.speed; }
         else {
           vx = -ny * this.speed * 0.4; vy = nx * this.speed * 0.4;
         }
+        if (isMid && this.summonCd <= 0 && this.hp < this.maxHp * 0.75) {
+          this.ctx.onBossSummon(this.x, this.y);
+          this.summonCd = 13;
+        }
         if (this.healCd <= 0 && this.aiState !== 'windup') {
-          const allies = this.ctx.enemiesNear(this.x, this.y, 260)
+          const allies = this.ctx.enemiesNear(this.x, this.y, isMid ? 320 : 260)
             .filter((e) => (e as Enemy).hp < (e as Enemy).maxHp * 0.95);
-          if (allies.length >= 2) {
+          if (allies.length >= (isMid ? 1 : 2)) {
             this.aiState = 'windup';
             this.play('monk-heal', true);
             this.once('animationcomplete', (anim: Phaser.Animations.Animation) => {
               if (anim.key === 'monk-heal' && this.active) {
                 this.ctx.onMonkHeal(this.x, this.y);
-                this.healCd = 3500;
+                this.healCd = isMid ? 2600 : 3500;
                 this.aiState = 'chase';
                 this.play('monk-run', true);
               }
@@ -368,19 +377,19 @@ export class Enemy extends Phaser.Physics.Arcade.Sprite {
 
   private drawHpBar(): void {
     if (!this.hpBar) return;
-    const w = 70, h = 6;
+    const w = this.def.isMidboss ? 90 : 70, h = 6;
     const x = this.x - w / 2, y = this.y - this.def.frameW * this.def.scale * 0.52;
     const g = this.hpBar;
     g.clear();
     g.fillStyle(0x1a0f08, 0.85).fillRoundedRect(x - 1, y - 1, w + 2, h + 2, 2);
     g.fillStyle(0x50120f).fillRect(x, y, w, h);
     const frac = Math.max(0, this.hp / this.maxHp);
-    g.fillStyle(0xd03028).fillRect(x, y, Math.round(w * frac), h);
+    g.fillStyle(this.def.isMidboss ? 0x8a2be2 : 0xd03028).fillRect(x, y, Math.round(w * frac), h);
   }
 
   tooFar(): boolean {
     return Math.hypot(this.x - this.ctx.playerX(), this.y - this.ctx.playerY()) > DESPAWN_DIST
-      && !this.def.isBoss && !this.def.isElite;
+      && !this.def.isBoss && !this.def.isElite && !this.def.isMidboss;
   }
 
   destroy(fromScene?: boolean): void {

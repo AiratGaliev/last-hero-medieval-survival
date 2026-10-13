@@ -96,11 +96,20 @@ export class GameOverScene extends Phaser.Scene {
     // Слушаем команды от React-диалога
     window.addEventListener('tss-restart', this.restart);
     window.addEventListener('tss-menu', this.toMenu);
+
+    // При изменении размера окна (поворот телефона) — перерисовать на новых координатах
+    this.scale.on('resize', this.rebuild, this);
     this.events.once('shutdown', () => {
       window.removeEventListener('tss-restart', this.restart);
       window.removeEventListener('tss-menu', this.toMenu);
+      this.scale.off('resize', this.rebuild, this);
     });
   }
+
+  private rebuild = (): void => {
+    // Перезапуск с той же статистикой — элементы встанут по новым размерам экрана
+    this.scene.restart({ stats: this.payload.stats });
+  };
 
   private restart = (): void => {
     // Гасим возможные зависшие оверлеи (левел-ап/пауза)

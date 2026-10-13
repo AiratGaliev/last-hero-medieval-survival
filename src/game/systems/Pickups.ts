@@ -1,5 +1,5 @@
 import Phaser from 'phaser';
-import { DEPTH, GEM_CAP } from '../constants';
+import { DEPTH, GEM_CAP, WORLD } from '../constants';
 import { audio } from './Audio';
 
 // ============ Подбираемые предметы: XP-кристаллы, мясо, сундуки ============
@@ -9,6 +9,7 @@ interface Gem {
   value: number;
   xp: number;
   heal: number;
+  gold: number;
   pulling: boolean;
   vx: number;
   vy: number;
@@ -23,17 +24,20 @@ export class Pickups {
   private onXp: (v: number) => void;
   private onHeal: (v: number) => void;
   private onChest: (x: number, y: number) => void;
+  private onGold: (v: number, x: number, y: number) => void;
 
   constructor(
     scene: Phaser.Scene,
     onXp: (v: number) => void,
     onHeal: (v: number) => void,
     onChest: (x: number, y: number) => void,
+    onGold: (v: number, x: number, y: number) => void = () => {},
   ) {
     this.scene = scene;
     this.onXp = onXp;
     this.onHeal = onHeal;
     this.onChest = onChest;
+    this.onGold = onGold;
   }
 
   get count(): number {
@@ -57,7 +61,23 @@ export class Pickups {
       .setScale(texture === 'gem-red' ? 0.5 : 0.42)
       .setDepth(DEPTH.GEM);
     this.gems.push({
-      img, value: 0, xp, heal: 0, pulling: false, vx: 0, vy: 0,
+      img, value: 0, xp, heal: 0, gold: 0, pulling: false, vx: 0, vy: 0,
+      phase: Math.random() * Math.PI * 2, kind: 'gem',
+    });
+  }
+
+  /** Золотой кристалл: даёт золото при подборе */
+  spawnGoldGem(x: number, y: number, gold = 5): void {
+    if (this.gems.length >= GEM_CAP) {
+      // Переливаем в ближайший кристалл (в виде XP-эквивалента)
+      this.spawnGem(x, y, 'gem-blue', 1);
+      return;
+    }
+    const img = this.scene.add.image(x, y, 'gem-gold')
+      .setScale(0.5)
+      .setDepth(DEPTH.GEM);
+    this.gems.push({
+      img, value: 0, xp: 0, heal: 0, gold, pulling: false, vx: 0, vy: 0,
       phase: Math.random() * Math.PI * 2, kind: 'gem',
     });
   }
@@ -65,7 +85,7 @@ export class Pickups {
   spawnMeat(x: number, y: number): void {
     const img = this.scene.add.image(x, y, 'meat').setScale(0.55).setDepth(DEPTH.GEM);
     this.gems.push({
-      img, value: 0, xp: 0, heal: 30, pulling: false, vx: 0, vy: 0,
+      img, value: 0, xp: 0, heal: 30, gold: 0, pulling: false, vx: 0, vy: 0,
       phase: Math.random() * Math.PI * 2, kind: 'meat',
     });
   }
@@ -93,7 +113,7 @@ export class Pickups {
       ease: 'Sine.easeInOut',
     });
     this.gems.push({
-      img, value: 0, xp: 0, heal: 0, pulling: false, vx: 0, vy: 0,
+      img, value: 0, xp: 0, heal: 0, gold: 0, pulling: false, vx: 0, vy: 0,
       phase: 0, kind: 'chest', glow,
     });
   }
@@ -130,7 +150,7 @@ export class Pickups {
 
       // Лёгкое покачивание
       g.img.y += Math.sin(now / 400 + g.phase) * 0.12;
-      if (g.img.x < 0 || g.img.x > 3200 || g.img.y < 0 || g.img.y > 3200) {
+      if (g.img.x < 0 || g.img.x > WORLD.SIZE || g.img.y < 0 || g.img.y > WORLD.SIZE) {
         this.destroyGem(g, i);
       }
     }
@@ -144,6 +164,10 @@ export class Pickups {
     }
     if (g.heal > 0) {
       this.onHeal(g.heal);
+      audio.play('pickup');
+    }
+    if (g.gold > 0) {
+      this.onGold(g.gold, g.img.x, g.img.y);
       audio.play('pickup');
     }
     this.scene.tweens.add({

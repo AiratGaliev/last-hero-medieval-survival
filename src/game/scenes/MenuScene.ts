@@ -28,7 +28,7 @@ interface DiffChip {
   diffId: DifficultyId;
 }
 
-const HERO_ORDER: HeroId[] = ['warrior', 'archer', 'lancer'];
+const HERO_ORDER: HeroId[] = ['warrior', 'archer', 'lancer', 'monk'];
 const DIFF_ORDER: DifficultyId[] = ['normal', 'nightmare'];
 
 export class MenuScene extends Phaser.Scene {
@@ -39,19 +39,39 @@ export class MenuScene extends Phaser.Scene {
   private diffChips: DiffChip[] = [];
   private selectedHero: HeroId = 'warrior';
   private selectedDiff: DifficultyId = 'normal';
+  /** Виртуальное полотно (на мобильных меньше реального экрана — камера зумит) */
+  private vw = 0;
+  private vh = 0;
+  private menuZoom = 1;
 
   constructor() {
     super('Menu');
   }
 
   create(): void {
-    const { width, height } = this.scale;
+    const realW = this.scale.width;
+    const realH = this.scale.height;
     this.heroCards = [];
     this.diffChips = [];
 
+    // Мобильная раскладка: контент позиционируется на виртуальном полотне 460×800,
+    // затем камера уменьшает его до реального размера экрана — ничего не обрезается.
+    const mobile = realW < 760;
+    this.menuZoom = mobile ? Math.min(realW / 460, realH / 800) : 1;
+    this.vw = mobile ? 460 : realW;
+    this.vh = mobile ? 800 : realH;
+    // centerOn центрирует виртуальное полотно (с учётом origin 0.5 камеры)
+    this.cameras.main.setZoom(this.menuZoom);
+    this.cameras.main.centerOn(this.vw / 2, this.vh / 2);
+    const width = this.vw;
+    const height = this.vh;
+    // Полотно фона — с запасом, чтобы при зуме < 1 закрыть весь экран
+    const coverW = this.vw / this.menuZoom + 240;
+    const coverH = this.vh / this.menuZoom + 240;
+
     // Сохранённый герой + сложность
     const saved = window.localStorage.getItem('tss-hero');
-    if (saved === 'warrior' || saved === 'archer' || saved === 'lancer') {
+    if (saved === 'warrior' || saved === 'archer' || saved === 'lancer' || saved === 'monk') {
       this.selectedHero = saved;
     }
     const savedDiff = window.localStorage.getItem('tss-diff');
@@ -59,12 +79,12 @@ export class MenuScene extends Phaser.Scene {
       this.selectedDiff = savedDiff;
     }
 
-    // Фон: травка + вода
-    this.add.tileSprite(width / 2, height / 2, width + 120, height + 120, 'grass-tile');
-    this.add.tileSprite(width / 2, -60, width + 400, 200, 'water-tile');
-    this.add.tileSprite(width / 2, height + 60, width + 400, 200, 'water-tile');
-    this.add.tileSprite(-80, height / 2, 200, height + 400, 'water-tile');
-    this.add.tileSprite(width + 80, height / 2, 200, height + 400, 'water-tile');
+    // Фон: травка + вода (полосы шире видимой области — под зум)
+    this.add.tileSprite(width / 2, height / 2, coverW, coverH, 'grass-tile');
+    this.add.tileSprite(width / 2, -60, coverW + 400, 200, 'water-tile');
+    this.add.tileSprite(width / 2, height + 60, coverW + 400, 200, 'water-tile');
+    this.add.tileSprite(-80, height / 2, 200, coverH + 400, 'water-tile');
+    this.add.tileSprite(width + 80, height / 2, 200, coverH + 400, 'water-tile');
 
     // Облака
     for (let i = 0; i < 6; i++) {
@@ -83,21 +103,21 @@ export class MenuScene extends Phaser.Scene {
     }
 
     // Замок на фоне
-    this.add.image(width * 0.5, height * 0.30, 'castle').setScale(0.8).setAlpha(0.55);
-    const sheep = this.add.sprite(width * 0.12, height * 0.88, 'sheep').setScale(0.65).setAlpha(0.9);
+    this.add.image(width * 0.5, height * 0.28, 'castle').setScale(0.8).setAlpha(0.55);
+    const sheep = this.add.sprite(width * 0.1, height * 0.9, 'sheep').setScale(0.65).setAlpha(0.9);
     sheep.play('sheep-idle');
-    const pawn = this.add.sprite(width * 0.88, height * 0.9, 'grunt-idle').setScale(0.45).setAlpha(0.9);
+    const pawn = this.add.sprite(width * 0.9, height * 0.92, 'grunt-idle').setScale(0.45).setAlpha(0.9);
     pawn.play('grunt-idle');
     void sheep; void pawn;
 
     // Логотип
-    const titleY = Math.max(52, height * 0.085);
+    const titleY = Math.max(52, height * 0.075);
     this.logo = this.add.text(width / 2, titleY, 'TINY SWORD', {
-      fontFamily: FONT, fontSize: width < 700 ? '38px' : '52px', color: '#ffd76e',
+      fontFamily: FONT, fontSize: mobile ? '42px' : '52px', color: '#ffd76e',
       stroke: '#5a2d05', strokeThickness: 12,
     }).setOrigin(0.5);
-    this.logo2 = this.add.text(width / 2, titleY + (width < 700 ? 44 : 54), 'SURVIVORS', {
-      fontFamily: FONT, fontSize: width < 700 ? '32px' : '44px', color: '#ffffff',
+    this.logo2 = this.add.text(width / 2, titleY + (mobile ? 48 : 54), 'SURVIVORS', {
+      fontFamily: FONT, fontSize: mobile ? '36px' : '44px', color: '#ffffff',
       stroke: '#7a1010', strokeThickness: 11,
     }).setOrigin(0.5);
     this.tweens.add({
@@ -112,23 +132,33 @@ export class MenuScene extends Phaser.Scene {
     }
 
     // ---------- Выбор героя ----------
-    const label = this.add.text(width / 2, titleY + (width < 700 ? 96 : 108), '— ВЫБЕРИ ГЕРОЯ —', {
+    // Сетка карточек: 4 в ряд на десктопе, 2×2 на мобильном (виртуальное полотно)
+    const cols = width < 760 ? 2 : 4;
+    const rows = Math.ceil(HERO_ORDER.length / cols);
+    const gap = 14;
+    const cardW = Math.min(width < 760 ? 205 : 225, (width - 36 - (cols - 1) * gap) / cols);
+    const cardH = width < 760 ? 178 : 214;
+    const cardsY = height * (width < 760 ? 0.44 : 0.47);
+    const blockH = rows * cardH + (rows - 1) * gap;
+    const heroTop = cardsY - blockH / 2;
+    const heroBottom = cardsY + blockH / 2;
+
+    const label = this.add.text(width / 2, heroTop - 26, '— ВЫБЕРИ ГЕРОЯ —', {
       fontFamily: FONT, fontSize: '14px', color: '#3b2410',
       stroke: '#ffe9c0', strokeThickness: 4,
     }).setOrigin(0.5).setAlpha(0.9);
     void label;
 
-    const cardW = Math.min(250, (width - 56) / 3);
-    const cardH = 216;
-    const gap = 16;
-    const cardsY = height * 0.46;
     HERO_ORDER.forEach((id, i) => {
-      const x = width / 2 - (3 * cardW + 2 * gap - gap) / 2 + i * (cardW + gap) + cardW / 2;
-      this.createHeroCard(x, cardsY, id, cardW, cardH);
+      const col = i % cols;
+      const row = Math.floor(i / cols);
+      const x = width / 2 - (cols * cardW + (cols - 1) * gap) / 2 + col * (cardW + gap) + cardW / 2;
+      const y = heroTop + row * (cardH + gap) + cardH / 2;
+      this.createHeroCard(x, y, id, cardW, cardH);
     });
 
     // ---------- Выбор сложности ----------
-    const chipsY = cardsY + cardH / 2 + 38;
+    const chipsY = heroBottom + 34;
     const chipW = Math.min(200, (width - 90) / 2);
     DIFF_ORDER.forEach((id, i) => {
       const x = width / 2 + (i === 0 ? -chipW / 2 - 8 : chipW / 2 + 8);
@@ -136,20 +166,20 @@ export class MenuScene extends Phaser.Scene {
     });
 
     // ---------- Кнопки ----------
-    const btnY = Math.min(height * 0.86, cardsY + cardH / 2 + 96);
-    makeButton(this, width / 2, btnY, Math.min(320, width - 80), 60, 'ИГРАТЬ', () => {
+    const btnY = Math.min(height * 0.85, chipsY + 34 + 30);
+    makeButton(this, width / 2, btnY, Math.min(320, width - 80), 58, 'ИГРАТЬ', () => {
       audio.unlock();
       window.localStorage.setItem('tss-hero', this.selectedHero);
       window.localStorage.setItem('tss-diff', this.selectedDiff);
       this.scene.start('Game', { hero: this.selectedHero, diff: this.selectedDiff });
-    }, 'blue', width < 700 ? 20 : 24);
+    }, 'blue', mobile ? 20 : 24);
 
-    const smallW = Math.min(190, (width - 100) / 2);
-    const smallY = btnY + 62;
-    makeButton(this, width / 2 - smallW / 2 - 10, smallY, smallW, 46, 'КАК ИГРАТЬ', () => this.showHowTo(), 'red', 14);
-    makeButton(this, width / 2 + smallW / 2 + 10, smallY, smallW, 46, 'РЕКОРДЫ', () => this.showRecords(), 'red', 14);
+    const smallW = Math.min(185, (width - 100) / 2);
+    const smallY = btnY + 60;
+    makeButton(this, width / 2 - smallW / 2 - 10, smallY, smallW, 44, 'КАК ИГРАТЬ', () => this.showHowTo(), 'red', 14);
+    makeButton(this, width / 2 + smallW / 2 + 10, smallY, smallW, 44, 'РЕКОРДЫ', () => this.showRecords(), 'red', 14);
 
-    this.add.text(width / 2, height - 14, 'Phaser 4 • ассеты Pixel Frog «Tiny Swords»', {
+    this.add.text(width / 2, height - 12, 'Phaser 4 • ассеты Pixel Frog «Tiny Swords»', {
       fontFamily: FONT, fontSize: '11px', color: '#3b2410',
     }).setOrigin(0.5).setAlpha(0.8);
 
@@ -298,27 +328,32 @@ export class MenuScene extends Phaser.Scene {
   // ---------- Как играть ----------
   private showHowTo(): void {
     this.closeOverlay();
-    const { width, height } = this.scale;
+    const width = this.vw;
+    const height = this.vh;
     this.overlay = this.add.container(0, 0);
-    const dim = this.add.rectangle(width / 2, height / 2, width + 40, height + 40, 0x0a0a12, 0.72);
+    const dim = this.add.rectangle(width / 2, height / 2, width / this.menuZoom + 80, height / this.menuZoom + 80, 0x0a0a12, 0.72);
     const paperW = Math.min(560, width - 50);
     const paper = makePanel(this, width / 2, height / 2, 'paper', paperW, paperW * 1.05);
     const header = this.add.text(width / 2, height / 2 - paperW * 0.5, 'КАК ИГРАТЬ', {
       fontFamily: FONT, fontSize: '26px', color: '#3b2410',
     }).setOrigin(0.5);
     const lines = [
-      'Выбери героя: воин, лучница или копейщик.',
+      'Выбери героя: воин, лучница, копейщик или монах.',
       'Затем сложность: Поход или Кошмар (×1.6 очков).',
       'WASD / стрелки — движение',
       'на телефоне — виртуальный джойстик',
       '',
       'Оружие атакует автоматически.',
-      'Собирай кристаллы опыта, открывай',
-      'сокровища и выбирай улучшения.',
+      'Собирай кристаллы опыта и золото,',
+      'открывай сокровища и выбирай улучшения.',
+      'Золото матча — валюта «Лавки торговца».',
       'Осторожно: бочки-камикадзе взрываются!',
       '',
       'Выживи 15 минут и убей',
       'ЧЁРНОГО КОПЕЙЩИКА!',
+      '',
+      'На «Кошмаре» на 10-й минуте ждёт',
+      'ТЁМНЫЙ МОНАХ...',
       '',
       'ESC / P — пауза, M — звук',
     ];
@@ -332,10 +367,11 @@ export class MenuScene extends Phaser.Scene {
   // ---------- Рекорды ----------
   private async showRecords(): Promise<void> {
     this.closeOverlay();
-    const { width, height } = this.scale;
+    const width = this.vw;
+    const height = this.vh;
     const container = this.add.container(0, 0);
     this.overlay = container;
-    const dim = this.add.rectangle(width / 2, height / 2, width + 40, height + 40, 0x0a0a12, 0.72);
+    const dim = this.add.rectangle(width / 2, height / 2, width / this.menuZoom + 80, height / this.menuZoom + 80, 0x0a0a12, 0.72);
     const paperW = Math.min(560, width - 50);
     const paper = makePanel(this, width / 2, height / 2, 'paperSpecial', paperW, paperW * 1.05);
     const header = this.add.text(width / 2, height / 2 - paperW * 0.5, 'ТАБЛИЦА РЕКОРДОВ', {
@@ -373,7 +409,8 @@ export class MenuScene extends Phaser.Scene {
   }
 
   private backButton(): void {
-    const { width, height } = this.scale;
+    const width = this.vw;
+    const height = this.vh;
     const y = height / 2 + Math.min(300, height * 0.36);
     makeButton(this, width / 2, y, 170, 56, 'НАЗАД', () => this.closeOverlay(), 'red', 17);
   }
@@ -385,9 +422,9 @@ export class MenuScene extends Phaser.Scene {
 
   update(): void {
     if (this.logo && this.logo.active) {
-      const base = Math.max(52, this.scale.height * 0.085);
+      const base = Math.max(52, this.vh * 0.075);
       this.logo.y = base + Math.sin(this.time.now / 700) * 5;
-      this.logo2.y = base + (this.scale.width < 700 ? 44 : 54) + Math.sin(this.time.now / 700) * 5;
+      this.logo2.y = base + (this.vw < 760 ? 48 : 54) + Math.sin(this.time.now / 700) * 5;
     }
     // Выбранный герой «дышит»
     for (const c of this.heroCards) {

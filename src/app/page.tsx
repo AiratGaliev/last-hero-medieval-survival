@@ -6,6 +6,7 @@ import GameOverDialog from '@/components/game/GameOverDialog';
 import Leaderboard from '@/components/game/Leaderboard';
 import MetaStatsPanel from '@/components/game/MetaStats';
 import AchievementsPanel from '@/components/game/Achievements';
+import ShopPanel from '@/components/game/ShopPanel';
 
 const GameCanvas = dynamic(() => import('@/components/game/GameCanvas'), {
   ssr: false,
@@ -29,13 +30,13 @@ const CONTROLS = [
 const HIGHLIGHTS = [
   {
     icon: Users,
-    title: '3 героя',
-    desc: 'Воин, Лучница и Копейщик — у каждого своё оружие и стиль',
+    title: '4 героя',
+    desc: 'Воин, Лучница, Копейщик и Монах — каждый со своим оружием и стилем',
   },
   {
     icon: Flame,
     title: '2 сложности',
-    desc: '«Поход» для расслабленной охоты и «Кошмар» ×1.6 очков',
+    desc: '«Поход» для расслабленной охоты и «Кошмар» ×1.6 с Тёмным Монахом на 10-й минуте',
   },
   {
     icon: Zap,
@@ -132,15 +133,17 @@ export default function Home() {
             <p className="mt-3 flex items-start gap-1.5 text-sm leading-relaxed text-amber-900/70">
               <ChevronRight className="mt-0.5 h-4 w-4 shrink-0 text-amber-700" aria-hidden />
               <span>
-                Герой атакует автоматически: собирай кристаллы опыта, выбирай улучшения на каждом
-                уровне и выживи 15 минут, чтобы встретиться с Чёрным Копейщиком. Элиты ждут на
-                5-й и 10-й минуте, а бочки-камикадзе охотятся за тобой с 4-й!
+                Герой атакует автоматически: собирай кристаллы опыта и золото, выбирай улучшения на
+                каждом уровне и выживи 15 минут, чтобы встретиться с Чёрным Копейщиком. Добытое
+                золото копится в «Лавке торговца» — трать его на постоянные усиления. Элиты ждут
+                на 5-й и 10-й минуте, а бочки-камикадзе охотятся за тобой с 4-й!
               </span>
             </p>
           </section>
 
-          {/* Сайдбар: прогресс, рекорды */}
-          <aside aria-label="Прогресс и таблица рекордов" className="space-y-4">
+          {/* Сайдбар: прогресс, лавка, рекорды */}
+          <aside aria-label="Прогресс, лавка и таблица рекордов" className="space-y-4">
+            <ShopPanel />
             <Leaderboard />
             <MetaStatsPanel />
             <AchievementsPanel />
@@ -176,7 +179,7 @@ export default function Home() {
           </span>
           <span className="inline-flex flex-wrap items-center gap-x-3 gap-y-1">
             <span className="rounded-full border border-amber-800/20 bg-white/50 px-2 py-0.5 font-mono text-[10px]">
-              v1.2 · R3
+              v1.3 · R4
             </span>
             <span>Движок: Phaser 4 • Next.js 16 • Сделано с ❤️ и мечом</span>
           </span>

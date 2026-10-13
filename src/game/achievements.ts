@@ -1,6 +1,8 @@
 // ============ Достижения + мета-статистика (localStorage) ============
 // Модуль без Phaser-зависимостей: используется и игрой, и React-оболочкой.
 
+import { depositGold } from './shop';
+
 export interface AchievementDef {
   id: string;
   name: string;
@@ -162,6 +164,8 @@ export function commitMeta(params: {
   m.bestScore = Math.max(m.bestScore, params.score);
   m.playTime += Math.max(0, Math.floor(params.playTime));
   saveMeta(m);
+  // Золото матча пополняет кошелёк мета-магазина («Лавка торговца»)
+  depositGold(params.gold);
   if (typeof window !== 'undefined') {
     window.dispatchEvent(new CustomEvent('tss-meta-updated'));
   }

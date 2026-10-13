@@ -37,13 +37,16 @@ export class BootScene extends Phaser.Scene {
     this.load.spritesheet('player-atk1', `${A}/units/blue/warrior/warrior-attack1.png`, { frameWidth: 192, frameHeight: 192 });
     this.load.spritesheet('player-atk2', `${A}/units/blue/warrior/warrior-attack2.png`, { frameWidth: 192, frameHeight: 192 });
 
-    // ---- Герои: лучница и копейщик (синяя фракция) ----
+    // ---- Герои: лучница, копейщик и монах (синяя фракция) ----
     this.load.spritesheet('hero-archer-idle', `${A}/units/blue/archer/archer-idle.png`, { frameWidth: 192, frameHeight: 192 });
     this.load.spritesheet('hero-archer-run', `${A}/units/blue/archer/archer-run.png`, { frameWidth: 192, frameHeight: 192 });
     this.load.spritesheet('hero-archer-atk', `${A}/units/blue/archer/archer-shoot.png`, { frameWidth: 192, frameHeight: 192 });
     this.load.spritesheet('hero-lancer-idle', `${A}/units/blue/lancer/lancer-idle.png`, { frameWidth: 320, frameHeight: 320 });
     this.load.spritesheet('hero-lancer-run', `${A}/units/blue/lancer/lancer-run.png`, { frameWidth: 320, frameHeight: 320 });
     this.load.spritesheet('hero-lancer-atk', `${A}/units/blue/lancer/lancer-right-attack.png`, { frameWidth: 320, frameHeight: 320 });
+    this.load.spritesheet('hero-monk-idle', `${A}/units/blue/monk/idle.png`, { frameWidth: 192, frameHeight: 192 });
+    this.load.spritesheet('hero-monk-run', `${A}/units/blue/monk/run.png`, { frameWidth: 192, frameHeight: 192 });
+    this.load.spritesheet('hero-monk-atk', `${A}/units/blue/monk/heal.png`, { frameWidth: 192, frameHeight: 192 });
 
     // ---- Враги ----
     this.load.spritesheet('grunt-idle', `${A}/units/red/pawn/pawn-idle.png`, { frameWidth: 192, frameHeight: 192 });
@@ -195,6 +198,9 @@ export class BootScene extends Phaser.Scene {
     this.sheet('hero-lancer-idle', 'hero-lancer-idle', 12, 8);
     this.sheet('hero-lancer-run', 'hero-lancer-run', 6, 10);
     this.once('hero-lancer-atk', 'hero-lancer-atk', 3, 12);
+    this.sheet('hero-monk-idle', 'hero-monk-idle', 6, 7);
+    this.sheet('hero-monk-run', 'hero-monk-run', 4, 10);
+    this.once('hero-monk-atk', 'hero-monk-atk', 11, 12);
     // Декор
     this.sheet('tree1-sway', 'tree1', 8, 3);
     this.sheet('tree3-sway', 'tree3', 8, 3);

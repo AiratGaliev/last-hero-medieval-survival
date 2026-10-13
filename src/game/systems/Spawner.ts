@@ -45,6 +45,8 @@ export class Spawner {
     // Обработка событий по таймингу
     while (this.eventIdx < WAVE_EVENTS.length && WAVE_EVENTS[this.eventIdx].t <= this.elapsed) {
       const ev = WAVE_EVENTS[this.eventIdx++];
+      // Событие может быть привязано к конкретной сложности
+      if (ev.diff && ev.diff !== this.diff.id) continue;
       switch (ev.type) {
         case 'rate':
           if (ev.interval) this.interval = ev.interval * this.diff.rateMult;
@@ -55,7 +57,12 @@ export class Spawner {
         case 'elite':
           if (ev.enemy) {
             audio.play('boss');
-            this.ctx.announce(ev.enemy === 'elite-lancer' ? 'ЭЛИТА: КОПЕЙЩИК!' : 'ЭЛИТА: ТЁМНЫЙ МОНАХ!', '#ff5544');
+            const label = ev.enemy === 'elite-lancer'
+              ? 'ЭЛИТА: КОПЕЙЩИК!'
+              : ev.enemy === 'midboss'
+                ? 'БОСС: ТЁМНЫЙ МОНАХ!'
+                : 'ЭЛИТА: ТЁМНЫЙ МОНАХ!';
+            this.ctx.announce(label, '#ff5544');
             this.ctx.spawnElite(ev.enemy);
           }
           break;

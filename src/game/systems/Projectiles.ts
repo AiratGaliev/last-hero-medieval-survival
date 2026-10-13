@@ -130,6 +130,7 @@ export class Projectiles {
     const dt = dtMs / 1000;
     this.updateProjs(this.arrowPool, dtMs);
     this.updateProjs(this.spearPool, dtMs);
+    this.updateProjs(this.knifePool, dtMs);
     this.updateProjs(this.enemyArrowPool, dtMs);
 
     for (let i = this.bombs.length - 1; i >= 0; i--) {

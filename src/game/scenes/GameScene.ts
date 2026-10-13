@@ -17,6 +17,7 @@ import { WeaponSystem, type WeaponCtx } from '../systems/Weapons';
 import { HUD } from '../systems/HUD';
 import { Joystick } from '../systems/Joystick';
 import { AchTracker, commitMeta } from '../achievements';
+import { getShopLevels, type ShopLevels } from '../shop';
 
 type Keys = Record<string, Phaser.Input.Keyboard.Key>;
 
@@ -34,6 +35,7 @@ export class GameScene extends Phaser.Scene {
   private weapons!: WeaponSystem;
   private hud!: HUD;
   private boss: Enemy | null = null;
+  private midboss: Enemy | null = null;
 
   // Состояние матча
   private elapsed = 0;
@@ -70,6 +72,7 @@ export class GameScene extends Phaser.Scene {
   private elitesSlain = 0;
   private hitstopUntil = 0;
   private ach: AchTracker | null = null;
+  private shopLevels: ShopLevels = { might: 0, vitality: 0, speed: 0, magnet: 0, luck: 0 };
 
   constructor() {
     super('Game');
@@ -79,9 +82,11 @@ export class GameScene extends Phaser.Scene {
     this.resetState();
     this.initHero(payload?.hero);
     this.initDifficulty(payload?.diff);
+    this.shopLevels = getShopLevels();
     this.buildWorld();
     this.buildPlayer();
     this.buildSystems();
+    this.recomputeStats();
     this.setupCollisions();
     this.setupInput();
     this.cameras.main.setBackgroundColor('#3a7bd5');
@@ -112,6 +117,7 @@ export class GameScene extends Phaser.Scene {
     this.xp = 0; this.xpNext = XP_CURVE(1); this.gold = 0; this.score = 0;
     this.pendingLevelUps = 0; this.overlayOpen = false; this.gameEnded = false;
     this.boss = null;
+    this.midboss = null;
     this.passiveLevels.clear();
     this.armorMult = 1; this.magnetRadius = PLAYER_BASE.MAGNET_RADIUS;
     this.regen = 0; this.mightMult = 1; this.cdMult = 1; this.critChance = 0;
@@ -138,7 +144,7 @@ export class GameScene extends Phaser.Scene {
     let id = heroId;
     if (!id && typeof window !== 'undefined') {
       const saved = window.localStorage.getItem('tss-hero');
-      if (saved === 'warrior' || saved === 'archer' || saved === 'lancer') id = saved;
+      if (saved === 'warrior' || saved === 'archer' || saved === 'lancer' || saved === 'monk') id = saved;
     }
     this.heroDef = HEROES[id ?? 'warrior'];
   }
@@ -286,6 +292,7 @@ export class GameScene extends Phaser.Scene {
       (v) => this.addXp(v),
       (v) => this.player.heal(v),
       (x, y) => this.openChest(x, y),
+      (v, x, y) => this.addGold(v, x, y),
     );
     this.projectiles = new Projectiles(this, {
       onExplode: (x, y, dmg, radius) => this.explode(x, y, dmg, radius),
@@ -469,12 +476,21 @@ export class GameScene extends Phaser.Scene {
       this.despawnFar();
     }
 
-    // Босс
+    // Босс / мидбосс — приоритет полосе HP: сначала финальный босс
     if (this.boss) {
       if (this.boss.active) {
         this.hud.updateBossBar(this.boss.hp / this.boss.maxHp);
       } else {
         this.boss = null;
+        if (this.midboss && this.midboss.active) this.hud.showBossBar(ENEMIES.midboss.name);
+        else this.hud.hideBossBar();
+      }
+    } else if (this.midboss) {
+      if (this.midboss.active) {
+        this.hud.updateBossBar(this.midboss.hp / this.midboss.maxHp);
+      } else {
+        this.midboss = null;
+        this.hud.hideBossBar();
       }
     }
 
@@ -521,6 +537,7 @@ export class GameScene extends Phaser.Scene {
     if (crit) final *= 2;
     final = Math.max(1, Math.round(final));
     this.effects.damage(e.x, e.y - 40 * e.def.scale, final, crit);
+    if (Math.random() < 0.6) this.effects.hitSpark(e.x, e.y - 26 * e.def.scale);
     if (force > 0) e.knockback(kx, ky, force);
     this.effects.hitSound(this.time.now);
     if (e.takeDamage(final)) {
@@ -562,7 +579,7 @@ export class GameScene extends Phaser.Scene {
     this.kills++;
     this.score += SCORE.KILL;
     this.ach?.event({ type: 'kills', value: this.kills });
-    const big = e.def.isElite || e.def.isBoss;
+    const big = e.def.isElite || e.def.isBoss || e.def.isMidboss;
 
     // Бочка-камикадзе, убитая оружием: взрыв бьёт врагов (цепная реакция!)
     if (e.def.kind === 'bomber') {
@@ -592,7 +609,17 @@ export class GameScene extends Phaser.Scene {
       this.elitesSlain++;
       this.ach?.event({ type: 'elites', value: this.elitesSlain });
     }
-    if (Math.random() < 0.03) this.pickups.spawnGem(x, y, 'gem-gold', 0);
+    // Золотые кристаллы: теперь дают золото
+    if (Math.random() < 0.03) this.pickups.spawnGoldGem(x, y, Phaser.Math.Between(3, 8));
+    if (e.def.kind === 'midboss') {
+      this.score += 1500;
+      this.pickups.spawnGoldGem(x + 24, y, 40);
+      this.pickups.spawnGoldGem(x - 24, y, 40);
+      for (let i = 0; i < 3; i++) {
+        this.pickups.spawnGem(x + Phaser.Math.Between(-50, 50), y + Phaser.Math.Between(-50, 50), 'gem-red', 12);
+      }
+      this.hud.announce('ТЁМНЫЙ МОНАХ ПОВЕРЖЕН! +1500 ОЧКОВ', '#ffd700');
+    }
 
     if (e === this.boss) {
       this.victory();
@@ -659,13 +686,20 @@ export class GameScene extends Phaser.Scene {
   }
 
   private spawnEnemy(kind: EnemyKind, x: number, y: number): void {
-    if (this.enemyGroup.getLength() >= ENEMY_CAP) return;
+    const def = ENEMIES[kind];
+    // Элиты/боссы не подпадают под лимит толпы
+    if (!def.isElite && !def.isBoss && !def.isMidboss && this.enemyGroup.getLength() >= ENEMY_CAP) return;
     const m = WORLD.GRASS_MARGIN + 40;
     x = Phaser.Math.Clamp(x, m, WORLD.SIZE - m);
     y = Phaser.Math.Clamp(y, m, WORLD.SIZE - m);
     const e = new Enemy(this, x, y, kind, this.spawner.hpMult, this.spawner.dmgMult, this.enemyCtxStore!);
     if (this.diffDef.speedMult !== 1) e.speed = Math.round(e.speed * this.diffDef.speedMult);
     this.enemyGroup.add(e);
+    if (def.isMidboss) {
+      this.midboss = e;
+      this.hud.showBossBar(def.name);
+      this.cameras.main.shake(350, 0.007);
+    }
   }
 
   private enemyCtxStore: EnemyContext | null = null;
@@ -737,6 +771,15 @@ export class GameScene extends Phaser.Scene {
       this.xpNext = XP_CURVE(this.level);
       this.pendingLevelUps++;
       this.ach?.event({ type: 'level', value: this.level });
+    }
+  }
+
+  /** Пополнение золота (кристаллы/сокровища) с всплывающим текстом */
+  private addGold(v: number, x?: number, y?: number): void {
+    this.gold += v;
+    this.ach?.event({ type: 'gold', value: this.gold });
+    if (x !== undefined && y !== undefined) {
+      this.effects.popup(x, y - 12, `+${v} ЗОЛОТА`, '#ffd76e', 12);
     }
   }
 
@@ -845,15 +888,16 @@ export class GameScene extends Phaser.Scene {
 
   private recomputeStats(): void {
     const lvl = (id: PassiveId) => this.passiveLevels.get(id) ?? 0;
-    this.player.speed = this.heroDef.speed * (1 + 0.1 * lvl('boots'));
+    const shop = this.shopLevels;
+    this.player.speed = this.heroDef.speed * (1 + 0.04 * shop.speed + 0.1 * lvl('boots'));
     this.armorMult = 1 - 0.08 * lvl('armor');
-    this.magnetRadius = PLAYER_BASE.MAGNET_RADIUS * (1 + 0.3 * lvl('magnet'));
-    this.regen = 0.5 * lvl('regen');
-    this.mightMult = 1 + 0.12 * lvl('might');
+    this.magnetRadius = PLAYER_BASE.MAGNET_RADIUS * (1 + 0.2 * shop.magnet + 0.3 * lvl('magnet'));
+    this.regen = this.heroDef.baseRegen + 0.5 * lvl('regen');
+    this.mightMult = 1 + 0.06 * shop.might + 0.12 * lvl('might');
     this.cdMult = Math.max(0.6, 1 - 0.08 * lvl('haste'));
-    this.critChance = 0.15 * lvl('luck');
+    this.critChance = 0.05 * shop.luck + 0.15 * lvl('luck');
     this.xpMult = 1 + 0.15 * lvl('wisdom');
-    const newMax = this.heroDef.maxHp + 25 * lvl('vitality');
+    const newMax = this.heroDef.maxHp + 15 * shop.vitality + 25 * lvl('vitality');
     if (newMax !== this.player.maxHp) {
       const diff = newMax - this.player.maxHp;
       this.player.maxHp = newMax;

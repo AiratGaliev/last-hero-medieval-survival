@@ -163,7 +163,7 @@ export const PASSIVES: Record<PassiveId, PassiveDef> = {
 
 // ============ Герои ============
 
-export type HeroId = 'warrior' | 'archer' | 'lancer';
+export type HeroId = 'warrior' | 'archer' | 'lancer' | 'monk';
 
 export interface HeroDef {
   id: HeroId;
@@ -175,6 +175,7 @@ export interface HeroDef {
   startWeapon: WeaponId;
   maxHp: number;
   speed: number;
+  baseRegen: number;   // innate HP/s (монах)
   anims: { idle: string; run: string; atk1: string; atk2: string };
 }
 
@@ -183,22 +184,29 @@ export const HEROES: Record<HeroId, HeroDef> = {
     id: 'warrior', name: 'Воин', title: 'Крепкий как скала',
     traits: ['+10% HP', 'старт: Меч'],
     frameW: 192, scale: 0.55, startWeapon: 'sword',
-    maxHp: 110, speed: 200,
+    maxHp: 110, speed: 200, baseRegen: 0,
     anims: { idle: 'player-idle', run: 'player-run', atk1: 'player-atk1', atk2: 'player-atk2' },
   },
   archer: {
     id: 'archer', name: 'Лучница', title: 'Быстрая стрела',
     traits: ['+15% скорость', '−10 HP', 'старт: Лук'],
     frameW: 192, scale: 0.55, startWeapon: 'bow',
-    maxHp: 90, speed: 230,
+    maxHp: 90, speed: 230, baseRegen: 0,
     anims: { idle: 'hero-archer-idle', run: 'hero-archer-run', atk1: 'hero-archer-atk', atk2: 'hero-archer-atk' },
   },
   lancer: {
     id: 'lancer', name: 'Копейщик', title: 'Стена из стали',
     traits: ['+30 HP', '−5% скорость', 'старт: Копьё'],
     frameW: 320, scale: 0.34, startWeapon: 'spear',
-    maxHp: 130, speed: 190,
+    maxHp: 130, speed: 190, baseRegen: 0,
     anims: { idle: 'hero-lancer-idle', run: 'hero-lancer-run', atk1: 'hero-lancer-atk', atk2: 'hero-lancer-atk' },
+  },
+  monk: {
+    id: 'monk', name: 'Монах', title: 'Верный целитель',
+    traits: ['+0.5 HP/с регенерация', 'старт: Аура'],
+    frameW: 192, scale: 0.55, startWeapon: 'aura',
+    maxHp: 100, speed: 195, baseRegen: 0.5,
+    anims: { idle: 'hero-monk-idle', run: 'hero-monk-run', atk1: 'hero-monk-atk', atk2: 'hero-monk-atk' },
   },
 };
 
@@ -232,7 +240,7 @@ export const DIFFICULTIES: Record<DifficultyId, DifficultyDef> = {
 
 export type EnemyKind =
   | 'grunt' | 'swarm' | 'brute' | 'archer' | 'bomber'
-  | 'elite-lancer' | 'elite-monk' | 'boss' | 'boss-minion';
+  | 'elite-lancer' | 'elite-monk' | 'boss' | 'boss-minion' | 'midboss';
 
 export interface EnemyDef {
   kind: EnemyKind;
@@ -248,6 +256,7 @@ export interface EnemyDef {
   gem: string;          // текстура дропа
   isElite?: boolean;
   isBoss?: boolean;
+  isMidboss?: boolean;  // промежуточный босс «Кошмара» (10-я минута)
   explodeDmg?: number;   // для бочки-камикадзе
   explodeRadius?: number;
 }
@@ -282,6 +291,10 @@ export const ENEMIES: Record<EnemyKind, EnemyDef> = {
     kind: 'elite-monk', name: 'Тёмный монах', texture: 'enemy-monk', frameW: 192, scale: 0.6,
     bodyRadius: 24, hp: 350, speed: 75, damage: 12, xp: 25, gem: 'gem-red', isElite: true,
   },
+  midboss: {
+    kind: 'midboss', name: 'ТЁМНЫЙ МОНАХ', texture: 'enemy-monk', frameW: 192, scale: 0.92,
+    bodyRadius: 32, hp: 1500, speed: 82, damage: 20, xp: 0, gem: 'gem-red', isMidboss: true,
+  },
   boss: {
     kind: 'boss', name: 'ЧЁРНЫЙ КОПЕЙЩИК', texture: 'boss', frameW: 320, scale: 2.0,
     bodyRadius: 80, hp: 3000, speed: 110, damage: 40, xp: 0, gem: 'gem-red', isBoss: true,
@@ -301,6 +314,7 @@ export interface WaveEvent {
   count?: number;
   interval?: number;    // новый интервал спавна (мс)
   note?: string;
+  diff?: DifficultyId;  // событие только для указанной сложности
 }
 
 export const WAVE_EVENTS: WaveEvent[] = [
@@ -316,7 +330,8 @@ export const WAVE_EVENTS: WaveEvent[] = [
   { t: 420, type: 'rate', interval: 450 },
   { t: 480, type: 'ring', enemy: 'swarm', count: 32 },
   { t: 480, type: 'rate', interval: 400 },
-  { t: 600, type: 'elite', enemy: 'elite-monk' },
+  { t: 600, type: 'elite', enemy: 'elite-monk', diff: 'normal' },
+  { t: 600, type: 'elite', enemy: 'midboss', diff: 'nightmare' },
   { t: 600, type: 'rate', interval: 370 },
   { t: 780, type: 'rate', interval: 340 },
   { t: 840, type: 'ring', enemy: 'brute', count: 20 },
