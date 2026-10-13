@@ -84,7 +84,7 @@ export class HUD {
     this.xpBarFill = this.scene.add.rectangle(2, 0, 10, 12, 0x54c2ff)
       .setOrigin(0, 0.5);
     this.xpLabel = this.scene.add.text(0, 0, 'УР. 1', {
-      fontFamily: FONT, fontSize: '9px', color: '#ffffff',
+      fontFamily: FONT, fontSize: '10px', color: '#ffffff',
       stroke: '#1b1008', strokeThickness: 3,
     }).setOrigin(0.5);
 
@@ -94,18 +94,18 @@ export class HUD {
     });
 
     this.statsText = this.scene.add.text(0, 0, '', {
-      fontFamily: FONT, fontSize: '9px', color: '#d8c9a8',
+      fontFamily: FONT, fontSize: '10px', color: '#d8c9a8',
       stroke: '#1b1008', strokeThickness: 3,
     });
 
     this.goldIcon = this.scene.add.image(0, 0, 'icon-coin').setDisplaySize(14, 14);
     this.goldText = this.scene.add.text(0, 0, '0', {
-      fontFamily: FONT, fontSize: '11px', color: '#ffd76e',
+      fontFamily: FONT, fontSize: '12px', color: '#ffd76e',
       stroke: '#1b1008', strokeThickness: 3,
     }).setOrigin(0, 0.5);
 
     this.scoreText = this.scene.add.text(0, 0, 'СЧЁТ 0', {
-      fontFamily: FONT, fontSize: '10px', color: '#ffd76e',
+      fontFamily: FONT, fontSize: '11px', color: '#ffd76e',
       stroke: '#1b1008', strokeThickness: 3,
     }).setOrigin(1, 0);
 
@@ -189,13 +189,16 @@ export class HUD {
     this.xpBarFill.setPosition(2, 8);
     this.xpLabel.setPosition(W / 2, 8);
     this.timerText.setPosition(12, 34);
-    this.statsText.setPosition(12, 60);
-    this.goldIcon.setPosition(12, 78);
-    this.goldText.setPosition(30, 78);
+    this.statsText.setPosition(12, 62);
+    this.goldIcon.setPosition(12, 82);
+    this.goldText.setPosition(30, 82);
     this.scoreText.setPosition(W - 12, 34);
-    this.diffTag?.setPosition(W - 12, 52);
-    this.announceText.setPosition(W / 2, H * 0.22);
-    this.bossGroup.setPosition(W / 2, 64);
+    this.diffTag?.setPosition(W - 12, 54);
+    // Анонс: на низких экранах опускаем ниже, чтобы не наезжать на босс-бар
+    this.announceText.setPosition(W / 2, H < 600 ? Math.max(126, H * 0.3) : H * 0.22);
+    // Босс-бар: на узких экранах опускаем под строку золота — иначе
+    // перекрывает счётчик убийств (x=12, y=62)
+    this.bossGroup.setPosition(W / 2, W < 620 ? 112 : 64);
     // Полоса босса не шире экрана: на мобильных (<430px) фиксированные 420px
     // обрезались краями экрана
     this.bossBarW = Math.min(420, W - 24);
@@ -247,9 +250,16 @@ export class HUD {
     this.xpLabel.setText(`УР. ${s.level}`);
 
     const remain = Math.max(0, GAME_DURATION - s.elapsed);
-    const mm = Math.floor(remain / 60);
-    const ss = Math.floor(remain % 60);
-    this.timerText.setText(`${mm.toString().padStart(2, '0')}:${ss.toString().padStart(2, '0')}`);
+    if (remain <= 0) {
+      // Время вышло — на арене финальный босс: честная индикация вместо «00:00»
+      this.timerText.setText('⚔ БОСС!');
+      this.timerText.setColor('#ff6b5e');
+    } else {
+      const mm = Math.floor(remain / 60);
+      const ss = Math.floor(remain % 60);
+      this.timerText.setText(`${mm.toString().padStart(2, '0')}:${ss.toString().padStart(2, '0')}`);
+      this.timerText.setColor('#ffe9b0');
+    }
 
     this.statsText.setText(`УБИЙСТВ: ${s.kills}`);
     this.goldText.setText(`${s.gold}`);

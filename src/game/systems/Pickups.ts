@@ -214,6 +214,34 @@ export class Pickups {
     }
   }
 
+  /**
+   * Финальный вакуум при ПОБЕДЕ: кристаллы по-настоящему долетают до игрока
+   * (tween), а их ценность выдаётся колбэком — золото/лечение/очки не теряются.
+   * Вызывается ДО gameOver(): твины (~650 мс) успевают завершиться до паузы
+   * сцены на экране статистики (gameOver ставит сцену на pause через 1900 мс).
+   */
+  finaleVacuum(px: number, py: number, onCollect: (g: { xp: number; gold: number; heal: number }) => void): void {
+    for (let i = this.gems.length - 1; i >= 0; i--) {
+      const g = this.gems[i];
+      if (g.kind === 'chest') continue; // сундуки не собираем автоматом
+      this.gems.splice(i, 1); // сразу исключаем из игровой логики
+      const img = g.img;
+      const d = Math.hypot(img.x - px, img.y - py);
+      this.scene.tweens.add({
+        targets: img,
+        x: px,
+        y: py,
+        scale: img.scale * 0.35,
+        duration: Math.min(620, 180 + d * 0.32),
+        ease: 'Quad.easeIn',
+        onComplete: () => {
+          img.destroy();
+          onCollect(g);
+        },
+      });
+    }
+  }
+
   destroy(): void {
     for (const g of this.gems) {
       g.glow?.destroy();

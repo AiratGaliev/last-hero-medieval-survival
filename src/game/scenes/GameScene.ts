@@ -951,6 +951,22 @@ export class GameScene extends Phaser.Scene {
     this.cameras.main.shake(500, 0.006);
     this.hitstop(200);
     this.ach?.event({ type: 'victory', difficulty: this.diffDef.id });
+    // Толпа отступает: враги мягко растворяются (без AI и физики)
+    for (const e of this.activeEnemies()) {
+      if (e.def.isBoss) continue; // босс уже погиб
+      this.enemyGroup.remove(e, false);
+      e.setActive(false);
+      const b = e.body as Phaser.Physics.Arcade.Body | null;
+      if (b) b.enable = false;
+      this.tweens.add({
+        targets: e,
+        alpha: 0,
+        scale: e.def.scale * 0.55,
+        duration: 420 + Math.random() * 380,
+        ease: 'Quad.easeOut',
+        onComplete: () => e.destroy(),
+      });
+    }
     // Финальный фейерверк
     for (let i = 0; i < 8; i++) {
       this.time.delayedCall(i * 160, () => {
@@ -960,8 +976,16 @@ export class GameScene extends Phaser.Scene {
         );
       });
     }
-    // Собрать все кристаллы
-    this.pickups.vacuumAll(this.player.x, this.player.y);
+    // Собрать все кристаллы — ПО-НАСТОЯЩЕМУ: золото/лечение начисляются,
+    // опыт конвертируется в очки (левел-апы в финале уже не выдаются)
+    this.pickups.finaleVacuum(this.player.x, this.player.y, (g) => {
+      if (g.gold > 0) {
+        this.gold += g.gold;
+        this.ach?.event({ type: 'gold', value: this.gold });
+      }
+      if (g.heal > 0) this.player.heal(g.heal);
+      if (g.xp > 0) this.score += g.xp * 2;
+    });
     this.time.delayedCall(1900, () => this.gameOver(true));
   }
 

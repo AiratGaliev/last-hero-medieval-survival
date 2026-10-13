@@ -34,6 +34,8 @@ export class LevelUpScene extends Phaser.Scene {
   private vw = 0;
   private vh = 0;
   private overlayZoom = 1;
+  /** Клавиатурная навигация: подсвеченная карточка (−1 = ничего) */
+  private hoverIdx = -1;
 
   constructor() {
     super('LevelUp');
@@ -78,14 +80,33 @@ export class LevelUpScene extends Phaser.Scene {
     this.panel = this.add.container(0, 0);
     this.renderCards();
 
-    this.add.text(width / 2, height - 18, 'выбери улучшение', {
+    this.add.text(width / 2, height - 18, 'выбери улучшение • клик или 1 / 2 / 3', {
       fontFamily: FONT, fontSize: '13px', color: '#cbb389',
     }).setOrigin(0.5);
+
+    // Клавиатурная навигация: 1/2/3 — мгновенный выбор, стрелки — подсветка,
+    // Enter/Space — выбор подсвеченной карточки
+    const kb = this.input.keyboard;
+    if (kb) {
+      kb.on('keydown-ONE', () => this.chooseByIndex(0));
+      kb.on('keydown-NUMPAD_ONE', () => this.chooseByIndex(0));
+      kb.on('keydown-TWO', () => this.chooseByIndex(1));
+      kb.on('keydown-NUMPAD_TWO', () => this.chooseByIndex(1));
+      kb.on('keydown-THREE', () => this.chooseByIndex(2));
+      kb.on('keydown-NUMPAD_THREE', () => this.chooseByIndex(2));
+      kb.on('keydown-RIGHT', () => this.moveHover(1));
+      kb.on('keydown-LEFT', () => this.moveHover(-1));
+      kb.on('keydown-UP', () => this.moveHover(-1));
+      kb.on('keydown-DOWN', () => this.moveHover(1));
+      kb.on('keydown-ENTER', () => this.chooseHovered());
+      kb.on('keydown-SPACE', () => this.chooseHovered());
+    }
 
     // При изменении размера окна — перерисовать карты на новых координатах (те же карты!)
     this.scale.on('resize', this.rebuild, this);
     this.events.once('shutdown', () => {
       this.scale.off('resize', this.rebuild, this);
+      this.hoverIdx = -1;
     });
   }
 
@@ -96,6 +117,7 @@ export class LevelUpScene extends Phaser.Scene {
   private renderCards(): void {
     for (const c of this.cards) c.container.destroy();
     this.cards = [];
+    this.hoverIdx = -1;
     // Кэшируем набор карт: при перезапуске сцены (ресайз) показываем те же карты,
     // при переходе к следующему левел-апу — генерируем новые.
     if (!this.currentChoices) this.currentChoices = this.payload.getChoices();
@@ -158,12 +180,10 @@ export class LevelUpScene extends Phaser.Scene {
       container.setInteractive({ useHandCursor: true });
 
       container.on('pointerover', () => {
-        this.tweens.add({ targets: container, scale: 1.05, duration: 120 });
-        paper.setTint(0xfff2cc);
+        this.setHover(i);
       });
       container.on('pointerout', () => {
-        this.tweens.add({ targets: container, scale: 1, duration: 120 });
-        paper.clearTint();
+        this.clearHover(i);
       });
       container.on('pointerdown', () => {
         audio.play('click');
@@ -183,6 +203,60 @@ export class LevelUpScene extends Phaser.Scene {
 
       this.cards.push({ container, paper, icon, title, subtitle, desc, levelDots, card });
     });
+  }
+
+  // ================================================================
+  // Клавиатурная навигация
+  // ================================================================
+
+  /** Подсветить карточку (без выбора) */
+  private setHover(idx: number): void {
+    if (idx < 0 || idx >= this.cards.length) return;
+    if (this.hoverIdx === idx) return;
+    this.clearHoverVisual();
+    this.hoverIdx = idx;
+    const c = this.cards[idx];
+    if (!c) return;
+    this.tweens.add({ targets: c.container, scale: 1.05, duration: 120 });
+    c.paper.setTint(0xfff2cc);
+  }
+
+  private clearHoverVisual(): void {
+    if (this.hoverIdx < 0) return;
+    const c = this.cards[this.hoverIdx];
+    if (c && c.container.active) {
+      this.tweens.add({ targets: c.container, scale: 1, duration: 120 });
+      c.paper.clearTint();
+    }
+    this.hoverIdx = -1;
+  }
+
+  private clearHover(idx: number): void {
+    if (this.hoverIdx !== idx) return;
+    this.clearHoverVisual();
+  }
+
+  private moveHover(dir: number): void {
+    if (this.cards.length === 0) return;
+    const base = this.hoverIdx < 0 ? (dir > 0 ? -1 : 0) : this.hoverIdx;
+    const next = (base + dir + this.cards.length) % this.cards.length;
+    this.setHover(next);
+    audio.play('click');
+  }
+
+  private chooseByIndex(idx: number): void {
+    if (idx < 0 || idx >= this.cards.length) return;
+    audio.play('click');
+    this.chooseCard(this.cards[idx].card);
+  }
+
+  private chooseHovered(): void {
+    if (this.hoverIdx >= 0 && this.hoverIdx < this.cards.length) {
+      this.chooseByIndex(this.hoverIdx);
+    } else if (this.cards.length > 0) {
+      // Ничего не подсвечено — выбираем среднюю карточку (как «Enter по умолчанию»)
+      this.chooseByIndex(Math.floor(this.cards.length / 2));
+    }
   }
 
   private chooseCard(card: UpgradeCard): void {

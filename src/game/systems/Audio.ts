@@ -127,11 +127,23 @@ class AudioSystem {
     131, 0, 131, 0, 165, 0, 147, 0, 131, 0, 110, 0, 110, 0, 0, 0,
   ];
 
-  startMusic(): void {
-    if (!this.ensure() || this.musicTimer) return;
+  /** Меню играет ту же тему тише (иначе она спорит с «игровым» настроением) */
+  startMusic(quiet = false): void {
+    if (!this.ensure() || this.musicTimer) {
+      // Уже играем — просто подстроим громкость под контекст
+      if (this.musicTimer && this.musicGain && this.ctx) {
+        this.musicGain.gain.setTargetAtTime(quiet ? 0.09 : 0.16, this.ctx.currentTime, 0.1);
+      }
+      return;
+    }
+    if (this.musicGain && this.ctx) {
+      this.musicGain.gain.setTargetAtTime(quiet ? 0.09 : 0.16, this.ctx.currentTime, 0.02);
+    }
     const stepMs = 180; // ~ темп
     this.musicTimer = setInterval(() => {
-      if (!this.ctx || !this.musicGain || this.muted) return;
+      // Ключевая защита: пока контекст suspended (автозапрет браузера),
+      // ноты НЕ планируются — иначе после первого клика они грянут все разом
+      if (!this.ctx || !this.musicGain || this.muted || this.ctx.state !== 'running') return;
       const m = AudioSystem.MELODY[this.musicStep % 32];
       const b = AudioSystem.BASS[this.musicStep % 32];
       const t0 = this.ctx.currentTime;

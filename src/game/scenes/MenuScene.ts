@@ -46,6 +46,9 @@ export class MenuScene extends Phaser.Scene {
   private diffChips: DiffChip[] = [];
   private selectedHero: HeroId = 'warrior';
   private selectedDiff: DifficultyId = 'normal';
+  /** Выбор уже инициализирован (из localStorage) — рестарты сцены (ресайз)
+  *  не должны сбрасывать выбор, сделанный игроком в этой сессии */
+  private selectionInited = false;
   /** Виртуальное полотно (на мобильных меньше реального экрана — камера зумит) */
   private vw = 0;
   private vh = 0;
@@ -88,14 +91,18 @@ export class MenuScene extends Phaser.Scene {
     const coverW = this.vw / this.menuZoom + 240;
     const coverH = this.vh / this.menuZoom + 240;
 
-    // Сохранённый герой + сложность
-    const saved = window.localStorage.getItem('tss-hero');
-    if (saved === 'warrior' || saved === 'archer' || saved === 'lancer' || saved === 'monk') {
-      this.selectedHero = saved;
-    }
-    const savedDiff = window.localStorage.getItem('tss-diff');
-    if (savedDiff === 'normal' || savedDiff === 'nightmare') {
-      this.selectedDiff = savedDiff;
+    // Сохранённый герой + сложность — только при первом запуске сцены;
+    // при ресайзе (scene.restart) сохраняем выбор игрока текущей сессии
+    if (!this.selectionInited) {
+      this.selectionInited = true;
+      const saved = window.localStorage.getItem('tss-hero');
+      if (saved === 'warrior' || saved === 'archer' || saved === 'lancer' || saved === 'monk') {
+        this.selectedHero = saved;
+      }
+      const savedDiff = window.localStorage.getItem('tss-diff');
+      if (savedDiff === 'normal' || savedDiff === 'nightmare') {
+        this.selectedDiff = savedDiff;
+      }
     }
 
     // Фон: травка + вода (полосы шире видимой области — под зум)
@@ -237,13 +244,17 @@ export class MenuScene extends Phaser.Scene {
       });
     }
 
-    this.add.text(width / 2, height - 12, 'v1.6 • Phaser 4 • ассеты Pixel Frog «Tiny Swords»', {
+    this.add.text(width / 2, height - 12, 'v1.7 • Phaser 4 • ассеты Pixel Frog «Tiny Swords»', {
       fontFamily: FONT, fontSize: '11px', color: '#3b2410',
     }).setOrigin(0.5).setAlpha(0.8);
 
     this.refreshSelection();
     this.scale.on('resize', this.layout, this);
     this.events.once('shutdown', () => this.scale.off('resize', this.layout, this));
+
+    // Тихая тема меню (заставка живёт и после возврата из матча)
+    audio.unlock();
+    audio.startMusic(true);
   }
 
   private createHeroCard(x: number, y: number, heroId: HeroId, cardW: number, cardH: number): void {

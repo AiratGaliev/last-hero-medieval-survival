@@ -1,5 +1,5 @@
 import Phaser from 'phaser';
-import { DEPTH, DESPAWN_DIST } from '../constants';
+import { DEPTH, DESPAWN_DIST, WORLD } from '../constants';
 import { ENEMIES, type EnemyDef, type EnemyKind } from '../data';
 import { audio } from '../systems/Audio';
 
@@ -135,7 +135,8 @@ export class Enemy extends Phaser.Physics.Arcade.Sprite {
   heal(hp: number): void {
     if (this.hp >= this.maxHp) return;
     this.hp = Math.min(this.maxHp, this.hp + hp);
-    if (this.def.isElite) this.drawHpBar();
+    // Мировой HP-бар актуален для всех «крупных» врагов
+    if (this.def.isElite || this.def.isMidboss || this.def.isBoss) this.drawHpBar();
   }
 
   preUpdate(time: number, delta: number): void {
@@ -294,6 +295,24 @@ export class Enemy extends Phaser.Physics.Arcade.Sprite {
 
     const body = this.body as Phaser.Physics.Arcade.Body;
     body.setVelocity(vx + this.knockX, vy + this.knockY);
+
+    // Границы травы: враги не должны «гулять по воде» за кромкой арены
+    // (отброс/инерция могут вынести их за пределы суши)
+    const m = WORLD.GRASS_MARGIN + 20;
+    if (this.x < m) {
+      this.x = m;
+      if (body.velocity.x < 0) body.velocity.x = 0;
+    } else if (this.x > WORLD.SIZE - m) {
+      this.x = WORLD.SIZE - m;
+      if (body.velocity.x > 0) body.velocity.x = 0;
+    }
+    if (this.y < m) {
+      this.y = m;
+      if (body.velocity.y < 0) body.velocity.y = 0;
+    } else if (this.y > WORLD.SIZE - m) {
+      this.y = WORLD.SIZE - m;
+      if (body.velocity.y > 0) body.velocity.y = 0;
+    }
 
     // Поворот по направлению движения
     if (Math.abs(body.velocity.x) > 8) this.setFlipX(body.velocity.x < 0);

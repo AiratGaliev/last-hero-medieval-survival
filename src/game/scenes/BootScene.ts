@@ -119,17 +119,10 @@ export class BootScene extends Phaser.Scene {
     }
 
     // ---- UI ----
-    this.load.image('btn-blue', `${A}/ui/buttons/bigbluebutton-regular.png`);
-    this.load.image('btn-blue-pressed', `${A}/ui/buttons/bigbluebutton-pressed.png`);
-    this.load.image('btn-red', `${A}/ui/buttons/bigredbutton-regular.png`);
-    this.load.image('btn-red-pressed', `${A}/ui/buttons/bigredbutton-pressed.png`);
+    // 9-slice версии (склеены из тайлов ассета) — все панели/кнопки строятся
+    // из них; сырые крупные текстуры (paper/banner/bigbutton) не грузим.
     this.load.image('btn-small-blue', `${A}/ui/buttons/smallbluesquarebutton-regular.png`);
-    this.load.image('btn-small-red', `${A}/ui/buttons/smallredsquarebutton-regular.png`);
-    this.load.image('paper', `${A}/ui/papers/regularpaper.png`);
-    this.load.image('paper-special', `${A}/ui/papers/specialpaper.png`);
-    this.load.image('banner', `${A}/ui/banners/banner.png`);
     this.load.image('swords', `${A}/ui/swords/swords.png`);
-    // Бесшовные 9-slice версии (склеены из тайлов ассета)
     this.load.image('paper9', `${G}/paper9.png`);
     this.load.image('paper-special9', `${G}/paper-special9.png`);
     this.load.image('btn-blue9', `${G}/btn-blue9.png`);

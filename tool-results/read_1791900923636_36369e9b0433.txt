@@ -1,0 +1,334 @@
+     1→---
+     2→Task ID: ASSET-1
+     3→Agent: general-purpose (asset downloader)
+     4→Task: Download and organize Tiny Swords assets into public/assets/tiny-swords
+     5→
+     6→Work Log:
+     7→- Read prior worklog (did not exist yet; this is the first entry).
+     8→- Used agent-browser CLI to navigate to https://pixelfrog-assets.itch.io/tiny-swords, clicked "Download Now", clicked "No thanks, just take me to the downloads" in the itch.io lightbox (bypassed Stripe iframe + Google ad overlays by removing ad DOM nodes and closing the after-download lightbox).
+     9→- Downloaded BOTH free files from the official itch.io download page into /tmp:
+    10→  - "Tiny Swords (Free Pack).zip" (3.3 MB, current Dec-2025 version, 410 PNGs)
+    11→  - "TS_old version_CC0 Licensed" (2.6 MB, "Tiny Swords (Update 010)", CC0, 197 PNGs)
+    12→- Extracted both zips in /tmp, inspected structures (new pack: Buildings/Units/Terrain/UI Elements/Particle FX in 5 faction colors; old pack: Factions/Deco/Effects/Resources/Terrain/UI).
+    13→- Note: the original "Characters (King, Queen, Knight...)/Commands/Ground & Props" structure described in the brief is no longer distributed on itch.io; current packs use Units/Buildings structure. GitHub mirrors found (ZieIony/TinySwords) contained the same new-version assets, so official itch.io download was used.
+    14→- Organized all 607 PNGs into /home/z/my-project/public/assets/tiny-swords/ via Python script with explicit path mapping + web-safe renaming (lowercase, non-alphanumerics -> hyphens): "Blue Buildings" -> buildings/blue, "Pawn_Idle Axe.png" -> pawn-idle-axe.png, "Rocks in the Water" -> water-rocks, etc. Old CC0 pack placed under legacy/. Fixed original pack typo "Archer_Purlple" -> archer-purple. Skipped .aseprite sources, .DS_Store, __MACOSX.
+    15→- Fixed a rename bug where ".png" became "-png" (578 files) via bulk rename; fixed 5 mangled legacy archer filenames.
+    16→- Verified: 607/607 files are valid PNGs (checked with `file` + PIL integrity), all names match ^[a-z0-9-]+\.png$, total size 6.4 MB.
+    17→- Verified HTTP serving against the running Next.js dev server: curl http://localhost:3000/assets/tiny-swords/... returns 200 for units, buildings, terrain, ui, particle-fx, legacy paths.
+    18→- Computed sprite sheet dimensions and frame counts for all character sheets (192x192 frames; Lancer 320x320).
+    19→
+    20→Stage Summary:
+    21→- Final root: /home/z/my-project/public/assets/tiny-swords/ (607 PNGs, 6.4 MB) served at /assets/tiny-swords/...
+    22→- Top-level folders:
+    23→  - buildings/{black,blue,purple,red,yellow}/ -> archery.png [192x256], barracks.png [192x256], castle.png [320x256], house1/2/3.png [128x192], monastery.png [192x320], tower.png [128x256]
+    24→  - units/{black,blue,purple,red,yellow}/{archer,lancer,monk,pawn,warrior}/
+    25→    - archer: archer-idle.png [1152x192=6f], archer-run.png [768x192=4f], archer-shoot.png [1536x192=8f], arrow.png [64x64]
+    26→    - lancer (320x320 frames): lancer-idle.png [3840x320=12f], lancer-run.png [1920x320=6f], lancer-{up,down,right,upright,downright}-{attack [960x320=3f], defence [1920x320=6f]}.png
+    27→    - monk: idle.png [1152x192=6f], run.png [768x192=4f], heal.png [2112x192=11f], heal-effect.png [2112x192=11f]
+    28→    - pawn: pawn-idle.png [1536x192=8f], pawn-run.png [1152x192=6f], pawn-{idle,run}-{axe,gold,hammer,knife,meat,pickaxe,wood}.png, pawn-interact-{axe[6f],hammer[3f],knife[4f],pickaxe[6f]}.png
+    29→    - warrior: warrior-idle.png [1536x192=8f], warrior-run.png [1152x192=6f], warrior-attack1/2.png [768x192=4f], warrior-guard.png [1152x192=6f]
+    30→  - terrain/tileset/ (tilemap-color1..5.png [576x384, 64px tiles], shadow.png, water-foam.png [3072x192], water-background-color.png)
+    31→  - terrain/decorations/{bushes,clouds,rocks,water-rocks,rubber-duck}/
+    32→  - terrain/resources/{gold-resource,gold-stones,meat-resource,sheep,tools,trees,wood-resource}/
+    33→  - particle-fx/ (dust-01/02, explosion-01/02 [1536/1920x192], fire-01/02/03, water-splash.png)
+    34→  - ui/{avatars(25),banners,bars,buttons,cursors(4),icons(12),papers,ribbons,store-banners,swords,wood-table}/
+    35→  - legacy/ (old CC0 "Update 010" pack): deco(18), effects/{explosion,fire}, goblins/{buildings,troops}, knights/{buildings,troops}, resources/{gold-mine,sheep,spawns,trees}, terrain/{bridge,ground,water}, ui/{banners,buttons,icons(30),pointers(6),ribbons}
+    36→    - legacy unit sheets are multi-row grids: archer-blue.png [1536x1344 = 8x7 grid of 192], pawn-blue.png [1152x1152 = 6x6], warrior-blue.png [1152x1536 = 6x8]
+    37→- License: Free Pack (c) Pixel Frog - free asset pack from itch.io; legacy pack is CC0. Attribution to Pixel Frog (https://pixelfrog-assets.itch.io/) recommended.
+    38→- Issues: none blocking; itch.io ad/lightbox overlays required DOM manipulation to click download; extension rename bug found & fixed (all files verified valid PNG afterwards).
+    39→
+    40→---
+    41→Task ID: 1 (docs + prep)
+    42→Agent: main orchestrator
+    43→Task: Create TZ/roadmap docs, install Phaser, prepare derived assets
+    44→
+    45→Work Log:
+    46→- Explored project (Next.js 16, shadcn/ui present, prisma configured)
+    47→- Installed phaser@4.2.1 (latest)
+    48→- Created docs/TZ.md (full technical spec) and docs/ROADMAP.md (8 phases with test gates)
+    49→- Analyzed Tiny Swords assets via VLM: tilemaps (found seamless grass tile at tilemap-color3 col1,row1), UI icons (12), buttons/papers/banners structure, gold stones
+    50→- Generated derived assets in public/assets/game/: grass-tile, gems (recolored gold-stones: blue/purple/green/red/gold), spear projectile, slash crescent, aoe-ring, barrel crop, drawn pixel icons (heart, haste, magnet, boots, might), copied icons (sword, hammer, shield, coin, meat, aura)
+    51→- Verified Phaser 4.2.1 API surface: load.spritesheet, add.particles, generateFrameNumbers all present
+    52→
+    53→Stage Summary:
+    54→- Docs at docs/TZ.md + docs/ROADMAP.md are the source of truth for development
+    55→- Assets ready: public/assets/tiny-swords (original) + public/assets/game (derived)
+    56→- Phaser 4.2.1 installed; starting Phase 1 (bootstrap: React shell, BootScene, world, player movement)
+    57→
+    58→---
+    59→Task ID: 4-6 (phases 1-6 core)
+    60→Agent: main orchestrator
+    61→Task: Implement full game core (world, enemies, weapons, XP, HUD, boss, records)
+    62→
+    63→Work Log:
+    64→- Written game architecture: src/game/{constants,data}.ts, scenes/{Boot,Menu,Game,LevelUp,Pause,GameOver}Scene.ts, entities/{Player,Enemy}.ts, systems/{Audio,Effects,Pickups,Projectiles,Spawner,Weapons,HUD,Joystick}.ts
+    65→- React shell: page.tsx (header, game container, controls, leaderboard sidebar, sticky footer with attribution), GameCanvas.tsx (dynamic import + font preload + __tss debug hook), GameOverDialog.tsx (shadcn dialog, name input, save), Leaderboard.tsx (shadcn table)
+    66→- Prisma GameResult model + /api/scores GET/POST (zod validated); db pushed
+    67→- Fixed Phaser 4 API issues: setTintFill removed -> setTint().setTintMode(TintModes.FILL); particles config 'frames' -> 'frame'; anim/texture key mismatch for trees/bushes/sheep; scene data property conflict (renamed to payload)
+    68→- Fixed critical bug: pause onResume didn't call scene.resume()
+    69→- Verified via agent-browser: menu->game->movement (WASD via key.isDown injection)->combat (6 weapons)->XP->level-up cards (chain of 2)->pause ESC->elite spawn at 5:00->boss at 15:00->boss kill->VICTORY->React dialog->score saved to DB (7580 pts)->leaderboard updated (React + Phaser records overlay)
+    70→- Console clean: no errors/warnings after fixes
+    71→
+    72→Stage Summary:
+    73→- Full gameplay loop works end-to-end; all 6 weapons, 8 passives, waves/elites/boss, records pipeline
+    74→- Remaining: polish (water foam, mobile check), balance, final QA, cron task
+    75→
+    76→---
+    77→Task ID: 7-8 (polish + final QA)
+    78→Agent: main orchestrator
+    79→Task: Audio/menu/polish phases + final acceptance QA
+    80→
+    81→Work Log:
+    82→- Fixed Phaser 4 breaking changes found at runtime: setTintFill(color) removed -> setTint(color).setTintMode(TintModes.FILL); particles config 'frames' -> 'frame'; anim startFrame via anims.setCurrentFrame
+    83→- CRITICAL discovery: Tiny Swords big UI images (paper/button/banner 320-448px) are 3x3 TILE GRIDS with transparent gaps, not whole images. Stitched them into seamless 9-slice textures (public/assets/game/paper9, btn-blue9, btn-red9, banner9, paper-special9) and rebuilt all UI via Phaser NineSlice (new src/game/systems/Ui.ts: makePanel/makeButton)
+    84→- Fixed mobile layout: grid-cols-1 + minmax(0,1fr) track, section min-w-0, canvas CSS w/h full -> no horizontal overflow at 390px
+    85→- Fixed critical pause bug: onResume callback did not call scene.resume() -> game stuck paused
+    86→- Added animated water foam ring around arena edge (fx-foam, staggered frames)
+    87→- Verified via agent-browser: mobile joystick (drag -> velocity 200 -> stop on release), M mute announce, meat pickup healing (40->100), how-to/records/level-up/gameover screens all render as solid parchment panels
+    88→- Cleaned test scores from DB; final fresh-load QA: console completely clean, combat confirmed (17 kills in ~20s), VLM checklist all PASS (XP bar, timer, score, icons, player/enemies, effects)
+    89→- Perf: RAF in headless capped ~20fps regardless of content (raw RAF test = 19fps on empty page) -> environment limit, not game; JS budget fits at 94 enemies
+    90→
+    91→Stage Summary:
+    92→- All 8 roadmap phases complete, all TZ acceptance criteria verified
+    93→- Game fully playable end-to-end: menu -> 15-min survival -> elites/boss -> victory/defeat -> score save -> leaderboard
+    94→- Next phase (cron-driven): continued QA + potential new features per review
+    95→
+    96→---
+    97→Task ID: R2 (cron webDevReview, раунд развития 2)
+    98→Agent: main orchestrator
+    99→Task: QA + новые функции (герои, сундуки, ножи, мудрость, UI-полировка)
+   100→
+   101→Текущее состояние проекта (оценка):
+   102→- Игра полностью играбельна и стабильна: консоль чистая, tsc/eslint чистые, полный цикл работает. Критических багов не найдено.
+   103→
+   104→Work Log:
+   105→- QA: свежая загрузка, запуск игры, проверка боя/консоли — стабильно.
+   106→- Фича: ВЫБОР ГЕРОЯ — 3 героя (Воин 110HP/200spd/меч, Лучница 90HP/230spd/лук, Копейщик 130HP/190spd/копьё) с карточками в меню (живые анимированные спрайты, золотая рамка, иконка оружия), выбор в localStorage 'tss-hero', передача через scene data; Player.ts переписан под HeroDef (кадры 192/320, разные анимации); recomputeStats учитывает базу героя.
+   107→- Фича: СУНДУКИ-СОКРОВИЩА — каждые 75с (первый на 40с) с золотым свечением (fx-treasure ADD-blend) и покачиванием; подбор <58px: взрыв + золотой дождь 14 кристаллов + красный кристалл 10XP + 2 мяса + 75 золота + 250 счёта; анонсы «ГДЕ-ТО СПРЯТАНО СОКРОВИЩЕ...» / «СОКРОВИЩЕ ОБРЕТЕНО!».
+   108→- Фича: ОРУЖИЕ «МЕТАТЕЛЬНЫЕ НОЖИ» (7-е) — веер 3-6 ножей по направлению движения, скорость 840, пробитие 2-4; ассет knife.png вырезан из tool-03 (dagger), повёрнут вправо.
+   109→- Фича: ПАССИВКА «МУДРОСТЬ» (9-я) — +15% XP/уровень, иконка icon-gem (зелёный кристалл); addXp умножает на xpMult.
+   110→- UI: HUD — счётчик золота с иконкой монеты; КНОПКА ПАУЗЫ «II» в правом верхнем углу (мобильные); GameOver-диалог показывает героя; анонс старта с именем героя; меню переработано (карточки, кнопки в ряд, замок фоном).
+   111→- Верификация через agent-browser: карточки героев рендерятся (VLM: спрайты/имена/рамка ок), Лучница (hero=Лучница, 90HP, 230spd, bow) и Копейщик (130HP, spear, hero-lancer-idle) стартуют корректно, сундук открывается (gold 75, gems 13, score +250), ножи летят (16 активных, кд циклится), мудрость xpMult 1.3, карты левел-апа включают новые пассивки, мобильное меню 390px без переполнения.
+   112→- Заметка для будущих QA: при тесте AFK игрок погибает — для боевых тестов ставить sc.player.hp = 999999. Старыe React-диалоги GameOver не закрываются при рестарте через eval — закрывать вручную.
+   113→
+   114→Stage Summary:
+   115→- Все новые функции реализованы и верифицированы; чистота кода и консоли подтверждена.
+   116→- Нерешённого/рисков: визуал ножей не пойман на скриншоте (проверен программно), субъективный звук требует живой проверки.
+   117→- Приоритет следующего раунда: мета-прогрессия (localStorage статистика), ачивки, game-feel полировка (hitstop/скриншейк), новые типы врагов, режимы сложности.
+   118→
+   119→---
+   120→Task ID: R3 (cron webDevReview, раунд развития 3)
+   121→Agent: main orchestrator
+   122→Task: QA стабильности + новые функции (сложности, бочка-камикадзе, game-feel, достижения, мета-статистика, React-полировка)
+   123→
+   124→Текущее состояние проекта (оценка):
+   125→- Стартовое QA: игра стабильна, консоль чистая, tsc/eslint чистые. Критических багов на старте не найдено.
+   126→- Обнаружен и исправлен устаревший контент React-страницы («6 оружий • 8 бонусов» при фактических 7/9).
+   127→
+   128→Work Log:
+   129→- QA стартовое: свежая загрузка → меню → игра → движение → бой → цепочка левел-апов → всё стабильно, ошибок нет.
+   130→- Фича: СЛОЖНОСТИ «Поход»/«Кошмар» — DIFFICULTIES в data.ts (hp ×1.45, dmg ×1.25, speed ×1.1, rate ×0.85, score ×1.6); чипы в меню (localStorage tss-diff), Spawner умножает hp/dmg/interval, скорость врагов в spawnEnemy/spawnBoss; HUD-метка «КОШМАР ×1.6»; множитель счёта в currentScore(); сложность в статистике/диалоге/GameOver.
+   131→- Фича: ВРАГ «БОЧКА-КАМИКАДЗЕ» (bomber) — текстура barrel (192px), катится с вращением (rotation по скорости), телеграф 620 мс (мигание + раздувание), взрыв 24 урона в радиусе 150; убитая оружием взрывается среди врагов (цепные реакции, босс невосприимчив); в пуле с 4-й мин + залп 8 бочек на 6:30.
+   132→- Фича: GAME-FEEL — хитстоп (реестр tss-freeze: 70 мс взрывы, 80 мс урон, 110 мс элиты, 200 мс победа); красная вспышка камеры при уроне; пульсирующая красная виньетка краёв экрана при HP<30%; всплывающие тексты «+75 ЗОЛОТА»/«+250 ОЧКОВ» (Effects.popup).
+   133→- Фича: ДОСТИЖЕНИЯ (9 шт.) — новый модуль src/game/achievements.ts (без Phaser-зависимостей, общий для игры и React); AchTracker с тостами HUD (пергамент справа, очередь, звук-джингл 'ach'); localStorage tss-ach; чипы новых достижений в GameOverScene + React-диалоге; сетка 3×3 с прогресс-баром в сайдбаре (Achievements.tsx).
+   134→- Фича: МЕТА-СТАТИСТИКА — localStorage tss-meta (матчи/победы/убийства/золото/рекорд/время); панель «Хроника воина» с винрейтом (MetaStats.tsx); обновление по событию tss-meta-updated.
+   135→- React-полировка: актуальные бейджи хедера, карточки «Что нового» (герои/сложности/оружия), уголки-декор рамки игры, версия v1.2 в футере.
+   136→- БАГФИКС 1 (критический): hitstop замораживал игру навсегда — hurtPlayer вызывался КАЖДЫЙ кадр контакта (overlap) и обновлял hitstopUntil; теперь эффекты урона гейтятся i-frames (раньше это был спам звука/тряски).
+   137→- БАГФИКС 2 (критический): бесконечная рекурсия взрывов бочки — onEnemyDeath взрывал цепь ДО удаления из группы, взрыв бил саму бочку → смерть → взрыв → ... (1484 киллов за кадр, stack overflow); фикс: enemyGroup.remove+destroy ДО цепного взрыва + флаг Enemy.dead от повторного урона.
+   138→- БАГФИКС 3: зависание сцены LevelUp/Pause при рестарте из GameOver (если gameOver случился при открытом оверлее) — GameOverScene.restart/toMenu теперь гасят LevelUp и Pause.
+   139→- Верификация через agent-browser + VLM: чипы сложности в меню (десктоп и 390px — VLM 9/10 без переполнений), кошмарный hpMult 1.48, метка ×1.6 в HUD (VLM подтвердил), бочка: спавн → качение → телеграф → взрыв → 24 урона игроку + 3 цепных килла врагов, тост достижения рендерится (VLM), first-blood в localStorage, game over → мета (2 матча/1 победа) → сайдбар «Хроника воина» + «Достижения 1/9» (VLM), сохранение рекорда через React-диалог в БД, пауза/резюм работает, лестница левел-апов (8 уровней, 3 оружия, 4 пассивки), консоль чистая после всех тестов, tsc+eslint чистые, dev.log без ошибок.
+   140→- Тестовые записи БД очищены (leaderboard пустой для пользователя).
+   141→- Документация: docs/TZ.md — раздел «Обновление v1.2 (раунд 3)»; docs/ROADMAP.md — таблица раунда 3 со статусами.
+   142→
+   143→Stage Summary:
+   144→- Все новые функции реализованы и верифицированы; 3 бага найдено и исправлено (2 критических из новых фич — обнаружены именно новым QA-протоколом).
+   145→- Нерешённого/рисков: звук джингла достижений и hitstop-длительности требуют живой проверки (субъективно); бочка на 20 FPS headless выглядит резкой (на 60 FPS плавно); сентимент VLM к мелким шрифтам карточек (не критично).
+   146→- Приоритет следующего раунда: золото-экономика и мета-магазин (покупка стартовых бонусов за золото), 4-й герой (монах — самолечение), новый босс на 10-й минуте для «Кошмара», локализация (EN), партиклы крови/пыли при ударах, SEO/OG-мета страницы.
+   147→
+   148→---
+   149→Task ID: R4 (глубокое QA + доработка v1.3)
+   150→Agent: main orchestrator
+   151→Task: Тщательное тестирование игры (по запросу пользователя) + исправление найденного + доработка
+   152→
+   153→Текущее состояние проекта (оценка):
+   154→- Игра стабильна, но глубокий QA нашёл 1 критический баг и несколько средних.
+   155→
+   156→Work Log:
+   157→- ГЛУБОКИЙ QA через agent-browser (+ VLM + пиксельный анализ скриншотов): меню (десктоп/390px), выбор героя, старт, движение (WASD/джойстик), все 7 оружий одновременно, XP/цепочки левел-апов, пауза/резюм/ESC, сундук (+75 золота/+250 очков), бочка (телеграф→взрыв 24 урона→цепные киллы), лучник-враг (стрелы, цикл 2.2с, HP падает), элита на 5:00, босс на 15:00, победа/поражение, React-диалог, сохранение рекорда в БД, рестарты, мобильная вёрстка.
+   158→- НАЙДЕНО И ИСПРАВЛЕНО (5 багов):
+   159→  1. КРИТИЧНО: ножи никогда не истекали — Projectiles.update() не обновлял knifePool; утёкшие ножи летели вечно (126 шт на ±37000 за минуту боя). Фикс: updateProjs(knifePool). Проверено: 2 ножа в пустоту → 0 активных через 1.2с.
+   160→  2. Золотые кристаллы (3% дроп) не давали НИЧЕГО (xp=0, механики золота не было). Фикс: spawnGoldGem + колбэк onGold → +3..8 золота с попапом.
+   161→  3. Оверлеи (Pause/LevelUp/GameOver) не перестраивались при ресайзе окна → кнопки уезжали за экран на мобильном. Фикс: рестарт сцены с тем же payload при resize; LevelUp кэширует текущие карты (те же карты после ресайза, сброс по новому payload).
+   162→  4. Мобильное меню (2×2 героев) переполняло канвас: заголовок наезжал на карточки, кнопки обрезаны. Фикс: виртуальное полотно 460×800 + зум камеры (аналогично LevelUp 460×780). ВАЖНО: camera.centerOn учитывает origin 0.5 — ручной setScroll по наивной формуле ЛОМАЕТ позиционирование (проверено пиксельным анализом: centerOn правильно, setScroll нет).
+   163→  5. Хардкод 3200 в Pickups → WORLD.SIZE.
+   164→- ДОРAБОТКА (v1.3):
+   165→  - 4-й герой МОНАХ: 100 HP / 195 скор / стартовая АУРА / +0.5 HP/с врождённая регенерация (HeroDef.baseRegen); анимации синего монаха (idle/run/heal); меню — 4 карточки (4 в ряд десктоп, 2×2 мобильный).
+   166→  - ЛАВКА ТОРГОВЦА (мета-магазин, localStorage tss-shop): золото матчей → кошелёк (commitMeta→depositGold); 5 апгрейдов × 3 уровня (Сила предков +6% урона, Дублёная кожа +15 HP, Сапоги +4% скорости, Компас +20% подбора, Лапка +5% крита); React-панель ShopPanel в сайдбаре (кошелёк, точки уровней, покупка); применение в recomputeStats.
+   167→  - МИДБОСС «ТЁМНЫЙ МОНАХ» на Кошмаре (10:00, событие с фильтром по сложности): 1500 HP фикс (не скейлится!), урон 20, полоса босса в HUD, фиолетовый HP-бар, зов свиты при HP<75%, лечение союзников; награда +1500 очков + 2 золотых кристалла по 40 + 3 красных; смерть НЕ завершает матч. На Походе — обычная элита.
+   168→  - БРЫЗГИ УДАРОВ: красный партикл-эмиттер (fx-dust tint) на 60% попаданий.
+   169→  - Элиты/боссы/мидбоссы вне ENEMY_CAP.
+   170→  - page.tsx: 4 героя, v1.3, лавка в сайдбаре, обновлённые тексты.
+   171→- Верификация: пиксельный анализ (кнопки меню 495..531 из 590 — не обрезаны; логотип 33..119; карточки левел-апа 135..543), VLM-проверки всех экранов, монах: regen 50→52 за 3с + 9 киллов аурой, лавка: 514→364, might L1 → mightMult 1.06 в бою, мидбосс: 1500 HP, +1500 очков, gameEnded=false, кошелёк +14 золота за матч. Консоль: 0 ошибок/0 предупреждений. tsc/eslint чистые.
+   172→- Заметка для будущих QA: (1) установка player.hp=999999 сбрасывается любым passive-левел-апом (recomputeStats) — для неуязвимости ставить player.iframesUntil=Date.now()+1e9 и повторять; (2) элемент-скриншот анимирующегося WebGL-канваса иногда даёт белый кадр — верифицировать полным страничным скриншотом + пиксельным анализом; (3) VLM может ошибаться про «обрезанность» — доверять пиксельным замерам; (4) при длинных сессиях agent-browser канвас может «посереть» (глюк контекста) — перезапустить браузер, это не баг игры.
+   173→
+   174→Stage Summary:
+   175→- 5 багов найдено и исправлено (1 критический), 4 крупные фичи добавлены.
+   176→- Игра полностью играбельна и верифицирована на десктопе и мобильном размере.
+   177→- Нерешённого/рисков: звук требует живой проверки (субъективно); баланс монаха (слабый старт, компенсируется регеном) — наблюдать.
+   178→- Приоритет следующего раунда: локализация EN, новые типы врагов на поздних минутах, статистика оружия (какое оружие даёт больше DPS), онлайн-таблица с фильтрами, SEO/OG-мета.
+   179→
+   180→---
+   181→Task ID: R5 (миграция всего UI в Phaser, v1.4)
+   182→Agent: main orchestrator
+   183→Task: Вынести всё в Phaser-игру (React — только монтировщик); перед этим было указание тщательно протестировать и доработать
+   184→
+   185→Текущее состояние проекта (оценка):
+   186→- Игра v1.3 стабильна; задача раунда — архитектурная миграция UI из React-оболочки внутрь Phaser + QA.
+   187→
+   188→Work Log:
+   189→- Изучены все точки связи React↔Phaser (window-события tss-*): GameOverDialog, Leaderboard, MetaStats, Achievements, ShopPanel + слушатели в GameScene/GameOverScene.
+   190→- config.ts: включён `dom: { createContainer: true }` для DOMElement.
+   191→- React-минимизация: page.tsx → полноэкранный main h-dvh + динамический GameCanvas (loading-сплэш); удалены 5 React-компонентов; GameCanvas без rounded-стилей.
+   192→- MenuScene: ряд из 5 кнопок навигации (КАК ИГРАТЬ/РЕКОРДЫ/ЛАВКА/ДОСТИЖЕНИЯ/ХРОНИКА; десктоп 1×5, мобильный 2+3); кошелёк с монетой в углу при balance>0; каркас оверлеев beginOverlay/closeOverlay с ИНТЕРАКТИВНЫМ блокировщиком кликов (раньше клики проходили сквозь затемнение к карточкам героев).
+   193→- БАГФИКС (старый): кнопка «НАЗАД» создавалась вне overlay-контейнера и НЕ уничтожалась при закрытии → висела над меню. Теперь все интерактивные элементы оверлея трекаются в overlayExtras и уничтожаются. Проверено: 6 красных кнопок при оверлее → 5 после закрытия.
+   194→- Оверлей «Рекорды»: полная переработка — таблица из /api/scores с медалями 🥇🥈🥉, колонками (правое выравнивание чисел), ★ за победу, формулой счёта; guard от гонки (оверлей закрыт до прихода fetch).
+   195→- Оверлей «Лавка торговца»: 5 строк (иконка/имя/описание/точки ●●○/кнопка цены), кошелёк, покупка кликом по строке, disabled-цена (серый tint) при нехватке золота, тряска при клике без денег, flash-анимация покупки, звук levelup.
+   196→- Оверлей «Достижения»: сетка 3×3 (иконки игрока, золотая рамка полученных, серые закрытые), счётчик N/9, полоса прогресса (Graphics), строка описания по hover/тапу.
+   197→- Оверлей «Хроника воина»: 6 ячеек статистики + чип винрейта + пустое состояние; формат времени ч/мин/сек.
+   198→- GameOverScene: полная переработка — нативный <input> через add.dom (DOMElement, пергаментный стиль, pointer-events auto), «СОХРАНИТЬ РЕКОРД» → POST /api/scores → «✓ РЕКОРД СОХРАНЁН» (кнопка заменяется текстом), «ПОПРОБУЙ СНОВА» + подсказка при ошибке, Enter = сохранить, имя в localStorage tss-name (предзаполнение следующего матча), ГЕРОЙ в статистике, компактный ландшафтный режим (h<520: без баннера), кнопки ИГРАТЬ СНОВА + В МЕНЮ в ряд, state сохранения переживает ресайз (lastStatsRef) и сбрасывается в новом матче, ручное удаление DOM-инпута на shutdown.
+   199→- GameScene: убран dispatch 'tss-gameover' (React-слушателей больше нет).
+   200→- QA через agent-browser (нативные mouse-события CDP + VLM + программные проверки): меню (5 кнопок + кошелёк), лавка (покупка: 500→350, might 0→1, цена L2 350), достижения (клик → «🩸 Первая кровь — Повергнуть первого врага»), хроника (винрейт-чип, значения), рекорды (таблица с QA-Тестер), блокировщик кликов подтверждён (клик по меню под оверлеем игнорируется), GameOver: ввод «QA-Фараон» → POST → id 6 в БД, ✓-подтверждение, Enter-save (id 7), мобильный save (id 8), предзаполнение имени, сброс состояния в новом матче, ИГРАТЬ СНОВА/В МЕНЮ, инпут удаляется из DOM, пауза/резюм ESC, геймплей (движение WASD, авто-бой, 110 HP воина), мобилка 390×844 (меню 2+3, лавка, рекорды, GameOver c инпутом 310px), ландшафт 844×390 (компактный GameOver). Консоль/browser errors/dev.log — чисто. tsc/eslint чистые.
+   201→- Тестовые данные вычищены: БД (DELETE QA-%, 0 строк), localStorage tss-shop/tss-meta восстановлены к исходным, tss-name удалён.
+   202→- Документация: TZ.md раздел «Обновление v1.4», ROADMAP.md таблица раунда 5.
+   203→
+   204→Stage Summary:
+   205→- Всё UI и мета-функциональность теперь внутри Phaser: React = полноэкранный монтировщик (~90 строк против ~350).
+   206→- Найден и исправлен 1 старый баг (утечка кнопки НАЗАД) + добавлен блокировщик кликов под оверлеями.
+   207→- Все сценарии (лавка/достижения/хроника/рекорды/сохранение имени) работают на десктопе, мобильном и ландшафте.
+   208→- Нерешённого/рисков: OSK на реальных телефонах не проверяем в headless (инпут нативный — риск низкий); VLM иногда неверно читает мелкий пиксельный шрифт (проверять программно).
+   209→- Приоритет следующего раунда: EN-локализация, новые типы врагов на поздних минутах, статистика оружия, фильтры таблицы рекордов, SEO/OG-мета.
+   210→
+   211→---
+   212→Task ID: R6 (глубокое QA v1.5 — по запросу пользователя: «максимально тщательно протестируй игру»)
+   213→Agent: main orchestrator
+   214→Task: Тщательное тестирование всего: UI-элементы, тексты, UX, гейм-дизайн, логика, баланс, механики + исправление найденного
+   215→
+   216→Текущее состояние проекта (оценка):
+   217→- Игра v1.4 стабильна внешне, но глубокий QA вскрыл 3 критических скрытых бага (HUD, пауза-клик, спам миньонов), которые проявлялись на нестандартных вьюпортах и поздних фазах боя.
+   218→
+   219→Work Log:
+   220→- QA-методика: agent-browser (мышь по координатам, eval-инспекция сцен/состояний) + VLM-анализ скриншотов + пиксельный анализ (поиск цветов HUD) + программные проверки (spawn/damage/ach через __tss-хук).
+   221→- Протестировано: меню (карточки героев, чипы, кошелёк), все 5 оверлеев (как играть/рекорды/лавка/достижения/хроника), блокировщик кликов, старт всеми героями, WASD-движение, мобильный джойстик, все 7 оружий одновременно, левел-ап цепочки, пауза/резюм (ESC/кнопка), сундуки (+75 золота/+250 очков/золотой дождь), золотые кристаллы, бочка (телеграф→взрыв→цепные киллы), элита (дроп 3 красных кристалла + 2 мяса), мидбосс Кошмара (лечение свиты, зов при HP<75%), босс (enrage ×1.35 при HP<30%, кольцо стрел, зов свиты), победа (+5000), поражение, сохранение рекорда (POST→БД→✓), рестарты, nightmare-множители (HP×1.45/DMG×1.25/SPD×1.1), ачивки, мета-статистика, лавка, мобильная вёрстка 390×844.
+   222→- НАЙДЕНО И ИСПРАВЛЕНО (7 багов):
+   223→  1. КРИТИЧНО: HUD полностью невидим при зуме камеры ≠ 1 — на десктопе >1152×700 уезжал за экран (зум 1.111), на мобильных сжимался к центру (зум 0.55). Причина: зум камеры применяется вокруг центра вьюпорта, scrollFactor(0) не защищает. Фикс: корневой контейнер HUD с инверсной трансформацией [scale 1/z, pos center·(1−1/z)] — дети в экранных координатах рендерятся точно по месту при любом зуме. ВАЖНО: в исходном фиксе забыл setScrollFactor(0) на контейнере — без него HUD «уезжает» со скроллом мира (долго искал: маскировалось паузами левел-апов, затемнявшими экран).
+   224→  2. КРИТИЧНО: кнопка паузы некликабельна — баг Phaser 4.2.1: InputManager.hitTest для вложенных объектов использует scrollFactor РЕБЁНКА, игнорируя контейнер (рендер корректно перемножает, инпут — нет). Фикс: пауза = три плоских top-level sf=0-объекта (bg/txt/zone) с ручной компенсацией зума. Вывод для будущих фич: ИНТЕРАКТИВНЫЕ элементы НИКОГДА не класть внутрь sf=0-контейнеров при скроллящейся камере.
+   225→  3. КРИТИЧНО: Enemy.summonCd задан в мс (8/11/13) вместо секунд — босс при HP<65% и мидбосс при HP<75% призывали 6 миньонов КАЖДЫЙ КАДР (219 миньонов за 3 с, забивали ENEMY_CAP). Фикс: 8000/11000/13000 мс.
+   226→  4. Гонка победы: в 1.9-с окне фейерверка (а) открывались левел-апы от собранных кристаллов → каскад откладывал экран победы; (б) игрок мог погибнуть от остатков толпы ПОСЛЕ убийства босса → «ПОРАЖЕНИЕ» вместо победы; (в) спавнер продолжал работать. Фикс: флаг victoryPending (блокирует update/openLevelUp/hurtPlayer/addXp + spawner.stopped + velocity 0).
+   227→  5. Карточки героев: текст характеристик наезжал на иконку оружия внизу (подтверждено VLM на зуме). Фикс: иконка оружия перенесена в верхний правый угол карточки.
+   228→  6. GameOver: строка СЛОЖНОСТЬ наезжала на СЧЁТ — курсор считался как кегль×кол-во строк (26px/строку), реальная строка Pixelify ≈30px. Фикс: cursor = statsTop + statsText.height.
+   229→  7. Ассеты: icon-aura был почти пустым (47/4096 непрозрачных пикселей — невидим в карточках/HUD/ачивках). Перерисован пиксельным пылающим кольцом (палитра жёлтый→оранж→красный, 8 языков, апскейл ×2 NEAREST); icon-bomb осветлён (Brightness 1.55).
+   230→- Тестовые данные вычищены: БД (2 строки: «Айрат», «QA-Раунд6» — deleteMany, 0 осталось), localStorage (tss-ach/meta/shop/name/hero/diff — все 6 ключей).
+   231→- Верификация после фиксов: HUD-пиксели на месте на 1280×800 (полоса опыта 1818px, таймер 35, счёт 53, пауза 361+кликабельна) и 390×844 (полоса 339, таймер 32, пауза 2576+кликабельна); босс 12с → 5 миньонов (было 219/3с); мидбосс зов при HP<75% после падения ниже порога; победа с кристаллами на поле → экран ПОБЕДА (score 5150, ach boss-slayer, мета 7 матчей/1 победа); пауза кнопкой и ESC; джойстик (вектор 0.89/0.45 → скорость 195); tsc/eslint/dev.log/console — чистые.
+   232→- Документация: TZ.md — раздел «Обновление v1.5», ROADMAP.md — таблица раунда 6.
+   233→
+   234→Методологические заметки для будущих QA (ВАЖНО):
+   235→- Пиксельный анализ скриншотов — единственный надёжный способ проверить, что элемент РЕАЛЬНО отрисовался; VLM может «не видеть» тонкие полосы и перевирает мелкий пиксельный шрифт («СЧЁТ»→«ОЧЕТ», «Кошмар»→«Ковшар» — это OCR-шум, не баги).
+   236→- ПЕРЕД каждым скриншот-тестом проверять, что Game активна и НЕТ оверлеев (LevelUp/Pause/GameOver) — затемнение оверлея 0.72 делает элементы «невидимыми» для пиксельных фильтров, а пауза замораживает рендер: половина «багов» в этом раунде оказалась артефактами незакрытых левел-апов (у неуязвимого игрока с горами XP они открываются постоянно). Рецепт: gs.overlayOpen=true (блокирует openLevelUp) + проверка getActiveScenes перед скриншотом.
+   237→- scene.start('Game') из eval НЕ перезапускает уже активную сцену (create не вызывается повторно) — для гарантированного рестарта сначала scene.stop, потом scene.start, и проверять elapsed===0.
+   238→- Для боевых тестов ставить gs.player.iframesUntil = gs.time.now + 600000 (повторять в каждом eval — hp=999999 сбрасывается recomputeStats при пассивках).
+   239→- НИКОГДА не использовать while-циклы по scene.isActive() в eval — блокируют главный поток до CDP-таймаута (scene.stop обрабатывается только на следующем кадре).
+   240→
+   241→Stage Summary:
+   242→- 7 багов найдено и исправлено (3 критических: HUD-зум, инпут-баг Phaser, спам миньонов; 1 гонка; 3 UI/ассеты).
+   243→- Игра полностью верифицирована на десктопе 1280×800 и мобильном 390×844: все экраны, механики, боссы, экономика, сохранения.
+   244→- Нерешённого/рисков: звук остаётся субъективным (синтезированный WebAudio); баланс монаха на старте слабее других (компенсируется регеном) — наблюдать; потенциально: ENEMY_CAP 220 на слабых устройствах.
+   245→- Приоритет следующего раунда: EN-локализация, новые типы врагов на поздних минутах (5–9 мин — только скейлинг старых), статистика оружия, фильтры таблицы рекордов, SEO/OG-мета.
+   246→
+   247→---
+   248→Task ID: R7 (релизный аудит: слои, UI, тексты, UX, баланс + полировка v1.6)
+   249→Agent: main orchestrator
+   250→Task: Максимально тщательное тестирование всего (явный запрос пользователя: «все слои, на которых расположены игровые элементы», UI, тексты, UX, гейм-дизайн, логика, баланс, механики) и доработка до релизного качества
+   251→
+   252→Текущее состояние проекта (оценка):
+   253→- Игра v1.5 внешне стабильна, но полный аудит слоёв вскрыл КРИТИЧЕСКИЙ системный дефект отрисовки, невидимый в обычных QA-проверках.
+   254→
+   255→Work Log:
+   256→- Методика: чтение всего кода игры (6 тыс. строк) → каталогизация ВСЕХ DEPTH-назначений → браузерное QA (agent-browser native mouse + eval-инспекция сцен + пиксельный анализ + VLM) → юнит-проверки формул.
+   257→- НАЙДЕНО (главное): сущности/декор используют depth = ENTITY_BASE + y (y до 3200 → depth до ~3210), а фиксированные слои PROJECTILE=500/FX=600/HUD=1000. В 2/3 карты (y>500..1000) снаряды/FX/числа урона/HP-бары/HUD рендерились ПОД врагами. Подтверждено трижды: программно (117 объектов выше HUD), пиксельно (припаркованный брут перекрывал иконку оружия), VLM (враг на таймере, «иконки оружия не видны»).
+   258→- Прочие находки: босс-бар 420px шире мобильного экрана 390px (обрезался); 16 иконок оружий/пассивок в один ряд (652px) выходили за мобильный экран; зона джойстика не полностью исключала хит-зону паузы; анонс сундука без направления; в лавке нехватка золота неочевидна; кошелёк без подложки; слабый контраст характеристик карточек героев; босс 3000 HP = 5-6 сек боя.
+   259→- ИСПРАВЛЕНО (v1.6):
+   260→  1. DEPTH: PROJECTILE 500→4000, новый HPBAR=4500 (мир-координатные HP-бары игрока/элит/боссов), FX 600→5000, HUD 1000→9000, OVERLAY→9500; джойстик 3000→HUD+20/+21; комментарии в constants.ts о диапазоне сущностей.
+   261→  2. HUD: босс-бар min(420, W−24) в layout() (bossBg/bossInner/bossFill подстраиваются); иконки оружий переносятся на новый ряд (perRow=(W−24)/40), layout() вызывается при добавлении иконки.
+   262→  3. Joystick: исключение паузы x>W−100, y<140.
+   263→  4. GameScene.spawnChest: направление сундука 8 румбов («ГДЕ-ТО НА ЮГО-ВОСТОКЕ...»), юнит-тест маппинга 8/8.
+   264→  5. MenuScene: кошелёк на пергаментном чипе с рамкой; traits карточек 11px #4a3517; лавка — недоступные строки alpha 0.55 + светлая цена; версия v1.6.
+   265→  6. data.ts: босс 3000→4000 HP (климактический бой ~10-15 с).
+   266→  7. layout.tsx: openGraph + twitter-мета. Spawner: удалён мёртвый activeCount.
+   267→- ВЕРИФИКАЦИЯ ПОСЛЕ ФИКСОВ: объектов выше HUD 117→5 (кнопка паузы + джойстик); иконка оружия 699 тёмных px ПОВЕРХ припаркованного брута; таймер/статистика поверх врагов (VLM); босс-бар 366px на 390px без выхода за границы (0 красных px за W−24); 16 иконок → 2 ряда (8262+5604 px); победа: damageEnemy(босс) → victoryPending → фейерверк → экран ПОБЕДА + статистика; сохранение «QA-Раунд7» → БД → ✓ (потом вычищено); покупка лавки 500→350, might 0→1; джойстик +270px; кошелёк-чип 1888 px пергамента; мобильное меню (карточки/чипы/кнопки) — без обрезок; 45-секундный прогон: 32 килла/уровень 2/18 врагов — здоровый темп. tsc/eslint (по игровому коду) чистые, консоль/dev.log чистые.
+   268→- Методологическое (ВАЖНО для будущих QA):
+   269→  - Формула Phaser 4 экранных координат: s = (w − scroll − W/2)·z + W/2 (для sf=0: s = w·z + W/2·(1−z)) — вывод проверен на логотипе меню и кнопке паузы; НАИВНАЯ формула (w−scroll)·z СИЛЬНО врёт при зуме ≠ 1.
+   270→  - Direct takeDamage() у Enemy не запускает onEnemyDeath (нет дропа/victory) — убивать через gs.damageEnemy(e, dmg,...); уже «dead» враг игнорируется.
+   271→  - Артефакт тестов: стоящий неуязвимый игрок с активным спавнером бесконечно левел-апается (убийства → XP) — для стабильных скриншотов ставить gs.spawner.stopped = true + чистить enemyGroup + gs.overlayOpen = true.
+   272→  - Убийство босса eval-ом при ОТКРЫТОМ LevelUp оставляет delayedCall(1900) на паузе — в реальной игре невозможно (оружие не стреляет на паузе), после клика карты победа доезжает.
+   273→  - VLM стабильно неверно читает мелкий пиксельный шрифт («СЧЁТ»→«ОЧЕТ», «ПОХОД»→«Легко», «QA-Раунд7»→«QA-Peyna7») — это шум, проверять тексты программно; VLM также ошибся про «обрезанную карточку» и «наложение на баннер» (пиксельный анализ опроверг).
+   274→
+   275→Stage Summary:
+   276→- 9 дефектов найдено и исправлено (1 системный критический: слои), 3 UX-улучшения, баланс босса, OG-мета.
+   277→- Все ключевые потоки перепроверены на десктопе 1280×800 и мобильном 390×844 после фиксов; игра визуально целостна и готова к релизу по охвату ТЗ.
+   278→- Нерешённого/рисков: звук субъективен (синтез); EN-локализация не начата; новые типы врагов 5–9 мин отсутствуют (по плану следующих раундов).
+   279→- Приоритет следующего раунда: EN-локализация, поздние типы врагов, статистика оружия, фильтры рекордов.
+   280→
+   281→---
+   282→Task ID: R8 (релизный аудит v1.7 — «сделать игру законченной», большой QA-раунд)
+   283→Agent: main orchestrator
+   284→Task: Полный аудит по расширенному ТЗ (game loop, все механики, UX, тексты, слои, мобильные, API, перфоманс) + исправление найденного
+   285→
+   286→QA-методология (ВАЖНО для будущих раундов):
+   287→- agent-browser `keydown X` шлёт события с keyCode=0 — Phaser матчит клавиши по keyCode → клавиатура «не работает» в тестах. РАБОЧИЙ ОБХОД: dispatchEvent(new KeyboardEvent('keydown', {key:'d', code:'KeyD', keyCode:68, which:68, bubbles:true})). Реальные браузеры шлют корректный keyCode — ЭТО НЕ БАГ ИГРЫ.
+   288→- Phaser 4.2.1: cam.scrollX/scrollY (геттеры) — центр-ориентированные (worldCenter − halfScreen), НЕ world-левый-край как в Phaser 3! Ручные формулы через scrollX врут. ДЛЯ КООРДИНАТ ИСПОЛЬЗОВАТЬ ТОЛЬКО cam.getWorldPoint(screenX, screenY) — она согласована с рендером и хит-тестом.
+   289→- Для стабильных игровых тестов: gs.overlayOpen=true (блокирует левел-апы) + iframesUntil + spawner.stopped.
+   290→- Левел-апы открываются САМИ при накоплении XP неуязвимого игрока — сцена паддится, спавнер замирает: перед КАЖДЫМ измерением проверять getScenes(true).
+   291→
+   292→ПРОВЕРЕНО (всё работает):
+   293→- Полный цикл: меню → ИГРАТЬ (клик) → бой → левел-апы (карточки кликом, mightMult 1.12 применился) → элита-копейщик на 300с (400HP, дроп 3 кристалла+2 мяса, elitesSlain++) → элита-монах на 600с (лечение союзников 12→39HP подтверждено) → босс на 900с (4000HP, спавнер stopped, босс-бар, charge×3+телеграф, зов 6 миньонов при 65%, enrage ×1.35 при 30% + кольцо 14 стрел) → победа (+5000, ачивки, фейерверк) → GameOver → сохранение QA-Release (id 12, victory) → таблица рекордов с медалью/звездой.
+   294→- Рестарты: 6 подряд scene.stop/start + 2 полных матча — enemies/gems сбрасываются, heap 36MB, 1 canvas, 0 инпутов в DOM — утечек нет.
+   295→- Клавиатура/джойстик: скорость ровно 200px/s, диагональ нормализована (198px/s, 45°), джойстик: drag → vec(1,0) → vel 200 → release → 0.
+   296→- Мобайл 390×844: меню 2×2+2+3 без обрезок (VLM+пиксели), HUD (XP-бар 390px, таймер, пауза 3061px, иконки), джойстик, клики кнопок (ИГРАТЬ на экране (195,621)).
+   297→- Ландшафт 844×390: HUD живёт после ресайза в матче, LevelUp 3 карточки влезают, компактный GameOver — всё видно.
+   298→- API: 8 edge-case (пустое имя/30 симв/отрицательный/строковый/10М+ score/level 0/limit=abc/limit=1000) — все корректно отработаны, мусор в БД не попал.
+   299→- Перфоманс: RAF-базлайн окружения ~10fps (софтверный рендер headless); игра с 200 врагами+7 оружий ≈ 9fps = ~10% накладных сверх базлайна → на реальном GPU/WebGL 60fps достижимо; лимиты пулов работают.
+   300→
+   301→НАЙДЕНО ДЕФЕКТОВ (исправляется в этом раунде):
+   302→1. [P2] Вакуум кристаллов при победе — косметический: update() заблокирован victoryPending → 131 кристалл НЕ собран, золото/XP потеряны (подтверждено: gemsLeft 131).
+   303→2. [P2] Враги ходят по воде у краёв арены (нет clamp к границе травы).
+   304→3. [P2] Клавиатурный выбор карточек левел-апа отсутствует (1/2/3/Enter/стрелки).
+   305→4. [P2] Босс-бар (y=64, до 420px шириной) перекрывает счётчик убийств (x=12,y=60) на узких экранах (<620px).
+   306→5. [P3] Enemy.heal не перерисовывает мировой HP-бар мидбосса/босса (только isElite).
+   307→6. [P3] MenuScene: невыбранная в localStorage пара герой/сложность сбрасывается при ресайзе окна (restart перечитывает localStorage).
+   308→7. [P3] BootScene грузит 8 неиспользуемых текстур (paper, banner, btn-blue, ... raw версии до 9-slice).
+   309→8. [P2] В меню и после возврата из матча нет музыки (только в GameScene); риск «взрыва» осцилляторов при resume suspended-контекста.
+   310→9. [P3] Мелкие шрифты HUD (9px статистика); таймер показывает 00:00 весь бой с боссом без индикации.
+   311→10. [P3] Анонсы (H*0.22) могут наезжать на босс-бар на низких экранах.
+   312→
+   313→Work Log (продолжение R8 — исправления и регрессия):
+   314→- Реализованы все 10 пунктов доработки:
+   315→  1. Pickups.finaleVacuum(): кристаллы при победе долетают до игрока и НАСТОЯЩЕ начисляются (золото→кошелёк/счёт, мясо→HP, XP→очки ×2, сундуки не трогаются). Верифицировано: gold +120, HP 40→70, score +122 сверх +5000 босса, gemsLeft=1 (только сундук).
+   316→  2. Enemy.preUpdate: clamp к границам травы (WORLD.GRASS_MARGIN+20) + гашение outward-скорости — враги больше не ходят по воде. Верифицировано на краю карты (3000,2986 < 3020).
+   317→  3. LevelUpScene: клавиатура 1/2/3 (+нумпад) — мгновенный выбор, стрелки — подсветка (tween+tint), Enter/Space — выбор (без подсветки — средняя карта). Верифицировано: «2» → сапоги (скорость 200→220), стрелка-вправо → hover 0, Enter → Мощь (mightMult 1.12).
+   318→  4. HUD.layout(): босс-бар y=112 при W<620 (не перекрывает «УБИЙСТВ» на 390px), анонс max(126, H*0.3) при H<600.
+   319→  5. HUD.update(): после GAME_DURATION таймер показывает «⚔ БОСС!» красным (вместо застывшего 00:00).
+   320→  6. Enemy.heal(): HP-бар перерисовывается для elite/midboss/boss.
+   321→  7. MenuScene.selectionInited: выбор героя/сложности переживает scene.restart() (ресайз).
+   322→  8. BootScene: удалены 8 неиспользуемых загрузок (paper/banner/btn-blue/btn-red/pressed-вариации) — быстрее загрузка.
+   323→  9. Audio.startMusic(quiet): тихая тема меню (0.09), секвенсор НЕ планирует ноты пока ctx.state!=='running' (нет «залпа» после resume автозапрета); MenuScene запускает тему, GameScene — полную.
+   324→  10. Полировка: шрифты HUD 9→10/11/12px; толпа врагов растворяется (fade, без AI/физики) в момент победы — фейерверк читается чисто (kills не растёт от fade).
+   325→- Регрессия после правок (всё зелёное): чистая загрузка (0 ошибок консоли/dev.log), все 5 оверлеев меню открываются/закрываются, ИГРАТЬ (десктоп 640,581 + мобайл 195,621), бой 25с (12 киллов/18с —健康ый темп), левел-апы (мышь+клавиатура), пауза ESC/кнопкой/резюм/рестарт (elapsed→2, kills→0), ЗАНОВО из паузы, смерть → GameOver → В МЕНЮ, музыка меню без ошибок, tsc/eslint чистые.
+   326→- Документация: TZ.md раздел «Обновление v1.7», ROADMAP.md «Раунд 8».
+   327→- Тестовые данные вычищены: БД 0 строк (QA-Release удалён), localStorage只剩 tss-hero/tss-diff (= дефолты).
+   328→
+   329→Stage Summary:
+   330→- 10 дефектов/недочётов найдено и исправлено; ВСЕ ключевые потоки перепроверены реальными запусками на десктопе 1280×800, мобильном 390×844 и ландшафте 844×390.
+   331→- Игра полностью соответствует ТЗ v1.7: полный игровой цикл, 4 героя, 2 сложности, 7 оружий, 9 пассивок, элиты/мидбосс/босс, сундуки, мета-магазин, 9 достижений, таблица рекордов (API+SQLite), мобильное управление, устойчивость к рестартам.
+   332→- Ограничения (честно): 55–60 FPS неизмеримы в headless (софтверный рендер ~10 FPS базлайн; накладные игры ~10%); звук синтезированный (субъективно); OSK реального телефона непроверяем; EN-локализации нет (монастырь RU-рынка).
+   333→- Приоритет следующего раунда: EN-локализация, новые типы врагов 5–9 мин, статистика оружия, фильтры рекордов.
+   334→
