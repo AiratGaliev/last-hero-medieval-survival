@@ -16,6 +16,8 @@ interface GameOverStats {
   gold: number;
   score: number;
   hero?: string;
+  difficulty?: string;
+  newAch?: { name: string; emoji: string }[];
 }
 
 type SaveState = 'idle' | 'saving' | 'saved' | 'error';
@@ -97,6 +99,14 @@ export default function GameOverDialog() {
           <div className="grid grid-cols-2 gap-2 rounded-lg border-2 border-amber-800/30 bg-amber-50 p-3 text-sm">
             <span className="text-amber-900/70">Герой</span>
             <span className="text-right font-semibold">{stats.hero ?? 'Воин'}</span>
+            {stats.difficulty && (
+              <>
+                <span className="text-amber-900/70">Сложность</span>
+                <span className={`text-right font-semibold ${stats.difficulty === 'Кошмар' ? 'text-red-700' : ''}`}>
+                  {stats.difficulty === 'Кошмар' ? '☠ ' : '⚔ '}{stats.difficulty}
+                </span>
+              </>
+            )}
             <span className="text-amber-900/70">Время</span>
             <span className="text-right font-semibold tabular-nums">{mm}:{ss}</span>
             <span className="text-amber-900/70">Убийств</span>
@@ -107,6 +117,24 @@ export default function GameOverDialog() {
             <span className="text-right font-semibold tabular-nums">{stats.gold}</span>
             <span className="text-amber-900/70">Счёт</span>
             <span className="text-right font-bold tabular-nums text-amber-700">{stats.score.toLocaleString('ru-RU')}</span>
+          </div>
+        )}
+
+        {stats?.newAch && stats.newAch.length > 0 && (
+          <div className="rounded-lg border-2 border-amber-600/40 bg-gradient-to-b from-amber-100 to-amber-200/80 p-3">
+            <p className="mb-2 text-center text-xs font-bold uppercase tracking-wide text-amber-800">
+              🏆 Новые достижения
+            </p>
+            <ul className="flex flex-wrap justify-center gap-1.5">
+              {stats.newAch.map((a) => (
+                <li
+                  key={a.name}
+                  className="inline-flex items-center gap-1 rounded-full border border-amber-700/30 bg-white/80 px-2.5 py-1 text-xs font-semibold text-amber-900 shadow-sm"
+                >
+                  <span aria-hidden>{a.emoji}</span> {a.name}
+                </li>
+              ))}
+            </ul>
           </div>
         )}
 

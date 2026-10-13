@@ -202,10 +202,36 @@ export const HEROES: Record<HeroId, HeroDef> = {
   },
 };
 
+// ============ Сложности ============
+
+export type DifficultyId = 'normal' | 'nightmare';
+
+export interface DifficultyDef {
+  id: DifficultyId;
+  name: string;
+  tagline: string;
+  hpMult: number;
+  dmgMult: number;
+  speedMult: number;
+  rateMult: number;   // множитель интервала спавна (меньше = чаще)
+  scoreMult: number;
+}
+
+export const DIFFICULTIES: Record<DifficultyId, DifficultyDef> = {
+  normal: {
+    id: 'normal', name: 'Поход', tagline: 'классическое приключение',
+    hpMult: 1, dmgMult: 1, speedMult: 1, rateMult: 1, scoreMult: 1,
+  },
+  nightmare: {
+    id: 'nightmare', name: 'Кошмар', tagline: 'враги свирепее, очки ×1.6',
+    hpMult: 1.45, dmgMult: 1.25, speedMult: 1.1, rateMult: 0.85, scoreMult: 1.6,
+  },
+};
+
 // ============ Враги ============
 
 export type EnemyKind =
-  | 'grunt' | 'swarm' | 'brute' | 'archer'
+  | 'grunt' | 'swarm' | 'brute' | 'archer' | 'bomber'
   | 'elite-lancer' | 'elite-monk' | 'boss' | 'boss-minion';
 
 export interface EnemyDef {
@@ -222,6 +248,8 @@ export interface EnemyDef {
   gem: string;          // текстура дропа
   isElite?: boolean;
   isBoss?: boolean;
+  explodeDmg?: number;   // для бочки-камикадзе
+  explodeRadius?: number;
 }
 
 export const ENEMIES: Record<EnemyKind, EnemyDef> = {
@@ -240,6 +268,11 @@ export const ENEMIES: Record<EnemyKind, EnemyDef> = {
   archer: {
     kind: 'archer', name: 'Лучник', texture: 'enemy-archer', frameW: 192, scale: 0.5,
     bodyRadius: 20, hp: 20, speed: 60, damage: 8, xp: 3, gem: 'gem-green',
+  },
+  bomber: {
+    kind: 'bomber', name: 'Бочка-камикадзе', texture: 'barrel', frameW: 192, scale: 0.42,
+    bodyRadius: 17, hp: 16, speed: 105, damage: 4, xp: 2, gem: 'gem-green',
+    explodeDmg: 24, explodeRadius: 150,
   },
   'elite-lancer': {
     kind: 'elite-lancer', name: 'Копейщик-изгой', texture: 'enemy-lancer', frameW: 320, scale: 0.75,
@@ -279,6 +312,7 @@ export const WAVE_EVENTS: WaveEvent[] = [
   { t: 240, type: 'ring', enemy: 'brute', count: 14 },
   { t: 300, type: 'elite', enemy: 'elite-lancer' },
   { t: 300, type: 'rate', interval: 500 },
+  { t: 390, type: 'ring', enemy: 'bomber', count: 8, note: 'бочковый залп' },
   { t: 420, type: 'rate', interval: 450 },
   { t: 480, type: 'ring', enemy: 'swarm', count: 32 },
   { t: 480, type: 'rate', interval: 400 },
@@ -295,6 +329,7 @@ export function pickRegularKind(minute: number, rng: () => number): EnemyKind {
   if (minute >= 3 && r < 0.22) return 'brute';
   if (minute >= 5 && r < 0.38) return 'archer';
   if (minute >= 1 && r < 0.62) return 'swarm';
+  if (minute >= 4 && r < 0.74) return 'bomber';
   return 'grunt';
 }
 

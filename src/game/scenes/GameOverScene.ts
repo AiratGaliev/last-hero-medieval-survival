@@ -11,6 +11,8 @@ export interface GameOverStats {
   level: number;
   gold: number;
   score: number;
+  difficulty?: string;
+  newAch?: { name: string; emoji: string }[];
 }
 
 interface GameOverData {
@@ -57,12 +59,36 @@ export class GameOverScene extends Phaser.Scene {
       stroke: '#1b1008', strokeThickness: 5,
     }).setOrigin(0.5).setScrollFactor(0);
 
-    this.add.text(width / 2, height * 0.63, 'сохрани рекорд в диалоге справа', {
+    // Сложность матча
+    if (s.difficulty) {
+      this.add.text(width / 2, height * 0.575, `СЛОЖНОСТЬ: ${s.difficulty.toUpperCase()}`, {
+        fontFamily: FONT, fontSize: '13px', color: '#cbb389',
+        stroke: '#1b1008', strokeThickness: 4,
+      }).setOrigin(0.5).setScrollFactor(0);
+    }
+
+    // Новые достижения
+    if (s.newAch && s.newAch.length > 0) {
+      const achY = height * 0.63;
+      const label = this.add.text(width / 2, achY, 'НОВЫЕ ДОСТИЖЕНИЯ:', {
+        fontFamily: FONT, fontSize: '11px', color: '#ffd76e',
+        stroke: '#1b1008', strokeThickness: 4,
+      }).setOrigin(0.5).setScrollFactor(0);
+      const items = s.newAch.map((a) => `${a.emoji} ${a.name}`).join('  •  ');
+      this.add.text(width / 2, achY + 18, items, {
+        fontFamily: FONT, fontSize: '12px', color: '#ffe9b0',
+        align: 'center', wordWrap: { width: Math.min(480, width - 60) },
+        stroke: '#1b1008', strokeThickness: 4,
+      }).setOrigin(0.5).setScrollFactor(0);
+      void label;
+    }
+
+    this.add.text(width / 2, height * 0.685, 'сохрани рекорд в диалоге справа', {
       fontFamily: FONT, fontSize: '12px', color: '#cbb389',
     }).setOrigin(0.5).setScrollFactor(0);
 
-    this.btn(width / 2, height * 0.74, 'ИГРАТЬ СНОВА', 'blue', 300, 66, () => this.restart());
-    this.btn(width / 2, height * 0.88, 'В МЕНЮ', 'blue', 220, 54, () => this.toMenu());
+    this.btn(width / 2, height * 0.76, 'ИГРАТЬ СНОВА', 'blue', 300, 66, () => this.restart());
+    this.btn(width / 2, height * 0.9, 'В МЕНЮ', 'blue', 220, 54, () => this.toMenu());
 
     void title;
     void statsText;
@@ -77,11 +103,16 @@ export class GameOverScene extends Phaser.Scene {
   }
 
   private restart = (): void => {
+    // Гасим возможные зависшие оверлеи (левел-ап/пауза)
+    this.scene.stop('LevelUp');
+    this.scene.stop('Pause');
     this.scene.stop('Game');
     this.scene.start('Game');
   };
 
   private toMenu = (): void => {
+    this.scene.stop('LevelUp');
+    this.scene.stop('Pause');
     this.scene.stop('Game');
     this.scene.start('Menu');
   };

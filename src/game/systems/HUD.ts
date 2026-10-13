@@ -1,7 +1,8 @@
 import Phaser from 'phaser';
 import { DEPTH, FONT, GAME_DURATION } from '../constants';
-import { WEAPONS, PASSIVES, type WeaponId, type PassiveId } from '../data';
+import type { AchievementDef } from '../achievements';
 import { audio } from './Audio';
+import { makePanel } from './Ui';
 
 // ============ HUD: XP-бар, таймер, счётчики, иконки, бар босса ============
 
@@ -17,8 +18,14 @@ export interface HudState {
   gold: number;
 }
 
+export interface HudOpts {
+  scoreMult?: number;
+  diffName?: string;
+}
+
 export class HUD {
   private scene: Phaser.Scene;
+  private scoreMult = 1;
   private xpBarBg!: Phaser.GameObjects.Rectangle;
   private xpBarFill!: Phaser.GameObjects.Rectangle;
   private xpLabel!: Phaser.GameObjects.Text;
@@ -34,15 +41,22 @@ export class HUD {
   private bossFill!: Phaser.GameObjects.Rectangle;
   private bossText!: Phaser.GameObjects.Text;
 
+  // Виньетка низкого HP + тег сложности + тосты ачивок
+  private vignetteRects: Phaser.GameObjects.Rectangle[] = [];
+  private diffTag: Phaser.GameObjects.Text | null = null;
+  private toastQueue: AchievementDef[] = [];
+  private toastBusy = false;
+
   private resizeHandler = () => this.layout();
 
-  constructor(scene: Phaser.Scene, onPause: () => void) {
+  constructor(scene: Phaser.Scene, onPause: () => void, opts: HudOpts = {}) {
     this.scene = scene;
-    this.build(onPause);
+    this.scoreMult = opts.scoreMult ?? 1;
+    this.build(onPause, opts);
     scene.scale.on('resize', this.resizeHandler);
   }
 
-  private build(onPause: () => void): void {
+  private build(onPause: () => void, opts: HudOpts): void {
     const W = this.scene.scale.width;
     this.xpBarBg = this.scene.add.rectangle(0, 0, W, 16, 0x1b1008)
       .setOrigin(0, 0.5).setScrollFactor(0).setDepth(DEPTH.HUD + 5);
@@ -106,6 +120,21 @@ export class HUD {
     });
     this.pauseBtn.add([pbBg, pbTxt, pbHit]);
 
+    // Виньетка низкого HP (пульсирующие красные края экрана)
+    for (let i = 0; i < 4; i++) {
+      const r = this.scene.add.rectangle(0, 0, 10, 10, 0xd03028, 0.3)
+        .setOrigin(0, 0).setScrollFactor(0).setDepth(DEPTH.HUD + 14).setVisible(false);
+      this.vignetteRects.push(r);
+    }
+
+    // Тег сложности («Кошмар ×1.6»)
+    if ((opts.scoreMult ?? 1) > 1) {
+      this.diffTag = this.scene.add.text(0, 0, `${opts.diffName ?? ''} ×${opts.scoreMult}`, {
+        fontFamily: FONT, fontSize: '10px', color: '#ff8866',
+        stroke: '#1b1008', strokeThickness: 3,
+      }).setOrigin(1, 0).setScrollFactor(0).setDepth(DEPTH.HUD + 7);
+    }
+
     this.layout();
   }
 
@@ -120,9 +149,17 @@ export class HUD {
     this.goldIcon.setPosition(12, 78);
     this.goldText.setPosition(30, 78);
     this.scoreText.setPosition(W - 12, 34);
+    this.diffTag?.setPosition(W - 12, 52);
     this.pauseBtn.setPosition(W - 46, 96);
     this.announceText.setPosition(W / 2, H * 0.22);
     this.bossGroup.setPosition(W / 2, 64);
+    // Виньетка: красные полосы по краям
+    const e = 26;
+    const [top, bottom, left, right] = this.vignetteRects;
+    top?.setPosition(0, 0).setSize(W, e);
+    bottom?.setPosition(0, H - e).setSize(W, e);
+    left?.setPosition(0, 0).setSize(e, H);
+    right?.setPosition(W - e, 0).setSize(e, H);
     // Иконки оружия
     let x = 12;
     for (const c of this.weaponIcons.values()) {
@@ -145,6 +182,17 @@ export class HUD {
     this.statsText.setText(`УБИЙСТВ: ${s.kills}`);
     this.goldText.setText(`${s.gold}`);
     this.scoreText.setText(`СЧЁТ ${s.score.toLocaleString('ru-RU')}`);
+
+    // Виньетка низкого HP
+    const hpFrac = s.hp / Math.max(1, s.maxHp);
+    if (hpFrac < 0.3) {
+      const pulse = 0.18 + Math.abs(Math.sin(this.scene.time.now / 260)) * 0.16;
+      for (const r of this.vignetteRects) {
+        r.setVisible(true).setAlpha(pulse);
+      }
+    } else {
+      for (const r of this.vignetteRects) r.setVisible(false);
+    }
   }
 
   announce(text: string, color = '#ffffff'): void {
@@ -176,6 +224,42 @@ export class HUD {
 
   hideBossBar(): void {
     this.bossGroup.setVisible(false);
+  }
+
+  /** Тост-уведомление о достижении (очередь, выезжает справа) */
+  achievementToast(a: AchievementDef): void {
+    audio.play('ach');
+    this.toastQueue.push(a);
+    this.pumpToast();
+  }
+
+  private pumpToast(): void {
+    if (this.toastBusy || this.toastQueue.length === 0) return;
+    this.toastBusy = true;
+    const a = this.toastQueue.shift()!;
+    const W = this.scene.scale.width;
+    const c = this.scene.add.container(W + 150, 132).setScrollFactor(0).setDepth(DEPTH.HUD + 30);
+    const paper = makePanel(this.scene, 0, 0, 'paper', 250, 58);
+    const icon = this.scene.add.image(-95, 0, a.icon).setDisplaySize(38, 38);
+    const label = this.scene.add.text(-68, -14, 'ДОСТИЖЕНИЕ!', {
+      fontFamily: FONT, fontSize: '9px', color: '#8a5b12',
+    }).setOrigin(0, 0.5);
+    const name = this.scene.add.text(-68, 7, a.name, {
+      fontFamily: FONT, fontSize: '13px', color: '#3b2410',
+      stroke: '#ffe9c0', strokeThickness: 3,
+    }).setOrigin(0, 0.5);
+    c.add([paper, icon, label, name]);
+    this.scene.tweens.add({ targets: c, x: W - 140, duration: 320, ease: 'Back.easeOut' });
+    this.scene.time.delayedCall(2600, () => {
+      this.scene.tweens.add({
+        targets: c, x: W + 170, alpha: 0, duration: 280,
+        onComplete: () => {
+          c.destroy();
+          this.toastBusy = false;
+          this.pumpToast();
+        },
+      });
+    });
   }
 
   setIcon(id: string, iconKey: string, level: number, isPassive: boolean): void {

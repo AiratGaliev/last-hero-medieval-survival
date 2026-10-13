@@ -3,8 +3,8 @@ import {
   WORLD, PLAYER_BASE, DEPTH, ENEMY_CAP, SCORE, XP_CURVE,
 } from '../constants';
 import {
-  WEAPONS, PASSIVES, HEROES, ENEMIES,
-  type WeaponId, type PassiveId, type EnemyKind, type UpgradeCard, type HeroId, type HeroDef,
+  WEAPONS, PASSIVES, HEROES, ENEMIES, DIFFICULTIES,
+  type WeaponId, type PassiveId, type EnemyKind, type UpgradeCard, type HeroId, type HeroDef, type DifficultyId, type DifficultyDef,
 } from '../data';
 import { Player } from '../entities/Player';
 import { Enemy, type EnemyContext } from '../entities/Enemy';
@@ -16,6 +16,7 @@ import { Spawner, type SpawnerCtx } from '../systems/Spawner';
 import { WeaponSystem, type WeaponCtx } from '../systems/Weapons';
 import { HUD } from '../systems/HUD';
 import { Joystick } from '../systems/Joystick';
+import { AchTracker, commitMeta } from '../achievements';
 
 type Keys = Record<string, Phaser.Input.Keyboard.Key>;
 
@@ -62,16 +63,22 @@ export class GameScene extends Phaser.Scene {
   private lastDieSound = 0;
   private sepGrid = new Map<number, Enemy[]>();
   private heroDef: HeroDef = HEROES.warrior;
+  private diffDef: DifficultyDef = DIFFICULTIES.normal;
   private xpMult = 1;
   private chestTimer = 40;
+  private chestsOpened = 0;
+  private elitesSlain = 0;
+  private hitstopUntil = 0;
+  private ach: AchTracker | null = null;
 
   constructor() {
     super('Game');
   }
 
-  create(payload?: { hero?: HeroId }): void {
+  create(payload?: { hero?: HeroId; diff?: DifficultyId }): void {
     this.resetState();
     this.initHero(payload?.hero);
+    this.initDifficulty(payload?.diff);
     this.buildWorld();
     this.buildPlayer();
     this.buildSystems();
@@ -95,6 +102,9 @@ export class GameScene extends Phaser.Scene {
     audio.startMusic();
     this.started = true;
     this.hud.announce(`ВЫЖИВИ 15 МИНУТ, ${this.heroDef.name.toUpperCase()}!`, '#ffe9b0');
+    if (this.diffDef.id === 'nightmare') {
+      this.time.delayedCall(2100, () => this.hud.announce('⚔ КОШМАР: ВРАГИ СВИРЕПЕЕ, ОЧКИ ×1.6', '#ff8866'));
+    }
   }
 
   private resetState(): void {
@@ -107,8 +117,21 @@ export class GameScene extends Phaser.Scene {
     this.regen = 0; this.mightMult = 1; this.cdMult = 1; this.critChance = 0;
     this.xpMult = 1;
     this.chestTimer = 40;
+    this.chestsOpened = 0;
+    this.elitesSlain = 0;
+    this.hitstopUntil = 0;
+    this.registry.set('tss-freeze', 0);
     this.lastMove = { x: 1, y: 0 };
     this.sepGrid.clear();
+  }
+
+  private initDifficulty(diffId?: DifficultyId): void {
+    let id = diffId;
+    if (!id && typeof window !== 'undefined') {
+      const saved = window.localStorage.getItem('tss-diff');
+      if (saved === 'normal' || saved === 'nightmare') id = saved;
+    }
+    this.diffDef = DIFFICULTIES[id ?? 'normal'];
   }
 
   private initHero(heroId?: HeroId): void {
@@ -285,7 +308,7 @@ export class GameScene extends Phaser.Scene {
         return Math.hypot(cam.width, cam.height) / (2 * cam.zoom) + 80;
       },
     };
-    this.spawner = new Spawner(this, spawnCtx);
+    this.spawner = new Spawner(this, spawnCtx, this.diffDef.id);
 
     const weaponCtx: WeaponCtx = {
       player: () => this.player,
@@ -301,8 +324,12 @@ export class GameScene extends Phaser.Scene {
     this.weapons.add(this.heroDef.startWeapon);
     const startId = this.heroDef.startWeapon;
 
-    this.hud = new HUD(this, () => this.openPause());
+    this.hud = new HUD(this, () => this.openPause(), {
+      scoreMult: this.diffDef.scoreMult,
+      diffName: this.diffDef.name.toUpperCase(),
+    });
     this.hud.setIcon(startId, WEAPONS[startId].icon, 1, false);
+    this.ach = new AchTracker((a) => this.hud.achievementToast(a));
   }
 
   private setupCollisions(): void {
@@ -372,6 +399,13 @@ export class GameScene extends Phaser.Scene {
 
   update(time: number, delta: number): void {
     if (!this.started || this.gameEnded) return;
+
+    // Хитстоп: короткая заморозка мира (после убийств элит/взрывов/урона)
+    if (time < this.hitstopUntil) {
+      this.player.setVelocity(0, 0);
+      return;
+    }
+
     const dt = Math.min(delta, 50) / 1000;
 
     // Пауза
@@ -474,8 +508,14 @@ export class GameScene extends Phaser.Scene {
     return out;
   }
 
+  /** Хитстоп: заморозить врагов на ms миллисекунд */
+  private hitstop(ms: number): void {
+    this.hitstopUntil = Math.max(this.hitstopUntil, this.time.now + ms);
+    this.registry.set('tss-freeze', this.hitstopUntil);
+  }
+
   private damageEnemy(e: Enemy, dmg: number, kx = 0, ky = 0, force = 0): void {
-    if (!e.active) return;
+    if (!e.active || e.dead) return;
     let final = dmg * this.mightMult;
     const crit = Math.random() < this.critChance;
     if (crit) final *= 2;
@@ -502,18 +542,35 @@ export class GameScene extends Phaser.Scene {
 
   private hurtPlayer(amount: number): void {
     if (this.gameEnded) return;
+    // Эффекты урона (звук/тряска/хитстоп) — только когда удар реально прошёл
+    if (this.time.now < this.player.iframesUntil) return;
     const dmg = Math.max(1, Math.round(amount * this.armorMult));
     const dead = this.player.damage(dmg, this.time.now);
     audio.play('hurt');
     this.cameras.main.shake(120, 0.0035);
+    this.cameras.main.flash(110, 190, 40, 30, false);
+    this.hitstop(80);
     if (dead) this.gameOver(false);
   }
 
   private onEnemyDeath(e: Enemy): void {
+    if (!e.active) return;
+    // Убираем из мира СРАЗУ: цепные взрывы не должны повторно бить погибающего
+    const x = e.x, y = e.y;
+    this.enemyGroup.remove(e, true, true);
+
     this.kills++;
     this.score += SCORE.KILL;
+    this.ach?.event({ type: 'kills', value: this.kills });
     const big = e.def.isElite || e.def.isBoss;
-    this.effects.explosion(e.x, e.y, big ? 1.7 : e.def.scale * 1.15, big ? 2 : 1);
+
+    // Бочка-камикадзе, убитая оружием: взрыв бьёт врагов (цепная реакция!)
+    if (e.def.kind === 'bomber') {
+      this.bomberExplosion(x, y, false);
+    }
+
+    this.effects.explosion(x, y, big ? 1.7 : e.def.scale * 1.15, big ? 2 : 1);
+    if (big) this.hitstop(110);
     if (this.time.now - this.lastDieSound > 120) {
       this.lastDieSound = this.time.now;
       audio.play('die');
@@ -524,21 +581,43 @@ export class GameScene extends Phaser.Scene {
       for (let i = 0; i < n; i++) {
         const ox = big ? Phaser.Math.Between(-40, 40) : 0;
         const oy = big ? Phaser.Math.Between(-40, 40) : 0;
-        this.pickups.spawnGem(e.x + ox, e.y + oy, e.def.gem, Math.ceil(e.xpValue / n));
+        this.pickups.spawnGem(x + ox, y + oy, e.def.gem, Math.ceil(e.xpValue / n));
       }
     }
-    if (e.def.kind === 'brute' && Math.random() < 0.04) this.pickups.spawnMeat(e.x, e.y);
+    if (e.def.kind === 'brute' && Math.random() < 0.04) this.pickups.spawnMeat(x, y);
     if (e.def.isElite) {
-      this.pickups.spawnMeat(e.x + 30, e.y);
-      this.pickups.spawnMeat(e.x - 30, e.y);
+      this.pickups.spawnMeat(x + 30, y);
+      this.pickups.spawnMeat(x - 30, y);
       this.hud.announce('ЭЛИТА ПОВЕРЖЕНА! +25 XP', '#7CFC00');
+      this.elitesSlain++;
+      this.ach?.event({ type: 'elites', value: this.elitesSlain });
     }
-    if (Math.random() < 0.03) this.pickups.spawnGem(e.x, e.y, 'gem-gold', 0);
+    if (Math.random() < 0.03) this.pickups.spawnGem(x, y, 'gem-gold', 0);
 
     if (e === this.boss) {
       this.victory();
     }
-    this.enemyGroup.remove(e, true, true);
+  }
+
+  /** Взрыв бочки-камикадзе. selfDestruct=true — сама доехала до игрока. */
+  private bomberExplosion(x: number, y: number, selfDestruct: boolean): void {
+    const def = ENEMIES.bomber;
+    const dmg = def.explodeDmg ?? 24;
+    const R = def.explodeRadius ?? 150;
+    this.effects.explosion(x, y, 1.05, 2);
+    audio.play('explosion');
+    this.cameras.main.shake(170, 0.0045);
+    this.hitstop(70);
+    // Урон игроку — только если бочка дошла сама
+    if (selfDestruct && Math.hypot(this.player.x - x, this.player.y - y) < R) {
+      this.hurtPlayer(dmg);
+    }
+    // Урон толпе врагов (в т.ч. другие бочки → цепная реакция)
+    for (const s of this.enemiesNear(x, y, R + 40)) {
+      const e = s as Enemy;
+      if (!e.active || e.def.isBoss) continue;
+      this.damageEnemy(e, dmg * 0.8, e.x - x, e.y - y, 260);
+    }
   }
 
   private spawnChest(): void {
@@ -559,6 +638,11 @@ export class GameScene extends Phaser.Scene {
     this.hud.announce('СОКРОВИЩЕ ОБРЕТЕНО!', '#ffd700');
     this.gold += 75;
     this.score += 250;
+    this.chestsOpened++;
+    this.ach?.event({ type: 'chests', value: this.chestsOpened });
+    this.ach?.event({ type: 'gold', value: this.gold });
+    this.effects.popup(x, y - 14, '+75 ЗОЛОТА', '#ffd76e', 15);
+    this.effects.popup(x, y + 8, '+250 ОЧКОВ', '#ffffff', 12);
     // Золотой дождь из кристаллов
     const minute = this.elapsed / 60;
     const tier = minute > 8 ? 'gem-green' : 'gem-blue';
@@ -580,6 +664,7 @@ export class GameScene extends Phaser.Scene {
     x = Phaser.Math.Clamp(x, m, WORLD.SIZE - m);
     y = Phaser.Math.Clamp(y, m, WORLD.SIZE - m);
     const e = new Enemy(this, x, y, kind, this.spawner.hpMult, this.spawner.dmgMult, this.enemyCtxStore!);
+    if (this.diffDef.speedMult !== 1) e.speed = Math.round(e.speed * this.diffDef.speedMult);
     this.enemyGroup.add(e);
   }
 
@@ -590,6 +675,7 @@ export class GameScene extends Phaser.Scene {
     const x = Phaser.Math.Clamp(this.player.x + Math.cos(a) * 640, 400, WORLD.SIZE - 400);
     const y = Phaser.Math.Clamp(this.player.y + Math.sin(a) * 640, 400, WORLD.SIZE - 400);
     this.boss = new Enemy(this, x, y, 'boss', 1, 1, this.enemyCtxStore!);
+    this.boss.speed = Math.round(this.boss.speed * this.diffDef.speedMult);
     this.enemyGroup.add(this.boss);
     this.hud.showBossBar(ENEMIES.boss.name);
     this.cameras.main.shake(400, 0.008);
@@ -650,6 +736,7 @@ export class GameScene extends Phaser.Scene {
       this.level++;
       this.xpNext = XP_CURVE(this.level);
       this.pendingLevelUps++;
+      this.ach?.event({ type: 'level', value: this.level });
     }
   }
 
@@ -749,7 +836,10 @@ export class GameScene extends Phaser.Scene {
         break;
       }
       case 'heal': this.player.heal(40); break;
-      case 'gold': this.gold += 100; break;
+      case 'gold':
+        this.gold += 100;
+        this.ach?.event({ type: 'gold', value: this.gold });
+        break;
     }
   }
 
@@ -788,10 +878,11 @@ export class GameScene extends Phaser.Scene {
   }
 
   private currentScore(): number {
-    return this.score
+    const base = this.score
       + Math.floor(this.elapsed / 60) * SCORE.MINUTE
       + this.level * SCORE.LEVEL
       + this.gold;
+    return Math.round(base * this.diffDef.scoreMult);
   }
 
   private victory(): void {
@@ -801,6 +892,8 @@ export class GameScene extends Phaser.Scene {
     this.hud.announce('ПОБЕДА!!! БОСС ПОВЕРЖЕН!', '#ffd700');
     audio.play('victory');
     this.cameras.main.shake(500, 0.006);
+    this.hitstop(200);
+    this.ach?.event({ type: 'victory', difficulty: this.diffDef.id });
     // Финальный фейерверк
     for (let i = 0; i < 8; i++) {
       this.time.delayedCall(i * 160, () => {
@@ -823,15 +916,26 @@ export class GameScene extends Phaser.Scene {
     if (!victory) audio.play('gameover');
     audio.stopMusic();
 
+    const finalScore = this.currentScore();
     const stats = {
       victory,
       time: Math.floor(this.elapsed),
       kills: this.kills,
       level: this.level,
       gold: this.gold,
-      score: this.currentScore(),
+      score: finalScore,
       hero: this.heroDef.name,
+      difficulty: this.diffDef.name,
+      newAch: (this.ach?.newlyUnlocked ?? []).map((a) => ({ name: a.name, emoji: a.emoji })),
     };
+    // Мета-статистика (localStorage) для React-сайдбара
+    commitMeta({
+      victory,
+      kills: this.kills,
+      gold: this.gold,
+      score: finalScore,
+      playTime: Math.floor(this.elapsed),
+    });
     this.scene.launch('GameOver', { stats });
     this.scene.pause();
     // Уведомляем React-слой
@@ -872,6 +976,11 @@ export class GameScene extends Phaser.Scene {
           this.spawnEnemy('boss-minion', x + Math.cos(a) * 170, y + Math.sin(a) * 170);
         }
         this.hud.announce('БОСС ЗОВЁТ СВИТУ!', '#ff8866');
+      },
+      onBomberExplode: (x, y, self, selfDestruct) => {
+        // Уничтожаем бочку ДО взрыва: взрыв не должен бить саму бочку (иначе рекурсия)
+        this.enemyGroup.remove(self, true, true);
+        this.bomberExplosion(x, y, selfDestruct);
       },
       enemiesNear: (x, y, r) => this.enemiesNear(x, y, r),
       healEnemy: (e, hp) => (e as Enemy).heal(hp),

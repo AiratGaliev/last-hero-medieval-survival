@@ -95,6 +95,25 @@ export class Effects {
     });
   }
 
+  /** Всплывающий текст (золото, бонусы) */
+  popup(x: number, y: number, text: string, color = '#ffd76e', size = 15): void {
+    const t = this.scene.add.text(x, y, text, {
+      fontFamily: FONT,
+      fontSize: `${size}px`,
+      color,
+      stroke: '#1b1008',
+      strokeThickness: 4,
+    }).setOrigin(0.5).setDepth(DEPTH.FX + 12);
+    this.scene.tweens.add({
+      targets: t,
+      y: y - 50,
+      alpha: 0,
+      duration: 950,
+      ease: 'Quad.easeOut',
+      onComplete: () => t.destroy(),
+    });
+  }
+
   hitSound(now: number): void {
     if (now - this.lastHitSound > 70) {
       this.lastHitSound = now;

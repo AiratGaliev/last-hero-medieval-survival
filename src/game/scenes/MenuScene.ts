@@ -1,6 +1,6 @@
 import Phaser from 'phaser';
 import { FONT } from '../constants';
-import { HEROES, WEAPONS, type HeroId } from '../data';
+import { HEROES, WEAPONS, DIFFICULTIES, type HeroId, type DifficultyId } from '../data';
 import { audio } from '../systems/Audio';
 import { makePanel, makeButton } from '../systems/Ui';
 
@@ -22,14 +22,23 @@ interface HeroCard {
   heroId: HeroId;
 }
 
+interface DiffChip {
+  container: Phaser.GameObjects.Container;
+  frame: Phaser.GameObjects.Graphics;
+  diffId: DifficultyId;
+}
+
 const HERO_ORDER: HeroId[] = ['warrior', 'archer', 'lancer'];
+const DIFF_ORDER: DifficultyId[] = ['normal', 'nightmare'];
 
 export class MenuScene extends Phaser.Scene {
   private overlay: Phaser.GameObjects.Container | null = null;
   private logo!: Phaser.GameObjects.Text;
   private logo2!: Phaser.GameObjects.Text;
   private heroCards: HeroCard[] = [];
+  private diffChips: DiffChip[] = [];
   private selectedHero: HeroId = 'warrior';
+  private selectedDiff: DifficultyId = 'normal';
 
   constructor() {
     super('Menu');
@@ -38,11 +47,16 @@ export class MenuScene extends Phaser.Scene {
   create(): void {
     const { width, height } = this.scale;
     this.heroCards = [];
+    this.diffChips = [];
 
-    // Сохранённый герой
+    // Сохранённый герой + сложность
     const saved = window.localStorage.getItem('tss-hero');
     if (saved === 'warrior' || saved === 'archer' || saved === 'lancer') {
       this.selectedHero = saved;
+    }
+    const savedDiff = window.localStorage.getItem('tss-diff');
+    if (savedDiff === 'normal' || savedDiff === 'nightmare') {
+      this.selectedDiff = savedDiff;
     }
 
     // Фон: травка + вода
@@ -113,12 +127,21 @@ export class MenuScene extends Phaser.Scene {
       this.createHeroCard(x, cardsY, id, cardW, cardH);
     });
 
+    // ---------- Выбор сложности ----------
+    const chipsY = cardsY + cardH / 2 + 38;
+    const chipW = Math.min(200, (width - 90) / 2);
+    DIFF_ORDER.forEach((id, i) => {
+      const x = width / 2 + (i === 0 ? -chipW / 2 - 8 : chipW / 2 + 8);
+      this.createDiffChip(x, chipsY, chipW, 40, id);
+    });
+
     // ---------- Кнопки ----------
-    const btnY = Math.min(height * 0.84, cardsY + cardH / 2 + 58);
+    const btnY = Math.min(height * 0.86, cardsY + cardH / 2 + 96);
     makeButton(this, width / 2, btnY, Math.min(320, width - 80), 60, 'ИГРАТЬ', () => {
       audio.unlock();
       window.localStorage.setItem('tss-hero', this.selectedHero);
-      this.scene.start('Game', { hero: this.selectedHero });
+      window.localStorage.setItem('tss-diff', this.selectedDiff);
+      this.scene.start('Game', { hero: this.selectedHero, diff: this.selectedDiff });
     }, 'blue', width < 700 ? 20 : 24);
 
     const smallW = Math.min(190, (width - 100) / 2);
@@ -192,6 +215,50 @@ export class MenuScene extends Phaser.Scene {
     this.heroCards.push({ container, sprite, frame, heroId });
   }
 
+  private createDiffChip(x: number, y: number, w: number, h: number, diffId: DifficultyId): void {
+    const def = DIFFICULTIES[diffId];
+    const container = this.add.container(x, y);
+    const paper = makePanel(this, 0, 0, 'paper', w, h);
+    container.add(paper);
+
+    const isNightmare = diffId === 'nightmare';
+    const icon = this.add.text(-w / 2 + 16, 0, isNightmare ? '☠' : '⚔', {
+      fontFamily: FONT, fontSize: '16px', color: isNightmare ? '#7a1010' : '#3b2410',
+    }).setOrigin(0.5);
+    container.add(icon);
+
+    const name = this.add.text(-w / 2 + 34, -7, def.name.toUpperCase(), {
+      fontFamily: FONT, fontSize: '13px', color: isNightmare ? '#7a1010' : '#3b2410',
+    }).setOrigin(0, 0.5);
+    container.add(name);
+
+    const tag = this.add.text(-w / 2 + 34, 7, def.tagline, {
+      fontFamily: FONT, fontSize: '8px', color: '#8a5b12',
+    }).setOrigin(0, 0.5);
+    container.add(tag);
+
+    const frame = this.add.graphics();
+    container.add(frame);
+
+    container.setSize(w, h);
+    container.setInteractive({ useHandCursor: true });
+    container.on('pointerover', () => {
+      if (this.selectedDiff !== diffId) this.tweens.add({ targets: container, scale: 1.04, duration: 100 });
+    });
+    container.on('pointerout', () => {
+      if (this.selectedDiff !== diffId) this.tweens.add({ targets: container, scale: 1, duration: 100 });
+    });
+    container.on('pointerdown', () => {
+      audio.play('click');
+      if (this.selectedDiff !== diffId) {
+        this.selectedDiff = diffId;
+        this.refreshSelection();
+      }
+    });
+
+    this.diffChips.push({ container, frame, diffId });
+  }
+
   private selectHero(heroId: HeroId): void {
     if (this.selectedHero === heroId) return;
     this.selectedHero = heroId;
@@ -207,6 +274,19 @@ export class MenuScene extends Phaser.Scene {
         c.container.setScale(1.07);
       } else {
         c.container.setScale(1);
+      }
+    }
+    for (const d of this.diffChips) {
+      const selected = d.diffId === this.selectedDiff;
+      d.frame.clear();
+      d.container.setAlpha(selected ? 1 : 0.72);
+      if (selected) {
+        const w = d.container.width, h = d.container.height;
+        d.frame.lineStyle(3, d.diffId === 'nightmare' ? 0xc03028 : 0xd9a520, 1)
+          .strokeRect(-w / 2 + 3, -h / 2 + 3, w - 6, h - 6);
+        d.container.setScale(1.05);
+      } else {
+        d.container.setScale(1);
       }
     }
   }
@@ -228,12 +308,14 @@ export class MenuScene extends Phaser.Scene {
     }).setOrigin(0.5);
     const lines = [
       'Выбери героя: воин, лучница или копейщик.',
+      'Затем сложность: Поход или Кошмар (×1.6 очков).',
       'WASD / стрелки — движение',
       'на телефоне — виртуальный джойстик',
       '',
       'Оружие атакует автоматически.',
       'Собирай кристаллы опыта, открывай',
       'сокровища и выбирай улучшения.',
+      'Осторожно: бочки-камикадзе взрываются!',
       '',
       'Выживи 15 минут и убей',
       'ЧЁРНОГО КОПЕЙЩИКА!',

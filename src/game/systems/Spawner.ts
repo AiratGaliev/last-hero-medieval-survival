@@ -1,6 +1,6 @@
 import Phaser from 'phaser';
 import { ENEMY_CAP, WORLD } from '../constants';
-import { WAVE_EVENTS, pickRegularKind, hpScale, dmgScale, type EnemyKind } from '../data';
+import { WAVE_EVENTS, pickRegularKind, hpScale, dmgScale, DIFFICULTIES, type DifficultyId, type DifficultyDef, type EnemyKind } from '../data';
 import { audio } from './Audio';
 
 // ============ Директор волн: тайминг, состав, спец-события ============
@@ -22,12 +22,16 @@ export class Spawner {
   private interval = 850;
   private eventIdx = 0;
   private elapsed = 0;
+  private diff: DifficultyDef;
   stopped = false;
   activeCount = 0;
 
-  constructor(scene: Phaser.Scene, ctx: SpawnerCtx) {
+  constructor(scene: Phaser.Scene, ctx: SpawnerCtx, difficulty: DifficultyId = 'normal') {
     this.scene = scene;
     this.ctx = ctx;
+    this.diff = DIFFICULTIES[difficulty];
+    this.interval = 850 * this.diff.rateMult;
+    this.timer = 1200 * this.diff.rateMult;
   }
 
   get minute(): number {
@@ -43,7 +47,7 @@ export class Spawner {
       const ev = WAVE_EVENTS[this.eventIdx++];
       switch (ev.type) {
         case 'rate':
-          if (ev.interval) this.interval = ev.interval;
+          if (ev.interval) this.interval = ev.interval * this.diff.rateMult;
           break;
         case 'ring':
           if (ev.enemy && ev.count) this.spawnRing(ev.enemy, ev.count);
@@ -111,6 +115,6 @@ export class Spawner {
     this.ctx.spawn(kind, x, y);
   }
 
-  get hpMult(): number { return hpScale(this.minute); }
-  get dmgMult(): number { return dmgScale(this.minute); }
+  get hpMult(): number { return hpScale(this.minute) * this.diff.hpMult; }
+  get dmgMult(): number { return dmgScale(this.minute) * this.diff.dmgMult; }
 }

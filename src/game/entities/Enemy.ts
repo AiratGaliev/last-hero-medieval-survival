@@ -1,6 +1,7 @@
 import Phaser from 'phaser';
 import { DEPTH, DESPAWN_DIST } from '../constants';
 import { ENEMIES, type EnemyDef, type EnemyKind } from '../data';
+import { audio } from '../systems/Audio';
 
 // ============ Враг ============
 
@@ -11,6 +12,7 @@ export interface EnemyContext {
   onBossArrowRing(x: number, y: number): void;
   onMonkHeal(x: number, y: number): void;
   onBossSummon(x: number, y: number): void;
+  onBomberExplode(x: number, y: number, self: Enemy, selfDestruct: boolean): void;
   enemiesNear(x: number, y: number, radius: number): Phaser.Physics.Arcade.Sprite[];
   healEnemy(e: Phaser.Physics.Arcade.Sprite, hp: number): void;
 }
@@ -25,6 +27,7 @@ export class Enemy extends Phaser.Physics.Arcade.Sprite {
   speed: number;
   damage: number;
   xpValue: number;
+  dead = false;   // защита от повторной обработки смерти
   aiState: AiState = 'chase';
   stateTimer = 0;
   private shootCd = 0;
@@ -33,6 +36,7 @@ export class Enemy extends Phaser.Physics.Arcade.Sprite {
   private chargeDirX = 0;
   private chargeDirY = 0;
   private chargeCount = 0;
+  private spinDir = 1; // направление вращения бочки
   private knockX = 0;
   private knockY = 0;
   private ctx: EnemyContext;
@@ -41,7 +45,8 @@ export class Enemy extends Phaser.Physics.Arcade.Sprite {
 
   constructor(scene: Phaser.Scene, x: number, y: number, kind: EnemyKind, hpMult: number, dmgMult: number, ctx: EnemyContext) {
     const def = ENEMIES[kind];
-    super(scene, x, y, `${Enemy.animPrefixOf(kind)}idle`);
+    const texKey = kind === 'bomber' ? def.texture : `${Enemy.animPrefixOf(kind)}idle`;
+    super(scene, x, y, texKey);
     this.def = def;
     this.kind = kind;
     this.ctx = ctx;
@@ -55,7 +60,13 @@ export class Enemy extends Phaser.Physics.Arcade.Sprite {
     scene.physics.add.existing(this);
     this.setScale(def.scale);
     this.setDepth(DEPTH.ENTITY_BASE + y);
-    this.play(`${this.animPrefix()}idle`);
+    if (kind === 'bomber') {
+      // Бочка-камикадзе: без анимаций ходьбы, крутится при качении
+      this.anims.stop();
+      this.setFrame(0);
+    } else {
+      this.play(`${this.animPrefix()}idle`);
+    }
 
     // Круглое тело у ног
     const frame = def.frameW;
@@ -81,6 +92,7 @@ export class Enemy extends Phaser.Physics.Arcade.Sprite {
       case 'swarm': case 'boss-minion': return 'swarm-';
       case 'brute': return 'brute-';
       case 'archer': return 'archer-';
+      case 'bomber': return 'swarm-';
       case 'elite-lancer': return 'lancer-';
       case 'elite-monk': return 'monk-';
       case 'boss': return 'boss-';
@@ -92,6 +104,7 @@ export class Enemy extends Phaser.Physics.Arcade.Sprite {
   }
 
   takeDamage(dmg: number): boolean {
+    if (this.dead) return false;
     this.hp -= dmg;
     // Вспышка урона (белая заливка в Phaser 4: setTint + FILL режим)
     this.setTint(0xffffff);
@@ -104,6 +117,7 @@ export class Enemy extends Phaser.Physics.Arcade.Sprite {
       }
     });
     if (this.def.isElite || this.def.isBoss) this.drawHpBar();
+    if (this.hp <= 0) this.dead = true;
     return this.hp <= 0;
   }
 
@@ -125,6 +139,15 @@ export class Enemy extends Phaser.Physics.Arcade.Sprite {
   preUpdate(time: number, delta: number): void {
     super.preUpdate(time, delta);
     if (!this.active) return;
+
+    // Хитстоп: короткая заморозка врагов (реестр пишет GameScene)
+    const freezeUntil = (this.scene.registry.get('tss-freeze') as number | undefined) ?? 0;
+    if (time < freezeUntil) {
+      const b = this.body as Phaser.Physics.Arcade.Body | null;
+      if (b) b.setVelocity(0, 0);
+      return;
+    }
+
     const dt = delta / 1000;
     const px = this.ctx.playerX();
     const py = this.ctx.playerY();
@@ -138,6 +161,33 @@ export class Enemy extends Phaser.Physics.Arcade.Sprite {
       case 'grunt': case 'swarm': case 'brute': case 'boss-minion':
         vx = nx * this.speed; vy = ny * this.speed;
         break;
+
+      case 'bomber': {
+        this.stateTimer -= delta;
+        if (this.aiState === 'chase') {
+          vx = nx * this.speed; vy = ny * this.speed;
+          // Качение: вращение пропорционально скорости и направлению
+          if (Math.abs(dx) > 12) this.spinDir = Math.sign(dx);
+          this.rotation += (this.speed / 26) * dt * this.spinDir;
+          if (dist < 115) {
+            this.aiState = 'windup';
+            this.stateTimer = 620;
+            audio.play('slam');
+          }
+        } else if (this.aiState === 'windup') {
+          // Телеграф: мигание + раздувание, затем взрыв
+          const blink = Math.floor(this.stateTimer / 90) % 2 === 0;
+          this.setTint(blink ? 0xff5540 : 0xffffff);
+          this.setTintMode(Phaser.TintModes.FILL);
+          const grow = 1 + (1 - Math.max(0, this.stateTimer) / 620) * 0.3;
+          this.setScale(this.def.scale * grow);
+          if (this.stateTimer <= 0) {
+            this.ctx.onBomberExplode(this.x, this.y, this, true);
+            return;
+          }
+        }
+        break;
+      }
 
       case 'archer': {
         this.shootCd -= delta;

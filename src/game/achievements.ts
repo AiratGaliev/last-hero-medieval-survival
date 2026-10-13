@@ -1,0 +1,168 @@
+// ============ Достижения + мета-статистика (localStorage) ============
+// Модуль без Phaser-зависимостей: используется и игрой, и React-оболочкой.
+
+export interface AchievementDef {
+  id: string;
+  name: string;
+  desc: string;
+  icon: string;   // текстура Phaser (в игре)
+  emoji: string;  // для React-сайдбара
+}
+
+export const ACHIEVEMENTS: AchievementDef[] = [
+  { id: 'first-blood', name: 'Первая кровь', desc: 'Повергнуть первого врага', icon: 'icon-sword', emoji: '🩸' },
+  { id: 'kills-100', name: 'Сотня павших', desc: '100 убийств за один матч', icon: 'icon-spear', emoji: '⚔️' },
+  { id: 'kills-500', name: 'Легенда поля боя', desc: '500 убийств за один матч', icon: 'icon-aura', emoji: '💀' },
+  { id: 'level-10', name: 'Десять ступеней', desc: 'Достичь 10-го уровня', icon: 'icon-gem', emoji: '📈' },
+  { id: 'gold-500', name: 'Золотая жила', desc: 'Собрать 500 золота за матч', icon: 'icon-coin', emoji: '💰' },
+  { id: 'chests-3', name: 'Кладоискатель', desc: 'Открыть 3 сокровища за матч', icon: 'icon-knives', emoji: '🗝️' },
+  { id: 'elites-2', name: 'Гроза элит', desc: 'Повергнуть обе элиты за матч', icon: 'icon-might', emoji: '🗡️' },
+  { id: 'boss-slayer', name: 'Повелитель поля', desc: 'Победить Чёрного Копейщика', icon: 'icon-hammer', emoji: '👑' },
+  { id: 'nightmare-win', name: 'Повелитель кошмара', desc: 'Победить на сложности «Кошмар»', icon: 'icon-bomb', emoji: '🔥' },
+];
+
+const LS_ACH = 'tss-ach';
+const LS_META = 'tss-meta';
+
+// ---------- Хранилище достижений ----------
+
+export function loadUnlocked(): Set<string> {
+  if (typeof window === 'undefined') return new Set();
+  try {
+    const raw = window.localStorage.getItem(LS_ACH);
+    if (!raw) return new Set();
+    const arr: unknown = JSON.parse(raw);
+    if (Array.isArray(arr)) return new Set(arr.filter((x): x is string => typeof x === 'string'));
+  } catch {
+    // повреждённые данные — начинаем с чистого листа
+  }
+  return new Set();
+}
+
+function saveUnlocked(set: Set<string>): void {
+  try {
+    window.localStorage.setItem(LS_ACH, JSON.stringify([...set]));
+  } catch {
+    // localStorage недоступен (приватный режим) — просто не сохраняем
+  }
+}
+
+// ---------- Мета-статистика ----------
+
+export interface MetaStats {
+  matches: number;
+  victories: number;
+  kills: number;
+  gold: number;
+  bestScore: number;
+  playTime: number; // суммарные секунды
+}
+
+const EMPTY_META: MetaStats = { matches: 0, victories: 0, kills: 0, gold: 0, bestScore: 0, playTime: 0 };
+
+export function loadMeta(): MetaStats {
+  if (typeof window === 'undefined') return { ...EMPTY_META };
+  try {
+    const raw = window.localStorage.getItem(LS_META);
+    if (!raw) return { ...EMPTY_META };
+    const m = JSON.parse(raw) as Partial<MetaStats>;
+    return {
+      matches: Number(m.matches ?? 0) || 0,
+      victories: Number(m.victories ?? 0) || 0,
+      kills: Number(m.kills ?? 0) || 0,
+      gold: Number(m.gold ?? 0) || 0,
+      bestScore: Number(m.bestScore ?? 0) || 0,
+      playTime: Number(m.playTime ?? 0) || 0,
+    };
+  } catch {
+    return { ...EMPTY_META };
+  }
+}
+
+export function saveMeta(m: MetaStats): void {
+  try {
+    window.localStorage.setItem(LS_META, JSON.stringify(m));
+  } catch {
+    // игнорируем
+  }
+}
+
+// ---------- Трекер внутри матча ----------
+
+export type AchEvent =
+  | { type: 'kills'; value: number }
+  | { type: 'level'; value: number }
+  | { type: 'gold'; value: number }
+  | { type: 'chests'; value: number }
+  | { type: 'elites'; value: number }
+  | { type: 'victory'; difficulty: string };
+
+export class AchTracker {
+  private unlocked: Set<string>;
+  readonly newlyUnlocked: AchievementDef[] = [];
+
+  constructor(private onUnlock: (a: AchievementDef) => void) {
+    this.unlocked = loadUnlocked();
+  }
+
+  /** Вызывается при изменении счётчиков. Возвращает список новых ачивок. */
+  event(ev: AchEvent): void {
+    switch (ev.type) {
+      case 'kills':
+        if (!this.unlocked.has('first-blood') && ev.value >= 1) this.unlock('first-blood');
+        if (!this.unlocked.has('kills-100') && ev.value >= 100) this.unlock('kills-100');
+        if (!this.unlocked.has('kills-500') && ev.value >= 500) this.unlock('kills-500');
+        break;
+      case 'level':
+        if (!this.unlocked.has('level-10') && ev.value >= 10) this.unlock('level-10');
+        break;
+      case 'gold':
+        if (!this.unlocked.has('gold-500') && ev.value >= 500) this.unlock('gold-500');
+        break;
+      case 'chests':
+        if (!this.unlocked.has('chests-3') && ev.value >= 3) this.unlock('chests-3');
+        break;
+      case 'elites':
+        if (!this.unlocked.has('elites-2') && ev.value >= 2) this.unlock('elites-2');
+        break;
+      case 'victory':
+        if (!this.unlocked.has('boss-slayer')) this.unlock('boss-slayer');
+        if (ev.difficulty === 'nightmare' && !this.unlocked.has('nightmare-win')) this.unlock('nightmare-win');
+        break;
+    }
+  }
+
+  private unlock(id: string): void {
+    const def = ACHIEVEMENTS.find((a) => a.id === id);
+    if (!def || this.unlocked.has(id)) return;
+    this.unlocked.add(id);
+    this.newlyUnlocked.push(def);
+    saveUnlocked(this.unlocked);
+    this.onUnlock(def);
+  }
+
+  get unlockedCount(): number {
+    return this.unlocked.size;
+  }
+}
+
+/** Финальное обновление мета-статистики (вызывается при конце матча). */
+export function commitMeta(params: {
+  victory: boolean;
+  kills: number;
+  gold: number;
+  score: number;
+  playTime: number;
+}): void {
+  const m = loadMeta();
+  m.matches += 1;
+  if (params.victory) m.victories += 1;
+  m.kills += params.kills;
+  m.gold += params.gold;
+  m.bestScore = Math.max(m.bestScore, params.score);
+  m.playTime += Math.max(0, Math.floor(params.playTime));
+  saveMeta(m);
+  if (typeof window !== 'undefined') {
+    window.dispatchEvent(new CustomEvent('tss-meta-updated'));
+  }
+}

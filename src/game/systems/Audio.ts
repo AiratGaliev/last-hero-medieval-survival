@@ -3,7 +3,7 @@
 
 type SfxName =
   | 'hit' | 'shoot' | 'pickup' | 'levelup' | 'hurt' | 'die'
-  | 'explosion' | 'boss' | 'click' | 'victory' | 'gameover' | 'slam';
+  | 'explosion' | 'boss' | 'click' | 'victory' | 'gameover' | 'slam' | 'ach';
 
 class AudioSystem {
   private ctx: AudioContext | null = null;
@@ -104,6 +104,9 @@ class AudioSystem {
         this.noise(0.6, 0.2, 0.2, 300);
         break;
       case 'click': this.tone(440, 0.05, 'square', 0.08); break;
+      case 'ach':
+        [880, 1109, 1319].forEach((f, i) => this.tone(f, 0.14, 'triangle', 0.14, i * 0.1));
+        break;
       case 'victory':
         [523, 659, 784, 1047, 784, 1047, 1319].forEach((f, i) => this.tone(f, 0.16, 'square', 0.12, i * 0.13));
         break;
