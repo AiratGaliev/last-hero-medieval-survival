@@ -13,6 +13,7 @@ export interface AchievementDef {
 
 export const ACHIEVEMENTS: AchievementDef[] = [
   { id: 'first-blood', name: 'Первая кровь', desc: 'Повергнуть первого врага', icon: 'icon-sword', emoji: '🩸' },
+  { id: 'evolution-first', name: 'Кузнец судьбы', desc: 'Совершить первую эволюцию оружия', icon: 'icon-might', emoji: '⭐' },
   { id: 'kills-100', name: 'Сотня павших', desc: '100 убийств за один матч', icon: 'icon-spear', emoji: '⚔️' },
   { id: 'kills-500', name: 'Легенда поля боя', desc: '500 убийств за один матч', icon: 'icon-aura', emoji: '💀' },
   { id: 'level-10', name: 'Десять ступеней', desc: 'Достичь 10-го уровня', icon: 'icon-gem', emoji: '📈' },
@@ -101,6 +102,7 @@ export type AchEvent =
   | { type: 'elites'; value: number }
   | { type: 'guards'; value: number }
   | { type: 'taskmasters'; value: number }
+  | { type: 'evolution' }
   | { type: 'victory'; difficulty: string };
 
 export class AchTracker {
@@ -136,6 +138,9 @@ export class AchTracker {
         break;
       case 'taskmasters':
         if (!this.unlocked.has('riot-quell') && ev.value >= 8) this.unlock('riot-quell');
+        break;
+      case 'evolution':
+        if (!this.unlocked.has('evolution-first')) this.unlock('evolution-first');
         break;
       case 'victory':
         if (!this.unlocked.has('boss-slayer')) this.unlock('boss-slayer');

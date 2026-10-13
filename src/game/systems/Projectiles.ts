@@ -9,6 +9,9 @@ export interface Proj extends Phaser.Physics.Arcade.Image {
   pierceLeft: number;
   life: number;
   hitSet?: Set<Phaser.GameObjects.Sprite>;
+  /** Гунгнир: фаза возвращения (копьё разворачивается к игроку) */
+  gungnir?: boolean;
+  returned?: boolean;
 }
 
 interface Bomb {
@@ -19,10 +22,14 @@ interface Bomb {
   dur: number;
   dmg: number;
   radius: number;
+  /** Мини-бомба кластера: не порождает новых мини-бомб */
+  mini?: boolean;
 }
 
 export interface ProjectileCtx {
-  onExplode(x: number, y: number, dmg: number, radius: number): void;
+  onExplode(x: number, y: number, dmg: number, radius: number, mini?: boolean): void;
+  /** Позиция игрока — для возврата Гунгнира */
+  playerPos(): { x: number; y: number };
 }
 
 export class Projectiles {
@@ -75,13 +82,35 @@ export class Projectiles {
     p.pierceLeft = 999;
     p.life = 620;
     p.hitSet = new Set();
+    p.gungnir = false;
+    p.returned = false;
     p.setDepth(DEPTH.PROJECTILE);
     (p.body as Phaser.Physics.Arcade.Body).setSize(110, 14, true);
     audio.play('shoot');
   }
 
+  // ---------- Гунгнир (эволюция копья): гигантское возвращающееся копьё ----------
+  fireGungnir(x: number, y: number, angle: number, dmg: number): void {
+    const p = this.acquire(this.spearPool, 'spear', this.spears);
+    const speed = 950;
+    p.setPosition(x, y);
+    p.setVelocity(Math.cos(angle) * speed, Math.sin(angle) * speed);
+    p.setRotation(angle);
+    p.setScale(1.9);
+    p.setTint(0xffe9a0); // золотое свечение
+    p.dmg = dmg;
+    p.pierceLeft = 999;
+    p.life = 1500;
+    p.hitSet = new Set();
+    p.gungnir = true;
+    p.returned = false;
+    p.setDepth(DEPTH.PROJECTILE);
+    (p.body as Phaser.Physics.Arcade.Body).setSize(200, 26, true);
+    audio.play('shoot');
+  }
+
   // ---------- Ножи ----------
-  fireKnife(x: number, y: number, angle: number, dmg: number, pierce: number): void {
+  fireKnife(x: number, y: number, angle: number, dmg: number, pierce: number, golden = false): void {
     const p = this.acquire(this.knifePool, 'knife', this.knives);
     const speed = 840;
     p.setPosition(x, y);
@@ -92,6 +121,7 @@ export class Projectiles {
     p.life = 560;
     p.hitSet = new Set();
     p.setDepth(DEPTH.PROJECTILE);
+    if (golden) p.setTint(0xffe9a0); // «Танец клинков»
     (p.body as Phaser.Physics.Arcade.Body).setSize(30, 12, true);
     audio.play('shoot');
   }
@@ -112,16 +142,20 @@ export class Projectiles {
   }
 
   // ---------- Бомба (навесная) ----------
-  throwBomb(x: number, y: number, tx: number, ty: number, dmg: number, radius: number): void {
-    const img = this.scene.add.image(x, y, 'barrel').setScale(0.5).setDepth(DEPTH.PROJECTILE);
+  throwBomb(x: number, y: number, tx: number, ty: number, dmg: number, radius: number, mini = false): void {
+    const img = this.scene.add.image(x, y, 'barrel')
+      .setScale(mini ? 0.3 : 0.5)
+      .setDepth(DEPTH.PROJECTILE)
+      .setTint(mini ? 0xffc080 : 0xffffff);
     this.bombs.push({
       img,
       from: { x, y },
       to: { x: tx, y: ty },
       t: 0,
-      dur: 620,
+      dur: mini ? 340 : 620,
       dmg,
       radius,
+      mini,
     });
     audio.play('shoot');
   }
@@ -129,7 +163,7 @@ export class Projectiles {
   update(dtMs: number): void {
     const dt = dtMs / 1000;
     this.updateProjs(this.arrowPool, dtMs);
-    this.updateProjs(this.spearPool, dtMs);
+    this.updateSpears(dtMs);
     this.updateProjs(this.knifePool, dtMs);
     this.updateProjs(this.enemyArrowPool, dtMs);
 
@@ -139,14 +173,33 @@ export class Projectiles {
       const k = Math.min(1, b.t / b.dur);
       const x = Phaser.Math.Linear(b.from.x, b.to.x, k);
       const y = Phaser.Math.Linear(b.from.y, b.to.y, k);
-      const h = Math.sin(Math.PI * k) * 90; // псевдовысота дуги
+      const h = Math.sin(Math.PI * k) * (b.mini ? 46 : 90); // псевдовысота дуги
       b.img.setPosition(x, y - h);
       b.img.setRotation(b.img.rotation + dt * 7);
       if (k >= 1) {
         b.img.destroy();
         this.bombs.splice(i, 1);
-        this.ctx.onExplode(b.to.x, b.to.y, b.dmg, b.radius);
+        this.ctx.onExplode(b.to.x, b.to.y, b.dmg, b.radius, b.mini);
       }
+    }
+  }
+
+  /** Копья: обычные живут 620мс; Гунгнир на полёте разворачивается к игроку
+   *  и с чистым hitSet проходит сквозь врагов второй раз */
+  private updateSpears(dtMs: number): void {
+    const half = 700;
+    for (const p of this.spearPool) {
+      if (!p.active) continue;
+      p.life -= dtMs;
+      if (p.gungnir && !p.returned && p.life <= 1500 - half) {
+        p.returned = true;
+        p.hitSet = new Set();
+        const pp = this.ctx.playerPos();
+        const a = Math.atan2(pp.y - p.y, pp.x - p.x);
+        p.setVelocity(Math.cos(a) * 900, Math.sin(a) * 900);
+        p.setRotation(a);
+      }
+      if (p.life <= 0) this.release(p);
     }
   }
 
@@ -172,6 +225,7 @@ export class Projectiles {
     b.enable = true;
     b.setAllowGravity(false);
     p.clearTint();
+    p.setScale(1);
     return p;
   }
 

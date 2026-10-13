@@ -3,7 +3,7 @@ import {
   WORLD, PLAYER_BASE, DEPTH, ENEMY_CAP, SCORE, XP_CURVE, COMBO,
 } from '../constants';
 import {
-  WEAPONS, PASSIVES, HEROES, ENEMIES, DIFFICULTIES,
+  WEAPONS, PASSIVES, HEROES, ENEMIES, DIFFICULTIES, EVOLUTIONS,
   type WeaponId, type PassiveId, type EnemyKind, type UpgradeCard, type HeroId, type HeroDef, type DifficultyId, type DifficultyDef,
 } from '../data';
 import { Player } from '../entities/Player';
@@ -28,6 +28,8 @@ export interface WeaponStat {
   name: string;
   dmg: number;
   kills: number;
+  /** Оружие прошло эволюцию — золотое имя с ★ */
+  evolved?: boolean;
 }
 
 // ============ Основная игровая сцена ============
@@ -337,7 +339,10 @@ export class GameScene extends Phaser.Scene {
       (v, x, y) => this.addGold(v, x, y),
     );
     this.projectiles = new Projectiles(this, {
-      onExplode: (x, y, dmg, radius) => this.explode(x, y, dmg, radius, 'bomb'),
+      onExplode: (x, y, dmg, radius, mini) => {
+        this.explode(x, y, dmg, radius, 'bomb', mini !== true);
+      },
+      playerPos: () => ({ x: this.player.x, y: this.player.y }),
     });
     this.enemyGroup = this.physics.add.group();
     this.enemyCtxStore = this.makeEnemyCtx();
@@ -414,7 +419,25 @@ export class GameScene extends Phaser.Scene {
       if (p.hitSet?.has(enemy)) return;
       p.hitSet?.add(enemy);
       this.damageEnemy(enemy, p.dmg, enemy.x - this.player.x, enemy.y - this.player.y, 70, 'knives');
-      this.projectiles.consumePierce(p);
+      const spent = this.projectiles.consumePierce(p);
+      // «Танец клинков»: рикошет — летящий нож доворачивает на нового врага
+      if (!spent && this.weapons.isEvolved('knives') && p.active) {
+        let best: Enemy | null = null;
+        let bestD = 300 * 300;
+        for (const t of this.activeEnemies()) {
+          if (t === enemy || p.hitSet?.has(t)) continue;
+          const d = (t.x - p.x) ** 2 + (t.y - p.y) ** 2;
+          if (d < bestD) { bestD = d; best = t; }
+        }
+        if (best) {
+          const a = Math.atan2(best.y - p.y, best.x - p.x);
+          const body = p.body as Phaser.Physics.Arcade.Body;
+          body.setVelocity(Math.cos(a) * 840, Math.sin(a) * 840);
+          p.setRotation(a);
+          p.life = Math.max(p.life, 420);
+          this.effects.hitSpark(p.x, p.y);
+        }
+      }
     });
 
     this.physics.add.overlap(this.player, this.projectiles.enemyArrows, (_p, proj) => {
@@ -613,7 +636,7 @@ export class GameScene extends Phaser.Scene {
     }
   }
 
-  private explode(x: number, y: number, dmg: number, radius: number, src?: WeaponId): void {
+  private explode(x: number, y: number, dmg: number, radius: number, src?: WeaponId, allowCluster = true): void {
     this.effects.explosion(x, y, 1.1, 2);
     audio.play('explosion');
     this.cameras.main.shake(160, 0.004);
@@ -621,6 +644,17 @@ export class GameScene extends Phaser.Scene {
       const dx = e.x - x, dy = e.y - y;
       if (Math.hypot(dx, dy) <= radius + e.def.bodyRadius) {
         this.damageEnemy(e, dmg, dx, dy, 320, src);
+      }
+    }
+    // «Кластерный залп»: основной взрыв рождает 4 мини-бомбы
+    // (мини-бомбы сами кластеры не порождают — без рекурсии)
+    if (allowCluster && src === 'bomb' && this.weapons.isEvolved('bomb')) {
+      for (let i = 0; i < 4; i++) {
+        const a = (i / 4) * Math.PI * 2 + Math.random() * 0.7;
+        const dist = 90 + Math.random() * 70;
+        const tx = Phaser.Math.Clamp(x + Math.cos(a) * dist, WORLD.GRASS_MARGIN + 20, WORLD.SIZE - WORLD.GRASS_MARGIN - 20);
+        const ty = Phaser.Math.Clamp(y + Math.sin(a) * dist, WORLD.GRASS_MARGIN + 20, WORLD.SIZE - WORLD.GRASS_MARGIN - 20);
+        this.projectiles.throwBomb(x, y, tx, ty, Math.round(dmg * 0.45), 90, true);
       }
     }
   }
@@ -882,6 +916,8 @@ export class GameScene extends Phaser.Scene {
 
   private generateChoices(): UpgradeCard[] {
     const pool: UpgradeCard[] = [];
+    // Карточки эволюций — приоритетные: всегда попадают в выдачу
+    const evolutions: UpgradeCard[] = [];
     for (const w of Object.values(WEAPONS)) {
       const lvl = this.weapons.level(w.id);
       if (lvl === 0 && this.weapons.ownedIds().length < 7) {
@@ -896,6 +932,16 @@ export class GameScene extends Phaser.Scene {
           desc: this.weaponUpgradeDesc(w.id, lvl), icon: w.icon, levelFrom: lvl, levelTo: lvl + 1,
         });
         void next;
+      } else if (lvl === 5) {
+        // Эволюция: 5-й уровень + пассивка-партнёр в инвентаре
+        const evo = EVOLUTIONS[w.id];
+        if ((this.passiveLevels.get(evo.partner) ?? 0) > 0) {
+          evolutions.push({
+            kind: 'weapon-evolve', id: w.id, title: evo.name, subtitle: '★ ЭВОЛЮЦИЯ ★',
+            desc: `${evo.desc}\n(${WEAPONS[w.id].name} + ${PASSIVES[evo.partner].name})`,
+            icon: w.icon, levelFrom: 5, levelTo: 6,
+          });
+        }
       }
     }
     for (const p of Object.values(PASSIVES)) {
@@ -908,7 +954,8 @@ export class GameScene extends Phaser.Scene {
       }
     }
     Phaser.Utils.Array.Shuffle(pool);
-    const picked = pool.slice(0, 3);
+    // Эволюции — в начало выдачи (не больше 3 карточек всего)
+    const picked = [...evolutions.slice(0, 3), ...pool.slice(0, Math.max(0, 3 - evolutions.length))];
     if (picked.length === 0) {
       picked.push(
         { kind: 'heal', title: 'Жареное мясо', subtitle: 'ЛЕЧЕНИЕ', desc: 'Восстановить 40 HP', icon: 'icon-meat' },
@@ -964,6 +1011,20 @@ export class GameScene extends Phaser.Scene {
         const id = card.id as WeaponId;
         this.weapons.upgrade(id);
         this.hud.setIcon(id, WEAPONS[id].icon, this.weapons.level(id), false);
+        break;
+      }
+      case 'weapon-evolve': {
+        const id = card.id as WeaponId;
+        this.weapons.evolve(id);
+        this.hud.setIcon(id, WEAPONS[id].icon, 6, false);
+        const evo = EVOLUTIONS[id];
+        // Праздничный момент: золотая вспышка, искры, объявление, звук
+        this.cameras.main.flash(220, 255, 215, 120, false);
+        this.effects.goldBurst(this.player.x, this.player.y - 20, 22);
+        this.effects.popup(this.player.x, this.player.y - 70, `★ ${evo.name.toUpperCase()} ★`, '#ffd700', 18);
+        this.hud.announce(`★ ЭВОЛЮЦИЯ: ${evo.name.toUpperCase()}!`, '#ffd700');
+        audio.play('evolve');
+        this.ach?.event({ type: 'evolution' });
         break;
       }
       case 'passive': {
@@ -1039,7 +1100,10 @@ export class GameScene extends Phaser.Scene {
     // Снаряжение для панели паузы: оружия и пассивки с уровнями
     const loadout = {
       weapons: this.weapons.ownedIds().map((id) => ({
-        icon: WEAPONS[id].icon, name: WEAPONS[id].name, level: this.weapons.level(id),
+        icon: WEAPONS[id].icon,
+        name: this.weapons.isEvolved(id) ? EVOLUTIONS[id].name : WEAPONS[id].name,
+        level: this.weapons.level(id),
+        evolved: this.weapons.isEvolved(id),
       })),
       passives: [...this.passiveLevels.entries()]
         .filter(([, lvl]) => lvl > 0)
@@ -1125,9 +1189,16 @@ export class GameScene extends Phaser.Scene {
     audio.stopMusic();
 
     const finalScore = this.currentScore();
-    // Статистика оружия: сортировка по суммарному урону
+    // Статистика оружия: сортировка по суммарному урону; эволюционные формы — с ★
     const weapons: WeaponStat[] = [...this.weaponStats.entries()]
-      .map(([id, st]) => ({ id, icon: WEAPONS[id].icon, name: WEAPONS[id].name, dmg: st.dmg, kills: st.kills }))
+      .map(([id, st]) => {
+        const evolved = this.weapons.isEvolved(id);
+        return {
+          id, icon: WEAPONS[id].icon,
+          name: evolved ? `★ ${EVOLUTIONS[id].name}` : WEAPONS[id].name,
+          dmg: st.dmg, kills: st.kills, evolved,
+        };
+      })
       .sort((a, b) => b.dmg - a.dmg);
     const stats = {
       victory,

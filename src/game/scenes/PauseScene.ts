@@ -9,6 +9,8 @@ interface LoadoutEntry {
   icon: string;
   name: string;
   level: number;
+  /** Оружие прошло эволюцию (уровень 6) */
+  evolved?: boolean;
 }
 
 interface LoadoutData {
@@ -138,13 +140,18 @@ export class PauseScene extends Phaser.Scene {
     }).setOrigin(0.5).setScrollFactor(0);
 
     const entry = (x: number, y: number, e: LoadoutEntry, maxed: boolean) => {
-      this.add.image(x - colW / 2 + 14, y, e.icon).setDisplaySize(22, 22).setScrollFactor(0);
-      this.add.text(x - colW / 2 + 32, y, e.name, {
-        fontFamily: FONT, fontSize: '10px', color: '#3b2410',
+      const ic = this.add.image(x - colW / 2 + 14, y, e.icon).setDisplaySize(22, 22).setScrollFactor(0);
+      const nameTxt = this.add.text(x - colW / 2 + 32, y, e.name, {
+        fontFamily: FONT, fontSize: '10px', color: e.evolved ? '#9a6a08' : '#3b2410',
       }).setOrigin(0, 0.5).setScrollFactor(0);
-      this.add.text(x + colW / 2 - 10, y, `${e.level}/5`, {
-        fontFamily: FONT, fontSize: '10px', color: maxed ? '#2e7d32' : '#b0803a',
-        stroke: maxed ? '#dcecc9' : '#f7e7c3', strokeThickness: 3,
+      if (e.evolved) {
+        ic.setTint(0xffe9a0);
+        nameTxt.setText(`★ ${e.name}`);
+      }
+      this.add.text(x + colW / 2 - 10, y, e.evolved ? '★' : `${e.level}/5`, {
+        fontFamily: FONT, fontSize: e.evolved ? 12 : 10,
+        color: e.evolved ? '#b8860b' : maxed ? '#2e7d32' : '#b0803a',
+        stroke: e.evolved ? '#ffe9b0' : maxed ? '#dcecc9' : '#f7e7c3', strokeThickness: 3,
       }).setOrigin(1, 0.5).setScrollFactor(0);
     };
     lo.weapons.slice(0, 7).forEach((e, i) => entry(colL, top + 100 + i * 28, e, e.level >= 5));

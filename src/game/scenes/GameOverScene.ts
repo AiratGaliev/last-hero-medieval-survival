@@ -17,7 +17,7 @@ export interface GameOverStats {
   hero?: string;
   difficulty?: string;
   bestCombo?: number;
-  weapons?: { id: string; icon: string; name: string; dmg: number; kills: number }[];
+  weapons?: { id: string; icon: string; name: string; dmg: number; kills: number; evolved?: boolean }[];
   newAch?: { name: string; emoji: string }[];
 }
 
@@ -200,17 +200,21 @@ export class GameOverScene extends Phaser.Scene {
     const barMax = rowW - 150;
     list.slice(0, 7).forEach((w, i) => {
       const y = cursor + i * 22;
-      // Иконка + имя
-      this.add.image(cx - rowW / 2 + 10, y - 2, w.icon).setDisplaySize(20, 20).setScrollFactor(0);
+      // Иконка + имя (эволюция — золотое имя и подсветка)
+      const icon = this.add.image(cx - rowW / 2 + 10, y - 2, w.icon).setDisplaySize(20, 20).setScrollFactor(0);
+      if (w.evolved) icon.setTint(0xffe9a0);
       this.add.text(cx - rowW / 2 + 26, y - 2, w.name, {
-        fontFamily: FONT, fontSize: '10px', color: '#ffe9b0',
+        fontFamily: FONT, fontSize: '10px', color: w.evolved ? '#ffd76e' : '#ffe9b0',
         stroke: '#1b1008', strokeThickness: 3,
       }).setOrigin(0, 0.5).setScrollFactor(0);
-      // Полоса урона (относительно лучшего оружия)
+      // Полоса урона (относительно лучшего оружия; эволюция — золотая)
       const barW = Math.max(4, Math.round(barMax * (w.dmg / maxDmg)));
       this.add.rectangle(cx - rowW / 2 + 128, y - 2, barMax, 8, 0x2a1c10, 0.9)
         .setOrigin(0, 0.5).setScrollFactor(0);
-      const bar = this.add.rectangle(cx - rowW / 2 + 128, y - 2, 4, 6, i === 0 ? 0xffd76e : 0xd0883a)
+      const bar = this.add.rectangle(
+        cx - rowW / 2 + 128, y - 2, 4, 6,
+        w.evolved ? 0xffd76e : i === 0 ? 0xffd76e : 0xd0883a,
+      )
         .setOrigin(0, 0.5).setScrollFactor(0);
       this.tweens.add({ targets: bar, width: barW, duration: 500, delay: 150 + i * 70, ease: 'Cubic.easeOut' });
       // Числа: урон и убийства

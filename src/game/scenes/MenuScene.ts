@@ -1,6 +1,6 @@
 import Phaser from 'phaser';
 import { FONT } from '../constants';
-import { HEROES, WEAPONS, DIFFICULTIES, type HeroId, type DifficultyId } from '../data';
+import { HEROES, WEAPONS, PASSIVES, DIFFICULTIES, EVOLUTIONS, type HeroId, type DifficultyId } from '../data';
 import { audio } from '../systems/Audio';
 import { makePanel, makeButton } from '../systems/Ui';
 import { loadShop, buyUpgrade, SHOP_UPGRADES } from '../shop';
@@ -260,7 +260,7 @@ export class MenuScene extends Phaser.Scene {
       });
     }
 
-    this.add.text(width / 2, height - 12, 'v1.9 • Phaser 4 • ассеты Pixel Frog «Tiny Swords»', {
+    this.add.text(width / 2, height - 12, 'v1.10 • Phaser 4 • ассеты Pixel Frog «Tiny Swords»', {
       fontFamily: FONT, fontSize: '11px', color: '#3b2410',
     }).setOrigin(0.5).setAlpha(0.8);
 
@@ -456,34 +456,72 @@ export class MenuScene extends Phaser.Scene {
     const width = this.vw;
     const height = this.vh;
     const paperW = Math.min(560, width - 50);
-    const paper = makePanel(this, width / 2, height / 2, 'paper', paperW, paperW * 1.05);
-    const header = this.add.text(width / 2, height / 2 - paperW * 0.5, 'КАК ИГРАТЬ', {
+    const paperH = Math.min(paperW * 1.24, height - 40);
+    const paper = makePanel(this, width / 2, height / 2, 'paper', paperW, paperH);
+    const top = height / 2 - paperH / 2;
+    const header = this.add.text(width / 2, top + 34, 'КАК ИГРАТЬ', {
       fontFamily: FONT, fontSize: '26px', color: '#3b2410',
     }).setOrigin(0.5);
     const lines = [
-      'Выбери героя: воин, лучница, копейщик или монах.',
-      'Затем сложность: Поход или Кошмар (×1.6 очков).',
-      'WASD / стрелки — движение',
-      'на телефоне — виртуальный джойстик',
+      'Выбери героя и сложность («Кошмар» — ×1.6 очков).',
+      'WASD / стрелки — движение, на телефоне — джойстик.',
       '',
-      'Оружие атакует автоматически.',
-      'Собирай кристаллы опыта и золото,',
-      'открывай сокровища и выбирай улучшения.',
-      'Золото матча — валюта «Лавки торговца».',
-      'Осторожно: бочки-камикадзе взрываются!',
-      '',
-      'Выживи 15 минут и убей',
-      'ЧЁРНОГО КОПЕЙЩИКА!',
-      '',
-      'На «Кошмаре» на 10-й минуте ждёт',
-      'ТЁМНЫЙ МОНАХ...',
-      '',
-      'ESC / P — пауза, M — звук',
+      'Оружие атакует автоматически. Собирай кристаллы',
+      'опыта, золото и сокровища, выбирай улучшения.',
     ];
-    const body = this.add.text(width / 2, height / 2 - paperW * 0.34, lines.join('\n'), {
-      fontFamily: FONT, fontSize: '15px', color: '#57431f', align: 'center', lineSpacing: 8,
+    const body = this.add.text(width / 2, top + 64, lines.join('\n'), {
+      fontFamily: FONT, fontSize: '14px', color: '#57431f', align: 'center', lineSpacing: 6,
     }).setOrigin(0.5, 0);
     this.overlay?.add([paper, header, body]);
+
+    // ===== Раздел «Эволюции оружия» с рецептами =====
+    const evoTitle = this.add.text(width / 2, top + 172, '★ ЭВОЛЮЦИИ ОРУЖИЯ', {
+      fontFamily: FONT, fontSize: '16px', color: '#9a6a08',
+    }).setOrigin(0.5);
+    const evoHint = this.add.text(width / 2, top + 194,
+      'Меч 5-го уровня + пассивка-партнёр → мощнейшая форма', {
+      fontFamily: FONT, fontSize: '11px', color: '#8a5b12',
+    }).setOrigin(0.5);
+    this.overlay?.add([evoTitle, evoHint]);
+
+    const recipeY0 = top + 222;
+    const recipeGap = 26;
+    Object.values(EVOLUTIONS).forEach((evo, i) => {
+      const y = recipeY0 + i * recipeGap;
+      const cx = width / 2;
+      // [оружие] + [пассивка] → ★ Имя
+      const wIcon = this.add.image(cx - 168, y, WEAPONS[evo.weapon].icon)
+        .setDisplaySize(18, 18);
+      const wName = this.add.text(cx - 152, y, WEAPONS[evo.weapon].name.replace(' воина', '').replace(' лучника', '').replace(' копейщика', '').replace(' кузнеца', ''), {
+        fontFamily: FONT, fontSize: '11px', color: '#57431f',
+      }).setOrigin(0, 0.5);
+      const plus = this.add.text(cx - 96, y, '+', {
+        fontFamily: FONT, fontSize: '11px', color: '#8a5b12',
+      }).setOrigin(0.5);
+      const pIcon = this.add.image(cx - 82, y, PASSIVES[evo.partner].icon)
+        .setDisplaySize(18, 18);
+      const pName = this.add.text(cx - 66, y, PASSIVES[evo.partner].name, {
+        fontFamily: FONT, fontSize: '11px', color: '#57431f',
+      }).setOrigin(0, 0.5);
+      const arrow = this.add.text(cx + 34, y, '→', {
+        fontFamily: FONT, fontSize: '12px', color: '#9a6a08',
+      }).setOrigin(0.5);
+      const evoName = this.add.text(cx + 48, y, `★ ${evo.name}`, {
+        fontFamily: FONT, fontSize: '11px', color: '#9a6a08',
+        stroke: '#f7e7c3', strokeThickness: 2,
+      }).setOrigin(0, 0.5);
+      this.overlay?.add([wIcon, wName, plus, pIcon, pName, arrow, evoName]);
+    });
+
+    const footerY = recipeY0 + 7 * recipeGap + 14;
+    const footer = this.add.text(width / 2, footerY, [
+      'Выживи 15 минут и убей ЧЁРНОГО КОПЕЙЩИКА!',
+      'На «Кошмаре» на 10-й минуте ждёт ТЁМНЫЙ МОНАХ.',
+      'ESC / P — пауза, M — звук. Бочки-камикадзе взрываются!',
+    ].join('\n'), {
+      fontFamily: FONT, fontSize: '13px', color: '#57431f', align: 'center', lineSpacing: 6,
+    }).setOrigin(0.5, 0);
+    this.overlay?.add([footer]);
     this.backButton();
   }
 

@@ -4,6 +4,27 @@
 export type WeaponId = 'sword' | 'bow' | 'spear' | 'hammer' | 'bomb' | 'aura' | 'knives';
 export type PassiveId = 'boots' | 'armor' | 'magnet' | 'regen' | 'might' | 'haste' | 'vitality' | 'luck' | 'wisdom';
 
+// ============ Эволюции оружия (v1.10) ============
+// Максимальный уровень оружия (5) + пассивка-партнёр (любой уровень) →
+// карточка ЭВОЛЮЦИИ на левел-апе. Оружие заменяется улучшенной формой
+// (уровень 6) с новым поведением и усиленными характеристиками.
+export interface EvolutionDef {
+  weapon: WeaponId;
+  partner: PassiveId;   // требуемая пассивка (достаточно владеть)
+  name: string;         // имя эволюционной формы
+  desc: string;         // что меняет эволюция
+}
+
+export const EVOLUTIONS: Record<WeaponId, EvolutionDef> = {
+  sword:   { weapon: 'sword',   partner: 'might',    name: 'Клинок зари',     desc: 'Вихрь на 360° ×3 взмаха + молнии-цепи на врагов' },
+  bow:     { weapon: 'bow',     partner: 'haste',    name: 'Град стрел',      desc: 'Двойной залп: 12 самонаводящихся стрел с двойным пробитием' },
+  spear:   { weapon: 'spear',   partner: 'vitality', name: 'Гунгнир',         desc: 'Гигантское копьё пронзает всех и возвращается, бьёт дважды' },
+  hammer:  { weapon: 'hammer',  partner: 'armor',    name: 'Молот приговора', desc: 'Цепные эхо-удары: за каждым слэмом следуют два вторичных' },
+  bomb:    { weapon: 'bomb',    partner: 'luck',     name: 'Кластерный залп', desc: 'Каждый взрыв распадается на 4 мини-бомбы' },
+  aura:    { weapon: 'aura',    partner: 'regen',    name: 'Нимб искупления', desc: 'Нова-импульс каждые 2.6с + лечение при толпе в кольце' },
+  knives:  { weapon: 'knives',  partner: 'boots',    name: 'Танец клинков',   desc: '9 ножей рикошетят между врагами' },
+};
+
 export interface WeaponLevel {
   dmg: number;
   cd: number;        // мс между атаками
@@ -32,6 +53,8 @@ export const WEAPONS: Record<WeaponId, WeaponDef> = {
       { dmg: 21, cd: 800, count: 1 },
       { dmg: 27, cd: 750, count: 2 },
       { dmg: 34, cd: 700, count: 2 },
+      // Эволюция «Клинок зари»: полный круг ×3 + молнии-цепи
+      { dmg: 50, cd: 520, count: 3 },
     ],
   },
   bow: {
@@ -45,6 +68,8 @@ export const WEAPONS: Record<WeaponId, WeaponDef> = {
       { dmg: 17, cd: 950, count: 2, pierce: 1 },
       { dmg: 22, cd: 900, count: 2, pierce: 2 },
       { dmg: 28, cd: 850, count: 3, pierce: 3 },
+      // Эволюция «Град стрел»: двойной залп по 6 стрел
+      { dmg: 38, cd: 600, count: 6, pierce: 6 },
     ],
   },
   spear: {
@@ -58,6 +83,8 @@ export const WEAPONS: Record<WeaponId, WeaponDef> = {
       { dmg: 26, cd: 800, count: 2 },
       { dmg: 33, cd: 750, count: 2 },
       { dmg: 42, cd: 700, count: 3 },
+      // Эволюция «Гунгнир»: одно гигантское возвращающееся копьё
+      { dmg: 70, cd: 640, count: 1 },
     ],
   },
   hammer: {
@@ -71,6 +98,8 @@ export const WEAPONS: Record<WeaponId, WeaponDef> = {
       { dmg: 43, cd: 2100, radius: 140, count: 1 },
       { dmg: 55, cd: 1900, radius: 160, count: 2 },
       { dmg: 70, cd: 1700, radius: 180, count: 2 },
+      // Эволюция «Молот приговора»: 3 слэма + цепные эхо-удары
+      { dmg: 100, cd: 1350, radius: 230, count: 3 },
     ],
   },
   bomb: {
@@ -84,6 +113,8 @@ export const WEAPONS: Record<WeaponId, WeaponDef> = {
       { dmg: 52, cd: 2600, radius: 160, count: 1 },
       { dmg: 66, cd: 2400, radius: 180, count: 2 },
       { dmg: 84, cd: 2200, radius: 200, count: 2 },
+      // Эволюция «Кластерный залп»: взрыв рождает 4 мини-бомбы
+      { dmg: 95, cd: 1800, radius: 175, count: 2 },
     ],
   },
   aura: {
@@ -97,6 +128,8 @@ export const WEAPONS: Record<WeaponId, WeaponDef> = {
       { dmg: 8, cd: 550, radius: 120 },
       { dmg: 11, cd: 500, radius: 140 },
       { dmg: 15, cd: 450, radius: 165 },
+      // Эволюция «Нимб искупления»: нова-импульс + лечение
+      { dmg: 24, cd: 380, radius: 215 },
     ],
   },
   knives: {
@@ -110,6 +143,8 @@ export const WEAPONS: Record<WeaponId, WeaponDef> = {
       { dmg: 15, cd: 950, count: 4, pierce: 3 },
       { dmg: 20, cd: 900, count: 5, pierce: 3 },
       { dmg: 26, cd: 850, count: 6, pierce: 4 },
+      // Эволюция «Танец клинков»: рикошет между врагами
+      { dmg: 36, cd: 620, count: 9, pierce: 6 },
     ],
   },
 };
@@ -386,7 +421,7 @@ export const dmgScale = (minute: number) => 1 + minute * 0.12;
 // ============ Карты апгрейдов ============
 
 export interface UpgradeCard {
-  kind: 'weapon-new' | 'weapon-up' | 'passive' | 'heal' | 'gold';
+  kind: 'weapon-new' | 'weapon-up' | 'weapon-evolve' | 'passive' | 'heal' | 'gold';
   id?: WeaponId | PassiveId;
   title: string;
   subtitle: string;

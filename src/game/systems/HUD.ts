@@ -589,10 +589,25 @@ export class HUD {
       this.layout();
     }
     const lvlText = c.list[2] as Phaser.GameObjects.Text;
-    lvlText.setText(level > 0 ? `${level}` : '');
-    // Подсветка максимума
-    const bg = c.list[0] as Phaser.GameObjects.Rectangle;
-    bg.setFillStyle(level >= 5 ? 0x6b4d12 : 0x1b1008, 0.8);
+    const ic = c.list[1] as Phaser.GameObjects.Image;
+    if (level >= 6) {
+      // Эволюция: звезда вместо цифры, золотая рамка и свечение иконки
+      lvlText.setText('★').setFontSize(11);
+      ic.setTint(0xffe9a0);
+      const bg = c.list[0] as Phaser.GameObjects.Rectangle;
+      bg.setFillStyle(0x8a6a18, 0.92);
+      bg.setStrokeStyle(2, 0xffd76e, 0.9);
+      // Появление: пульс золотой вспышки
+      this.scene.tweens.add({
+        targets: c, scale: { from: 1.6, to: 1 }, duration: 340, ease: 'Back.easeOut',
+      });
+    } else {
+      lvlText.setText(level > 0 ? `${level}` : '').setFontSize(8);
+      // Подсветка максимума
+      const bg = c.list[0] as Phaser.GameObjects.Rectangle;
+      bg.setStrokeStyle(0, 0xffffff, 0);
+      bg.setFillStyle(level >= 5 ? 0x6b4d12 : 0x1b1008, 0.8);
+    }
   }
 
   destroy(): void {

@@ -131,6 +131,76 @@ export class Effects {
     });
   }
 
+  /** Нова-импульс: расширяющееся золотое кольцо (эволюция ауры/эхо-удары) */
+  novaRing(x: number, y: number, radius: number, color = 0xffd76e): void {
+    const ring = this.scene.add.circle(x, y, 18)
+      .setStrokeStyle(4, color, 0.85)
+      .setDepth(DEPTH.FX + 6);
+    this.scene.tweens.add({
+      targets: ring,
+      radius,
+      alpha: 0,
+      duration: 380,
+      ease: 'Cubic.easeOut',
+      onComplete: () => ring.destroy(),
+    });
+    // внутренняя вспышка
+    const flash = this.scene.add.circle(x, y, 26)
+      .setFillStyle(color, 0.28)
+      .setDepth(DEPTH.FX + 5);
+    this.scene.tweens.add({
+      targets: flash,
+      scale: 1.8,
+      alpha: 0,
+      duration: 240,
+      onComplete: () => flash.destroy(),
+    });
+  }
+
+  /** Молния-цепь: ломаная золотая линия между двумя точками (эволюция меча) */
+  chainLightning(x1: number, y1: number, x2: number, y2: number): void {
+    const g = this.scene.add.graphics().setDepth(DEPTH.FX + 8).lineStyle(2.5, 0xffe9a0, 0.95);
+    g.beginPath();
+    g.moveTo(x1, y1);
+    // 3 промежуточных звена с поперечным дрожанием — «электрическая» дуга
+    const steps = 4;
+    const nx = -(y2 - y1), ny = x2 - x1;
+    const nLen = Math.hypot(nx, ny) || 1;
+    for (let i = 1; i < steps; i++) {
+      const t = i / steps;
+      const jitter = Phaser.Math.Between(-14, 14);
+      g.lineTo(
+        Phaser.Math.Linear(x1, x2, t) + (nx / nLen) * jitter,
+        Phaser.Math.Linear(y1, y2, t) + (ny / nLen) * jitter,
+      );
+    }
+    g.lineTo(x2, y2);
+    g.strokePath();
+    this.scene.tweens.add({
+      targets: g,
+      alpha: 0,
+      duration: 160,
+      ease: 'Quad.easeIn',
+      onComplete: () => g.destroy(),
+    });
+  }
+
+  /** Взрыв золотых искр (момент эволюции/новы) */
+  goldBurst(x: number, y: number, count = 14): void {
+    const spark = this.scene.add.particles(x, y, 'fx-dust', {
+      frame: [0, 1, 2, 3, 4, 5, 6, 7],
+      speed: { min: 90, max: 260 },
+      scale: { start: 0.4, end: 0.05 },
+      alpha: { start: 1, end: 0 },
+      lifespan: { min: 300, max: 550 },
+      tint: 0xffd76e,
+      blendMode: 'ADD',
+      emitting: false,
+    }).setDepth(DEPTH.FX + 8);
+    spark.explode(count, x, y);
+    this.scene.time.delayedCall(700, () => spark.destroy());
+  }
+
   hitSound(now: number): void {
     if (now - this.lastHitSound > 70) {
       this.lastHitSound = now;

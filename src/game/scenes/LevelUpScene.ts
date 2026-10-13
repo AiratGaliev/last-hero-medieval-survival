@@ -131,7 +131,8 @@ export class LevelUpScene extends Phaser.Scene {
     const cardH = vertical ? cardW * 0.66 : cardW * 0.82;
     const totalH = vertical ? choices.length * (cardH + gap) : cardH;
     // Сдвиг вниз, чтобы карточки не наезжали на заголовок
-    const vShift = vertical ? 34 : 0;
+    // (44 = запас под glow-рамку эволюционной карточки +12px)
+    const vShift = vertical ? 44 : 0;
 
     choices.forEach((card, i) => {
       const x = vertical
@@ -142,12 +143,63 @@ export class LevelUpScene extends Phaser.Scene {
         : height * 0.52;
 
       const container = this.add.container(x, y);
-      const paper = makePanel(this, 0, 0, card.kind === 'weapon-new' || card.kind === 'passive' ? 'paper' : 'paperSpecial', cardW, cardH);
+      const isEvo = card.kind === 'weapon-evolve';
+      const paper = makePanel(this, 0, 0, isEvo ? 'paper' : card.kind === 'weapon-new' || card.kind === 'passive' ? 'paper' : 'paperSpecial', cardW, cardH);
       container.add(paper);
+
+      // Эволюция: пульсирующее золотое сияние за карточкой + искры
+      if (isEvo) {
+        paper.setTint(0xffd76e);
+        const glow = this.add.rectangle(0, 0, cardW + 18, cardH + 18)
+          .setStrokeStyle(3, 0xffd76e, 0.9).setFillStyle(0xffd76e, 0.06);
+        container.addAt(glow, 0);
+        this.tweens.add({
+          targets: glow,
+          alpha: { from: 1, to: 0.45 },
+          scale: { from: 1, to: 1.04 },
+          duration: 800,
+          yoyo: true,
+          repeat: -1,
+          ease: 'Sine.easeInOut',
+        });
+        // Мерцающие звёздочки вокруг карточки
+        for (let s = 0; s < 5; s++) {
+          const star = this.add.text(
+            Phaser.Math.Between(-cardW / 2 + 8, cardW / 2 - 8),
+            Phaser.Math.Between(-cardH / 2 + 6, cardH / 2 - 6),
+            '✦',
+            { fontFamily: FONT, fontSize: '13px', color: '#ffd76e' },
+          ).setOrigin(0.5).setAlpha(0);
+          container.add(star);
+          this.tweens.add({
+            targets: star,
+            alpha: { from: 0, to: 1 },
+            scale: { from: 0.4, to: 1 },
+            duration: 500,
+            delay: s * 220 + Phaser.Math.Between(0, 160),
+            yoyo: true,
+            repeat: -1,
+            repeatDelay: 700 + Phaser.Math.Between(0, 400),
+            ease: 'Sine.easeInOut',
+          });
+        }
+      }
 
       const icon = this.add.image(0, -cardH * 0.32, card.icon)
         .setDisplaySize(58, 58);
+      if (isEvo) icon.setTint(0xffe9a0);
       container.add(icon);
+      // Эволюция: иконка «дышит» золотом
+      if (isEvo) {
+        this.tweens.add({
+          targets: icon,
+          scale: { from: 1, to: 1.12 },
+          duration: 700,
+          yoyo: true,
+          repeat: -1,
+          ease: 'Sine.easeInOut',
+        });
+      }
 
       const title = this.add.text(0, -cardH * 0.08, card.title, {
         fontFamily: FONT, fontSize: '15px', color: '#3b2410',
@@ -156,7 +208,8 @@ export class LevelUpScene extends Phaser.Scene {
       container.add(title);
 
       const subtitle = this.add.text(0, cardH * 0.08, card.subtitle, {
-        fontFamily: FONT, fontSize: '12px', color: card.kind === 'weapon-new' ? '#8a5b12' : '#8a5b12',
+        fontFamily: FONT, fontSize: isEvo ? '13px' : '12px',
+        color: isEvo ? '#9a6a08' : '#8a5b12',
         align: 'center',
       }).setOrigin(0.5, 0.5);
       container.add(subtitle);
@@ -167,12 +220,14 @@ export class LevelUpScene extends Phaser.Scene {
       }).setOrigin(0.5, 0);
       container.add(desc);
 
-      // Точки уровня
-      const dots = card.levelTo !== undefined && card.levelTo <= 5 && card.kind !== 'heal' && card.kind !== 'gold'
-        ? '●'.repeat(card.levelTo) + '○'.repeat(Math.max(0, 5 - card.levelTo))
-        : '';
+      // Точки уровня (эволюция — пять точек + звезда)
+      const dots = card.kind === 'weapon-evolve'
+        ? '●●●●●★'
+        : card.levelTo !== undefined && card.levelTo <= 5 && card.kind !== 'heal' && card.kind !== 'gold'
+          ? '●'.repeat(card.levelTo) + '○'.repeat(Math.max(0, 5 - card.levelTo))
+          : '';
       const levelDots = this.add.text(0, cardH * 0.42, dots, {
-        fontFamily: FONT, fontSize: '12px', color: '#b0803a',
+        fontFamily: FONT, fontSize: '12px', color: isEvo ? '#9a6a08' : '#b0803a',
       }).setOrigin(0.5);
       container.add(levelDots);
 
@@ -190,14 +245,14 @@ export class LevelUpScene extends Phaser.Scene {
         this.chooseCard(card);
       });
 
-      // Появление
-      container.setScale(0.4);
+      // Появление (эволюция — крупнее и с «взрывом»)
+      container.setScale(isEvo ? 0.3 : 0.4);
       container.setAlpha(0);
       this.tweens.add({
         targets: container,
         scale: 1, alpha: 1,
         delay: 90 * i,
-        duration: 260,
+        duration: isEvo ? 380 : 260,
         ease: 'Back.easeOut',
       });
 
@@ -269,6 +324,9 @@ export class LevelUpScene extends Phaser.Scene {
       // Следующий выбор — новый набор карт
       this.currentChoices = null;
       for (const c of this.cards) {
+        // Бесконечные твиды сияния/звёзд эволюции — убить до уничтожения
+        this.tweens.killTweensOf(c.container);
+        c.container.list.forEach((child) => this.tweens.killTweensOf(child));
         this.tweens.add({
           targets: c.container,
           alpha: 0, y: c.container.y - 30,

@@ -3,7 +3,7 @@
 
 type SfxName =
   | 'hit' | 'shoot' | 'pickup' | 'levelup' | 'hurt' | 'die'
-  | 'explosion' | 'boss' | 'click' | 'victory' | 'gameover' | 'slam' | 'ach';
+  | 'explosion' | 'boss' | 'click' | 'victory' | 'gameover' | 'slam' | 'ach' | 'evolve';
 
 class AudioSystem {
   private ctx: AudioContext | null = null;
@@ -106,6 +106,13 @@ class AudioSystem {
       case 'click': this.tone(440, 0.05, 'square', 0.08); break;
       case 'ach':
         [880, 1109, 1319].forEach((f, i) => this.tone(f, 0.14, 'triangle', 0.14, i * 0.1));
+        break;
+      case 'evolve':
+        // Золотой восходящий арпеджион + финальная нота: «оружие пробудилось»
+        [523, 659, 784, 1047, 1319, 1568].forEach(
+          (f, i) => this.tone(f, 0.16, 'triangle', 0.15, i * 0.07),
+        );
+        this.tone(2093, 0.4, 'sine', 0.1, 0.42);
         break;
       case 'victory':
         [523, 659, 784, 1047, 784, 1047, 1319].forEach((f, i) => this.tone(f, 0.16, 'square', 0.12, i * 0.13));
