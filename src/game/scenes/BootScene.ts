@@ -37,6 +37,14 @@ export class BootScene extends Phaser.Scene {
     this.load.spritesheet('player-atk1', `${A}/units/blue/warrior/warrior-attack1.png`, { frameWidth: 192, frameHeight: 192 });
     this.load.spritesheet('player-atk2', `${A}/units/blue/warrior/warrior-attack2.png`, { frameWidth: 192, frameHeight: 192 });
 
+    // ---- Герои: лучница и копейщик (синяя фракция) ----
+    this.load.spritesheet('hero-archer-idle', `${A}/units/blue/archer/archer-idle.png`, { frameWidth: 192, frameHeight: 192 });
+    this.load.spritesheet('hero-archer-run', `${A}/units/blue/archer/archer-run.png`, { frameWidth: 192, frameHeight: 192 });
+    this.load.spritesheet('hero-archer-atk', `${A}/units/blue/archer/archer-shoot.png`, { frameWidth: 192, frameHeight: 192 });
+    this.load.spritesheet('hero-lancer-idle', `${A}/units/blue/lancer/lancer-idle.png`, { frameWidth: 320, frameHeight: 320 });
+    this.load.spritesheet('hero-lancer-run', `${A}/units/blue/lancer/lancer-run.png`, { frameWidth: 320, frameHeight: 320 });
+    this.load.spritesheet('hero-lancer-atk', `${A}/units/blue/lancer/lancer-right-attack.png`, { frameWidth: 320, frameHeight: 320 });
+
     // ---- Враги ----
     this.load.spritesheet('grunt-idle', `${A}/units/red/pawn/pawn-idle.png`, { frameWidth: 192, frameHeight: 192 });
     this.load.spritesheet('grunt-run', `${A}/units/red/pawn/pawn-run.png`, { frameWidth: 192, frameHeight: 192 });
@@ -96,10 +104,14 @@ export class BootScene extends Phaser.Scene {
     this.load.image('slash', `${G}/slash.png`);
     this.load.image('aoe-ring', `${G}/aoe-ring.png`);
     this.load.image('shadow', `${G}/shadow.png`);
+    this.load.image('knife', `${G}/knife.png`);
+    this.load.image('treasure', `${A}/terrain/resources/gold-stones/gold-stone-6.png`);
+    this.load.spritesheet('fx-treasure', `${A}/terrain/resources/gold-stones/gold-stone-6-highlight.png`, { frameWidth: 128, frameHeight: 128 });
 
     // ---- Иконки ----
     for (const ic of ['icon-sword', 'icon-bow', 'icon-spear', 'icon-hammer', 'icon-bomb', 'icon-aura',
-      'icon-boots', 'icon-shield', 'icon-magnet', 'icon-heart', 'icon-might', 'icon-haste', 'icon-meat', 'icon-coin']) {
+      'icon-boots', 'icon-shield', 'icon-magnet', 'icon-heart', 'icon-might', 'icon-haste', 'icon-meat', 'icon-coin',
+      'icon-knives', 'icon-gem']) {
       this.load.image(ic, `${G}/${ic}.png`);
     }
 
@@ -175,6 +187,14 @@ export class BootScene extends Phaser.Scene {
     this.once('fx-fire', 'fx-fire', 8, 12);
     this.once('fx-heal', 'fx-heal', 11, 12);
     this.sheet('fx-foam', 'fx-foam', 16, 8);
+    this.sheet('fx-treasure', 'fx-treasure', 6, 10);
+    // Герои
+    this.sheet('hero-archer-idle', 'hero-archer-idle', 6, 7);
+    this.sheet('hero-archer-run', 'hero-archer-run', 4, 10);
+    this.once('hero-archer-atk', 'hero-archer-atk', 8, 14);
+    this.sheet('hero-lancer-idle', 'hero-lancer-idle', 12, 8);
+    this.sheet('hero-lancer-run', 'hero-lancer-run', 6, 10);
+    this.once('hero-lancer-atk', 'hero-lancer-atk', 3, 12);
     // Декор
     this.sheet('tree1-sway', 'tree1', 8, 3);
     this.sheet('tree3-sway', 'tree3', 8, 3);

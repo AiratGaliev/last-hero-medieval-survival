@@ -15,6 +15,7 @@ interface GameOverStats {
   level: number;
   gold: number;
   score: number;
+  hero?: string;
 }
 
 type SaveState = 'idle' | 'saving' | 'saved' | 'error';
@@ -94,6 +95,8 @@ export default function GameOverDialog() {
 
         {stats && (
           <div className="grid grid-cols-2 gap-2 rounded-lg border-2 border-amber-800/30 bg-amber-50 p-3 text-sm">
+            <span className="text-amber-900/70">Герой</span>
+            <span className="text-right font-semibold">{stats.hero ?? 'Воин'}</span>
             <span className="text-amber-900/70">Время</span>
             <span className="text-right font-semibold tabular-nums">{mm}:{ss}</span>
             <span className="text-amber-900/70">Убийств</span>

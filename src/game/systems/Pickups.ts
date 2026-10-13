@@ -2,7 +2,7 @@ import Phaser from 'phaser';
 import { DEPTH, GEM_CAP } from '../constants';
 import { audio } from './Audio';
 
-// ============ Подбираемые предметы: XP-кристаллы и мясо ============
+// ============ Подбираемые предметы: XP-кристаллы, мясо, сундуки ============
 
 interface Gem {
   img: Phaser.GameObjects.Image;
@@ -13,6 +13,8 @@ interface Gem {
   vx: number;
   vy: number;
   phase: number;
+  kind: 'gem' | 'meat' | 'chest';
+  glow?: Phaser.GameObjects.Sprite;
 }
 
 export class Pickups {
@@ -20,11 +22,18 @@ export class Pickups {
   private gems: Gem[] = [];
   private onXp: (v: number) => void;
   private onHeal: (v: number) => void;
+  private onChest: (x: number, y: number) => void;
 
-  constructor(scene: Phaser.Scene, onXp: (v: number) => void, onHeal: (v: number) => void) {
+  constructor(
+    scene: Phaser.Scene,
+    onXp: (v: number) => void,
+    onHeal: (v: number) => void,
+    onChest: (x: number, y: number) => void,
+  ) {
     this.scene = scene;
     this.onXp = onXp;
     this.onHeal = onHeal;
+    this.onChest = onChest;
   }
 
   get count(): number {
@@ -37,6 +46,7 @@ export class Pickups {
       let best: Gem | null = null;
       let bestD = Infinity;
       for (const g of this.gems) {
+        if (g.kind !== 'gem') continue;
         const d = (g.img.x - x) ** 2 + (g.img.y - y) ** 2;
         if (d < bestD) { bestD = d; best = g; }
       }
@@ -48,7 +58,7 @@ export class Pickups {
       .setDepth(DEPTH.GEM);
     this.gems.push({
       img, value: 0, xp, heal: 0, pulling: false, vx: 0, vy: 0,
-      phase: Math.random() * Math.PI * 2,
+      phase: Math.random() * Math.PI * 2, kind: 'gem',
     });
   }
 
@@ -56,7 +66,35 @@ export class Pickups {
     const img = this.scene.add.image(x, y, 'meat').setScale(0.55).setDepth(DEPTH.GEM);
     this.gems.push({
       img, value: 0, xp: 0, heal: 30, pulling: false, vx: 0, vy: 0,
-      phase: Math.random() * Math.PI * 2,
+      phase: Math.random() * Math.PI * 2, kind: 'meat',
+    });
+  }
+
+  /** Сундук-сокровище: подбирается касанием, вызывают onChest */
+  spawnChest(x: number, y: number): void {
+    // Только один активный сундук
+    if (this.gems.some((g) => g.kind === 'chest')) return;
+    const img = this.scene.add.image(x, y, 'treasure')
+      .setScale(0.8)
+      .setDepth(DEPTH.GEM);
+    const glow = this.scene.add.sprite(x, y, 'fx-treasure')
+      .setScale(1.15)
+      .setDepth(DEPTH.GEM - 1)
+      .setBlendMode(Phaser.BlendModes.ADD)
+      .setAlpha(0.9);
+    glow.play('fx-treasure');
+    // Мягкое покачивание
+    this.scene.tweens.add({
+      targets: [img, glow],
+      y: y - 7,
+      duration: 900,
+      yoyo: true,
+      repeat: -1,
+      ease: 'Sine.easeInOut',
+    });
+    this.gems.push({
+      img, value: 0, xp: 0, heal: 0, pulling: false, vx: 0, vy: 0,
+      phase: 0, kind: 'chest', glow,
     });
   }
 
@@ -68,6 +106,11 @@ export class Pickups {
       const dx = px - g.img.x;
       const dy = py - g.img.y;
       const dist = Math.hypot(dx, dy);
+
+      if (g.kind === 'chest') {
+        if (dist < 58) this.collectChest(i);
+        continue;
+      }
 
       if (g.pulling) {
         // Притяжение к игроку с ускорением
@@ -88,8 +131,7 @@ export class Pickups {
       // Лёгкое покачивание
       g.img.y += Math.sin(now / 400 + g.phase) * 0.12;
       if (g.img.x < 0 || g.img.x > 3200 || g.img.y < 0 || g.img.y > 3200) {
-        g.img.destroy();
-        this.gems.splice(i, 1);
+        this.destroyGem(g, i);
       }
     }
   }
@@ -114,9 +156,34 @@ export class Pickups {
     this.gems.splice(index, 1);
   }
 
+  private collectChest(index: number): void {
+    const g = this.gems[index];
+    this.scene.tweens.killTweensOf(g.img);
+    if (g.glow) this.scene.tweens.killTweensOf(g.glow);
+    const x = g.img.x;
+    const y = g.img.y;
+    g.glow?.destroy();
+    this.scene.tweens.add({
+      targets: g.img,
+      scale: 1.3,
+      alpha: 0,
+      duration: 200,
+      onComplete: () => g.img.destroy(),
+    });
+    this.gems.splice(index, 1);
+    this.onChest(x, y);
+  }
+
+  private destroyGem(g: Gem, index: number): void {
+    g.glow?.destroy();
+    g.img.destroy();
+    this.gems.splice(index, 1);
+  }
+
   /** Собрать всё (победа/конец игры) */
   vacuumAll(px: number, py: number): void {
     for (const g of this.gems) {
+      if (g.kind === 'chest') continue;
       g.pulling = true;
       g.img.x = Phaser.Math.Linear(g.img.x, px, 0.5);
       g.img.y = Phaser.Math.Linear(g.img.y, py, 0.5);
@@ -124,7 +191,10 @@ export class Pickups {
   }
 
   destroy(): void {
-    for (const g of this.gems) g.img.destroy();
+    for (const g of this.gems) {
+      g.glow?.destroy();
+      g.img.destroy();
+    }
     this.gems = [];
   }
 }

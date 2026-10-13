@@ -99,6 +99,7 @@ export class WeaponSystem {
       case 'hammer': this.fireHammer(w.dmg, w.radius ?? 110, w.count ?? 1); break;
       case 'bomb': this.fireBomb(w.dmg, w.radius ?? 130, w.count ?? 1); break;
       case 'aura': this.fireAura(w.dmg, w.radius ?? 90); break;
+      case 'knives': this.fireKnives(w.dmg, w.count ?? 3, w.pierce ?? 2); break;
     }
   }
 
@@ -230,6 +231,17 @@ export class WeaponSystem {
         const ty = t.y + body.velocity.y * 0.35;
         this.ctx.projectiles().throwBomb(p.x, p.y, tx, ty, dmg, radius);
       });
+    }
+  }
+
+  // ---------- НОЖИ: веер ----------
+  private fireKnives(dmg: number, count: number, pierce: number): void {
+    const p = this.ctx.player();
+    const dir = this.ctx.moveDir();
+    const base = Math.atan2(dir.y, dir.x);
+    for (let i = 0; i < count; i++) {
+      const a = base + (i - (count - 1) / 2) * 0.16;
+      this.ctx.projectiles().fireKnife(p.x, p.y, a, dmg, pierce);
     }
   }
 

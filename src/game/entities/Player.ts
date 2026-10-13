@@ -1,31 +1,43 @@
 import Phaser from 'phaser';
-import { PLAYER_BASE, DEPTH } from '../constants';
+import { DEPTH } from '../constants';
+import type { HeroDef } from '../data';
 
-// ============ Игрок — Синий Воин ============
+// ============ Игрок ============
 
 export class Player extends Phaser.Physics.Arcade.Sprite {
-  hp: number = PLAYER_BASE.HP;
-  maxHp: number = PLAYER_BASE.HP;
-  speed: number = PLAYER_BASE.SPEED;
-  iframesUntil: number = 0;
+  hp: number;
+  maxHp: number;
+  speed: number;
+  iframesUntil = 0;
+  readonly hero: HeroDef;
   hpBar: Phaser.GameObjects.Graphics;
   private shadow: Phaser.GameObjects.Image;
 
-  constructor(scene: Phaser.Scene, x: number, y: number) {
-    super(scene, x, y, 'player-idle');
+  constructor(scene: Phaser.Scene, x: number, y: number, hero: HeroDef) {
+    super(scene, x, y, hero.anims.idle);
+    this.hero = hero;
+    this.hp = hero.maxHp;
+    this.maxHp = hero.maxHp;
+    this.speed = hero.speed;
+
     scene.add.existing(this);
     scene.physics.add.existing(this);
 
-    this.setScale(PLAYER_BASE.DISPLAY_SCALE);
+    this.setScale(hero.scale);
     this.setCollideWorldBounds(true);
     this.setDepth(DEPTH.ENTITY_BASE + y);
-    this.play('player-idle');
+    this.play(hero.anims.idle);
 
-    const r = 24;
-    this.setCircle(r, this.width / 2 - r, this.height / 2 - r + 12);
+    // Круглое тело у ног (кадры 192 или 320)
+    const frame = hero.frameW;
+    const cx = frame / 2;
+    const cy = frame === 320 ? 266 : 150;
+    const r = 24 / hero.scale;
+    this.setCircle(r, cx - r, cy - r);
 
     // Тень под ногами
-    this.shadow = scene.add.image(x, y + 6, 'shadow')
+    const shadowDy = frame === 320 ? 36 : 6;
+    this.shadow = scene.add.image(x, y + shadowDy, 'shadow')
       .setScale(0.22, 0.13)
       .setAlpha(0.35)
       .setDepth(DEPTH.SHADOW);
@@ -34,31 +46,32 @@ export class Player extends Phaser.Physics.Arcade.Sprite {
     this.hpBar = scene.add.graphics().setDepth(DEPTH.HUD);
 
     this.on('animationcomplete', (anim: Phaser.Animations.Animation) => {
-      if (anim.key.startsWith('player-atk')) {
+      if (anim.key === this.hero.anims.atk1 || anim.key === this.hero.anims.atk2) {
         const body = this.body as Phaser.Physics.Arcade.Body;
-        if (body.velocity.length() > 10) this.play('player-run', true);
-        else this.play('player-idle', true);
+        if (body.velocity.length() > 10) this.play(this.hero.anims.run, true);
+        else this.play(this.hero.anims.idle, true);
       }
     });
   }
 
   playAttack(alt: boolean): void {
-    if (!this.anims.currentAnim || !this.anims.currentAnim.key.startsWith('player-atk')) {
-      this.play(alt ? 'player-atk2' : 'player-atk1', true);
+    const cur = this.anims.currentAnim?.key ?? '';
+    if (cur !== this.hero.anims.atk1 && cur !== this.hero.anims.atk2) {
+      this.play(alt ? this.hero.anims.atk2 : this.hero.anims.atk1, true);
     }
   }
 
   setAnimForVelocity(): void {
     const cur = this.anims.currentAnim?.key ?? '';
-    if (cur.startsWith('player-atk')) return;
+    if (cur === this.hero.anims.atk1 || cur === this.hero.anims.atk2) return;
     const moving = (this.body as Phaser.Physics.Arcade.Body).velocity.length() > 10;
-    const want = moving ? 'player-run' : 'player-idle';
+    const want = moving ? this.hero.anims.run : this.hero.anims.idle;
     if (cur !== want) this.play(want, true);
   }
 
   damage(amount: number, now: number): boolean {
     if (now < this.iframesUntil) return false;
-    this.iframesUntil = now + PLAYER_BASE.IFRAMES;
+    this.iframesUntil = now + 500;
     this.hp = Math.max(0, this.hp - amount);
     // Мигание
     this.scene.tweens.add({
@@ -79,7 +92,7 @@ export class Player extends Phaser.Physics.Arcade.Sprite {
 
   preUpdate(time: number, delta: number): void {
     super.preUpdate(time, delta);
-    this.shadow.setPosition(this.x, this.y + 6);
+    this.shadow.setPosition(this.x, this.y + (this.hero.frameW === 320 ? 36 : 6));
     this.setDepth(DEPTH.ENTITY_BASE + this.y);
     if (this.hpBar.visible && this.hp < this.maxHp) this.drawHpBar();
   }
@@ -90,7 +103,7 @@ export class Player extends Phaser.Physics.Arcade.Sprite {
       return;
     }
     const w = 64, h = 7;
-    const x = this.x - w / 2, y = this.y + 34;
+    const x = this.x - w / 2, y = this.y + 38;
     const g = this.hpBar.setVisible(true);
     g.clear();
     g.fillStyle(0x1a0f08, 0.85).fillRoundedRect(x - 1, y - 1, w + 2, h + 2, 3);

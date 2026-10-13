@@ -30,9 +30,11 @@ export class Projectiles {
   private ctx: ProjectileCtx;
   arrows: Phaser.Physics.Arcade.Group;
   spears: Phaser.Physics.Arcade.Group;
+  knives: Phaser.Physics.Arcade.Group;
   enemyArrows: Phaser.Physics.Arcade.Group;
   private arrowPool: Proj[] = [];
   private spearPool: Proj[] = [];
+  private knifePool: Proj[] = [];
   private enemyArrowPool: Proj[] = [];
   private bombs: Bomb[] = [];
 
@@ -41,6 +43,7 @@ export class Projectiles {
     this.ctx = ctx;
     this.arrows = scene.physics.add.group({ allowGravity: false });
     this.spears = scene.physics.add.group({ allowGravity: false });
+    this.knives = scene.physics.add.group({ allowGravity: false });
     this.enemyArrows = scene.physics.add.group({ allowGravity: false });
   }
 
@@ -74,6 +77,22 @@ export class Projectiles {
     p.hitSet = new Set();
     p.setDepth(DEPTH.PROJECTILE);
     (p.body as Phaser.Physics.Arcade.Body).setSize(110, 14, true);
+    audio.play('shoot');
+  }
+
+  // ---------- Ножи ----------
+  fireKnife(x: number, y: number, angle: number, dmg: number, pierce: number): void {
+    const p = this.acquire(this.knifePool, 'knife', this.knives);
+    const speed = 840;
+    p.setPosition(x, y);
+    p.setVelocity(Math.cos(angle) * speed, Math.sin(angle) * speed);
+    p.setRotation(angle);
+    p.dmg = dmg;
+    p.pierceLeft = pierce;
+    p.life = 560;
+    p.hitSet = new Set();
+    p.setDepth(DEPTH.PROJECTILE);
+    (p.body as Phaser.Physics.Arcade.Body).setSize(30, 12, true);
     audio.play('shoot');
   }
 
@@ -176,7 +195,7 @@ export class Projectiles {
   }
 
   clear(): void {
-    for (const p of [...this.arrowPool, ...this.spearPool, ...this.enemyArrowPool]) this.release(p);
+    for (const p of [...this.arrowPool, ...this.spearPool, ...this.knifePool, ...this.enemyArrowPool]) this.release(p);
     for (const b of this.bombs) b.img.destroy();
     this.bombs = [];
   }

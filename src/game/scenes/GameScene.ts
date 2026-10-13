@@ -3,8 +3,8 @@ import {
   WORLD, PLAYER_BASE, DEPTH, ENEMY_CAP, SCORE, XP_CURVE,
 } from '../constants';
 import {
-  WEAPONS, PASSIVES, ENEMIES,
-  type WeaponId, type PassiveId, type EnemyKind, type UpgradeCard,
+  WEAPONS, PASSIVES, HEROES, ENEMIES,
+  type WeaponId, type PassiveId, type EnemyKind, type UpgradeCard, type HeroId, type HeroDef,
 } from '../data';
 import { Player } from '../entities/Player';
 import { Enemy, type EnemyContext } from '../entities/Enemy';
@@ -61,13 +61,17 @@ export class GameScene extends Phaser.Scene {
   private lastDespawn = 0;
   private lastDieSound = 0;
   private sepGrid = new Map<number, Enemy[]>();
+  private heroDef: HeroDef = HEROES.warrior;
+  private xpMult = 1;
+  private chestTimer = 40;
 
   constructor() {
     super('Game');
   }
 
-  create(): void {
+  create(payload?: { hero?: HeroId }): void {
     this.resetState();
+    this.initHero(payload?.hero);
     this.buildWorld();
     this.buildPlayer();
     this.buildSystems();
@@ -90,7 +94,7 @@ export class GameScene extends Phaser.Scene {
     audio.unlock();
     audio.startMusic();
     this.started = true;
-    this.hud.announce('ВЫЖИВИ 15 МИНУТ!', '#ffe9b0');
+    this.hud.announce(`ВЫЖИВИ 15 МИНУТ, ${this.heroDef.name.toUpperCase()}!`, '#ffe9b0');
   }
 
   private resetState(): void {
@@ -101,8 +105,19 @@ export class GameScene extends Phaser.Scene {
     this.passiveLevels.clear();
     this.armorMult = 1; this.magnetRadius = PLAYER_BASE.MAGNET_RADIUS;
     this.regen = 0; this.mightMult = 1; this.cdMult = 1; this.critChance = 0;
+    this.xpMult = 1;
+    this.chestTimer = 40;
     this.lastMove = { x: 1, y: 0 };
     this.sepGrid.clear();
+  }
+
+  private initHero(heroId?: HeroId): void {
+    let id = heroId;
+    if (!id && typeof window !== 'undefined') {
+      const saved = window.localStorage.getItem('tss-hero');
+      if (saved === 'warrior' || saved === 'archer' || saved === 'lancer') id = saved;
+    }
+    this.heroDef = HEROES[id ?? 'warrior'];
   }
 
   // ================= МИР =================
@@ -238,13 +253,17 @@ export class GameScene extends Phaser.Scene {
   }
 
   private buildPlayer(): void {
-    this.player = new Player(this, WORLD.SIZE / 2, WORLD.SIZE / 2 + 260);
-    this.player.speed = PLAYER_BASE.SPEED;
+    this.player = new Player(this, WORLD.SIZE / 2, WORLD.SIZE / 2 + 260, this.heroDef);
   }
 
   private buildSystems(): void {
     this.effects = new Effects(this);
-    this.pickups = new Pickups(this, (v) => this.addXp(v), (v) => this.player.heal(v));
+    this.pickups = new Pickups(
+      this,
+      (v) => this.addXp(v),
+      (v) => this.player.heal(v),
+      (x, y) => this.openChest(x, y),
+    );
     this.projectiles = new Projectiles(this, {
       onExplode: (x, y, dmg, radius) => this.explode(x, y, dmg, radius),
     });
@@ -279,10 +298,11 @@ export class GameScene extends Phaser.Scene {
       cdMult: () => this.cdMult,
     };
     this.weapons = new WeaponSystem(this, weaponCtx);
-    this.weapons.add('sword');
+    this.weapons.add(this.heroDef.startWeapon);
+    const startId = this.heroDef.startWeapon;
 
-    this.hud = new HUD(this);
-    this.hud.setIcon('sword', WEAPONS.sword.icon, 1, false);
+    this.hud = new HUD(this, () => this.openPause());
+    this.hud.setIcon(startId, WEAPONS[startId].icon, 1, false);
   }
 
   private setupCollisions(): void {
@@ -308,6 +328,16 @@ export class GameScene extends Phaser.Scene {
       if (p.hitSet?.has(enemy)) return;
       p.hitSet?.add(enemy);
       this.damageEnemy(enemy, p.dmg, 0, 0, 40);
+      this.projectiles.consumePierce(p);
+    });
+
+    this.physics.add.overlap(this.projectiles.knives, this.enemyGroup, (proj, e) => {
+      const p = proj as unknown as import('../systems/Projectiles').Proj;
+      const enemy = e as Enemy;
+      if (!p.active || !enemy.active) return;
+      if (p.hitSet?.has(enemy)) return;
+      p.hitSet?.add(enemy);
+      this.damageEnemy(enemy, p.dmg, enemy.x - this.player.x, enemy.y - this.player.y, 70);
       this.projectiles.consumePierce(p);
     });
 
@@ -380,6 +410,15 @@ export class GameScene extends Phaser.Scene {
     this.weapons.update(delta);
     this.projectiles.update(delta);
     this.spawner.update(dt);
+
+    // Сундуки с сокровищами
+    if (!this.gameEnded) {
+      this.chestTimer -= dt;
+      if (this.chestTimer <= 0) {
+        this.chestTimer = 75;
+        this.spawnChest();
+      }
+    }
     this.pickups.update(delta, this.player.x, this.player.y, this.magnetRadius, time);
 
     // Регенерация
@@ -502,6 +541,39 @@ export class GameScene extends Phaser.Scene {
     this.enemyGroup.remove(e, true, true);
   }
 
+  private spawnChest(): void {
+    const a = Math.random() * Math.PI * 2;
+    const r = Phaser.Math.Between(320, 520);
+    const m = WORLD.GRASS_MARGIN + 120;
+    const x = Phaser.Math.Clamp(this.player.x + Math.cos(a) * r, m, WORLD.SIZE - m);
+    const y = Phaser.Math.Clamp(this.player.y + Math.sin(a) * r, m, WORLD.SIZE - m);
+    this.pickups.spawnChest(x, y);
+    this.hud.announce('ГДЕ-ТО СПРЯТАНО СОКРОВИЩЕ...', '#ffd76e');
+  }
+
+  private openChest(x: number, y: number): void {
+    audio.play('levelup');
+    audio.play('explosion');
+    this.effects.explosion(x, y, 0.9, 2);
+    this.cameras.main.shake(180, 0.004);
+    this.hud.announce('СОКРОВИЩЕ ОБРЕТЕНО!', '#ffd700');
+    this.gold += 75;
+    this.score += 250;
+    // Золотой дождь из кристаллов
+    const minute = this.elapsed / 60;
+    const tier = minute > 8 ? 'gem-green' : 'gem-blue';
+    for (let i = 0; i < 14; i++) {
+      const a = Math.random() * Math.PI * 2;
+      const d = Phaser.Math.Between(20, 110);
+      this.pickups.spawnGem(x + Math.cos(a) * d, y + Math.sin(a) * d, tier, 1);
+    }
+    if (minute >= 3) {
+      this.pickups.spawnGem(x, y - 20, 'gem-red', 10);
+    }
+    this.pickups.spawnMeat(x + 26, y);
+    this.pickups.spawnMeat(x - 26, y);
+  }
+
   private spawnEnemy(kind: EnemyKind, x: number, y: number): void {
     if (this.enemyGroup.getLength() >= ENEMY_CAP) return;
     const m = WORLD.GRASS_MARGIN + 40;
@@ -572,7 +644,7 @@ export class GameScene extends Phaser.Scene {
 
   private addXp(v: number): void {
     if (this.gameEnded) return;
-    this.xp += v;
+    this.xp += Math.max(1, Math.round(v * this.xpMult));
     while (this.xp >= this.xpNext) {
       this.xp -= this.xpNext;
       this.level++;
@@ -585,7 +657,7 @@ export class GameScene extends Phaser.Scene {
     const pool: UpgradeCard[] = [];
     for (const w of Object.values(WEAPONS)) {
       const lvl = this.weapons.level(w.id);
-      if (lvl === 0 && this.weapons.ownedIds().length < 6) {
+      if (lvl === 0 && this.weapons.ownedIds().length < 7) {
         pool.push({
           kind: 'weapon-new', id: w.id, title: w.name, subtitle: 'НОВОЕ ОРУЖИЕ',
           desc: w.desc, icon: w.icon, levelFrom: 0, levelTo: 1,
@@ -683,14 +755,15 @@ export class GameScene extends Phaser.Scene {
 
   private recomputeStats(): void {
     const lvl = (id: PassiveId) => this.passiveLevels.get(id) ?? 0;
-    this.player.speed = PLAYER_BASE.SPEED * (1 + 0.1 * lvl('boots'));
+    this.player.speed = this.heroDef.speed * (1 + 0.1 * lvl('boots'));
     this.armorMult = 1 - 0.08 * lvl('armor');
     this.magnetRadius = PLAYER_BASE.MAGNET_RADIUS * (1 + 0.3 * lvl('magnet'));
     this.regen = 0.5 * lvl('regen');
     this.mightMult = 1 + 0.12 * lvl('might');
     this.cdMult = Math.max(0.6, 1 - 0.08 * lvl('haste'));
     this.critChance = 0.15 * lvl('luck');
-    const newMax = PLAYER_BASE.HP + 25 * lvl('vitality');
+    this.xpMult = 1 + 0.15 * lvl('wisdom');
+    const newMax = this.heroDef.maxHp + 25 * lvl('vitality');
     if (newMax !== this.player.maxHp) {
       const diff = newMax - this.player.maxHp;
       this.player.maxHp = newMax;
@@ -757,6 +830,7 @@ export class GameScene extends Phaser.Scene {
       level: this.level,
       gold: this.gold,
       score: this.currentScore(),
+      hero: this.heroDef.name,
     };
     this.scene.launch('GameOver', { stats });
     this.scene.pause();

@@ -1,6 +1,7 @@
 import Phaser from 'phaser';
 import { DEPTH, FONT, GAME_DURATION } from '../constants';
 import { WEAPONS, PASSIVES, type WeaponId, type PassiveId } from '../data';
+import { audio } from './Audio';
 
 // ============ HUD: XP-бар, таймер, счётчики, иконки, бар босса ============
 
@@ -23,8 +24,11 @@ export class HUD {
   private xpLabel!: Phaser.GameObjects.Text;
   private timerText!: Phaser.GameObjects.Text;
   private statsText!: Phaser.GameObjects.Text;
+  private goldIcon!: Phaser.GameObjects.Image;
+  private goldText!: Phaser.GameObjects.Text;
   private scoreText!: Phaser.GameObjects.Text;
   private announceText!: Phaser.GameObjects.Text;
+  private pauseBtn!: Phaser.GameObjects.Container;
   private weaponIcons = new Map<string, Phaser.GameObjects.Container>();
   private bossGroup!: Phaser.GameObjects.Container;
   private bossFill!: Phaser.GameObjects.Rectangle;
@@ -32,13 +36,13 @@ export class HUD {
 
   private resizeHandler = () => this.layout();
 
-  constructor(scene: Phaser.Scene) {
+  constructor(scene: Phaser.Scene, onPause: () => void) {
     this.scene = scene;
-    this.build();
+    this.build(onPause);
     scene.scale.on('resize', this.resizeHandler);
   }
 
-  private build(): void {
+  private build(onPause: () => void): void {
     const W = this.scene.scale.width;
     this.xpBarBg = this.scene.add.rectangle(0, 0, W, 16, 0x1b1008)
       .setOrigin(0, 0.5).setScrollFactor(0).setDepth(DEPTH.HUD + 5);
@@ -58,6 +62,13 @@ export class HUD {
       fontFamily: FONT, fontSize: '9px', color: '#d8c9a8',
       stroke: '#1b1008', strokeThickness: 3,
     }).setScrollFactor(0).setDepth(DEPTH.HUD + 7);
+
+    this.goldIcon = this.scene.add.image(0, 0, 'icon-coin').setDisplaySize(14, 14)
+      .setScrollFactor(0).setDepth(DEPTH.HUD + 7);
+    this.goldText = this.scene.add.text(0, 0, '0', {
+      fontFamily: FONT, fontSize: '11px', color: '#ffd76e',
+      stroke: '#1b1008', strokeThickness: 3,
+    }).setOrigin(0, 0.5).setScrollFactor(0).setDepth(DEPTH.HUD + 7);
 
     this.scoreText = this.scene.add.text(0, 0, 'СЧЁТ 0', {
       fontFamily: FONT, fontSize: '10px', color: '#ffd76e',
@@ -81,6 +92,20 @@ export class HUD {
     }).setOrigin(0.5);
     this.bossGroup.add([bg, inner, this.bossFill, this.bossText]);
 
+    // Кнопка паузы (важно для мобильных)
+    this.pauseBtn = this.scene.add.container(0, 0).setScrollFactor(0).setDepth(DEPTH.HUD + 9);
+    const pbBg = this.scene.add.image(0, 0, 'btn-small-blue').setDisplaySize(42, 42);
+    const pbTxt = this.scene.add.text(0, 0, 'II', {
+      fontFamily: FONT, fontSize: '16px', color: '#ffffff',
+      stroke: '#2a1608', strokeThickness: 5,
+    }).setOrigin(0.5);
+    const pbHit = this.scene.add.zone(0, 0, 56, 56).setInteractive({ useHandCursor: true });
+    pbHit.on('pointerdown', () => {
+      audio.play('click');
+      onPause();
+    });
+    this.pauseBtn.add([pbBg, pbTxt, pbHit]);
+
     this.layout();
   }
 
@@ -91,8 +116,11 @@ export class HUD {
     this.xpBarFill.setPosition(2, 8);
     this.xpLabel.setPosition(W / 2, 8);
     this.timerText.setPosition(12, 34);
-    this.statsText.setPosition(12, 62);
+    this.statsText.setPosition(12, 60);
+    this.goldIcon.setPosition(12, 78);
+    this.goldText.setPosition(30, 78);
     this.scoreText.setPosition(W - 12, 34);
+    this.pauseBtn.setPosition(W - 46, 96);
     this.announceText.setPosition(W / 2, H * 0.22);
     this.bossGroup.setPosition(W / 2, 64);
     // Иконки оружия
@@ -114,7 +142,8 @@ export class HUD {
     const ss = Math.floor(remain % 60);
     this.timerText.setText(`${mm.toString().padStart(2, '0')}:${ss.toString().padStart(2, '0')}`);
 
-    this.statsText.setText(`УБИЙСТВ: ${s.kills}   ЗОЛОТО: ${s.gold}`);
+    this.statsText.setText(`УБИЙСТВ: ${s.kills}`);
+    this.goldText.setText(`${s.gold}`);
     this.scoreText.setText(`СЧЁТ ${s.score.toLocaleString('ru-RU')}`);
   }
 

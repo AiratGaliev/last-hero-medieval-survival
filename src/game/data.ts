@@ -1,8 +1,8 @@
 // ============ Данные: оружия, пассивки, враги, волны ============
 // Источник баланса: docs/TZ.md
 
-export type WeaponId = 'sword' | 'bow' | 'spear' | 'hammer' | 'bomb' | 'aura';
-export type PassiveId = 'boots' | 'armor' | 'magnet' | 'regen' | 'might' | 'haste' | 'vitality' | 'luck';
+export type WeaponId = 'sword' | 'bow' | 'spear' | 'hammer' | 'bomb' | 'aura' | 'knives';
+export type PassiveId = 'boots' | 'armor' | 'magnet' | 'regen' | 'might' | 'haste' | 'vitality' | 'luck' | 'wisdom';
 
 export interface WeaponLevel {
   dmg: number;
@@ -99,6 +99,19 @@ export const WEAPONS: Record<WeaponId, WeaponDef> = {
       { dmg: 15, cd: 450, radius: 165 },
     ],
   },
+  knives: {
+    id: 'knives',
+    name: 'Метательные ножи',
+    desc: 'Веер острых ножей в направлении движения',
+    icon: 'icon-knives',
+    levels: [
+      { dmg: 8, cd: 1050, count: 3, pierce: 2 },
+      { dmg: 11, cd: 1000, count: 4, pierce: 2 },
+      { dmg: 15, cd: 950, count: 4, pierce: 3 },
+      { dmg: 20, cd: 900, count: 5, pierce: 3 },
+      { dmg: 26, cd: 850, count: 6, pierce: 4 },
+    ],
+  },
 };
 
 export interface PassiveDef {
@@ -141,6 +154,51 @@ export const PASSIVES: Record<PassiveId, PassiveDef> = {
   luck: {
     id: 'luck', name: 'Удача авантюриста', max: 5, icon: 'icon-coin',
     desc: (l) => `Шанс критического удара +${l * 15}%`,
+  },
+  wisdom: {
+    id: 'wisdom', name: 'Мудрость искателя', max: 5, icon: 'icon-gem',
+    desc: (l) => `Получаемый опыт +${l * 15}%`,
+  },
+};
+
+// ============ Герои ============
+
+export type HeroId = 'warrior' | 'archer' | 'lancer';
+
+export interface HeroDef {
+  id: HeroId;
+  name: string;
+  title: string;
+  traits: string[];
+  frameW: 192 | 320;
+  scale: number;
+  startWeapon: WeaponId;
+  maxHp: number;
+  speed: number;
+  anims: { idle: string; run: string; atk1: string; atk2: string };
+}
+
+export const HEROES: Record<HeroId, HeroDef> = {
+  warrior: {
+    id: 'warrior', name: 'Воин', title: 'Крепкий как скала',
+    traits: ['+10% HP', 'старт: Меч'],
+    frameW: 192, scale: 0.55, startWeapon: 'sword',
+    maxHp: 110, speed: 200,
+    anims: { idle: 'player-idle', run: 'player-run', atk1: 'player-atk1', atk2: 'player-atk2' },
+  },
+  archer: {
+    id: 'archer', name: 'Лучница', title: 'Быстрая стрела',
+    traits: ['+15% скорость', '−10 HP', 'старт: Лук'],
+    frameW: 192, scale: 0.55, startWeapon: 'bow',
+    maxHp: 90, speed: 230,
+    anims: { idle: 'hero-archer-idle', run: 'hero-archer-run', atk1: 'hero-archer-atk', atk2: 'hero-archer-atk' },
+  },
+  lancer: {
+    id: 'lancer', name: 'Копейщик', title: 'Стена из стали',
+    traits: ['+30 HP', '−5% скорость', 'старт: Копьё'],
+    frameW: 320, scale: 0.34, startWeapon: 'spear',
+    maxHp: 130, speed: 190,
+    anims: { idle: 'hero-lancer-idle', run: 'hero-lancer-run', atk1: 'hero-lancer-atk', atk2: 'hero-lancer-atk' },
   },
 };
 
