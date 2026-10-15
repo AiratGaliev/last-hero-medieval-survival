@@ -1,4 +1,5 @@
 import Phaser from 'phaser';
+import { Cursor } from '../systems/Cursor';
 import { FONT } from '../constants';
 import { audio } from '../systems/Audio';
 import { makeButton, makePanel } from '../systems/Ui';
@@ -35,7 +36,13 @@ export class PauseScene extends Phaser.Scene {
     super('Pause');
   }
 
+  /** Курсор в стиле Tiny Swords: следит за наведением и переключает
+   *  состояние. В CSS у курсора !important — он перебивает инлайновый
+   *  cursor, который Phaser ставит через useHandCursor. */
+  private cursor!: Cursor;
+
   create(payload: PauseData): void {
+    this.cursor = new Cursor(this);
     this.payload = payload;
     const { width, height } = this.scale;
     const compact = height < 560;

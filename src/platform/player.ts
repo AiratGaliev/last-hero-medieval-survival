@@ -4,15 +4,18 @@
 // сервисы, а предложение авторизоваться — только по явному действию игрока).
 
 import { getSdk, isOnYandex, type YandexPlayer } from './sdk';
+import { t } from '../i18n';
 
 /** Техническое имя таблицы рекордов в консоли Яндекса (поле «Technical name»). */
 export const LEADERBOARD_ID = 'tss_score';
 
 let cached: YandexPlayer | null = null;
+let loaded = false;
 
 /** Загружает объект игрока (один раз за сессию). */
 export async function loadPlayer(): Promise<YandexPlayer | null> {
-  if (cached) return cached;
+  if (loaded) return cached;
+  loaded = true;
   const sdk = getSdk();
   if (!sdk) return null;
   try {
@@ -57,9 +60,9 @@ export function avatarUrl(size: 'small' | 'medium' | 'large' = 'small'): string 
   }
 }
 
-/** Имя гостя по умолчанию — одинаковое во всех локализациях. */
+/** Имя гостя по умолчанию — из активной локали. */
 export function defaultGuestName(): string {
-  return 'Гость';
+  return t('common.guest');
 }
 
 /**
@@ -73,6 +76,7 @@ export async function offerAuth(): Promise<boolean> {
 
   try {
     await sdk.auth.openAuthDialog();
+    // Профиль перечитываем: до входа getPlayer() отдавал гостя.
     cached = await sdk.getPlayer();
     return cached?.isAuthorized() ?? false;
   } catch {

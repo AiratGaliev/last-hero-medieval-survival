@@ -4,7 +4,27 @@ Bullet-heaven роглайт (клон Vampire Survivors) на **нативно�
 **Yandex Games**. Ассеты — [Tiny Swords](https://pixelfrog-assets.itch.io/tiny-swords)
 от Pixel Frog.
 
-Документация: [`docs/TZ.md`](docs/TZ.md) · [`docs/ROADMAP.md`](docs/ROADMAP.md) · [`worklog.md`](worklog.md)
+Документация: [`docs/TZ.md`](docs/TZ.md) · [`docs/TILEMAP.md`](docs/TILEMAP.md) · [`docs/ROADMAP.md`](docs/ROADMAP.md) · [`worklog.md`](worklog.md)
+
+---
+
+## Что в игре
+
+| | |
+|---|---|
+| Матч | 15 минут, финальный босс на 15-й минуте |
+| Герои | 4 — Воин, Лучница, Копейщик, Монах |
+| Сложности | 2 — «Поход» и «Кошмар» (×1.6 к счёту) |
+| Оружие | 7, по 5 уровней + эволюция в 6-й |
+| Пассивные | 9, по 5 уровней |
+| Враги | 13 типов, включая элит, мидбосса и финального босса |
+| Достижения | 12 |
+| Лавка | 5 постоянных улучшений по 3 уровня |
+| Рекорды | общий зал Яндекса (для авторизованных) + локальная таблица (10 строк) |
+
+Эволюция оружия требует 5-го уровня ствола **и** пассивку-партнёра
+(меч + мощь, лук + молниеносность, копьё + пир, молот + щит, бомба + удача,
+аура + сердце, ножи + сапоги).
 
 ---
 
@@ -75,7 +95,7 @@ npm run build:yg     # -> release/tiny-sword-survivors.zip
 │   ├── styles.css           @font-face (шрифт в архиве) + сброс страницы
 │   ├── assets/
 │   │   ├── tiny-swords/     607 PNG — исходники Pixel Frog
-│   │   ├── game/            35 PNG — производные игровые
+│   │   ├── game/            производные игровые текстуры (девятислайсы, полосы, портреты)
 │   │   └── font/            3 woff2 — Pixelify Sans (SIL OFL 1.1)
 │   ├── i18n/                ru.ts (эталон) + en.ts + выбор языка
 │   ├── platform/            изолированный слой Yandex Games
@@ -86,15 +106,18 @@ npm run build:yg     # -> release/tiny-sword-survivors.zip
 │   │   └── lifecycle.ts     Game Ready, Gameplay, фокус, контекст-меню
 │   └── game/                ← вся игра, ноль импортов React/Next
 │       ├── config.ts assets.ts constants.ts data.ts
-│       ├── achievements.ts shop.ts
+│       ├── achievements.ts shop.ts storage.ts
 │       ├── scenes/          Boot, Menu, Game, LevelUp, Pause, GameOver
 │       ├── entities/        Player, Enemy
 │       └── systems/         Weapons, Spawner, Projectiles, Pickups,
-│                            Effects, Audio, HUD, Joystick, Ui
+│                            Effects, Audio, HUD, Bar, Joystick, Ui
 ├── public/
 │   └── vendor/yandex-sdk.js SDK площадки (копируется в архив как есть)
 ├── scripts/
-│   └── build-archive.mjs    проверка требований + упаковка zip
+│   ├── build-archive.mjs    проверка требований + упаковка zip
+│   ├── prepare-assets.mjs   генерация производных текстур из ассетов
+│   ├── preview-avatars.mjs  контактный лист портретов (подбор под героев)
+│   └── lib/                 свой PNG-ридер/писатель и штамповщик девятислайсов
 └── release/                 готовый архив (в .gitignore)
 ```
 
@@ -145,8 +168,12 @@ npm run build:yg     # -> release/tiny-sword-survivors.zip
 
 ### Авторизация
 
-Авторизация предлагается только по явной кнопке (требование 1.2). Имя
-авторизованного игрока берётся из профиля Яндекса, гостю остаётся свой ввод.
+Вход предлагается **явной кнопкой** в главном меню (требование 1.2: не дёргать
+окно входа без повода). Плашка вверху меню показывает состояние: гостю —
+«ВОЙТИ В АККАУНТ ЯНДЕКС», авторизованному — имя из профиля.
+
+Без входа общий зал рекордов недостижим: `leaderboards.setScore` доступен
+только авторизованным, поэтому гости видят локальную таблицу.
 
 ### Что нужно сделать в консоли
 

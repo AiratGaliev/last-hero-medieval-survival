@@ -18,14 +18,18 @@ class AudioSystem {
    * Приглушение не самим игроком, а внешним событием: уход вкладки из фокуса
    * (требование площадки 1.3) или показ рекламы (4.7). Живёт отдельно от
    * `muted`, чтобы выключатель звука в HUD не сбрасывался при возврате.
+   *
+   * Источников может быть несколько одновременно (потеря фокуса + реклама),
+   * поэтому это счётчик, а не флаг: иначе завершение одного источника
+   * возвращало бы звук, пока другой ещё активен.
    */
-  private silenced = false;
+  private silenceSources = 0;
 
   private static readonly MASTER_GAIN = 0.5;
 
   /** Громкость с учётом ручного выключателя и внешнего приглушения. */
   private get targetGain(): number {
-    if (this.muted || this.silenced) return 0;
+    if (this.muted || this.silenceSources > 0) return 0;
     return AudioSystem.MASTER_GAIN;
   }
 
@@ -35,17 +39,16 @@ class AudioSystem {
     }
   }
 
-  /** Заглушить снаружи (потеря фокуса, реклама). */
+  /** Заглушить снаружи (потеря фокуса, реклама). Вложенные вызовы допустимы. */
   silence(): void {
-    if (this.silenced) return;
-    this.silenced = true;
+    this.silenceSources++;
     this.applyGain();
   }
 
-  /** Вернуть звук после внешнего приглушения. Ручной mute при этом сохраняется. */
+  /** Снять один источник приглушения. Ручной mute при этом сохраняется. */
   unsilence(): void {
-    if (!this.silenced) return;
-    this.silenced = false;
+    if (this.silenceSources === 0) return;
+    this.silenceSources--;
     this.applyGain();
   }
 
@@ -91,7 +94,7 @@ class AudioSystem {
     freq: number, dur: number, type: OscillatorType,
     vol: number, delay = 0, slideTo?: number,
   ): void {
-    if (!this.ctx || !this.sfxGain || this.muted || this.silenced) return;
+    if (!this.ctx || !this.sfxGain || !this.isAudible) return;
     const t0 = this.ctx.currentTime + delay;
     const osc = this.ctx.createOscillator();
     const g = this.ctx.createGain();
@@ -106,7 +109,7 @@ class AudioSystem {
   }
 
   private noise(dur: number, vol: number, delay = 0, lowpass = 1200): void {
-    if (!this.ctx || !this.sfxGain || this.muted || this.silenced) return;
+    if (!this.ctx || !this.sfxGain || !this.isAudible) return;
     const t0 = this.ctx.currentTime + delay;
     const len = Math.floor(this.ctx.sampleRate * dur);
     const buf = this.ctx.createBuffer(1, len, this.ctx.sampleRate);
@@ -188,7 +191,7 @@ class AudioSystem {
     this.musicTimer = setInterval(() => {
       // Ключевая защита: пока контекст suspended (автозапрет браузера),
       // ноты НЕ планируются — иначе после первого клика они грянут все разом
-      if (!this.ctx || !this.musicGain || this.muted || this.silenced || this.ctx.state !== 'running') return;
+      if (!this.ctx || !this.musicGain || !this.isAudible || this.ctx.state !== 'running') return;
       const m = AudioSystem.MELODY[this.musicStep % 32];
       const b = AudioSystem.BASS[this.musicStep % 32];
       const t0 = this.ctx.currentTime;

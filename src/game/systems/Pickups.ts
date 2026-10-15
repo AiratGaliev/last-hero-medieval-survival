@@ -18,6 +18,13 @@ interface Gem {
   glow?: Phaser.GameObjects.Sprite;
 }
 
+/**
+ * Радиус схлопывания дропа (в единицах мира). Два кристалла, упавшие ближе
+ * друг к другу, объединяются в один: опыт складывается, но на экране
+ * остаётся в разы меньше пятен, и поле боя читается.
+ */
+const MERGE_RADIUS = 42;
+
 export class Pickups {
   private scene: Phaser.Scene;
   private gems: Gem[] = [];
@@ -50,6 +57,21 @@ export class Pickups {
     return c ? { x: c.img.x, y: c.img.y } : null;
   }
 
+  /**
+   * Ближайший дроп заданного вида в радиусе. Используется при схлопывании,
+   * чтобы вместо россыпи одинаковых кристаллов оставался один.
+   */
+  private nearestGem(x: number, y: number, r: number, kind: Gem['kind']): Gem | null {
+    let best: Gem | null = null;
+    let bestD = r * r;
+    for (const g of this.gems) {
+      if (g.kind !== kind) continue;
+      const d = (g.img.x - x) ** 2 + (g.img.y - y) ** 2;
+      if (d < bestD) { bestD = d; best = g; }
+    }
+    return best;
+  }
+
   spawnGem(x: number, y: number, texture: string, xp: number): void {
     if (this.gems.length >= GEM_CAP) {
       // Переливаем в ближайший кристалл
@@ -63,8 +85,16 @@ export class Pickups {
       if (best) best.xp += xp;
       return;
     }
+    // Схлопывание: кристаллы, падающие рядом, объединяются в один.
+    // Опыт не теряется — он просто переносится на соседний кристалл,
+    // а на экране остаётся в разы меньше пятен, и поле боя читается.
+    const near = this.nearestGem(x, y, MERGE_RADIUS, 'gem');
+    if (near) {
+      near.xp += xp;
+      return;
+    }
     const img = this.scene.add.image(x, y, texture)
-      .setScale(texture === 'gem-red' ? 0.5 : 0.42)
+      .setScale(texture === 'gem-red' ? 0.24 : 0.2)
       .setDepth(DEPTH.GEM);
     this.gems.push({
       img, value: 0, xp, heal: 0, gold: 0, pulling: false, vx: 0, vy: 0,
@@ -79,8 +109,13 @@ export class Pickups {
       this.spawnGem(x, y, 'gem-blue', 1);
       return;
     }
+    const near = this.nearestGem(x, y, MERGE_RADIUS, 'gem');
+    if (near) {
+      near.gold += gold;
+      return;
+    }
     const img = this.scene.add.image(x, y, 'gem-gold')
-      .setScale(0.5)
+      .setScale(0.24)
       .setDepth(DEPTH.GEM);
     this.gems.push({
       img, value: 0, xp: 0, heal: 0, gold, pulling: false, vx: 0, vy: 0,
@@ -88,8 +123,28 @@ export class Pickups {
     });
   }
 
+  /**
+   * Мясо (лечение). Если кристаллов уже GEM_CAP, новый кусок не создаётся,
+   * а лечение переливается в ближайшее мясо на земле — награда не теряется.
+   */
   spawnMeat(x: number, y: number): void {
-    const img = this.scene.add.image(x, y, 'meat').setScale(0.55).setDepth(DEPTH.GEM);
+    if (this.gems.length >= GEM_CAP) {
+      let best: Gem | null = null;
+      let bestD = Infinity;
+      for (const g of this.gems) {
+        if (g.kind !== 'meat') continue;
+        const d = (g.img.x - x) ** 2 + (g.img.y - y) ** 2;
+        if (d < bestD) { bestD = d; best = g; }
+      }
+      if (best) best.heal += 30;
+      return;
+    }
+    const near = this.nearestGem(x, y, MERGE_RADIUS, 'meat');
+    if (near) {
+      near.heal += 30;
+      return;
+    }
+    const img = this.scene.add.image(x, y, 'meat').setScale(0.45).setDepth(DEPTH.GEM);
     this.gems.push({
       img, value: 0, xp: 0, heal: 30, gold: 0, pulling: false, vx: 0, vy: 0,
       phase: Math.random() * Math.PI * 2, kind: 'meat',

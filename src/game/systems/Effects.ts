@@ -6,11 +6,22 @@ import { audio } from './Audio';
 
 interface DmgText extends Phaser.GameObjects.Text {
   busy?: boolean;
+  /** Момент захвата текста — по нему ищем самый старый для переиспользования. */
+  busyAt?: number;
 }
+
+/** Предел пула всплывающих чисел урона. */
+const DMG_POOL_MAX = 48;
 
 interface FxSprite extends Phaser.GameObjects.Sprite {
   busy?: boolean;
 }
+
+/**
+ * Предел пула спрайтов эффектов. Выше него эффект просто не рисуется:
+ * на кадре не появляется сотня новых объектов из-за одного взрыва.
+ */
+const FX_POOL_MAX = 40;
 
 export class Effects {
   private scene: Phaser.Scene;
@@ -49,6 +60,7 @@ export class Effects {
   /** Взрыв (вариант 1 маленький, 2 большой) */
   explosion(x: number, y: number, scale = 1, variant: 1 | 2 = 1): void {
     const s = this.acquireFx(`fx-explosion${variant}`);
+    if (!s) return;
     s.setPosition(x, y)
       .setScale(0.7 * scale, 0.7 * scale)
       .setAlpha(1)
@@ -70,16 +82,32 @@ export class Effects {
   /** Эффект лечения */
   heal(x: number, y: number): void {
     const s = this.acquireFx('fx-heal');
+    if (!s) return;
     s.setPosition(x, y).setScale(0.8).setAlpha(0.9).setDepth(DEPTH.FX)
       .play('fx-heal', true)
       .once('animationcomplete', () => this.releaseFx(s));
   }
 
+  /** Текст, который дольше всех занят: его можно переиспользовать. */
+  private oldestDmg(): DmgText | undefined {
+    let best: DmgText | undefined;
+    for (const d of this.dmgPool) {
+      if (!d.busy) return d;
+      // busyAt проставляется при захвате; undefined считаем самым старым
+      if (!best || (d.busyAt ?? -1) < (best.busyAt ?? -1)) best = d;
+    }
+    return best;
+  }
+
   /** Всплывающее число урона */
   damage(x: number, y: number, amount: number, crit = false): void {
-    const t = this.dmgPool.find((d) => !d.busy);
+    // Свободного текста может не оказаться — берём тот, который
+    // освободился раньше всех. Раньше в этом месте число просто
+    // выбрасывалось, и в плотной толпе, где цифры нужнее всего,
+    // игрок их не видел.
+    let t = this.dmgPool.find((d) => !d.busy);
+    if (!t && this.dmgPool.length >= DMG_POOL_MAX) t = this.oldestDmg();
     if (!t) {
-      if (this.dmgPool.length >= 48) return;
       const nt = this.scene.add.text(x, y, '', {
         fontFamily: FONT,
         fontSize: '13px',
@@ -92,11 +120,13 @@ export class Effects {
       this.showDamage(nt, x, y, amount, crit);
       return;
     }
+    this.scene.tweens.killTweensOf(t);
     this.showDamage(t, x, y, amount, crit);
   }
 
   private showDamage(t: DmgText, x: number, y: number, amount: number, crit: boolean): void {
     t.busy = true;
+    t.busyAt = this.scene.time.now;
     t.setText(crit ? `${amount}!` : `${amount}`);
     t.setPosition(x + Phaser.Math.Between(-8, 8), y - 20);
     t.setColor(crit ? '#ffb020' : '#ffffff');
@@ -209,10 +239,21 @@ export class Effects {
   }
 
   private acquireFx(animKey: string): FxSprite {
-    let s = this.fxPool.find((f) => !f.busy);
+    // Ищем свободный спрайт ИМЕННО с нужной текстурой: пул общий для
+    // fx-explosion1/2 и fx-heal, а анимация привязана к текстуре.
+    let s = this.fxPool.find((f) => !f.busy && f.texture.key === animKey);
     if (!s) {
-      s = this.scene.add.sprite(0, 0, animKey) as FxSprite;
-      this.fxPool.push(s);
+      // Пул не растёт бесконечно: выше предела эффект просто не показывается,
+      // зато на кадре не появляется сотня новых спрайтов.
+      if (this.fxPool.length >= FX_POOL_MAX) {
+        const spare = this.fxPool.find((f) => !f.busy);
+        if (!spare) return null as unknown as FxSprite;
+        spare.texture = this.scene.textures.get(animKey);
+        s = spare;
+      } else {
+        s = this.scene.add.sprite(0, 0, animKey) as FxSprite;
+        this.fxPool.push(s);
+      }
     }
     s.busy = true;
     s.setVisible(true).setActive(true);

@@ -6,6 +6,7 @@
 // import из '../i18n': этот модуль вычисляется до определения языка игровыми
 // сценами, а язык определяется в main.ts до их импорта.
 import { t } from '../i18n';
+import { loadJson, saveJson } from './storage';
 
 export interface ShopUpgradeDef {
   id: ShopUpgradeId;
@@ -62,7 +63,11 @@ const EMPTY: ShopState = {
 function sanitize(raw: unknown): ShopState {
   const s = (raw ?? {}) as Partial<ShopState>;
   const up = (s.upgrades ?? {}) as Partial<ShopLevels>;
-  const clampLvl = (v: unknown): number => Math.min(3, Math.max(0, Number(v) || 0));
+  // Math.floor обязателен: дробный уровень дал бы costs[2.7] === undefined,
+  // покупка прошла бы проверку «хватает ли золота», вычла бы undefined из
+  // баланса и обнулила кошелёк при следующем чтении.
+  const clampLvl = (v: unknown): number =>
+    Math.min(3, Math.max(0, Math.floor(Number(v) || 0)));
   return {
     balance: Math.max(0, Math.floor(Number(s.balance) || 0)),
     upgrades: {
@@ -76,28 +81,17 @@ function sanitize(raw: unknown): ShopState {
 }
 
 export function loadShop(): ShopState {
-  if (typeof window === 'undefined') return { ...EMPTY, upgrades: { ...EMPTY.upgrades } };
-  try {
-    const raw = window.localStorage.getItem(LS_SHOP);
-    if (!raw) return { ...EMPTY, upgrades: { ...EMPTY.upgrades } };
-    return sanitize(JSON.parse(raw));
-  } catch {
-    return { ...EMPTY, upgrades: { ...EMPTY.upgrades } };
-  }
+  if (typeof window === 'undefined') return cloneEmpty();
+  const raw = loadJson<ShopState>(LS_SHOP);
+  return raw === null ? cloneEmpty() : sanitize(raw);
+}
+
+function cloneEmpty(): ShopState {
+  return { ...EMPTY, upgrades: { ...EMPTY.upgrades } };
 }
 
 function saveShop(state: ShopState): void {
-  try {
-    window.localStorage.setItem(LS_SHOP, JSON.stringify(state));
-  } catch {
-    // приватный режим — не сохраняем
-  }
-}
-
-function emitChange(): void {
-  if (typeof window !== 'undefined') {
-    window.dispatchEvent(new CustomEvent('tss-shop-updated'));
-  }
+  saveJson(LS_SHOP, state);
 }
 
 /** Начисление золота в кошелёк (вызывается в конце матча). */
@@ -106,7 +100,6 @@ export function depositGold(gold: number): void {
   const st = loadShop();
   st.balance += Math.floor(gold);
   saveShop(st);
-  emitChange();
 }
 
 export interface BuyResult {
@@ -126,7 +119,6 @@ export function buyUpgrade(id: ShopUpgradeId): BuyResult {
   st.balance -= price;
   st.upgrades[id] = lvl + 1;
   saveShop(st);
-  emitChange();
   return { ok: true };
 }
 

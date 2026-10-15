@@ -18,7 +18,7 @@ export class BootScene extends Phaser.Scene {
     const bx = (width - barW) / 2;
     const by = height / 2 - barH / 2;
     this.add.rectangle(width / 2, by - 24, barW, 22, 0x3b2a1a).setStrokeStyle(2, 0x8a6d3b);
-    this.add.text(width / 2, by - 56, 'Tiny Sword Survivors', {
+    this.add.text(width / 2, by - 56, t('common.gameTitle'), {
       fontFamily: FONT, fontSize: '16px', color: '#ffe9b0',
     }).setOrigin(0.5);
     const bar = this.add.rectangle(bx + 2, by + 1, 10, barH - 4, 0xe8c170).setOrigin(0, 0.5);
@@ -82,17 +82,93 @@ export class BootScene extends Phaser.Scene {
 
     // ---- Тайлы, декорации ----
     this.load.image('grass-tile', asset('game', 'grass-tile.png'));
+    // Автотайлы арены: трава с кустистым краем и каменный обрыв.
+    // Используются для кромки — вместо голого прямоугольника травы.
+    this.load.spritesheet('arena-tiles', asset('tiny-swords', 'terrain/tileset/tilemap-color1.png'), {
+      frameWidth: 64, frameHeight: 64,
+    });
     this.load.image('water-tile', asset('tiny-swords', 'terrain/tileset/water-background-color.png'));
+    // ---- Деревья: четыре породы вместо двух ----
     this.load.spritesheet('tree1', asset('tiny-swords', 'terrain/resources/trees/tree1.png'), { frameWidth: 192, frameHeight: 256 });
+    this.load.spritesheet('tree2', asset('tiny-swords', 'terrain/resources/trees/tree2.png'), { frameWidth: 192, frameHeight: 256 });
     this.load.spritesheet('tree3', asset('tiny-swords', 'terrain/resources/trees/tree3.png'), { frameWidth: 192, frameHeight: 192 });
+    this.load.spritesheet('tree4', asset('tiny-swords', 'terrain/resources/trees/tree4.png'), { frameWidth: 192, frameHeight: 192 });
+    // Пни: рубленые стволы. Статичные, но хорошо закрывают пустоты
+    // у опушек, где дерево уже не помещается.
+    this.load.image('stump1', asset('tiny-swords', 'terrain/resources/trees/stump-1.png'));
+    this.load.image('stump2', asset('tiny-swords', 'terrain/resources/trees/stump-2.png'));
+    this.load.image('stump3', asset('tiny-swords', 'terrain/resources/trees/stump-3.png'));
+    this.load.image('stump4', asset('tiny-swords', 'terrain/resources/trees/stump-4.png'));
+    // ---- Кусты: четыре вида с покачиванием ----
     this.load.spritesheet('bushe1', asset('tiny-swords', 'terrain/decorations/bushes/bushe1.png'), { frameWidth: 128, frameHeight: 128 });
+    this.load.spritesheet('bushe2', asset('tiny-swords', 'terrain/decorations/bushes/bushe2.png'), { frameWidth: 128, frameHeight: 128 });
+    this.load.spritesheet('bushe3', asset('tiny-swords', 'terrain/decorations/bushes/bushe3.png'), { frameWidth: 128, frameHeight: 128 });
+    this.load.spritesheet('bushe4', asset('tiny-swords', 'terrain/decorations/bushes/bushe4.png'), { frameWidth: 128, frameHeight: 128 });
     this.load.spritesheet('sheep', asset('tiny-swords', 'terrain/resources/sheep/sheep-idle.png'), { frameWidth: 128, frameHeight: 128 });
+    // ---- Камни ----
     this.load.image('rock1', asset('tiny-swords', 'terrain/decorations/rocks/rock1.png'));
     this.load.image('rock2', asset('tiny-swords', 'terrain/decorations/rocks/rock2.png'));
     this.load.image('rock3', asset('tiny-swords', 'terrain/decorations/rocks/rock3.png'));
-    this.load.image('cloud1', asset('tiny-swords', 'terrain/decorations/clouds/clouds-02.png'));
-    this.load.image('cloud2', asset('tiny-swords', 'terrain/decorations/clouds/clouds-04.png'));
-    this.load.image('cloud3', asset('tiny-swords', 'terrain/decorations/clouds/clouds-06.png'));
+    this.load.image('rock4', asset('tiny-swords', 'terrain/decorations/rocks/rock4.png'));
+    // ---- Камни в воде: кромка арены перестаёт быть пустой полосой ----
+    this.load.spritesheet('waterrock1', asset('tiny-swords', 'terrain/decorations/water-rocks/water-rocks-01.png'), { frameWidth: 128, frameHeight: 64 });
+    this.load.spritesheet('waterrock2', asset('tiny-swords', 'terrain/decorations/water-rocks/water-rocks-02.png'), { frameWidth: 128, frameHeight: 64 });
+    this.load.spritesheet('waterrock3', asset('tiny-swords', 'terrain/decorations/water-rocks/water-rocks-03.png'), { frameWidth: 128, frameHeight: 64 });
+    this.load.spritesheet('waterrock4', asset('tiny-swords', 'terrain/decorations/water-rocks/water-rocks-04.png'), { frameWidth: 128, frameHeight: 64 });
+    // ---- Облака: восемь форм вместо трёх ----
+    this.load.image('cloud1', asset('tiny-swords', 'terrain/decorations/clouds/clouds-01.png'));
+    this.load.image('cloud2', asset('tiny-swords', 'terrain/decorations/clouds/clouds-02.png'));
+    this.load.image('cloud3', asset('tiny-swords', 'terrain/decorations/clouds/clouds-03.png'));
+    this.load.image('cloud4', asset('tiny-swords', 'terrain/decorations/clouds/clouds-04.png'));
+    this.load.image('cloud5', asset('tiny-swords', 'terrain/decorations/clouds/clouds-05.png'));
+    this.load.image('cloud6', asset('tiny-swords', 'terrain/decorations/clouds/clouds-06.png'));
+    this.load.image('cloud7', asset('tiny-swords', 'terrain/decorations/clouds/clouds-07.png'));
+    this.load.image('cloud8', asset('tiny-swords', 'terrain/decorations/clouds/clouds-08.png'));
+    // Пасхалка: уточка плавает в канаве у берега
+    this.load.image('duck', asset('tiny-swords', 'terrain/decorations/rubber-duck/rubber-duck.png'));
+
+    // ---- Стрелка и рамки: только ui/cursors ----
+    // cursor-01 — стрелка: и курсор мыши, и указатель на цель за экраном
+    // (не 'arrow' — под тем ключом уже лежит стрела-снаряд game/arrow.png)
+    this.load.image('cursor-arrow', asset('tiny-swords', 'ui/cursors/cursor-01.png'));
+    // cursor-04 — четыре угла рамки в одной картинке 128×128. Сама рамка
+    // годна только под квадрат, поэтому углы вырезаны из неё по
+    // квадрантам скриптом scripts/prepare-assets.mjs, а из них
+    // systems/Corners.ts собирает рамку, тянущуюся под любой размер
+    this.load.image('corner-tl', asset('game', 'corner-tl.png'));
+    this.load.image('corner-tr', asset('game', 'corner-tr.png'));
+    this.load.image('corner-br', asset('game', 'corner-br.png'));
+    this.load.image('corner-bl', asset('game', 'corner-bl.png'));
+
+    // Ленты для заголовков: торцы + растягиваемая середина
+    this.load.image('ribbon-blue', asset('game', 'ribbon-blue.png'));
+    this.load.image('ribbon-yellow', asset('game', 'ribbon-yellow.png'));
+    this.load.image('ribbon-purple', asset('game', 'ribbon-purple.png'));
+    this.load.image('ribbon-red', asset('game', 'ribbon-red.png'));
+
+    // ---- Жители: синяя и жёлтая фракции, чтобы толпа не была одного цвета ----
+    for (const [prefix, faction] of [['pawn', 'blue'], ['pawny', 'yellow']] as const) {
+      this.load.spritesheet(
+        prefix + '-idle', asset('tiny-swords', `units/${faction}/pawn/pawn-idle.png`),
+        { frameWidth: 192, frameHeight: 192 },
+      );
+      this.load.spritesheet(
+        prefix + '-work-axe', asset('tiny-swords', `units/${faction}/pawn/pawn-interact-axe.png`),
+        { frameWidth: 192, frameHeight: 192 },
+      );
+      this.load.spritesheet(
+        prefix + '-work-hammer', asset('tiny-swords', `units/${faction}/pawn/pawn-interact-hammer.png`),
+        { frameWidth: 192, frameHeight: 192 },
+      );
+      this.load.spritesheet(
+        prefix + '-work-knife', asset('tiny-swords', `units/${faction}/pawn/pawn-interact-knife.png`),
+        { frameWidth: 192, frameHeight: 192 },
+      );
+      this.load.spritesheet(
+        prefix + '-work-pickaxe', asset('tiny-swords', `units/${faction}/pawn/pawn-interact-pickaxe.png`),
+        { frameWidth: 192, frameHeight: 192 },
+      );
+    }
     this.load.image('castle', asset('tiny-swords', 'buildings/blue/castle.png'));
     this.load.image('house1', asset('tiny-swords', 'buildings/blue/house1.png'));
     this.load.image('house2', asset('tiny-swords', 'buildings/blue/house2.png'));
@@ -112,7 +188,8 @@ export class BootScene extends Phaser.Scene {
     this.load.image('barrel', asset('game', 'barrel.png'));
     this.load.image('slash', asset('game', 'slash.png'));
     this.load.image('aoe-ring', asset('game', 'aoe-ring.png'));
-    this.load.image('shadow', asset('game', 'shadow.png'));
+    // Обрезанная по содержимому версия shadow.png — та же картинка, но 14 КБ → 3 КБ
+    this.load.image('shadow', asset('game', 'shadow-soft.png'));
     this.load.image('knife', asset('game', 'knife.png'));
     this.load.image('treasure', asset('tiny-swords', 'terrain/resources/gold-stones/gold-stone-6.png'));
     this.load.spritesheet('fx-treasure', asset('tiny-swords', 'terrain/resources/gold-stones/gold-stone-6-highlight.png'), { frameWidth: 128, frameHeight: 128 });
@@ -128,12 +205,41 @@ export class BootScene extends Phaser.Scene {
     // 9-slice версии (склеены из тайлов ассета) — все панели/кнопки строятся
     // из них; сырые крупные текстуры (paper/banner/bigbutton) не грузим.
     this.load.image('btn-small-blue', asset('tiny-swords', 'ui/buttons/smallbluesquarebutton-regular.png'));
-    this.load.image('swords', asset('tiny-swords', 'ui/swords/swords.png'));
+    // Мечи логотипа: два ряда из сетки 3×5 в ui/swords, вырезаны скриптом
+    // scripts/prepare-assets.mjs. Сама сетка не грузится — она в три раза
+    // тяжелее и нужна только на этапе подготовки ассетов.
+    this.load.image('sword-blue', asset('game', 'sword-blue.png'));
+    this.load.image('sword-red', asset('game', 'sword-red.png'));
     this.load.image('paper9', asset('game', 'paper9.png'));
     this.load.image('paper-special9', asset('game', 'paper-special9.png'));
     this.load.image('btn-blue9', asset('game', 'btn-blue9.png'));
     this.load.image('btn-red9', asset('game', 'btn-red9.png'));
+    // Состояние «утопленной» кнопки — раньше нажатия не было вовсе
+    this.load.image('btn-blue9-pressed', asset('game', 'btn-blue9-pressed.png'));
+    this.load.image('btn-red9-pressed', asset('game', 'btn-red9-pressed.png'));
     this.load.image('banner9', asset('game', 'banner9.png'));
+    // Деревянный торговый стол для «Лавки торговца»
+    this.load.image('table9', asset('game', 'table9.png'));
+
+    // ---- Полосы HP/XP: собраны из трёх деталей, см. systems/Bar.ts ----
+    // Рамка: торцы + растягиваемая середина
+    for (const size of ['small', 'big']) {
+      this.load.image(`bar-${size}-cap-l`, asset('game', `bar-${size}-cap-l.png`));
+      this.load.image(`bar-${size}-mid`, asset('game', `bar-${size}-mid.png`));
+      this.load.image(`bar-${size}-cap-r`, asset('game', `bar-${size}-cap-r.png`));
+    }
+    // Заливки: исходная bar-big-fill перекрашена под цвета gameplay,
+    // потому что setTint умножает, а не заменяет цвет текстуры
+    for (const c of ['blue', 'green', 'yellow', 'red', 'ghost', 'white']) {
+      this.load.image(`bar-fill-${c}`, asset('game', `bar-fill-${c}.png`));
+    }
+
+    // ---- Портреты героев (обрезаны из ui/avatars) ----
+    for (const h of ['warrior', 'archer', 'lancer', 'monk']) {
+      this.load.image('avatar-' + h, asset('game', 'avatar-' + h + '.png'));
+    }
+
+
   }
 
   create(): void {
@@ -208,9 +314,38 @@ export class BootScene extends Phaser.Scene {
     this.sheet('hero-monk-run', 'hero-monk-run', 4, 10);
     this.once('hero-monk-atk', 'hero-monk-atk', 11, 12);
     // Декор
+    // Покачивание декора: деревья, кусты, камни в воде
     this.sheet('tree1-sway', 'tree1', 8, 3);
+    this.sheet('tree2-sway', 'tree2', 8, 3);
     this.sheet('tree3-sway', 'tree3', 8, 3);
+    this.sheet('tree4-sway', 'tree4', 8, 3);
     this.sheet('bushe1-sway', 'bushe1', 8, 4);
+    this.sheet('bushe2-sway', 'bushe2', 8, 4);
+    this.sheet('bushe3-sway', 'bushe3', 8, 4);
+    this.sheet('bushe4-sway', 'bushe4', 8, 4);
+    this.sheet('waterrock1-sway', 'waterrock1', 8, 6);
+    this.sheet('waterrock2-sway', 'waterrock2', 8, 6);
+    this.sheet('waterrock3-sway', 'waterrock3', 8, 6);
+    this.sheet('waterrock4-sway', 'waterrock4', 8, 6);
+
+    // ---- Жители: пешки базово-рабочего вида ----
+    // Раньше арена была пустой: никого, кроме овец. Крестьяне работают
+    // у ресурсов, поэтому карта выглядит обжитой, а не пустошей.
+    // Число кадров у листов разное: топор и кирка — по 6, нож — 4,
+    // молот — 3. Задавать всем одно значение нельзя: Phaser начинает
+    // писать «Frame not found» на каждом кадре анимации.
+    const WORK_FRAMES: Array<[string, number, number]> = [
+      ['axe', 6, 8],
+      ['hammer', 3, 9],
+      ['knife', 4, 8],
+      ['pickaxe', 6, 8],
+    ];
+    for (const p of ['pawn', 'pawny']) {
+      this.sheet(p + '-idle', p + '-idle', 8, 7);
+      for (const [tool, n, rate] of WORK_FRAMES) {
+        this.sheet(p + '-work-' + tool, p + '-work-' + tool, n, rate);
+      }
+    }
     this.sheet('sheep-idle', 'sheep', 6, 4);
   }
 }

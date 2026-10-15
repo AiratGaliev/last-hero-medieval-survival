@@ -26,6 +26,9 @@ const noop = (): void => {};
 
 let handlers: LifecycleHandlers = { silence: noop, unsilence: noop, pause: noop, resume: noop };
 
+/** Счётчик пауз площадки: события могут приходить чаще, чем их обрабатывают. */
+let platformPaused = 0;
+
 export function setLifecycleHandlers(next: Partial<LifecycleHandlers>): void {
   handlers = { ...handlers, ...next };
 }
@@ -107,17 +110,27 @@ function bindSdkEvents(): void {
   if (!sdk) return;
 
   // Площадка сворачивает игру (например, показывает другой элемент каталога).
+  // П. 1.19.4: на это время геймплей обязан быть на паузе, а не просто
+  // заглушенным — иначе игрок теряет здоровье, пока смотрит каталог.
   sdk.on('game_api_pause', () => {
+    platformPaused++;
     handlers.silence();
-    handlers.pause();
+    if (platformPaused === 1) handlers.pause();
   });
   sdk.on('game_api_resume', () => {
-    handlers.unsilence();
-    handlers.resume();
+    if (platformPaused === 0) return;
+    platformPaused--;
+    if (platformPaused === 0) handlers.resume();
+    if (!hidden) handlers.unsilence();
   });
 }
 
-/** Заглушка для плавных переходов и отладки. */
+/** Идёт ли сейчас активный геймплей (для отладки и тестов). */
 export function isGameplayRunning(): boolean {
   return gameplayRunning;
+}
+
+/** Запрашивает ли площадка сейчас паузу. */
+export function isPlatformPaused(): boolean {
+  return platformPaused > 0;
 }

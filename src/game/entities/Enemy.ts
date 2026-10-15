@@ -1,5 +1,5 @@
 import Phaser from 'phaser';
-import { DEPTH, DESPAWN_DIST, WORLD } from '../constants';
+import { DEPTH, DESPAWN_DIST, WORLD, SHADOW_SCALE } from '../constants';
 import { ENEMIES, type EnemyDef, type EnemyKind } from '../data';
 import { audio } from '../systems/Audio';
 
@@ -55,10 +55,16 @@ export class Enemy extends Phaser.Physics.Arcade.Sprite {
     this.def = def;
     this.kind = kind;
     this.ctx = ctx;
-    this.maxHp = Math.round(def.hp * (def.isBoss || def.isElite || def.isMidboss ? 1 : hpMult));
+    const big = def.isBoss || def.isElite || def.isMidboss;
+    // Крупные цели тоже должны ощущать сложность, но их HP умножаем
+    // лишь частично: 4000 * 1.45 = 5800 не берётся разумным билдом,
+    // и «Кошмар» превратился бы в стену.
+    this.maxHp = Math.round(def.hp * (big ? 1 + (hpMult - 1) * 0.5 : hpMult));
     this.hp = this.maxHp;
     this.speed = def.speed;
-    this.damage = Math.round(def.damage * (def.isBoss || def.isElite || def.isMidboss ? 1 : dmgMult));
+    // Урон крупных целей масштабируется полностью — иначе «Кошмар»
+    // не отличался бы в финальном бою.
+    this.damage = Math.round(def.damage * dmgMult);
     this.xpValue = def.xp;
 
     scene.add.existing(this);
@@ -82,7 +88,7 @@ export class Enemy extends Phaser.Physics.Arcade.Sprite {
     this.setCollideWorldBounds(false);
 
     this.shadow = scene.add.image(x, y + 8 * def.scale, 'shadow')
-      .setScale(0.2 * def.scale, 0.12 * def.scale)
+      .setScale(SHADOW_SCALE * def.scale, SHADOW_SCALE * 0.6 * def.scale)
       .setAlpha(0.3)
       .setDepth(DEPTH.SHADOW);
 
@@ -286,6 +292,9 @@ export class Enemy extends Phaser.Physics.Arcade.Sprite {
           for (const s of this.ctx.enemiesNear(this.x, this.y, R)) {
             const e = s as Enemy;
             if (e === this || !e.active) continue;
+            // Босса и мидбосса аура не разгоняет: их скорость и так
+            // калибруется отдельно, а +30% сверху делали финал непроходимым.
+            if (e.def.isBoss || e.def.isMidboss) continue;
             e.hasteUntil = time + 750;
             e.hasteMult = 1.3;
           }

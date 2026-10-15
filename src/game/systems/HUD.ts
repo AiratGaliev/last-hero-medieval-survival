@@ -1,9 +1,21 @@
 import Phaser from 'phaser';
-import { DEPTH, FONT, GAME_DURATION, COMBO } from '../constants';
+import { DEPTH, FONT, GAME_DURATION, COMBO, MAX_LEVEL } from '../constants';
 import type { AchievementDef } from '../achievements';
 import { audio } from './Audio';
+import { hudBottomInset, safeInsets, resetSafeInsets } from '../safeArea';
 import { makePanel } from './Ui';
 import { num, t } from '../../i18n';
+import { StatBar, FILL } from './Bar';
+
+/**
+ * Контейнер иконки оружия или пассивки в HUD.
+ *
+ * Расширение Phaser-контейнера полем пометки: когда ствол дозрел до
+ * эволюции, иконка пульсирует золотом, пока игрок не возьмёт карточку.
+ */
+interface WeaponIcon extends Phaser.GameObjects.Container {
+  evoReady?: boolean;
+}
 
 // ============ HUD: XP-бар, таймер, счётчики, иконки, бар босса ============
 //
@@ -31,13 +43,22 @@ export interface HudOpts {
   diffName?: string;
 }
 
+/** Сторона кнопки паузы в экранных пикселях. */
+const PAUSE_SIZE = 42;
+/**
+ * Горизонтальный запас справа под кнопку паузы: половина кнопки плюс
+ * поле до края экрана. Всё, что выравнивается вправо в HUD, смещается
+ * на эту величину, чтобы не наезжать на кнопку.
+ */
+const PAUSE_RESERVE = 70;
+
 export class HUD {
   private scene: Phaser.Scene;
   private scoreMult = 1;
   /** Корневой контейнер HUD с компенсацией зума камеры */
   private root!: Phaser.GameObjects.Container;
-  private xpBarBg!: Phaser.GameObjects.Rectangle;
-  private xpBarFill!: Phaser.GameObjects.Rectangle;
+  /** Полосы собраны из настоящих ассетов ui/bars (см. systems/Bar.ts) */
+  private xpBar!: StatBar;
   private xpLabel!: Phaser.GameObjects.Text;
   private timerText!: Phaser.GameObjects.Text;
   private statsText!: Phaser.GameObjects.Text;
@@ -47,23 +68,23 @@ export class HUD {
   private announceText!: Phaser.GameObjects.Text;
   // HP-бар: мгновенная полоса + «призрак» урона (медленно догоняет)
   private hpIcon!: Phaser.GameObjects.Image;
-  private hpBarBg!: Phaser.GameObjects.Rectangle;
-  private hpGhost!: Phaser.GameObjects.Rectangle;
-  private hpFill!: Phaser.GameObjects.Rectangle;
+  private hpBar!: StatBar;
   private hpText!: Phaser.GameObjects.Text;
-  private hpLastFrac = -1;
   // Кнопка паузы: три РОВНЯХ top-level sf=0-объекта (без контейнера!) —
   // баг Phaser 4.2.1: hit-тест вложенных в sf-контейнер объектов не учитывает
   // scrollFactor контейнера → кнопка в контейнере некликабельна при скролле.
   private pauseBg!: Phaser.GameObjects.Image;
   private pauseTxt!: Phaser.GameObjects.Text;
   private pauseHit!: Phaser.GameObjects.Zone;
-  private weaponIcons = new Map<string, Phaser.GameObjects.Container>();
+  /** Масштаб кнопки паузы после setDisplaySize — база для подсветки. */
+  private pauseBaseScale = 1;
+  private weaponIcons = new Map<string, WeaponIcon>();
   private bossGroup!: Phaser.GameObjects.Container;
   private bossFill!: Phaser.GameObjects.Rectangle;
   private bossBg!: Phaser.GameObjects.Rectangle;
   private bossInner!: Phaser.GameObjects.Rectangle;
   private bossText!: Phaser.GameObjects.Text;
+  private bossHpText!: Phaser.GameObjects.Text;
   /** Ширина полосы босса — не шире экрана (на мобильных 420px обрезалось) */
   private bossBarW = 420;
 
@@ -75,8 +96,8 @@ export class HUD {
   private comboBaseY = 78;
 
   // Индикаторы целей за экраном: сундук (золото) и босс/элита (красный)
-  private indChest!: Phaser.GameObjects.Graphics;
-  private indEnemy!: Phaser.GameObjects.Graphics;
+  private indChest!: Phaser.GameObjects.Container;
+  private indEnemy!: Phaser.GameObjects.Container;
   private indChestShown = false;
   private indEnemyShown = false;
 
@@ -86,13 +107,14 @@ export class HUD {
   private toastQueue: AchievementDef[] = [];
   private toastBusy = false;
 
-  private resizeHandler = () => this.layout();
+  private resizeHandler = () => { resetSafeInsets(); this.layout(); };
 
   constructor(scene: Phaser.Scene, onPause: () => void, opts: HudOpts = {}) {
     this.scene = scene;
     this.scoreMult = opts.scoreMult ?? 1;
     this.build(onPause, opts);
     scene.scale.on('resize', this.resizeHandler);
+    window.addEventListener('orientationchange', this.resizeHandler);
   }
 
   private build(onPause: () => void, opts: HudOpts): void {
@@ -100,10 +122,9 @@ export class HUD {
     // scrollFactor(0) обязателен: иначе контейнер «уезжает» вместе с миром при скролле камеры
     this.root = this.scene.add.container(0, 0).setScrollFactor(0).setDepth(DEPTH.HUD);
 
-    this.xpBarBg = this.scene.add.rectangle(0, 0, W, 16, 0x1b1008)
-      .setOrigin(0, 0.5);
-    this.xpBarFill = this.scene.add.rectangle(2, 0, 10, 12, 0x54c2ff)
-      .setOrigin(0, 0.5);
+    // Полоса опыта на всю ширину экрана: рамка из ui/bars + синяя заливка
+    this.xpBar = new StatBar(this.scene, W / 2, 9, W, 'small', { fill: FILL.blue });
+    this.root.add(this.xpBar.root);
     this.xpLabel = this.scene.add.text(0, 0, t('hud.level', { v: 1 }), {
       fontFamily: FONT, fontSize: '10px', color: '#ffffff',
       stroke: '#1b1008', strokeThickness: 3,
@@ -112,19 +133,22 @@ export class HUD {
     this.timerText = this.scene.add.text(0, 0, '00:00', {
       fontFamily: FONT, fontSize: '18px', color: '#ffe9b0',
       stroke: '#1b1008', strokeThickness: 5,
-    });
+    }).setOrigin(0, 0.5);
 
     this.statsText = this.scene.add.text(0, 0, '', {
       fontFamily: FONT, fontSize: '10px', color: '#d8c9a8',
       stroke: '#1b1008', strokeThickness: 3,
     });
 
-    // HP-бар игрока (v1.8): сердце + полоса с «призраком» урона
+    // HP-бар игрока: сердце + деревянная полоса с «призраком» урона
     this.hpIcon = this.scene.add.image(0, 0, 'icon-heart').setDisplaySize(15, 15);
-    this.hpBarBg = this.scene.add.rectangle(0, 0, 154, 15, 0x1b1008, 0.9).setOrigin(0, 0.5)
-      .setStrokeStyle(1, 0x000000, 0.35);
-    this.hpGhost = this.scene.add.rectangle(0, 0, 150, 11, 0xffb090, 0.9).setOrigin(0, 0.5);
-    this.hpFill = this.scene.add.rectangle(0, 0, 150, 11, 0x53b44a).setOrigin(0, 0.5);
+    this.hpBar = new StatBar(this.scene, 30 + 154 / 2, 55, 154, 'small', {
+      ghost: true,
+      fill: FILL.green,
+      fillLow: FILL.yellow,
+      fillCritical: FILL.red,
+    });
+    this.root.add(this.hpBar.root);
     this.hpText = this.scene.add.text(0, 0, '', {
       fontFamily: FONT, fontSize: '10px', color: '#ffffff',
       stroke: '#1b1008', strokeThickness: 3,
@@ -149,21 +173,32 @@ export class HUD {
       }).setOrigin(1, 0);
     }
 
-    // Кнопка паузы (важно для мобильных) — плоская структура, см. комментарий выше
-    this.pauseBg = this.scene.add.image(0, 0, 'btn-small-blue').setDisplaySize(42, 42)
-      .setScrollFactor(0).setDepth(DEPTH.HUD + 9);
+    // Кнопка паузы (важно для мобильных). Живёт внутри root: контейнер уже
+    // компенсирует зум камеры, поэтому кнопка всегда ровно PAUSE_SIZE
+    // экранных пикселей. Отдельным объектом со своим setScale(1/zoom)
+    // она выходила в натуральный размер текстуры — на 390 px это был
+    // квадрат в четверть экрана.
+    this.pauseBg = this.scene.add.image(0, 0, 'btn-small-blue').setDisplaySize(PAUSE_SIZE, PAUSE_SIZE);
     this.pauseTxt = this.scene.add.text(0, 0, 'II', {
       fontFamily: FONT, fontSize: '16px', color: '#ffffff',
       stroke: '#2a1608', strokeThickness: 5,
-    }).setOrigin(0.5).setScrollFactor(0).setDepth(DEPTH.HUD + 10);
-    this.pauseHit = this.scene.add.zone(0, 0, 56, 56).setScrollFactor(0)
-      .setDepth(DEPTH.HUD + 8).setInteractive({ useHandCursor: true });
+    }).setOrigin(0.5);
+    this.pauseHit = this.scene.add.zone(0, 0, PAUSE_SIZE + 16, PAUSE_SIZE + 16)
+      .setInteractive({ useHandCursor: true });
+    this.pauseBaseScale = this.pauseBg.scaleX;
+    this.root.add([this.pauseBg, this.pauseTxt, this.pauseHit]);
     this.pauseHit.on('pointerover', () => {
-      this.scene.tweens.add({ targets: [this.pauseBg, this.pauseTxt], scale: (this.pauseHit.scaleX || 1) * 1.08, duration: 110 });
+      this.scene.tweens.add({
+        targets: [this.pauseBg, this.pauseTxt],
+        scale: this.pauseBaseScale * 1.08, duration: 110,
+      });
       this.pauseBg.setTint(0xfff2cc);
     });
     this.pauseHit.on('pointerout', () => {
-      this.scene.tweens.add({ targets: [this.pauseBg, this.pauseTxt], scale: this.pauseHit.scaleX || 1, duration: 110 });
+      this.scene.tweens.add({
+        targets: [this.pauseBg, this.pauseTxt],
+        scale: this.pauseBaseScale, duration: 110,
+      });
       this.pauseBg.clearTint();
     });
     this.pauseHit.on('pointerdown', () => {
@@ -177,11 +212,15 @@ export class HUD {
     this.bossBg = this.scene.add.rectangle(0, 0, barW, 18, 0x1b1008, 0.92).setOrigin(0.5);
     this.bossInner = this.scene.add.rectangle(0, 0, barW - 6, 12, 0x50120f).setOrigin(0.5);
     this.bossFill = this.scene.add.rectangle(-(barW - 6) / 2, 0, barW - 6, 12, 0xd03028).setOrigin(0, 0.5);
+    this.bossHpText = this.scene.add.text(0, 0, '', {
+      fontFamily: FONT, fontSize: '10px', color: '#ffd9c0',
+      stroke: '#1b1008', strokeThickness: 4,
+    }).setOrigin(0.5);
     this.bossText = this.scene.add.text(0, -16, t('hud.bossName'), {
       fontFamily: FONT, fontSize: '10px', color: '#ff9a8a',
       stroke: '#1b1008', strokeThickness: 4,
     }).setOrigin(0.5);
-    this.bossGroup.add([this.bossBg, this.bossInner, this.bossFill, this.bossText]);
+    this.bossGroup.add([this.bossBg, this.bossInner, this.bossFill, this.bossText, this.bossHpText]);
 
     // Виньетка низкого HP (пульсирующие красные края экрана)
     for (let i = 0; i < 4; i++) {
@@ -204,16 +243,18 @@ export class HUD {
     this.comboBar = this.scene.add.rectangle(0, 0, 64, 3, 0xffd76e).setOrigin(1, 0.5).setVisible(false);
 
     // Стрелки-индикаторы за экраном (сундук/босс)
-    this.indChest = this.makeIndicator(0xffd76e);
+    // Сундук оставляем золотым (родной цвет спрайта), врага красим
+    // в красный — так стрелки различаются с одного взгляда
+    this.indChest = this.makeIndicator(0xffe9b0);
     this.indEnemy = this.makeIndicator(0xff5040);
 
     // Порядок добавления = порядок отрисовки (снизу вверх):
     // полосы/тексты → босс-бар → виньетка → анонс → тосты достижений
     // (добавляются динамически). Пауза — отдельным top-level объектом.
     const base: Phaser.GameObjects.GameObject[] = [
-      this.xpBarBg, this.xpBarFill, this.xpLabel,
+      this.xpBar.root, this.xpLabel,
       this.timerText, this.statsText, this.goldIcon, this.goldText,
-      this.hpIcon, this.hpBarBg, this.hpGhost, this.hpFill, this.hpText,
+      this.hpIcon, this.hpBar.root, this.hpText,
       this.scoreText,
     ];
     if (this.diffTag) base.push(this.diffTag);
@@ -234,26 +275,29 @@ export class HUD {
   layout(): void {
     const W = this.scene.scale.width;
     const H = this.scene.scale.height;
-    this.xpBarBg.setPosition(0, 8).setSize(W, 16);
-    this.xpBarFill.setPosition(2, 8);
-    this.xpLabel.setPosition(W / 2, 8);
-    this.timerText.setPosition(12, 34);
+    this.xpBar.setWidth(W);
+    const sa = safeInsets();
+    this.xpBar.setPosition(W / 2, 9 + sa.top);
+    this.xpLabel.setPosition(W / 2, 9 + sa.top);
+    this.timerText.setPosition(12 + sa.left, 32 + sa.top);
     // HP-бар: под таймером; полоса 150px + сердце + текст
-    this.hpIcon.setPosition(19, 55);
-    this.hpBarBg.setPosition(30, 55);
-    this.hpGhost.setPosition(32, 55);
-    this.hpFill.setPosition(32, 55);
-    this.hpText.setPosition(32 + 150 + 6, 55);
-    this.statsText.setPosition(12, 78);
-    this.goldIcon.setPosition(12, 98);
-    this.goldText.setPosition(30, 98);
-    this.scoreText.setPosition(W - 12, 34);
-    this.diffTag?.setPosition(W - 12, 54);
+    this.hpIcon.setPosition(19 + sa.left, 55 + sa.top);
+    this.hpBar.setPosition(30 + 154 / 2 + sa.left, 55 + sa.top);
+    this.hpText.setPosition(30 + 154 + 6 + sa.left, 55 + sa.top);
+    this.statsText.setPosition(12 + sa.left, 78 + sa.top);
+    this.goldIcon.setPosition(12 + sa.left, 98 + sa.top);
+    this.goldText.setPosition(30 + sa.left, 98 + sa.top);
+    // Правый верхний угол занят кнопкой паузы: весь блок (счёт, метка
+    // сложности, серия) заканчивается левее неё, иначе цифры ложились
+    // прямо на кнопку.
+    const rEdge = W - PAUSE_RESERVE;
+    this.scoreText.setPosition(rEdge - sa.right, 34 + sa.top);
+    this.diffTag?.setPosition(rEdge - sa.right, 54 + sa.top);
     // Комбо: под счётом, выравнивание вправо
-    this.comboBaseY = 78;
-    this.comboText.setPosition(W - 12, this.comboBaseY);
-    this.comboBarBg.setPosition(W - 12, this.comboBaseY + 16);
-    this.comboBar.setPosition(W - 10, this.comboBaseY + 16);
+    this.comboBaseY = 78 + sa.top;
+    this.comboText.setPosition(rEdge - sa.right, this.comboBaseY);
+    this.comboBarBg.setPosition(rEdge - sa.right, this.comboBaseY + 16);
+    this.comboBar.setPosition(rEdge - sa.right - 2, this.comboBaseY + 16);
     // Анонс: на низких экранах опускаем ниже, чтобы не наезжать на босс-бар
     this.announceText.setPosition(W / 2, H < 600 ? Math.max(126, H * 0.3) : H * 0.22);
     // Босс-бар: на узких экранах опускаем под строку золота — иначе
@@ -276,7 +320,7 @@ export class HUD {
     // на мобильных 16 иконок (7 оружий + 9 пассивок) не помещаются в один ряд
     const perRow = Math.max(1, Math.floor((W - 24) / 40));
     let ix = 12;
-    let iy = H - 16;
+    let iy = H - hudBottomInset();
     let inRow = 0;
     for (const c of this.weaponIcons.values()) {
       c.setPosition(ix, iy);
@@ -294,20 +338,26 @@ export class HUD {
     const z = this.camZoom();
     this.root.setScale(1 / z);
     this.root.setPosition((W / 2) * (1 - 1 / z), (H / 2) * (1 - 1 / z));
-    // Кнопка паузы — плоские sf=0-объекты с той же компенсацией
-    const bx = W / 2 + (W - 46 - W / 2) / z;
-    const by = H / 2 + (96 - H / 2) / z;
-    const inv = 1 / z;
-    this.pauseBg.setPosition(bx, by).setScale(inv);
-    this.pauseTxt.setPosition(bx, by).setScale(inv);
-    this.pauseHit.setPosition(bx, by).setScale(inv);
+    // Кнопка паузы: экранные координаты, компенсацию зума делает root.
+    // Масштаб фона не трогаем — он задан через setDisplaySize при создании,
+    // и любой setScale здесь вернул бы натуральный размер текстуры.
+    const bx = W - 46;
+    const by = 96;
+    this.pauseBg.setPosition(bx, by);
+    this.pauseTxt.setPosition(bx, by).setScale(1);
+    this.pauseHit.setPosition(bx, by).setScale(1);
   }
 
   update(s: HudState): void {
-    const frac = Phaser.Math.Clamp(s.xp / Math.max(1, s.xpNext), 0, 1);
-    const W = this.scene.scale.width;
-    this.xpBarFill.setSize(Math.max(6, (W - 4) * frac), 12);
-    this.xpLabel.setText(t('hud.level', { v: s.level }));
+    const atMax = s.level >= MAX_LEVEL;
+    // На потолке уровней полоса заполнена целиком и показывает пометку,
+    // а не растущие числа, которых больше не станет.
+    const frac = atMax ? 1 : Phaser.Math.Clamp(s.xp / Math.max(1, s.xpNext), 0, 1);
+    this.xpBar.setFraction(frac);
+    const label = atMax
+      ? t('hud.levelMax', { v: s.level })
+      : t('hud.levelProgress', { a: num(s.xp), b: num(s.xpNext), v: s.level });
+    if (this.xpLabel.text !== label) this.xpLabel.setText(label);
 
     const remain = Math.max(0, GAME_DURATION - s.elapsed);
     if (remain <= 0) {
@@ -340,42 +390,42 @@ export class HUD {
     }
   }
 
-  /** Полоса HP: быстрая полоса + медленный «призрак» (классика файтингов) */
+  /** Полоса HP: быстрая заливка + медленный «призрак» (классика файтингов) */
   private updateHpBar(hp: number, maxHp: number): void {
     const frac = Phaser.Math.Clamp(hp / Math.max(1, maxHp), 0, 1);
-    const W = 150;
-    const color = frac > 0.5 ? 0x53b44a : frac > 0.25 ? 0xe0a030 : 0xd03028;
-    this.hpFill.setFillStyle(color);
+    this.hpBar.setFraction(frac);
     this.hpText.setText(`${Math.ceil(hp)}/${maxHp}`);
     this.hpText.setColor(frac > 0.25 ? '#ffffff' : '#ff9a8a');
-    if (this.hpLastFrac < 0) {
-      // первый кадр — без анимации
-      this.hpFill.width = W * frac;
-      this.hpGhost.width = Math.max(1, W * frac);
-      this.hpLastFrac = frac;
-      return;
-    }
-    this.scene.tweens.killTweensOf(this.hpFill);
-    this.scene.tweens.add({
-      targets: this.hpFill, width: Math.max(1, W * frac),
-      duration: 130, ease: 'Quad.easeOut',
-    });
-    if (frac >= this.hpLastFrac) {
-      // лечение/первый показ: призрак подтягивается сразу
-      this.scene.tweens.killTweensOf(this.hpGhost);
-      this.hpGhost.width = Math.max(1, W * frac);
-    } else {
-      // урон: призрак держится и медленно тает
-      this.scene.tweens.killTweensOf(this.hpGhost);
-      this.scene.tweens.add({
-        targets: this.hpGhost, width: Math.max(1, W * frac),
-        duration: 430, delay: 240, ease: 'Quad.easeIn',
-      });
-    }
-    this.hpLastFrac = frac;
   }
 
   /** Обновление серии убийств: счётчик ×N + полоса окна */
+  /**
+   * Помечает иконку ствола как готового к эволюции: золотая рамка и
+   * мягкая пульсация. Метку нужно снять, когда эволюция взята.
+   */
+  markEvolutionReady(weaponId: string): void {
+    const icon = this.weaponIcons.get(weaponId);
+    if (!icon || icon.evoReady) return;
+    icon.evoReady = true;
+    const bg = icon.list[0] as Phaser.GameObjects.Rectangle | undefined;
+    if (bg && bg.type === 'Rectangle') bg.setStrokeStyle(3, 0xffd700, 1);
+    this.scene.tweens.add({
+      targets: icon, alpha: { from: 1, to: 0.65 },
+      duration: 850, yoyo: true, repeat: -1, ease: 'Sine.easeInOut',
+    });
+  }
+
+  /** Снимает пометку «готово к эволюции». */
+  clearEvolutionReady(weaponId: string): void {
+    const icon = this.weaponIcons.get(weaponId);
+    if (!icon || !icon.evoReady) return;
+    icon.evoReady = false;
+    this.scene.tweens.killTweensOf(icon);
+    icon.setAlpha(1);
+    const bg = icon.list[0] as Phaser.GameObjects.Rectangle | undefined;
+    if (bg && bg.type === 'Rectangle') bg.setStrokeStyle(0);
+  }
+
   updateCombo(combo: number, windowFrac: number): void {
     const show = combo >= COMBO.MIN_DISPLAY;
     this.comboText.setVisible(show);
@@ -416,19 +466,41 @@ export class HUD {
     this.comboShown = -1;
   }
 
-  /** Стрелка-индикатор: треугольник, указывающий на цель за экраном */
-  private makeIndicator(color: number): Phaser.GameObjects.Graphics {
-    const g = this.scene.add.graphics();
-    // Треугольник, остриём вправо (+x), с тёмной обводкой для читаемости
-    g.fillStyle(0x1b1008, 0.7);
-    g.fillTriangle(16, 0, -8, -11, -8, 11);
-    g.lineStyle(2, 0x1b1008, 0.9);
-    g.strokeTriangle(16, 0, -8, -11, -8, 11);
-    g.fillStyle(color, 1);
-    g.fillTriangle(13, 0, -6, -8, -6, 8);
-    g.setVisible(false);
-    return g;
+  /**
+   * Стрелка-индикатор: указывает на цель за пределами экрана.
+   *
+   * Раньше треугольник рисовался в Graphics: он был резким, не в духе
+   * остальной графики, и не масштабировался вместе с камерой. Теперь это
+   * спрайт ui/cursors/cursor-01.png — тот же, что курсор мыши.
+   *
+   * Геометрия спрайта измерена по непрозрачным пикселям
+   * (scripts/probe-cursors.mjs, scripts/probe-arrow.mjs): в кадре 64×64
+   * стрелка занимает x 22…43, y 17…46, остриё в точке (22, 17), а
+   * основание — между (34, 46) и (43, 36). Отсюда два числа:
+   *
+   *   • origin — в острии, иначе стрелка рисуется со сдвигом на 11 px
+   *     вверх-влево от точки на краю экрана и уезжает за кадр;
+   *   • направление оси — −125°, а не «ровно 45° наверх-влево», поэтому
+   *     к углу между экраном и целью прибавляется 125°.
+   */
+  private makeIndicator(tint: number): Phaser.GameObjects.Container {
+    const box = this.scene.add.container(0, 0);
+    const arrow = this.scene.add
+      .image(0, 0, 'cursor-arrow')
+      .setOrigin(HUD.ARROW_TIP_X, HUD.ARROW_TIP_Y)
+      .setScale(1)
+      .setTint(tint);
+    box.add(arrow);
+    box.setVisible(false);
+    return box;
   }
+
+  /** Остриё стрелки в координатах кадра 64×64: (22, 17). */
+  private static readonly ARROW_TIP_X = 22 / 64;
+  private static readonly ARROW_TIP_Y = 17 / 64;
+
+  /** Поворот от нарисованного наклона стрелки к нужному направлению: 125°. */
+  private static readonly ARROW_OFFSET = (125 * Math.PI) / 180;
 
   /** Индикаторы целей за экраном: позиции в экранных координатах */
   updateIndicators(
@@ -439,7 +511,7 @@ export class HUD {
     const H = this.scene.scale.height;
     const cx = W / 2, cy = H / 2;
     const m = 30;
-    const place = (g: Phaser.GameObjects.Graphics, t: { x: number; y: number } | undefined, pulse: boolean): boolean => {
+    const place = (g: Phaser.GameObjects.Container, t: { x: number; y: number } | undefined, pulse: boolean): boolean => {
       if (!t) return false;
       const s = toScreen(t.x, t.y);
       // Цель видима на экране — стрелка не нужна
@@ -452,7 +524,7 @@ export class HUD {
       const ky = ady > 0.001 ? (H / 2 - m) / ady : Infinity;
       const k = Math.min(kx, ky);
       g.setPosition(cx + dx * k, cy + dy * k);
-      g.setRotation(Math.atan2(dy, dx));
+      g.setRotation(Math.atan2(dy, dx) + HUD.ARROW_OFFSET);
       const a = pulse ? 0.55 + Math.abs(Math.sin(this.scene.time.now / 260)) * 0.45 : 1;
       g.setAlpha(a);
       return true;
@@ -526,8 +598,27 @@ export class HUD {
     this.bossGroup.setVisible(true);
   }
 
-  updateBossBar(frac: number): void {
-    this.bossFill.setSize(Math.max(0, (this.bossBarW - 6) * Phaser.Math.Clamp(frac, 0, 1)), 12);
+  updateBossBar(frac: number, hp?: number, maxHp?: number): void {
+    const f = Phaser.Math.Clamp(frac, 0, 1);
+    this.bossFill.setSize(Math.max(0, (this.bossBarW - 6) * f), 12);
+    if (hp !== undefined && maxHp !== undefined) {
+      const text = num(Math.max(0, Math.ceil(hp))) + ' / ' + num(Math.round(maxHp));
+      if (this.bossHpText.text !== text) this.bossHpText.setText(text);
+      // Подпись светлеет по мере падения здоровья, чтобы финальная фаза
+      // читалась без вглядывания в цифры.
+      this.bossHpText.setColor(f > 0.5 ? '#ffd9c0' : f > 0.2 ? '#ffb08a' : '#ff7a5e');
+    }
+  }
+
+  /** Прячет весь HUD (экран результата) и возвращает его при воскрешении. */
+  setVisible(v: boolean): void {
+    this.root.setVisible(v);
+    // Кнопка паузы — отдельные top-level объекты, контейнер их не покрывает
+    this.pauseBg.setVisible(v);
+    this.pauseTxt.setVisible(v);
+    this.pauseHit.setVisible(v);
+    if (v) this.pauseBg.setInteractive();
+    else this.pauseHit.disableInteractive();
   }
 
   hideBossBar(): void {
@@ -546,7 +637,9 @@ export class HUD {
     this.toastBusy = true;
     const a = this.toastQueue.shift()!;
     const W = this.scene.scale.width;
-    const c = this.scene.add.container(W + 150, 132);
+    // Ниже кнопки паузы (она занимает верхние ~117 px) и с запасом
+    // от правого края: раньше панель накрывала кнопку.
+    const c = this.scene.add.container(W + 170, 152);
     const paper = makePanel(this.scene, 0, 0, 'paper', 250, 58);
     const icon = this.scene.add.image(-95, 0, a.icon).setDisplaySize(38, 38);
     const label = this.scene.add.text(-68, -14, t('ach.toast'), {
@@ -558,7 +651,7 @@ export class HUD {
     }).setOrigin(0, 0.5);
     c.add([paper, icon, label, name]);
     this.root.add(c); // поверх остального HUD
-    this.scene.tweens.add({ targets: c, x: W - 140, duration: 320, ease: 'Back.easeOut' });
+    this.scene.tweens.add({ targets: c, x: W - 152, duration: 320, ease: 'Back.easeOut' });
     this.scene.time.delayedCall(2600, () => {
       this.scene.tweens.add({
         targets: c, x: W + 170, alpha: 0, duration: 280,
@@ -575,7 +668,10 @@ export class HUD {
     let c = this.weaponIcons.get(id);
     const H = this.scene.scale.height;
     if (!c) {
-      c = this.scene.add.container(12 + this.weaponIcons.size * 40, H - 16);
+      c = this.scene.add.container(
+        12 + this.weaponIcons.size * 40,
+        H - hudBottomInset(),
+      );
       const bg = this.scene.add.rectangle(0, 0, 34, 34, 0x1b1008, 0.75).setOrigin(0, 0.5);
       const ic = this.scene.add.image(4, -3, iconKey).setOrigin(0, 0).setDisplaySize(26, 26);
       const lvl = this.scene.add.text(30, 10, '1', {
@@ -613,6 +709,7 @@ export class HUD {
 
   destroy(): void {
     this.scene.scale.off('resize', this.resizeHandler);
+    window.removeEventListener('orientationchange', this.resizeHandler);
     this.root.destroy();
     this.pauseBg.destroy();
     this.pauseTxt.destroy();

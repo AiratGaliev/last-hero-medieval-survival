@@ -7,13 +7,17 @@ import { t } from '../../i18n';
 // ============ Директор волн: тайминг, состав, спец-события ============
 
 export interface SpawnerCtx {
-  spawn(kind: EnemyKind, x: number, y: number): void;
+  /** Создаёт врага. false — упёрлись в лимит толпы. */
+  spawn(kind: EnemyKind, x: number, y: number): boolean;
   spawnElite(kind: EnemyKind): void;
   spawnBoss(): void;
   playerX(): number;
   playerY(): number;
   announce(text: string, color?: string): void;
   spawnRadius(): number;
+  /** Точка у края экрана для добора отложенной волны. */
+  randomSpawnX(): number;
+  randomSpawnY(): number;
 }
 
 export class Spawner {

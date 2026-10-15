@@ -1,6 +1,7 @@
 import Phaser from 'phaser';
+import { Cursor } from '../systems/Cursor';
 import {
-  WORLD, PLAYER_BASE, DEPTH, ENEMY_CAP, SCORE, XP_CURVE, COMBO,
+  WORLD, PLAYER_BASE, DEPTH, ENEMY_CAP, SCORE, XP_CURVE, COMBO, MAX_LEVEL,
 } from '../constants';
 import {
   WEAPONS, PASSIVES, HEROES, ENEMIES, DIFFICULTIES, EVOLUTIONS,
@@ -19,6 +20,7 @@ import { Joystick } from '../systems/Joystick';
 import { AchTracker, commitMeta } from '../achievements';
 import { getShopLevels, type ShopLevels } from '../shop';
 import { t } from '../../i18n';
+import { loadText } from '../storage';
 import { gameplayStart, gameplayStop } from '../../platform/lifecycle';
 
 type Keys = Record<string, Phaser.Input.Keyboard.Key>;
@@ -107,7 +109,13 @@ export class GameScene extends Phaser.Scene {
     super('Game');
   }
 
+  /** Курсор в стиле Tiny Swords: следит за наведением и переключает
+   *  состояние. В CSS у курсора !important — он перебивает инлайновый
+   *  cursor, который Phaser ставит через useHandCursor. */
+  private cursor!: Cursor;
+
   create(payload?: { hero?: HeroId; diff?: DifficultyId }): void {
+    this.cursor = new Cursor(this);
     this.resetState();
     this.initHero(payload?.hero);
     this.initDifficulty(payload?.diff);
@@ -180,8 +188,8 @@ export class GameScene extends Phaser.Scene {
 
   private initDifficulty(diffId?: DifficultyId): void {
     let id = diffId;
-    if (!id && typeof window !== 'undefined') {
-      const saved = window.localStorage.getItem('tss-diff');
+    if (!id) {
+      const saved = loadText('tss-diff');
       if (saved === 'normal' || saved === 'nightmare') id = saved;
     }
     this.diffDef = DIFFICULTIES[id ?? 'normal'];
@@ -189,8 +197,8 @@ export class GameScene extends Phaser.Scene {
 
   private initHero(heroId?: HeroId): void {
     let id = heroId;
-    if (!id && typeof window !== 'undefined') {
-      const saved = window.localStorage.getItem('tss-hero');
+    if (!id) {
+      const saved = loadText('tss-hero');
       if (saved === 'warrior' || saved === 'archer' || saved === 'lancer' || saved === 'monk') id = saved;
     }
     this.heroDef = HEROES[id ?? 'warrior'];
@@ -210,21 +218,47 @@ export class GameScene extends Phaser.Scene {
       .setDepth(DEPTH.GROUND);
     void grass;
 
-    // Анимированная пена по кромке воды
-    const foamStep = 192;
-    const foamAnim = this.anims.get('fx-foam');
-    const foamRing = (x: number, y: number) => {
-      const f = this.add.sprite(x, y, 'fx-foam').setDepth(DEPTH.WATER + 2);
-      f.play('fx-foam');
-      if (foamAnim) f.anims.setCurrentFrame(foamAnim.frames[Phaser.Math.Between(0, foamAnim.frames.length - 1)]);
+    // Кромка арены: трава с обрывом вместо резкого прямоугольника.
+    // Тайл «трава сверху + камень снизу» повёрнут на четыре стороны.
+    const shoreFrame = 5 * 9 + 6; // строка 6, колонка 7 тайлсета 9×6
+    const shoreLen = S - m * 2;
+    const shore = (x: number, y: number, rot: number): void => {
+      const t = this.add.tileSprite(x, y, shoreLen, 64, 'arena-tiles', shoreFrame)
+        .setOrigin(0.5, 0.5)
+        .setRotation(rot)
+        .setDepth(DEPTH.GROUND + 1);
+      void t;
     };
-    for (let x = m; x < S - m; x += foamStep) {
-      foamRing(x + foamStep / 2, m);
-      foamRing(x + foamStep / 2, S - m);
-    }
-    for (let y = m; y < S - m; y += foamStep) {
-      foamRing(m, y + foamStep / 2);
-      foamRing(S - m, y + foamStep / 2);
+    shore(S / 2, m, Math.PI);          // верх: трава вниз, обрыв вверх
+    shore(S / 2, S - m, 0);           // низ: трава вверх, обрыв вниз
+    shore(m, S / 2, Math.PI / 2);      // слева
+    shore(S - m, S / 2, -Math.PI / 2); // справа
+
+    // Пена на воде: разбросанные пятна разного размера и поворота.
+    // Сетка 192 px вплотную читалась как бледные квадраты по кромке.
+    const foamAnim = this.anims.get('fx-foam');
+    const foamRng = new Phaser.Math.RandomDataGenerator(['tiny-sword-foam']);
+    const foamBand = m + 30;
+    for (let i = 0; i < 130; i++) {
+      const side = foamRng.pick([0, 1, 2, 3]);
+      const along = foamRng.between(0, S);
+      const across = foamRng.between(4, foamBand);
+      let fx: number;
+      let fy: number;
+      if (side === 0) { fx = across; fy = along; }
+      else if (side === 1) { fx = S - across; fy = along; }
+      else if (side === 2) { fx = along; fy = across; }
+      else { fx = along; fy = S - across; }
+      // Совсем у самого края пена не нужна — там должен быть виден синий
+      if ((side === 0 || side === 1 ? fx : fy) > m) continue;
+
+      const f = this.add.sprite(fx, fy, 'fx-foam')
+        .setDepth(DEPTH.WATER + 2)
+        .setScale(foamRng.realInRange(0.35, 0.95))
+        .setRotation(foamRng.realInRange(0, Math.PI * 2))
+        .setAlpha(foamRng.realInRange(0.7, 1));
+      f.play('fx-foam');
+      if (foamAnim) f.anims.setCurrentFrame(foamAnim.frames[foamRng.between(0, foamAnim.frames.length - 1)]);
     }
 
     this.physics.world.setBounds(m, m, S - m * 2, S - m * 2);
@@ -274,35 +308,124 @@ export class GameScene extends Phaser.Scene {
         place(x, y, 110);
       }
     }
-    // Деревья
-    for (let i = 0; i < 70; i++) {
+    // ---- Деревья: четыре породы разной высоты ----
+    // Раньше выбор был из двух видов, и карта читалась как копия
+    // одного объекта. tree2/tree4 отличаются силуэтом и высотой.
+    const TREE_KEYS = ['tree1', 'tree2', 'tree3', 'tree4'] as const;
+    for (let i = 0; i < 96; i++) {
       const [x, y] = randPos();
       if (!canPlace(x, y, 80)) continue;
-      const key = rng.frac() < 0.6 ? 'tree1' : 'tree3';
-      const sc = 0.8 + rng.frac() * 0.35;
+      const key = TREE_KEYS[rng.between(0, TREE_KEYS.length - 1)];
+      const sc = 0.75 + rng.frac() * 0.4;
       const t = this.add.sprite(x, y, key).setScale(sc);
-      t.play(key === 'tree1' ? 'tree1-sway' : 'tree3-sway');
+      t.play(key + '-sway');
       if (t.anims.currentAnim) t.setFrame(rng.between(0, 7));
       t.setDepth(DEPTH.ENTITY_BASE + y);
       place(x, y, 80);
     }
-    // Камни и кусты
-    for (let i = 0; i < 30; i++) {
+    // Пни у опушек: закрывают пустоты, где полноценное дерево не влезает
+    for (let i = 0; i < 22; i++) {
+      const [x, y] = randPos();
+      if (!canPlace(x, y, 34)) continue;
+      this.add.image(x, y, `stump${rng.between(1, 4)}`)
+        .setScale(0.6 + rng.frac() * 0.35)
+        .setDepth(DEPTH.ENTITY_BASE + y - 4);
+      place(x, y, 34);
+    }
+    // ---- Камни: четыре вида вместо трёх ----
+    for (let i = 0; i < 38; i++) {
       const [x, y] = randPos();
       if (!canPlace(x, y, 40)) continue;
-      this.add.image(x, y, `rock${rng.between(1, 3)}`).setScale(0.8 + rng.frac() * 0.5)
+      this.add.image(x, y, `rock${rng.between(1, 4)}`).setScale(0.8 + rng.frac() * 0.5)
         .setDepth(DEPTH.ENTITY_BASE + y - 4);
       place(x, y, 40);
     }
-    for (let i = 0; i < 40; i++) {
+    // ---- Кусты: четыре вида с покачиванием ----
+    const BUSH_KEYS = ['bushe1', 'bushe2', 'bushe3', 'bushe4'] as const;
+    for (let i = 0; i < 56; i++) {
       const [x, y] = randPos();
       if (!canPlace(x, y, 40)) continue;
-      const b = this.add.sprite(x, y, 'bushe1').setScale(0.7 + rng.frac() * 0.4);
-      b.play('bushe1-sway');
+      const key = BUSH_KEYS[rng.between(0, BUSH_KEYS.length - 1)];
+      const b = this.add.sprite(x, y, key).setScale(0.7 + rng.frac() * 0.4);
+      b.play(key + '-sway');
       b.setFrame(rng.between(0, 7));
       b.setDepth(DEPTH.ENTITY_BASE + y - 2);
       place(x, y, 40);
     }
+    // ---- Камни в воде: берег вместо пустой полосы ----
+    const wrockKeys = ['waterrock1', 'waterrock2', 'waterrock3', 'waterrock4'] as const;
+    for (let i = 0; i < 72; i++) {
+      const side = rng.between(0, 3);
+      const along = rng.between(20, S - 20);
+      const across = rng.between(6, m - 10);
+      const x = side === 0 ? across : side === 1 ? S - across : along;
+      const y = side === 2 ? across : side === 3 ? S - across : along;
+      const key = wrockKeys[rng.between(0, wrockKeys.length - 1)];
+      const w = this.add.sprite(x, y, key).setScale(0.38 + rng.frac() * 0.38);
+      w.play(key + '-sway');
+      w.setFrame(rng.between(0, 7));
+      w.setDepth(DEPTH.WATER + 3);
+    }
+
+    // ---- Резиновая уточка: одна, в северо-западном углу канала ----
+    // Пасхалка. Она не влияет на игру, но карта перестаёт быть
+    // бесконечной ровной травой с одинаковыми деревьями.
+    const duck = this.add.image(m - 70, m + 150, 'duck')
+      .setScale(1.2)
+      .setDepth(DEPTH.WATER + 4)
+      .setAlpha(0.95);
+    this.tweens.add({
+      targets: duck,
+      x: duck.x + 26,
+      duration: 2600,
+      yoyo: true,
+      repeat: -1,
+      ease: 'Sine.easeInOut',
+    });
+    this.tweens.add({
+      targets: duck,
+      angle: { from: -4, to: 4 },
+      duration: 1300,
+      yoyo: true,
+      repeat: -1,
+      ease: 'Sine.easeInOut',
+    });
+
+    // ---- Жители: крестьяне, которые работают у ресурсов ----
+    // Арена была пустошей: кроме овец, никого. Крестьяне с анимацией
+    // труда делают карту обжитой и объясняют, откуда на ней мясо и золото.
+    //
+    // Две фракции (синяя и жёлтая), чтобы толпа не была одного цвета.
+    const WORK_TOOLS = ['axe', 'hammer', 'knife', 'pickaxe'] as const;
+    for (let i = 0; i < 16; i++) {
+      const [x, y] = randPos();
+      if (!canPlace(x, y, 44)) continue;
+      const prefix = i % 2 === 0 ? 'pawn' : 'pawny';
+      const work = prefix + '-work-' + WORK_TOOLS[rng.between(0, WORK_TOOLS.length - 1)];
+
+      const v = this.add.sprite(x, y, prefix + '-idle').setScale(0.42);
+      v.play(prefix + '-idle');
+      v.setFrame(rng.between(0, 7));
+      v.setDepth(DEPTH.ENTITY_BASE + y - 1);
+      place(x, y, 44);
+
+      // Цикл «работает — отдыхает». Планировщик — time.delayedCall,
+      // а не твин с задержкой: твин без анимации отрабатывает onComplete
+      // в том же кадре, и рекурсия вешает браузер насмерть.
+      const workMs = 2400 + rng.between(0, 2600);
+      const restMs = 900 + rng.between(0, 1800);
+      const cycle = (): void => {
+        if (!v.scene) return;
+        v.play(work);
+        this.time.delayedCall(workMs, () => {
+          if (!v.scene) return;
+          v.play(prefix + '-idle');
+          this.time.delayedCall(restMs, cycle);
+        });
+      };
+      this.time.delayedCall(rng.between(600, 3200), cycle);
+    }
+
     // Овечки
     for (let i = 0; i < 10; i++) {
       const [x, y] = randPos();
@@ -315,9 +438,11 @@ export class GameScene extends Phaser.Scene {
     // Облака (дрейф вправо, относительный твин с переносом)
     for (let i = 0; i < 10; i++) {
       const [x, y] = [rng.between(0, S), rng.between(0, S)];
-      const c = this.add.image(x, y, `cloud${rng.between(1, 3)}`)
-        .setAlpha(0.5)
-        .setDepth(DEPTH.FX + 50);
+      const c = this.add.image(x, y, `cloud${rng.between(1, 8)}`)
+        .setAlpha(0.42)
+        // Дальний план: выше воды и обрыва, но ниже теней и сущностей.
+        // На DEPTH.FX + 50 облака накрывали врагов в бою.
+        .setDepth(DEPTH.DECOR_BACK);
       this.tweens.add({
         targets: c,
         x: '+=700',
@@ -353,8 +478,19 @@ export class GameScene extends Phaser.Scene {
     const spawnCtx: SpawnerCtx = {
       spawn: (kind, x, y) => this.spawnEnemy(kind, x, y),
       spawnElite: (kind) => {
+        // За пределами видимой области: радиус берём от камеры, а не
+        // фиксированный. На широком экране 700 px попадали в кадр —
+        // элита возникала перед глазами без предупреждения.
+        // Игрок узнаёт о ней по объявлению, звуку и указателю за краем.
+        const cam = this.cameras.main;
+        const r = Math.hypot(cam.width, cam.height) / (2 * cam.zoom) + 140;
         const a = Math.random() * Math.PI * 2;
-        this.spawnEnemy(kind, this.player.x + Math.cos(a) * 700, this.player.y + Math.sin(a) * 700);
+        const x = this.player.x + Math.cos(a) * r;
+        const y = this.player.y + Math.sin(a) * r;
+        if (this.spawnEnemy(kind, x, y)) {
+          audio.play('boss');
+          this.cameras.main.shake(220, 0.004);
+        }
       },
       spawnBoss: () => this.spawnBoss(),
       playerX: () => this.player.x,
@@ -363,6 +499,27 @@ export class GameScene extends Phaser.Scene {
       spawnRadius: () => {
         const cam = this.cameras.main;
         return Math.hypot(cam.width, cam.height) / (2 * cam.zoom) + 80;
+      },
+      // Точка у края экрана для добора отложенной волны
+      randomSpawnX: () => {
+        const cam = this.cameras.main;
+        const r = Math.hypot(cam.width, cam.height) / (2 * cam.zoom) + 80;
+        const a = Math.random() * Math.PI * 2;
+        return Phaser.Math.Clamp(
+          this.player.x + Math.cos(a) * r,
+          WORLD.GRASS_MARGIN + 60,
+          WORLD.SIZE - WORLD.GRASS_MARGIN - 60,
+        );
+      },
+      randomSpawnY: () => {
+        const cam = this.cameras.main;
+        const r = Math.hypot(cam.width, cam.height) / (2 * cam.zoom) + 80;
+        const a = Math.random() * Math.PI * 2;
+        return Phaser.Math.Clamp(
+          this.player.y + Math.sin(a) * r,
+          WORLD.GRASS_MARGIN + 60,
+          WORLD.SIZE - WORLD.GRASS_MARGIN - 60,
+        );
       },
     };
     this.spawner = new Spawner(this, spawnCtx, this.diffDef.id);
@@ -473,6 +630,9 @@ export class GameScene extends Phaser.Scene {
   // ================= ЦИКЛ =================
 
   update(time: number, delta: number): void {
+    // Решение о поражении принимается здесь — после всей физики кадра.
+    // Если тем же тиком погиб босс, победа уже объявлена и урон не считается.
+    if (this.confirmDefeat()) return;
     if (!this.started || this.gameEnded || this.victoryPending) return;
 
     // Хитстоп: короткая заморозка мира (после убийств элит/взрывов/урона)
@@ -547,7 +707,7 @@ export class GameScene extends Phaser.Scene {
     // Босс / мидбосс — приоритет полосе HP: сначала финальный босс
     if (this.boss) {
       if (this.boss.active) {
-        this.hud.updateBossBar(this.boss.hp / this.boss.maxHp);
+        this.hud.updateBossBar(this.boss.hp / this.boss.maxHp, this.boss.hp, this.boss.maxHp);
       } else {
         this.boss = null;
         if (this.midboss && this.midboss.active) this.hud.showBossBar(ENEMIES.midboss.name);
@@ -555,7 +715,7 @@ export class GameScene extends Phaser.Scene {
       }
     } else if (this.midboss) {
       if (this.midboss.active) {
-        this.hud.updateBossBar(this.midboss.hp / this.midboss.maxHp);
+        this.hud.updateBossBar(this.midboss.hp / this.midboss.maxHp, this.midboss.hp, this.midboss.maxHp);
       } else {
         this.midboss = null;
         this.hud.hideBossBar();
@@ -663,7 +823,7 @@ export class GameScene extends Phaser.Scene {
   }
 
   private hurtPlayer(amount: number): void {
-    if (this.gameEnded || this.victoryPending) return;
+    if (this.gameEnded || this.victoryPending || this.defeatPending) return;
     // Эффекты урона (звук/тряска/хитстоп) — только когда удар реально прошёл
     if (this.time.now < this.player.iframesUntil) return;
     const dmg = Math.max(1, Math.round(amount * this.armorMult));
@@ -672,7 +832,24 @@ export class GameScene extends Phaser.Scene {
     this.cameras.main.shake(120, 0.0035);
     this.cameras.main.flash(110, 190, 40, 30, false);
     this.hitstop(80);
-    if (dead) this.gameOver(false);
+    // Не завершаем матч сразу: событие урона приходит из физики, а убийство
+    // босса может произойти тем же тиком позже по порядку обработки.
+    // Решение принимается в update() — там уже известен исход боя с боссом.
+    if (dead) this.defeatPending = true;
+  }
+
+  /**
+   * Подтверждение поражения. Вызывается первым же обновлением после
+   * смертельного удара: к этому моменту известно, погиб ли босс.
+   */
+  private confirmDefeat(): boolean {
+    if (this.defeatPending && !this.gameEnded && !this.victoryPending) {
+      this.defeatPending = false;
+      this.gameOver(false);
+      return true;
+    }
+    this.defeatPending = false;
+    return false;
   }
 
   private onEnemyDeath(e: Enemy, src?: WeaponId): void {
@@ -742,10 +919,20 @@ export class GameScene extends Phaser.Scene {
       this.score += 1500;
       this.pickups.spawnGoldGem(x + 24, y, 40);
       this.pickups.spawnGoldGem(x - 24, y, 40);
-      for (let i = 0; i < 3; i++) {
-        this.pickups.spawnGem(x + Phaser.Math.Between(-50, 50), y + Phaser.Math.Between(-50, 50), 'gem-red', 12);
-      }
+      // Опыт мидбосса приходит общим дропом выше: он разбит на три
+      // кристалла из def.xp. Раньше здесь был второй дроп тех же 36 XP.
       this.hud.announce(t('game.midbossDown'), '#ffd700');
+    }
+    if (e.def.isBoss) {
+      // Награда за весь матч. Очки (SCORE.BOSS) начисляет victory(),
+      // здесь — золото в лавку и meat для восстановления после боя.
+      for (let i = 0; i < 5; i++) {
+        const a = (i / 5) * Math.PI * 2;
+        this.pickups.spawnGoldGem(x + Math.cos(a) * 70, y + Math.sin(a) * 70, 60);
+      }
+      for (let i = 0; i < 4; i++) {
+        this.pickups.spawnMeat(x + Phaser.Math.Between(-80, 80), y + Phaser.Math.Between(-80, 80));
+      }
     }
 
     if (e === this.boss) {
@@ -756,7 +943,7 @@ export class GameScene extends Phaser.Scene {
   /** Взрыв бочки-камикадзе. selfDestruct=true — сама доехала до игрока. */
   private bomberExplosion(x: number, y: number, selfDestruct: boolean, src?: WeaponId): void {
     const def = ENEMIES.bomber;
-    const dmg = def.explodeDmg ?? 24;
+    const dmg = Math.round((def.explodeDmg ?? 24) * this.spawner.dmgMult);
     const R = def.explodeRadius ?? 150;
     this.effects.explosion(x, y, 1.05, 2);
     audio.play('explosion');
@@ -818,10 +1005,11 @@ export class GameScene extends Phaser.Scene {
     this.pickups.spawnMeat(x - 26, y);
   }
 
-  private spawnEnemy(kind: EnemyKind, x: number, y: number): void {
+  /** true — враг создан; false — упёрлись в лимит толпы. */
+  private spawnEnemy(kind: EnemyKind, x: number, y: number): boolean {
     const def = ENEMIES[kind];
     // Элиты/боссы не подпадают под лимит толпы
-    if (!def.isElite && !def.isBoss && !def.isMidboss && this.enemyGroup.getLength() >= ENEMY_CAP) return;
+    if (!def.isElite && !def.isBoss && !def.isMidboss && this.enemyGroup.getLength() >= ENEMY_CAP) return false;
     const m = WORLD.GRASS_MARGIN + 40;
     x = Phaser.Math.Clamp(x, m, WORLD.SIZE - m);
     y = Phaser.Math.Clamp(y, m, WORLD.SIZE - m);
@@ -834,14 +1022,17 @@ export class GameScene extends Phaser.Scene {
       this.hud.bossIntro(def.name, t('hud.bossSubtitleGuardian'));
       this.cameras.main.shake(350, 0.007);
     }
+    return true;
   }
 
   private enemyCtxStore: EnemyContext | null = null;
 
   private spawnBoss(): void {
     const a = Math.random() * Math.PI * 2;
-    const x = Phaser.Math.Clamp(this.player.x + Math.cos(a) * 640, 400, WORLD.SIZE - 400);
-    const y = Phaser.Math.Clamp(this.player.y + Math.sin(a) * 640, 400, WORLD.SIZE - 400);
+    const cam = this.cameras.main;
+    const r = Math.hypot(cam.width, cam.height) / (2 * cam.zoom) + 160;
+    const x = Phaser.Math.Clamp(this.player.x + Math.cos(a) * r, 400, WORLD.SIZE - 400);
+    const y = Phaser.Math.Clamp(this.player.y + Math.sin(a) * r, 400, WORLD.SIZE - 400);
     this.boss = new Enemy(this, x, y, 'boss', 1, 1, this.enemyCtxStore!);
     this.boss.speed = Math.round(this.boss.speed * this.diffDef.speedMult);
     this.enemyGroup.add(this.boss);
@@ -851,6 +1042,23 @@ export class GameScene extends Phaser.Scene {
       this.diffDef.id === 'nightmare' ? t('hud.bossSubtitleNightmare') : t('hud.bossSubtitleFinal'),
     );
     this.cameras.main.shake(400, 0.008);
+  }
+
+  /**
+   * Убирает одного самого далёкого обычного врага, чтобы освободить место
+   * под элиту, босса или волну. Возвращает false, если убирать нечего.
+   */
+  private makeRoomForSummon(): boolean {
+    let worst: Enemy | null = null;
+    let worstD = 0;
+    for (const e of this.activeEnemies()) {
+      if (e.def.isElite || e.def.isBoss || e.def.isMidboss) continue;
+      const d = (e.x - this.player.x) ** 2 + (e.y - this.player.y) ** 2;
+      if (d > worstD) { worstD = d; worst = e; }
+    }
+    if (!worst) return false;
+    this.enemyGroup.remove(worst, true, true);
+    return true;
   }
 
   private separateEnemies(): void {
@@ -904,11 +1112,23 @@ export class GameScene extends Phaser.Scene {
     if (this.gameEnded || this.victoryPending) return;
     this.xp += Math.max(1, Math.round(v * this.xpMult));
     while (this.xp >= this.xpNext) {
+      if (this.level >= MAX_LEVEL) {
+        // Потолок достигнут: опыт больше не даёт карточек и переводится
+        // в золото. Раньше он просто копился в невидимой полосе.
+        this.addGold(Math.floor(this.xp));
+        this.xp = 0;
+        return;
+      }
       this.xp -= this.xpNext;
       this.level++;
       this.xpNext = XP_CURVE(this.level);
       this.pendingLevelUps++;
       this.ach?.event({ type: 'level', value: this.level });
+      // Достигнут потолок — один раз сообщаем, чтобы игрок знал,
+      // почему уровни больше не идут.
+      if (this.level === MAX_LEVEL) {
+        this.hud.announce(t('game.maxLevel', { v: MAX_LEVEL }), '#ffd76e');
+      }
     }
   }
 
@@ -963,15 +1183,28 @@ export class GameScene extends Phaser.Scene {
     Phaser.Utils.Array.Shuffle(pool);
     // Эволюции — в начало выдачи (не больше 3 карточек всего)
     const picked = [...evolutions.slice(0, 3), ...pool.slice(0, Math.max(0, 3 - evolutions.length))];
-    if (picked.length === 0) {
-      picked.push(
-        { kind: 'heal', title: t('levelup.cardHealTitle'), subtitle: t('levelup.cardHealSub'), desc: t('levelup.cardHealDesc'), icon: 'icon-meat' },
-        { kind: 'gold', title: t('levelup.cardGoldTitle'), subtitle: t('levelup.cardGoldSub'), desc: t('levelup.cardGoldDesc'), icon: 'icon-coin' },
-        { kind: 'heal', title: t('levelup.cardHealTitle'), subtitle: t('levelup.cardHealSub'), desc: t('levelup.cardHealDesc'), icon: 'icon-meat' },
-      );
+
+    // Добиваем выдачу только теми наградами, которые реально что-то дают.
+    // Раньше добивали карточками «мясо +40 HP», которые при полном здоровье
+    // не делали ничего, и двумя одинаковыми карточками подряд — игрок
+    // не мог отличить варианты.
+    const canHeal = this.player.hp < this.player.maxHp - 1;
+    const filler: UpgradeCard[] = [];
+    if (canHeal) {
+      filler.push({
+        kind: 'heal', title: t('levelup.cardHealTitle'), subtitle: t('levelup.cardHealSub'),
+        desc: t('levelup.cardHealDesc'), icon: 'icon-meat',
+      });
     }
+    filler.push({
+      kind: 'gold', title: t('levelup.cardGoldTitle'), subtitle: t('levelup.cardGoldSub'),
+      desc: t('levelup.cardGoldDesc'), icon: 'icon-coin',
+    });
+
+    let i = 0;
     while (picked.length < 3) {
-      picked.push({ kind: 'heal', title: t('levelup.cardHealTitle'), subtitle: t('levelup.cardHealSub'), desc: t('levelup.cardHealDesc'), icon: 'icon-meat' });
+      picked.push(filler[i % filler.length]);
+      i++;
     }
     return picked;
   }
@@ -984,6 +1217,11 @@ export class GameScene extends Phaser.Scene {
     if (next.count && next.count !== cur.count) parts.push(t('levelup.statCount', { v: next.count }));
     if (next.radius && cur.radius && next.radius !== cur.radius) parts.push(t('levelup.statRadius', { v: next.radius }));
     if (next.pierce && cur.pierce && next.pierce !== cur.pierce) parts.push(t('levelup.statPierce', { v: next.pierce }));
+    // Перезарядка показывается всегда: у части стволов (лук, копьё)
+    // частота выстрела — полноценная характеристика, а не деталь.
+    if (next.cd !== cur.cd) {
+      parts.push(t('levelup.statCooldown', { a: (next.cd / 1000).toFixed(2), b: (cur.cd / 1000).toFixed(2) }));
+    }
     return parts.join(', ');
   }
 
@@ -1025,13 +1263,16 @@ export class GameScene extends Phaser.Scene {
       case 'weapon-evolve': {
         const id = card.id as WeaponId;
         this.weapons.evolve(id);
-        this.hud.setIcon(id, WEAPONS[id].icon, 6, false);
+        // Уровень читаем из системы: константа 6 расходилась с реальным
+        // состоянием, если эволюция не сработала бы.
+        this.hud.setIcon(id, WEAPONS[id].icon, this.weapons.level(id), false);
         const evo = EVOLUTIONS[id];
         // Праздничный момент: золотая вспышка, искры, объявление, звук
         this.cameras.main.flash(220, 255, 215, 120, false);
         this.effects.goldBurst(this.player.x, this.player.y - 20, 22);
         this.effects.popup(this.player.x, this.player.y - 70, `★ ${evo.name.toUpperCase()} ★`, '#ffd700', 18);
         this.hud.announce(t('game.evolution', { v: evo.name.toUpperCase() }), '#ffd700');
+        this.hud.clearEvolutionReady(id);
         audio.play('evolve');
         this.ach?.event({ type: 'evolution' });
         break;
@@ -1043,6 +1284,7 @@ export class GameScene extends Phaser.Scene {
         this.hud.setIcon(id, PASSIVES[id].icon, lvl, true);
         this.recomputeStats();
         if (id === 'vitality') this.player.heal(25);
+        this.announceEvolutionReady();
         break;
       }
       case 'heal': this.player.heal(40); break;
@@ -1050,6 +1292,28 @@ export class GameScene extends Phaser.Scene {
         this.gold += 100;
         this.ach?.event({ type: 'gold', value: this.gold });
         break;
+    }
+  }
+
+  /**
+   * Сообщает, если взятая пассивка открыла эволюцию ствола.
+   *
+   * Партнёры не выглядят связанными со своим стволом: «Пир» звучит как
+   * обычный бонус, а на деле завершает копьё. Без подсказки игрок
+   * узнавал об эволюции только на следующем левел-апе — или не узнавал.
+   */
+  private announceEvolutionReady(): void {
+    let any = false;
+    for (const w of Object.values(WEAPONS)) {
+      const partner = EVOLUTIONS[w.id]?.partner;
+      if (!partner) continue;
+      if (!this.weapons.evolutionReady(w.id, (this.passiveLevels.get(partner) ?? 0) > 0)) continue;
+      this.hud.markEvolutionReady(w.id);
+      any = true;
+    }
+    if (any) {
+      this.hud.announce(t('game.evoReady'), '#ffd700');
+      audio.play('evolve');
     }
   }
 
@@ -1102,8 +1366,17 @@ export class GameScene extends Phaser.Scene {
 
   // ================= ПАУЗА / КОНЕЦ =================
 
+  /** Вызывается площадкой при game_api_resume. Не резumes сцену, если на ней
+     * открыт оверлей (Pause/LevelUp/GameOver) — иначе бой пойдёт под ним. */
+  platformResume(): void {
+    if (this.overlayOpen || this.gameEnded) this.scene.resume();
+    gameplayStart();
+  }
+
   private openPause(): void {
-    if (this.overlayOpen || this.gameEnded) return;
+    // Во время финального фейерверка пауза ломала экран победы: сцена
+    // замирала вместе с таймером, который должен был показать результат.
+    if (this.overlayOpen || this.gameEnded || this.victoryPending) return;
     this.overlayOpen = true;
     gameplayStop();
     this.scene.pause();
@@ -1180,6 +1453,9 @@ export class GameScene extends Phaser.Scene {
     }
     // Собрать все кристаллы — ПО-НАСТОЯЩЕМУ: золото/лечение начисляются,
     // опыт конвертируется в очки (левел-апы в финале уже не выдаются)
+    // Стрелы и бомбы в воздухе замирали на 1.9 с финальной анимации:
+    // update() выходил по victoryPending, и они висели неподвижно.
+    this.projectiles.clear();
     this.pickups.finaleVacuum(this.player.x, this.player.y, (g) => {
       if (g.gold > 0) {
         this.gold += g.gold;
@@ -1191,13 +1467,29 @@ export class GameScene extends Phaser.Scene {
     this.time.delayedCall(1900, () => this.gameOver(true));
   }
 
+  /** Смертельный удар получен, но исход матча ещё не решён. */
+  private defeatPending = false;
+  /** Приращения мета-статистики, уже записанные в хранилище. */
+  private metaCommitted = false;
+  private metaVictory = false;
+  private metaKills = 0;
+  private metaGold = 0;
+  private metaTime = 0;
+
   private gameOver(victory: boolean): void {
     if (this.gameEnded) return;
     this.gameEnded = true;
+    this.defeatPending = false;
+    // Снаряды в полёте замирали на весь экран результата: сцену ставили на
+    // паузу, а projectiles.update() переставал вызываться.
+    this.projectiles.clear();
     this.spawner.stopped = true;
     this.player.setVelocity(0, 0);
     if (!victory) audio.play('gameover');
     audio.stopMusic();
+    // HUD матча прячем: сцена ставится на паузу, но продолжает рисоваться,
+    // и полосы с тостами светились поверх затемнения экрана результата.
+    this.hud.setVisible(false);
 
     const finalScore = this.currentScore();
     // Статистика оружия: сортировка по суммарному урону; эволюционные формы — с ★
@@ -1220,20 +1512,41 @@ export class GameScene extends Phaser.Scene {
       score: finalScore,
       hero: this.heroDef.name,
       difficulty: this.diffDef.name,
+      difficultyId: this.diffDef.id,
       bestCombo: this.bestCombo,
       weapons,
-      newAch: (this.ach?.newlyUnlocked ?? []).map((a) => ({ name: a.name, emoji: a.emoji })),
+      newAch: (this.ach?.consumeNewly() ?? []).map((a) => ({ name: a.name, emoji: a.emoji })),
     };
-    // Мета-статистика (localStorage) для React-сайдбара
-    commitMeta({
-      victory,
-      kills: this.kills,
-      gold: this.gold,
-      score: finalScore,
-      playTime: Math.floor(this.elapsed),
-    });
+    this.commitMatchMeta(victory, finalScore);
     this.scene.launch('GameOver', { stats });
     this.scene.pause();
+  }
+
+  /**
+   * Записывает результат матча в мета-статистику ровно один раз.
+   *
+   * После воскрешения за rewarded-ролик игрок может умереть снова, и тогда
+   * gameOver() вызывается второй раз. Поэтому здесь считаются приращения
+   * с момента прошлой записи: первый вызов вносит факт участия в матче,
+   * последующие дописывают только разницу. Иначе один матч засчитывался бы
+   * дважды — и золото дважды падало бы в кошелёк лавки.
+   */
+  private commitMatchMeta(victory: boolean, finalScore: number): void {
+    const time = Math.floor(this.elapsed);
+    const first = !this.metaCommitted;
+    commitMeta({
+      matches: first ? 1 : 0,
+      victories: victory && !this.metaVictory ? 1 : 0,
+      kills: Math.max(0, this.kills - this.metaKills),
+      gold: Math.max(0, this.gold - this.metaGold),
+      score: finalScore,
+      playTime: Math.max(0, time - this.metaTime),
+    });
+    this.metaCommitted = true;
+    this.metaVictory = victory;
+    this.metaKills = this.kills;
+    this.metaGold = this.gold;
+    this.metaTime = time;
   }
 
   /**
@@ -1249,6 +1562,7 @@ export class GameScene extends Phaser.Scene {
   revive(): boolean {
     if (!this.gameEnded) return false;
     this.gameEnded = false;
+    this.defeatPending = false;
     this.spawner.stopped = false;
 
     // Серия сбрасывается — награда за рекламу не должна идти в счёт очков
@@ -1261,6 +1575,7 @@ export class GameScene extends Phaser.Scene {
 
     audio.startMusic();
     gameplayStart();
+    this.hud.setVisible(true);
     this.hud.announce(t('over.revived'), '#7dc95e');
     return true;
   }
@@ -1318,7 +1633,8 @@ export class GameScene extends Phaser.Scene {
       },
       onBossArrowRing: (x, y) => {
         for (let i = 0; i < 14; i++) {
-          this.projectiles.enemyArrow(x, y, (i / 14) * Math.PI * 2, 14);
+          const dmg = Math.round(14 * this.spawner.dmgMult);
+          this.projectiles.enemyArrow(x, y, (i / 14) * Math.PI * 2, dmg);
         }
       },
       onMonkHeal: (x, y) => {
@@ -1328,11 +1644,17 @@ export class GameScene extends Phaser.Scene {
         }
       },
       onBossSummon: (x, y) => {
+        // Если толпа упёрлась в лимит, свита сначала расступается:
+        // уходим от игрока, кто дальше — того и выкидываем. Иначе призыв
+        // босса при полной толпе не вызывал ничего, и игрок его не замечал.
+        let summoned = 0;
         for (let i = 0; i < 6; i++) {
           const a = (i / 6) * Math.PI * 2 + Math.random();
-          this.spawnEnemy('boss-minion', x + Math.cos(a) * 170, y + Math.sin(a) * 170);
+          const ok = this.spawnEnemy('boss-minion', x + Math.cos(a) * 170, y + Math.sin(a) * 170);
+          if (!ok && !this.makeRoomForSummon()) continue;
+          if (ok) summoned++;
         }
-        this.hud.announce(t('game.bossSummon'), '#ff8866');
+        if (summoned > 0) this.hud.announce(t('game.bossSummon'), '#ff8866');
       },
       onBomberExplode: (x, y, self, selfDestruct) => {
         // Уничтожаем бочку ДО взрыва: взрыв не должен бить саму бочку (иначе рекурсия)

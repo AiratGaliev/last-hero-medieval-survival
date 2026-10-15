@@ -1,5 +1,5 @@
 import Phaser from 'phaser';
-import { DEPTH } from '../constants';
+import { DEPTH, PROJECTILE_CAP } from '../constants';
 import { audio } from './Audio';
 
 // ============ Снаряды: стрелы, копья, бомбы (игрок) + стрелы врагов ============
@@ -57,6 +57,7 @@ export class Projectiles {
   // ---------- Стрелы игрока ----------
   fireArrow(x: number, y: number, angle: number, dmg: number, pierce: number): void {
     const p = this.acquire(this.arrowPool, 'arrow', this.arrows);
+    if (!p) return;
     const speed = 640;
     p.setPosition(x, y);
     p.setVelocity(Math.cos(angle) * speed, Math.sin(angle) * speed);
@@ -73,6 +74,7 @@ export class Projectiles {
   // ---------- Копья ----------
   fireSpear(x: number, y: number, angle: number, dmg: number): void {
     const p = this.acquire(this.spearPool, 'spear', this.spears);
+    if (!p) return;
     const speed = 760;
     p.setPosition(x, y);
     p.setVelocity(Math.cos(angle) * speed, Math.sin(angle) * speed);
@@ -92,6 +94,7 @@ export class Projectiles {
   // ---------- Гунгнир (эволюция копья): гигантское возвращающееся копьё ----------
   fireGungnir(x: number, y: number, angle: number, dmg: number): void {
     const p = this.acquire(this.spearPool, 'spear', this.spears);
+    if (!p) return;
     const speed = 950;
     p.setPosition(x, y);
     p.setVelocity(Math.cos(angle) * speed, Math.sin(angle) * speed);
@@ -112,6 +115,7 @@ export class Projectiles {
   // ---------- Ножи ----------
   fireKnife(x: number, y: number, angle: number, dmg: number, pierce: number, golden = false): void {
     const p = this.acquire(this.knifePool, 'knife', this.knives);
+    if (!p) return;
     const speed = 840;
     p.setPosition(x, y);
     p.setVelocity(Math.cos(angle) * speed, Math.sin(angle) * speed);
@@ -129,6 +133,7 @@ export class Projectiles {
   // ---------- Стрелы врагов ----------
   enemyArrow(x: number, y: number, angle: number, dmg: number): void {
     const p = this.acquire(this.enemyArrowPool, 'arrow', this.enemyArrows);
+    if (!p) return;
     const speed = 380;
     p.setPosition(x, y);
     p.setVelocity(Math.cos(angle) * speed, Math.sin(angle) * speed);
@@ -211,9 +216,12 @@ export class Projectiles {
     }
   }
 
-  private acquire(pool: Proj[], key: string, group: Phaser.Physics.Arcade.Group): Proj {
+  private acquire(pool: Proj[], key: string, group: Phaser.Physics.Arcade.Group): Proj | null {
     let p = pool.find((x) => !x.active);
     if (!p) {
+      // Предел общего числа снарядов: иначе при высокой скоростре пул
+      // рос бы неограниченно (PROJECTILE_CAP был объявлен, но не проверялся)
+      if (!this.hasRoom) return null;
       const img = this.scene.physics.add.image(0, 0, key) as Proj;
       img.setActive(false).setVisible(false);
       group.add(img);
@@ -249,8 +257,36 @@ export class Projectiles {
     this.release(p);
   }
 
+  /**
+   * Убирает все снаряды с поля. Вызывается при победе и при поражении:
+   * сцена ставится на паузу, projectiles.update() перестаёт вызываться,
+   * и висящие в воздухе стрелы и бомбы оставались на экране результата.
+   */
+  /**
+   * Сколько снарядов сейчас в обороте. Пулы растут до пиковой нагрузки и
+   * держатся — это нормально, но общий размер ограничен, иначе при
+   * долгом залпе пул вырос бы без предела.
+   */
+  get size(): number {
+    return this.arrowPool.length + this.spearPool.length
+      + this.knifePool.length + this.enemyArrowPool.length;
+  }
+
+  /** Есть ли свободный слот в общем пуле снарядов. */
+  get hasRoom(): boolean {
+    return this.size < PROJECTILE_CAP;
+  }
+
   clear(): void {
-    for (const p of [...this.arrowPool, ...this.spearPool, ...this.knifePool, ...this.enemyArrowPool]) this.release(p);
+    const pools = [this.arrowPool, this.spearPool, this.knifePool, this.enemyArrowPool];
+    const done = new Set<Phaser.GameObjects.GameObject>();
+    for (const pool of pools) {
+      for (const p of pool) {
+        if (done.has(p)) continue;
+        done.add(p);
+        this.release(p);
+      }
+    }
     for (const b of this.bombs) b.img.destroy();
     this.bombs = [];
   }

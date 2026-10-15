@@ -5,6 +5,7 @@
 // надёжным хранилищем — прогресс переживает перезагрузку и смену устройства.
 
 import { depositGold } from './shop';
+import { loadJson, saveJson } from './storage';
 import { t } from '../i18n';
 
 export interface AchievementDef {
@@ -35,25 +36,20 @@ const LS_META = 'tss-meta';
 
 // ---------- Хранилище достижений ----------
 
+/** Известные id — по ним отсеиваем мусор из хранилища. */
+const KNOWN_IDS = new Set(ACHIEVEMENTS.map((a) => a.id));
+
 export function loadUnlocked(): Set<string> {
   if (typeof window === 'undefined') return new Set();
-  try {
-    const raw = window.localStorage.getItem(LS_ACH);
-    if (!raw) return new Set();
-    const arr: unknown = JSON.parse(raw);
-    if (Array.isArray(arr)) return new Set(arr.filter((x): x is string => typeof x === 'string'));
-  } catch {
-    // повреждённые данные — начинаем с чистого листа
-  }
-  return new Set();
+  const arr = loadJson<unknown>(LS_ACH);
+  if (!Array.isArray(arr)) return new Set();
+  // Оставляем только строки с существующим id: иначе счётчик «n / 12»
+  // разъезжался бы, а полоска прогресса показывала больше 100 %.
+  return new Set(arr.filter((x): x is string => typeof x === 'string' && KNOWN_IDS.has(x)));
 }
 
-function saveUnlocked(set: Set<string>): void {
-  try {
-    window.localStorage.setItem(LS_ACH, JSON.stringify([...set]));
-  } catch {
-    // localStorage недоступен (приватный режим) — просто не сохраняем
-  }
+function saveUnlocked(set: Set<string>): boolean {
+  return saveJson(LS_ACH, [...set]);
 }
 
 // ---------- Мета-статистика ----------
@@ -69,31 +65,24 @@ export interface MetaStats {
 
 const EMPTY_META: MetaStats = { matches: 0, victories: 0, kills: 0, gold: 0, bestScore: 0, playTime: 0 };
 
+const num = (v: unknown): number => Math.max(0, Math.floor(Number(v) || 0));
+
 export function loadMeta(): MetaStats {
   if (typeof window === 'undefined') return { ...EMPTY_META };
-  try {
-    const raw = window.localStorage.getItem(LS_META);
-    if (!raw) return { ...EMPTY_META };
-    const m = JSON.parse(raw) as Partial<MetaStats>;
-    return {
-      matches: Number(m.matches ?? 0) || 0,
-      victories: Number(m.victories ?? 0) || 0,
-      kills: Number(m.kills ?? 0) || 0,
-      gold: Number(m.gold ?? 0) || 0,
-      bestScore: Number(m.bestScore ?? 0) || 0,
-      playTime: Number(m.playTime ?? 0) || 0,
-    };
-  } catch {
-    return { ...EMPTY_META };
-  }
+  const m = loadJson<Partial<MetaStats>>(LS_META);
+  if (!m) return { ...EMPTY_META };
+  return {
+    matches: num(m.matches),
+    victories: num(m.victories),
+    kills: num(m.kills),
+    gold: num(m.gold),
+    bestScore: num(m.bestScore),
+    playTime: num(m.playTime),
+  };
 }
 
-export function saveMeta(m: MetaStats): void {
-  try {
-    window.localStorage.setItem(LS_META, JSON.stringify(m));
-  } catch {
-    // игнорируем
-  }
+export function saveMeta(m: MetaStats): boolean {
+  return saveJson(LS_META, m);
 }
 
 // ---------- Трекер внутри матча ----------
@@ -165,27 +154,41 @@ export class AchTracker {
   get unlockedCount(): number {
     return this.unlocked.size;
   }
+
+  /** Возвращает и очищает список ачивок, разблокированных за текущий матч.
+   * Без очистки экран результата показывает одни и те же «НОВЫЕ ДОСТИЖЕНИЯ»
+   * после каждого воскрешения, потому что массив только растёт. */
+  consumeNewly(): AchievementDef[] {
+    const out = [...this.newlyUnlocked];
+    this.newlyUnlocked.length = 0;
+    return out;
+  }
 }
 
-/** Финальное обновление мета-статистики (вызывается при конце матча). */
-export function commitMeta(params: {
-  victory: boolean;
+/**
+ * Обновление мета-статистики.
+ *
+ * Параметры — ПРИРАЩЕНИЯ, а не итоговые значения матча. Игрок может
+ * воскреснуть после ролика и умереть снова: gameOver() вызывается дважды,
+ * и при абсолютных значениях один матч засчитывался бы дважды — с двойным
+ * числом игр, убийств и двойной зачисленной в лавку валютой.
+ */
+export function commitMeta(delta: {
+  matches?: number;
+  victories?: number;
   kills: number;
   gold: number;
   score: number;
   playTime: number;
 }): void {
   const m = loadMeta();
-  m.matches += 1;
-  if (params.victory) m.victories += 1;
-  m.kills += params.kills;
-  m.gold += params.gold;
-  m.bestScore = Math.max(m.bestScore, params.score);
-  m.playTime += Math.max(0, Math.floor(params.playTime));
+  m.matches += delta.matches ?? 0;
+  m.victories += delta.victories ?? 0;
+  m.kills += delta.kills;
+  m.gold += delta.gold;
+  m.bestScore = Math.max(m.bestScore, delta.score);
+  m.playTime += Math.max(0, Math.floor(delta.playTime));
   saveMeta(m);
   // Золото матча пополняет кошелёк мета-магазина («Лавка торговца»)
-  depositGold(params.gold);
-  if (typeof window !== 'undefined') {
-    window.dispatchEvent(new CustomEvent('tss-meta-updated'));
-  }
+  depositGold(delta.gold);
 }

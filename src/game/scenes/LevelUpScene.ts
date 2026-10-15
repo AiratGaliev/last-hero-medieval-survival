@@ -1,5 +1,8 @@
 import Phaser from 'phaser';
+import { Cursor } from '../systems/Cursor';
 import { FONT } from '../constants';
+import { makeRibbon } from '../systems/Ui';
+import { makeCornerFrame, type CornerFrame } from '../systems/Corners';
 import type { UpgradeCard } from '../data';
 import { audio } from '../systems/Audio';
 import { makePanel } from '../systems/Ui';
@@ -21,6 +24,8 @@ interface CardUi {
   desc: Phaser.GameObjects.Text;
   levelDots: Phaser.GameObjects.Text;
   card: UpgradeCard;
+  /** Угловая рамка из ассетов: появляется на наведённой карточке */
+  frame: CornerFrame;
 }
 
 export class LevelUpScene extends Phaser.Scene {
@@ -42,7 +47,13 @@ export class LevelUpScene extends Phaser.Scene {
     super('LevelUp');
   }
 
+  /** Курсор в стиле Tiny Swords: следит за наведением и переключает
+   *  состояние. В CSS у курсора !important — он перебивает инлайновый
+   *  cursor, который Phaser ставит через useHandCursor. */
+  private cursor!: Cursor;
+
   create(payload: LevelUpData): void {
+    this.cursor = new Cursor(this);
     if (this.lastPayload !== payload) {
       // Новая сессия (новый матч или новый вызов openLevelUp) — свежие карты
       this.currentChoices = null;
@@ -66,15 +77,34 @@ export class LevelUpScene extends Phaser.Scene {
     // Затемнение — на весь видимый экран
     this.add.rectangle(width / 2, height / 2, width / this.overlayZoom + 80, height / this.overlayZoom + 80, 0x0a0a12, 0.72);
 
-    // Заголовок
+    // Заголовок на ленте. Лента не даёт заголовку висеть в пустом
+    // тёмном поле и повторяет стиль остальных экранов.
+    const ribbonW = Math.min(width - 48, 400);
+    const ribbonH = Math.min(52, height * 0.09);
+    const ribbon = makeRibbon(this, width / 2, height * 0.1, ribbonW, 'ribbon-yellow', ribbonH)
+      .setDepth(1);
     const title = this.add.text(width / 2, height * 0.1, t('levelup.title'), {
-      fontFamily: FONT, fontSize: '34px', color: '#ffd76e',
-      stroke: '#5a2d05', strokeThickness: 8,
-    }).setOrigin(0.5);
+      fontFamily: FONT, fontSize: Math.min(30, height * 0.046) + 'px', color: '#5a2d05',
+      stroke: '#ffe9b0', strokeThickness: 5,
+    }).setOrigin(0.5).setDepth(2);
     this.tweens.add({
       targets: title,
       scale: { from: 0.6, to: 1 },
       duration: 320,
+      ease: 'Back.easeOut',
+    });
+    // Лента «разворачивается» вместе с заголовком
+    ribbon.setScale(0.4, 1);
+    this.tweens.add({
+      targets: ribbon,
+      scaleX: 1,
+      duration: 340,
+      ease: 'Back.easeOut',
+    });
+    this.tweens.add({
+      targets: ribbon,
+      scaleY: { from: 0.2, to: 1 },
+      duration: 260,
       ease: 'Back.easeOut',
     });
 
@@ -215,7 +245,7 @@ export class LevelUpScene extends Phaser.Scene {
       }).setOrigin(0.5, 0.5);
       container.add(subtitle);
 
-      const desc = this.add.text(0, cardH * 0.24, card.desc, {
+      const desc = this.add.text(0, cardH * 0.22, card.desc, {
         fontFamily: FONT, fontSize: '11px', color: '#57431f',
         align: 'center', wordWrap: { width: cardW - 56 },
       }).setOrigin(0.5, 0);
@@ -227,10 +257,17 @@ export class LevelUpScene extends Phaser.Scene {
         : card.levelTo !== undefined && card.levelTo <= 5 && card.kind !== 'heal' && card.kind !== 'gold'
           ? '●'.repeat(card.levelTo) + '○'.repeat(Math.max(0, 5 - card.levelTo))
           : '';
-      const levelDots = this.add.text(0, cardH * 0.42, dots, {
+      const levelDots = this.add.text(0, cardH * 0.38, dots, {
         fontFamily: FONT, fontSize: '12px', color: isEvo ? '#9a6a08' : '#b0803a',
       }).setOrigin(0.5);
       container.add(levelDots);
+
+      // Рамка из четырёх углов: подсвечивает выбранную карточку
+      const frame = makeCornerFrame(this, 0, 0, cardW + 10, cardH + 10, {
+        cornerScale: 1.15, depth: 20,
+      });
+      container.add(frame.container);
+      frame.setVisible(false);
 
       container.setSize(cardW, cardH);
       container.setInteractive({ useHandCursor: true });
@@ -257,7 +294,7 @@ export class LevelUpScene extends Phaser.Scene {
         ease: 'Back.easeOut',
       });
 
-      this.cards.push({ container, paper, icon, title, subtitle, desc, levelDots, card });
+      this.cards.push({ container, paper, icon, title, subtitle, desc, levelDots, card, frame });
     });
   }
 
@@ -275,6 +312,14 @@ export class LevelUpScene extends Phaser.Scene {
     if (!c) return;
     this.tweens.add({ targets: c.container, scale: 1.05, duration: 120 });
     c.paper.setTint(0xfff2cc);
+    c.frame.setVisible(true);
+    // Лёгкое дыхание рамки: приглашение выбрать именно эту карточку
+    this.tweens.killTweensOf(c.frame.container);
+    this.tweens.add({
+      targets: c.frame.container,
+      alpha: { from: 0.72, to: 1 },
+      duration: 620, yoyo: true, repeat: -1, ease: 'Sine.easeInOut',
+    });
   }
 
   private clearHoverVisual(): void {
@@ -283,6 +328,8 @@ export class LevelUpScene extends Phaser.Scene {
     if (c && c.container.active) {
       this.tweens.add({ targets: c.container, scale: 1, duration: 120 });
       c.paper.clearTint();
+      this.tweens.killTweensOf(c.frame.container);
+      c.frame.setVisible(false);
     }
     this.hoverIdx = -1;
   }

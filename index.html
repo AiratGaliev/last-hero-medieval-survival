@@ -8,34 +8,36 @@
     />
     <meta name="theme-color" content="#3f8ed0" />
 
-    <title>Tiny Sword Survivors — клон Vampire Survivors</title>
+    <title>Средневековое выживание</title>
     <meta
       name="description"
       content="Выживи 15 минут в толпе врагов! Bullet-heaven роглайт на Phaser 4 с ассетами Tiny Swords от Pixel Frog. 4 героя, 7 оружий, боссы, мета-магазин и достижения."
     />
-    <meta
-      name="keywords"
-      content="игра, Phaser, Vampire Survivors, Tiny Swords, roguelite, bullet heaven"
-    />
 
+    <!-- Язык документа выставляется из src/main.ts после автоопределения:
+         требование Yandex Games 2.14 — игра сама определяет язык при запуске.
+         По умолчанию в разметке оставлен русский, он же запасной в игре. -->
     <meta property="og:type" content="website" />
     <meta property="og:locale" content="ru_RU" />
-    <meta property="og:title" content="Tiny Sword Survivors — выживи 15 минут!" />
+    <meta property="og:locale:alternate" content="en_US" />
+    <meta property="og:title" content="Средневековое выживание" />
     <meta
       property="og:description"
-      content="Bullet-heaven роглайк на Phaser 4: 4 героя, 7 оружий, элиты, бочки-камикадзе и Чёрный Копейщик на 15-й минуте. Ассеты Tiny Swords от Pixel Frog."
+      content="Bullet-heaven роглайт на Phaser 4: 4 героя, 7 оружий, элиты, бочки-камикадзе и Чёрный Копейщик на 15-й минуте. Ассеты Tiny Swords от Pixel Frog."
     />
     <meta property="og:image" content="./logo.svg" />
 
     <meta name="twitter:card" content="summary" />
-    <meta name="twitter:title" content="Tiny Sword Survivors" />
+    <meta name="twitter:title" content="Средневековое выживание" />
     <meta
       name="twitter:description"
-      content="Выживи 15 минут в толпе врагов! Bullet-heaven роглайк на Phaser 4."
+      content="Выживи 15 минут в толпе врагов! Bullet-heaven роглайт на Phaser 4."
     />
 
     <link rel="icon" type="image/svg+xml" href="./favicon.svg" />
-    <link rel="apple-touch-icon" href="./favicon.svg" />
+    <!-- Иконка для iOS: Safari не принимает SVG и заменяет значок скриншотом
+         страницы, поэтому нужен готовый PNG -->
+    <link rel="apple-touch-icon" href="./apple-touch-icon.png" />
 
     <!--
       Шрифт Pixelify Sans лежит внутри архива и подключается из src/styles.css.
@@ -59,13 +61,34 @@
         justify-content: center;
         flex-direction: column;
         gap: 12px;
+        /* Безопасные зоны: viewport-fit=cover растягивает контент под вырез
+           и жестовую полосу, а HUD упирается в края экрана. */
+        padding: env(safe-area-inset-top) env(safe-area-inset-right)
+          env(safe-area-inset-bottom) env(safe-area-inset-left);
+        box-sizing: border-box;
         color: #ffe9b0;
-        font: 600 18px "Pixelify Sans", "Courier New", monospace;
+        font: 600 18px "Press Start 2P", "Courier New", monospace;
         text-align: center;
       }
       #boot .sword {
         font-size: 48px;
         animation: boot-pulse 1.6s ease-in-out infinite;
+      }
+      #boot.error .sword {
+        animation: none;
+      }
+      #boot .retry {
+        margin-top: 6px;
+        padding: 10px 22px;
+        border: 2px solid #ffd76e;
+        border-radius: 8px;
+        background: #3b2410;
+        color: #ffe9b0;
+        font: inherit;
+        cursor: pointer;
+      }
+      #boot .retry:hover {
+        background: #5a3a1c;
       }
       @keyframes boot-pulse {
         0%,
@@ -82,12 +105,19 @@
   </head>
   <body>
     <!-- Загрузочный экран живёт здесь, пока не смонтируется канвас Phaser.
-         Элемент удаляется из src/main.ts перед созданием игры. -->
+         Элемент удаляется из src/main.ts перед созданием игры. Если игра
+         не стартовала за 30 секунд, src/main.ts показывает причину и
+         кнопку перезагрузки — иначе игрок висел бы на надписи вечно. -->
     <div id="boot">
       <span class="sword" aria-hidden="true">&#9876;</span>
-      <p>Загружаем игру...</p>
+      <p id="boot-text">Загружаем игру...</p>
     </div>
     <div id="game"></div>
+    <noscript>
+      <p style="color: #ffe9b0; font-family: monospace; padding: 24px">
+        Для игры нужен включённый JavaScript.
+      </p>
+    </noscript>
     <script type="module" src="./src/main.ts"></script>
   </body>
 </html>

@@ -10,6 +10,7 @@
 // за 5 минут), поэтому ответ кэшируем на короткое время.
 
 import { getSdk, isOnYandex } from './sdk';
+import { loadJson, saveJson, removeKey } from '../game/storage';
 import { isAuthorized, LEADERBOARD_ID } from './player';
 
 export interface ScoreEntry {
@@ -61,27 +62,36 @@ function decodeExtra(raw: string): Pick<ScoreEntry, 'kills' | 'level' | 'timeSur
 
 // ---------- Локальная таблица ----------
 
+const int = (v: unknown): number => Math.max(0, Math.floor(Number(v) || 0));
+const str = (v: unknown, max: number): string =>
+  (typeof v === 'string' ? v : '').slice(0, max);
+
+/** Приводит запись к корректному виду; битые поля заменяет безопасными значениями. */
+function sanitizeEntry(x: unknown): NewScore {
+  const o = (x ?? {}) as Partial<NewScore>;
+  return {
+    name: str(o.name, 24) || '—',
+    score: int(o.score),
+    kills: int(o.kills),
+    level: int(o.level),
+    timeSurvived: int(o.timeSurvived),
+    victory: o.victory === true,
+  };
+}
+
 function readLocal(): NewScore[] {
-  try {
-    const raw = window.localStorage.getItem(LS_RECORDS);
-    if (!raw) return [];
-    const arr: unknown = JSON.parse(raw);
-    if (!Array.isArray(arr)) return [];
-    return arr
-      .filter((x): x is NewScore => !!x && typeof (x as NewScore).score === 'number')
-      .sort((a, b) => b.score - a.score)
-      .slice(0, LOCAL_LIMIT);
-  } catch {
-    return [];
-  }
+  const arr = loadJson<unknown[]>(LS_RECORDS);
+  if (!Array.isArray(arr)) return [];
+  return arr
+    // Запись без числового счёта — мусор: её не с чем сортировать
+    .filter((x) => !!x && typeof (x as NewScore).score === 'number')
+    .map(sanitizeEntry)
+    .sort((a, b) => b.score - a.score)
+    .slice(0, LOCAL_LIMIT);
 }
 
 function writeLocal(list: NewScore[]): void {
-  try {
-    window.localStorage.setItem(LS_RECORDS, JSON.stringify(list.slice(0, LOCAL_LIMIT)));
-  } catch {
-    // приватный режим — просто не сохраняем
-  }
+  saveJson(LS_RECORDS, list.slice(0, LOCAL_LIMIT));
 }
 
 /** Всегда держит локальную копию, чтобы зал не пустовал при ошибке сети. */
@@ -114,7 +124,11 @@ export interface SaveResult {
  * Сохраняет результат матча. Всегда пишет в локальную таблицу; в общий зал
  * отправляет только авторизованным — иначе SDK вернёт ошибку.
  */
-export async function submitScore(score: NewScore): Promise<SaveResult> {
+export async function submitScore(raw: NewScore): Promise<SaveResult> {
+  const score: NewScore = {
+    ...sanitizeEntry(raw),
+    victory: raw.victory === true,
+  };
   pushLocal(score);
   cache = null;
 
@@ -194,9 +208,5 @@ export function onlineAvailable(): boolean {
 /** Сбрасывает кэш и локальные записи. Только для отладочных прогонов. */
 export function resetRecords(): void {
   cache = null;
-  try {
-    window.localStorage.removeItem(LS_RECORDS);
-  } catch {
-    // игнорируем
-  }
+  removeKey(LS_RECORDS);
 }

@@ -9,11 +9,21 @@
 export const ru = {
   // ---------- Общее ----------
   'common.guest': 'Гость',
+  'common.signIn': 'ВОЙТИ В АККАУНТ ЯНДЕКС',
+  'common.signedIn': '✓ {v}',
+  'common.signInFailed': 'вход не завершён',
   'common.you': 'Вы',
   'common.back': 'НАЗАД',
+  // Название игры: в меню оно разложено по двум мечам (см. MenuScene)
+  'common.gameTitle': 'Средневековое выживание',
+  'common.titleTop': 'СРЕДНЕВЕКОВОЕ',
+  'common.titleBottom': 'ВЫЖИВАНИЕ',
 
   // ---------- Загрузка ----------
   'boot.loading': 'Загрузка...',
+  'boot.retry': 'ПЕРЕЗАГРУЗИТЬ',
+  'boot.timeout': 'Загрузка не завершилась — попробуйте перезагрузить страницу',
+  'boot.failed': 'Не удалось запустить игру — обновите страницу',
 
   // ---------- Главное меню ----------
   'menu.chooseHero': '— ВЫБЕРИ ГЕРОЯ —',
@@ -22,7 +32,7 @@ export const ru = {
   'menu.records': 'РЕКОРДЫ',
   'menu.shop': 'ЛАВКА',
   'menu.achievements': 'ДОСТИЖЕНИЯ',
-  'menu.chronicle': 'ХРОНИКА',
+  'menu.chronicle': 'ТВОЯ ИСТОРИЯ',
   'menu.version': 'v1.10 • Phaser 4 • ассеты Pixel Frog «Tiny Swords»',
 
   // ---------- Как играть ----------
@@ -109,6 +119,7 @@ export const ru = {
   'levelup.statCount': 'Количество: {v}',
   'levelup.statRadius': 'Радиус: {v}',
   'levelup.statPierce': 'Пробитие: {v}',
+  'levelup.statCooldown': 'Перезарядка {b}→{a} с',
 
   // ---------- Конец матча ----------
   'over.win': 'ПОБЕДА!',
@@ -135,6 +146,7 @@ export const ru = {
   'over.defaultName': 'Безымянный рыцарь',
   'over.savedOnline': '✓ РЕКОРД В ОБЩЕМ ЗАЛЕ',
   'over.savedLocal': '✓ РЕКОРД СОХРАНЁН НА УСТРОЙСТВЕ',
+  'over.savedLocalOffline': '✓ СОХРАНЕНО ЛОКАЛЬНО, В ОБЩИЙ ЗАЛ НЕ УШЛО',
   'over.revive': 'ВОСКРЕСИТЬСЯ',
   'over.reviveHint': 'посмотри ролик — вернёшься в бой',
   'over.reviveUnavailable': 'ПРОСМОТР РОЛИКА НЕДОСТУПЕН',
@@ -142,6 +154,8 @@ export const ru = {
 
   // ---------- HUD ----------
   'hud.level': 'УР. {v}',
+  'hud.levelProgress': 'УР. {v}   {a} / {b} ОП',
+  'hud.levelMax': 'УР. {v} — МАКС',
   'hud.score': 'СЧЁТ {v}',
   'hud.kills': 'УБИЙСТВ: {v}',
   'hud.bossName': 'ЧЁРНЫЙ КОПЕЙЩИК',
@@ -174,6 +188,8 @@ export const ru = {
   'game.victory': 'ПОБЕДА!!! БОСС ПОВЕРЖЕН!',
   'game.bossSummon': 'БОСС ЗОВЁТ СВИТУ!',
   'game.evolution': '★ ЭВОЛЮЦИЯ: {v}!',
+  'game.maxLevel': 'МАКСИМАЛЬНЫЙ УРОВЕНЬ {v} — ОПЫТ ИДЁТ В ЗОЛОТО',
+  'game.evoReady': '★ СТВОЛ ГОТОВ К ЭВОЛЮЦИИ — ЖДИ СЛЕДУЮЩЕГО УРОВНЯ ★',
 
   // ---------- Анонсы спавнера ----------
   'spawn.guard': '⚠ СТЕНА ЩИТОВ!',
@@ -288,21 +304,21 @@ export const ru = {
   'ach.evolution-first.name': 'Кузнец судьбы',
   'ach.evolution-first.desc': 'Совершить первую эволюцию оружия',
   'ach.kills-100.name': 'Сотня павших',
-  'ach.kills-100.desc': '100 убийств за один матч',
+  'ach.kills-100.desc': '100 убийств в одном матче (навсегда)',
   'ach.kills-500.name': 'Легенда поля боя',
-  'ach.kills-500.desc': '500 убийств за один матч',
+  'ach.kills-500.desc': '500 убийств в одном матче (навсегда)',
   'ach.level-10.name': 'Десять ступеней',
   'ach.level-10.desc': 'Достичь 10-го уровня',
   'ach.gold-500.name': 'Золотая жила',
-  'ach.gold-500.desc': 'Собрать 500 золота за матч',
+  'ach.gold-500.desc': 'Собрать 500 золота в одном матче',
   'ach.chests-3.name': 'Кладоискатель',
-  'ach.chests-3.desc': 'Открыть 3 сокровища за матч',
+  'ach.chests-3.desc': 'Открыть 3 сокровища в одном матче',
   'ach.elites-2.name': 'Гроза элит',
-  'ach.elites-2.desc': 'Повергнуть обе элиты за матч',
+  'ach.elites-2.desc': 'Повергнуть обе элиты в одном матче',
   'ach.shieldbreaker.name': 'Взломщик стен',
-  'ach.shieldbreaker.desc': 'Повергнуть 12 гвардейцев за матч',
+  'ach.shieldbreaker.desc': 'Повергнуть 12 гвардейцев в одном матче',
   'ach.riot-quell.name': 'Усмиритель бунта',
-  'ach.riot-quell.desc': 'Повергнуть 8 приказчиков за матч',
+  'ach.riot-quell.desc': 'Повергнуть 8 приказчиков в одном матче',
   'ach.boss-slayer.name': 'Повелитель поля',
   'ach.boss-slayer.desc': 'Победить Чёрного Копейщика',
   'ach.nightmare-win.name': 'Повелитель кошмара',

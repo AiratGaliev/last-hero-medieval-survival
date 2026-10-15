@@ -26,6 +26,21 @@ pnpm-debug.log*
 # typescript
 *.tsbuildinfo
 
+# backup / temp files
+*.bak
+*.tmp
+*.old
+*.swp
+*.swo
+*~
+
+# local caches and temp dirs
+.cache/
+.tmp/
+.temp/
+.coverage/
+.nyc_output/
+
 # служебное
 .DS_Store
 Thumbs.db
@@ -38,3 +53,4 @@ test
 prompt
 /skills/
 tool-results/
+/.playwright-cli/

@@ -1,5 +1,5 @@
 import Phaser from 'phaser';
-import { DEPTH } from '../constants';
+import { DEPTH, SHADOW_SCALE } from '../constants';
 import type { HeroDef } from '../data';
 
 // ============ Игрок ============
@@ -37,7 +37,7 @@ export class Player extends Phaser.Physics.Arcade.Sprite {
     // Тень под ногами
     const shadowDy = frame === 320 ? 36 : 6;
     this.shadow = scene.add.image(x, y + shadowDy, 'shadow')
-      .setScale(0.22, 0.13)
+      .setScale(SHADOW_SCALE * 1.1, SHADOW_SCALE * 0.65)
       .setAlpha(0.35)
       .setDepth(DEPTH.SHADOW);
 

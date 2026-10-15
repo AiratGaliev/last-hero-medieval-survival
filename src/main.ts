@@ -9,8 +9,9 @@ import type { createGame as CreateGame } from './game/config';
 import { audio } from './game/systems/Audio';
 import { initSdk, isOnYandex, getSdk } from './platform/sdk';
 import { loadPlayer } from './platform/player';
-import { detectLanguage } from './i18n';
-import { installLifecycle, setLifecycleHandlers } from './platform/lifecycle';
+import { detectLanguage, t } from './i18n';
+import { installLifecycle, setLifecycleHandlers, gameplayStop } from './platform/lifecycle';
+import type { GameScene } from './game/scenes/GameScene';
 
 /** Контейнер канваса — см. index.html */
 const HOST_ID = 'game';
@@ -43,12 +44,40 @@ function removeBootScreen(): void {
   document.getElementById(BOOT_ID)?.remove();
 }
 
+/**
+ * Если игра не смонтировалась за отведённое время, надпись «Загружаем игру...»
+ * оставалась на экране навсегда — без причины и без возможности что-то сделать.
+ * Показываем, что именно сломалось, и даём перезагрузить страницу.
+ */
+function showBootError(message: string): void {
+  const boot = document.getElementById(BOOT_ID);
+  if (!boot || boot.classList.contains('error')) return;
+  boot.classList.add('error');
+  const text = document.getElementById('boot-text');
+  if (text) text.textContent = message;
+
+  const retry = document.createElement('button');
+  retry.className = 'retry';
+  retry.type = 'button';
+  retry.textContent = t('boot.retry');
+  retry.addEventListener('click', () => window.location.reload());
+  boot.appendChild(retry);
+}
+
 function start(createGame: typeof CreateGame): void {
   const host = document.getElementById(HOST_ID);
   if (!host) throw new Error(`#${HOST_ID} не найден в index.html`);
 
   const game = createGame(host);
   window.__tss = game;
+
+  // Страховка: если BootScene так и не отрисовался, экран загрузки не
+  // исчезнет сам по себе.
+  window.setTimeout(() => {
+    if (document.getElementById(BOOT_ID) && !document.getElementById(BOOT_ID)?.classList.contains('error')) {
+      showBootError('Загрузка не завершилась — попробуйте перезагрузить страницу');
+    }
+  }, 30_000); // 30 секунд: не earlier, чем 20
 
   // Экран загрузки снимаем, когда BootScene реально отрисовал первый кадр:
   // раньше на его месте мигает пустой синий фон.
@@ -66,7 +95,8 @@ function start(createGame: typeof CreateGame): void {
  *      даже если игрок уйдёт со страницы загрузки.
  */
 const boot = async (): Promise<void> => {
-  await detectLanguage();
+  const startLang = await detectLanguage();
+  document.documentElement.lang = startLang === 'en' ? 'en' : 'ru';
 
   await initSdk();
   await detectLanguage(getSdk()?.environment.i18n.lang);
@@ -74,6 +104,16 @@ const boot = async (): Promise<void> => {
   setLifecycleHandlers({
     silence: () => audio.silence(),
     unsilence: () => audio.unsilence(),
+    // П. 1.19.4: площадка сворачивает игру — геймплей обязан встать на паузу,
+    // а не просто замолчать. Иначе игрок теряет здоровье, пока открыт каталог.
+    pause: () => {
+      const sc = window.__tss?.scene.getScene('Game') as (GameScene & { platformResume(): void }) | null;
+      if (sc && sc.scene.isActive()) { gameplayStop(); sc.scene.pause(); }
+    },
+    resume: () => {
+      const sc = window.__tss?.scene.getScene('Game') as (GameScene & { platformResume(): void }) | null;
+      sc?.platformResume?.();
+    },
   });
   installLifecycle();
 
@@ -85,7 +125,12 @@ const boot = async (): Promise<void> => {
   start(createGame);
 };
 
-void boot();
+boot().catch((err: unknown) => {
+  // Любая ошибка на старте (например, недоступен модуль) раньше просто
+  // оставляла надпись «Загружаем игру...» навсегда.
+  console.error('[boot] игра не запустилась:', err);
+  showBootError('Не удалось запустить игру — обновите страницу');
+});
 
 // Dev-сервер: полная перезагрузка страницы при изменении кода игры.
 if (import.meta.hot) {

@@ -7,11 +7,21 @@ import type { TranslationKey } from './ru';
 export const en: Record<TranslationKey, string> = {
   // ---------- Common ----------
   'common.guest': 'Guest',
+  'common.signIn': 'SIGN IN WITH YANDEX',
+  'common.signedIn': '✓ {v}',
+  'common.signInFailed': 'sign-in was not completed',
   'common.you': 'You',
   'common.back': 'BACK',
+  // Game title: split across the two swords in the menu (see MenuScene)
+  'common.gameTitle': 'Medieval Survival',
+  'common.titleTop': 'MEDIEVAL',
+  'common.titleBottom': 'SURVIVAL',
 
   // ---------- Loading ----------
   'boot.loading': 'Loading...',
+  'boot.retry': 'RESTART',
+  'boot.timeout': 'Loading did not finish — try reloading the page',
+  'boot.failed': 'Could not start the game — reload the page',
 
   // ---------- Main menu ----------
   'menu.chooseHero': '— CHOOSE YOUR HERO —',
@@ -20,7 +30,7 @@ export const en: Record<TranslationKey, string> = {
   'menu.records': 'HALL OF FAME',
   'menu.shop': 'SHOP',
   'menu.achievements': 'TROPHIES',
-  'menu.chronicle': 'RECORDS',
+  'menu.chronicle': 'YOUR RECORD',
   'menu.version': 'v1.10 • Phaser 4 • Pixel Frog “Tiny Swords” assets',
 
   // ---------- How to play ----------
@@ -107,6 +117,7 @@ export const en: Record<TranslationKey, string> = {
   'levelup.statCount': 'Count: {v}',
   'levelup.statRadius': 'Radius: {v}',
   'levelup.statPierce': 'Pierce: {v}',
+  'levelup.statCooldown': 'Cooldown {b}→{a} s',
 
   // ---------- Game over ----------
   'over.win': 'VICTORY!',
@@ -133,6 +144,7 @@ export const en: Record<TranslationKey, string> = {
   'over.defaultName': 'Nameless Knight',
   'over.savedOnline': '✓ SCORED ON THE GLOBAL BOARD',
   'over.savedLocal': '✓ SCORE SAVED ON THIS DEVICE',
+  'over.savedLocalOffline': '✓ SAVED LOCALLY, NOT SENT TO GLOBAL BOARD',
   'over.revive': 'REVIVE',
   'over.reviveHint': 'watch a video and return to the fight',
   'over.reviveUnavailable': 'VIDEO UNAVAILABLE',
@@ -140,6 +152,8 @@ export const en: Record<TranslationKey, string> = {
 
   // ---------- HUD ----------
   'hud.level': 'LV. {v}',
+  'hud.levelProgress': 'LV. {v}   {a} / {b} XP',
+  'hud.levelMax': 'LV. {v} — MAX',
   'hud.score': 'SCORE {v}',
   'hud.kills': 'KILLS: {v}',
   'hud.bossName': 'BLACK LANCER',
@@ -172,6 +186,8 @@ export const en: Record<TranslationKey, string> = {
   'game.victory': 'VICTORY!!! BOSS DEFEATED!',
   'game.bossSummon': 'THE BOSS CALLS FOR HELP!',
   'game.evolution': '★ EVOLUTION: {v}!',
+  'game.maxLevel': 'MAX LEVEL {v} — XP NOW CONVERTS TO GOLD',
+  'game.evoReady': '★ WEAPON READY TO EVOLVE — WAIT FOR THE NEXT LEVEL UP ★',
 
   // ---------- Spawner announcements ----------
   'spawn.guard': '⚠ WALL OF SHIELDS!',
@@ -286,21 +302,21 @@ export const en: Record<TranslationKey, string> = {
   'ach.evolution-first.name': 'Fate’s Blacksmith',
   'ach.evolution-first.desc': 'Perform your first weapon evolution',
   'ach.kills-100.name': 'A Hundred Fallen',
-  'ach.kills-100.desc': '100 kills in a single run',
+  'ach.kills-100.desc': '100 kills in a single run (one-time)',
   'ach.kills-500.name': 'Legend of the Battlefield',
-  'ach.kills-500.desc': '500 kills in a single run',
+  'ach.kills-500.desc': '500 kills in a single run (one-time)',
   'ach.level-10.name': 'Ten Steps Up',
   'ach.level-10.desc': 'Reach level 10',
   'ach.gold-500.name': 'Golden Vein',
-  'ach.gold-500.desc': 'Collect 500 gold in one run',
+  'ach.gold-500.desc': 'Collect 500 gold in a single run',
   'ach.chests-3.name': 'Treasure Hunter',
-  'ach.chests-3.desc': 'Open 3 treasure chests in one run',
+  'ach.chests-3.desc': 'Open 3 treasure chests in a single run',
   'ach.elites-2.name': 'Scourge of Elites',
-  'ach.elites-2.desc': 'Defeat both elites in one run',
+  'ach.elites-2.desc': 'Defeat both elites in a single run',
   'ach.shieldbreaker.name': 'Shield Breaker',
-  'ach.shieldbreaker.desc': 'Defeat 12 guards in one run',
+  'ach.shieldbreaker.desc': 'Defeat 12 guards in a single run',
   'ach.riot-quell.name': 'Riot Queller',
-  'ach.riot-quell.desc': 'Defeat 8 taskmasters in one run',
+  'ach.riot-quell.desc': 'Defeat 8 taskmasters in a single run',
   'ach.boss-slayer.name': 'Master of the Field',
   'ach.boss-slayer.desc': 'Defeat the Black Lancer',
   'ach.nightmare-win.name': 'Master of Nightmare',

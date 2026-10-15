@@ -88,8 +88,12 @@ export const WEAPONS: Record<WeaponId, WeaponDef> = {
       { dmg: 26, cd: 800, count: 2 },
       { dmg: 33, cd: 750, count: 2 },
       { dmg: 42, cd: 700, count: 3 },
-      // Эволюция «Гунгнир»: одно гигантское возвращающееся копьё
-      { dmg: 70, cd: 640, count: 1 },
+      // Эволюция «Гунгнир»: два гигантских возвращающихся копья.
+      // Копьё бьёт на пути туда и обратно, поэтому фактический урон
+      // вдвое выше показанного — как и у остальных эволюций с числом
+      // попаданий. Прежние 70/640/1 давали 109 DPS против 180 у пятого
+      // уровня, то есть эволюция ухудшала оружие.
+      { dmg: 75, cd: 600, count: 2 },
     ],
   },
   hammer: {
@@ -118,8 +122,12 @@ export const WEAPONS: Record<WeaponId, WeaponDef> = {
       { dmg: 52, cd: 2600, radius: 160, count: 1 },
       { dmg: 66, cd: 2400, radius: 180, count: 2 },
       { dmg: 84, cd: 2200, radius: 200, count: 2 },
-      // Эволюция «Кластерный залп»: взрыв рождает 4 мини-бомбы
-      { dmg: 95, cd: 1800, radius: 175, count: 2 },
+      // Эволюция «Кластерный залп»: взрыв рождает 4 мини-бомбы.
+      // Радиус не уменьшаем: эволюция должна быть строго лучше 5-го уровня.
+      // Было 95/1800 = 105 DPS против 76 у пятого — выигрыш в 1.4 раза,
+      // самый скромный в игре. Теперь 130*2/1.7 = 153, и к этому
+      // добавляются четыре мини-бомбы.
+      { dmg: 130, cd: 1700, radius: 235, count: 2 },
     ],
   },
   aura: {
@@ -128,13 +136,15 @@ export const WEAPONS: Record<WeaponId, WeaponDef> = {
     desc: t('weapon.aura.desc'),
     icon: 'icon-aura',
     levels: [
-      { dmg: 4, cd: 600, radius: 90 },
-      { dmg: 6, cd: 600, radius: 105 },
-      { dmg: 8, cd: 550, radius: 120 },
-      { dmg: 11, cd: 500, radius: 140 },
-      { dmg: 15, cd: 450, radius: 165 },
-      // Эволюция «Нимб искупления»: нова-импульс + лечение
-      { dmg: 24, cd: 380, radius: 215 },
+      { dmg: 6, cd: 560, radius: 100 },
+      { dmg: 9, cd: 540, radius: 115 },
+      { dmg: 13, cd: 500, radius: 135 },
+      { dmg: 18, cd: 460, radius: 160 },
+      { dmg: 24, cd: 420, radius: 185 },
+      // Эволюция «Нимб искупления»: нова-импульс + лечение.
+      // Раньше эволюция давала 63 DPS — в десять раз меньше эволюции
+      // ножей, за шесть карточек и полную прокачку «Регена».
+      { dmg: 38, cd: 340, radius: 240 },
     ],
   },
   knives: {
@@ -217,34 +227,36 @@ export interface HeroDef {
   speed: number;
   baseRegen: number;   // innate HP/s (монах)
   anims: { idle: string; run: string; atk1: string; atk2: string };
+  /** Портрет из ui/avatars для карточки выбора и таблицы рекордов */
+  portrait: string;
 }
 
 export const HEROES: Record<HeroId, HeroDef> = {
   warrior: {
     id: 'warrior', name: t('hero.warrior.name'), title: t('hero.warrior.title'),
     traits: [t('hero.warrior.t1'), t('hero.warrior.t2')],
-    frameW: 192, scale: 0.55, startWeapon: 'sword',
+    frameW: 192, scale: 0.55, startWeapon: 'sword', portrait: 'avatar-warrior',
     maxHp: 110, speed: 200, baseRegen: 0,
     anims: { idle: 'player-idle', run: 'player-run', atk1: 'player-atk1', atk2: 'player-atk2' },
   },
   archer: {
     id: 'archer', name: t('hero.archer.name'), title: t('hero.archer.title'),
     traits: [t('hero.archer.t1'), t('hero.archer.t2'), t('hero.archer.t3')],
-    frameW: 192, scale: 0.55, startWeapon: 'bow',
+    frameW: 192, scale: 0.55, startWeapon: 'bow', portrait: 'avatar-archer',
     maxHp: 90, speed: 230, baseRegen: 0,
     anims: { idle: 'hero-archer-idle', run: 'hero-archer-run', atk1: 'hero-archer-atk', atk2: 'hero-archer-atk' },
   },
   lancer: {
     id: 'lancer', name: t('hero.lancer.name'), title: t('hero.lancer.title'),
     traits: [t('hero.lancer.t1'), t('hero.lancer.t2'), t('hero.lancer.t3')],
-    frameW: 320, scale: 0.34, startWeapon: 'spear',
+    frameW: 320, scale: 0.34, startWeapon: 'spear', portrait: 'avatar-lancer',
     maxHp: 130, speed: 190, baseRegen: 0,
     anims: { idle: 'hero-lancer-idle', run: 'hero-lancer-run', atk1: 'hero-lancer-atk', atk2: 'hero-lancer-atk' },
   },
   monk: {
     id: 'monk', name: t('hero.monk.name'), title: t('hero.monk.title'),
     traits: [t('hero.monk.t1'), t('hero.monk.t2')],
-    frameW: 192, scale: 0.55, startWeapon: 'aura',
+    frameW: 192, scale: 0.55, startWeapon: 'aura', portrait: 'avatar-monk',
     maxHp: 100, speed: 195, baseRegen: 0.5,
     anims: { idle: 'hero-monk-idle', run: 'hero-monk-run', atk1: 'hero-monk-atk', atk2: 'hero-monk-atk' },
   },
@@ -328,11 +340,13 @@ export const ENEMIES: Record<EnemyKind, EnemyDef> = {
   },
   // --- Новые враги 5–9 минут (v1.8) ---
   guard: {
-    // Гвардеец: щит гасит половину урона; при потере 55% HP щит ломается —
+    // Гвардеец: щит гасит половину урона; при потере 45% HP щит ломается —
     // ярость (без брони, но быстрее). HP понижено в R10: с 85 копились
     // неразменными стенами к 13-й минуте (эфф. HP 525 против 212 у громилы)
     kind: 'guard', name: t('enemy.guard.name'), texture: 'guard-idle', frameW: 192, scale: 0.58,
-    bodyRadius: 24, hp: 62, speed: 62, damage: 14, xp: 4, gem: 'gem-green',
+    // 5 XP за ~96 эффективного HP = 19 на опыт — сопоставимо с громилой
+    // (18). Прежние 4 давали 24: плата за щит была выше выгоды.
+    bodyRadius: 24, hp: 62, speed: 62, damage: 14, xp: 5, gem: 'gem-green',
     armorFront: 0.5,
   },
   taskmaster: {
@@ -357,11 +371,13 @@ export const ENEMIES: Record<EnemyKind, EnemyDef> = {
   },
   midboss: {
     kind: 'midboss', name: t('enemy.midboss.name'), texture: 'enemy-monk', frameW: 192, scale: 0.92,
-    bodyRadius: 32, hp: 1500, speed: 82, damage: 20, xp: 0, gem: 'gem-red', isMidboss: true,
+    bodyRadius: 32, hp: 1500, speed: 82, damage: 20, xp: 36, gem: 'gem-red', isMidboss: true,
   },
   boss: {
     kind: 'boss', name: t('enemy.boss.name'), texture: 'boss', frameW: 320, scale: 2.0,
-    bodyRadius: 80, hp: 4000, speed: 110, damage: 40, xp: 0, gem: 'gem-red', isBoss: true,
+    // Босс — кульминация 15-минутного матча и обязан платить лучше
+    // мидбосса: 200 XP и щедрая награда выдаются при смерти в GameScene.
+    bodyRadius: 80, hp: 4000, speed: 110, damage: 40, xp: 200, gem: 'gem-red', isBoss: true,
   },
   'boss-minion': {
     kind: 'boss-minion', name: t('enemy.boss-minion.name'), texture: 'enemy-swarm', frameW: 192, scale: 0.5,
@@ -401,7 +417,16 @@ export const WAVE_EVENTS: WaveEvent[] = [
   { t: 600, type: 'elite', enemy: 'elite-monk', diff: 'normal' },
   { t: 600, type: 'elite', enemy: 'midboss', diff: 'nightmare' },
   { t: 600, type: 'rate', interval: 370 },
-  { t: 780, type: 'rate', interval: 340 },
+  // 11:00 — смешанная волна: собираем всё, что уже встречалось
+  { t: 660, type: 'ring', enemy: 'mercenary', count: 9, note: t('wave.note.mercs') },
+  { t: 690, type: 'rate', interval: 350 },
+  // 12:00 — бочки-камикадзе по плотной толпе
+  { t: 720, type: 'ring', enemy: 'bomber', count: 14, note: t('wave.note.bombardment') },
+  // 12:30 — приказчики: без игрока-цели толпа вязнет
+  { t: 750, type: 'ring', enemy: 'taskmaster', count: 5, note: t('wave.note.overseers') },
+  { t: 780, type: 'rate', interval: 330 },
+  // 13:30 — щитоносцы, к моменту когда у игрока уже есть чем их вскрыть
+  { t: 810, type: 'ring', enemy: 'guard', count: 12, note: t('wave.note.shields') },
   { t: 840, type: 'ring', enemy: 'brute', count: 20 },
   { t: 900, type: 'boss', enemy: 'boss' },
 ];
