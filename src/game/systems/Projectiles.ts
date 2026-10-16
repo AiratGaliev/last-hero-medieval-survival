@@ -148,10 +148,13 @@ export class Projectiles {
 
   // ---------- Бомба (навесная) ----------
   throwBomb(x: number, y: number, tx: number, ty: number, dmg: number, radius: number, mini = false): void {
-    const img = this.scene.add.image(x, y, 'barrel')
+    // Динамит с горящим фитилём: снаряд — спрайт из того же спрайт-листа,
+    // что и враг-камикадзе (ключ 'barrel' переиспользуется).
+    const img = this.scene.add.sprite(x, y, 'barrel', 0)
       .setScale(mini ? 0.3 : 0.5)
       .setDepth(DEPTH.PROJECTILE)
-      .setTint(mini ? 0xffc080 : 0xffffff);
+      .setTint(mini ? 0xffc080 : 0xffffff)
+      .play('barrel-burn');
     this.bombs.push({
       img,
       from: { x, y },

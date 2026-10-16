@@ -82,7 +82,11 @@ export class BootScene extends Phaser.Scene {
     this.load.spritesheet('fx-foam', asset('tiny-swords', 'terrain/tileset/water-foam.png'), { frameWidth: 192, frameHeight: 192 });
 
     // ---- Тайлы, декорации ----
-    this.load.image('grass-tile', asset('game', 'grass-tile.png'));
+    // Тайл травы берём кадром из тайлсета (второй тайл верхней строки) —
+    // отдельного grass-tile.png больше нет.
+    this.load.spritesheet('grass-source', asset('tiny-swords', 'terrain/tileset/tilemap-color3.png'), {
+      frameWidth: 64, frameHeight: 64,
+    });
     // Автотайлы арены: трава с кустистым краем и каменный обрыв.
     // Используются для кромки — вместо голого прямоугольника травы.
     this.load.spritesheet('arena-tiles', asset('tiny-swords', 'terrain/tileset/tilemap-color1.png'), {
@@ -132,14 +136,11 @@ export class BootScene extends Phaser.Scene {
     // cursor-01 — стрелка: и курсор мыши, и указатель на цель за экраном
     // (не 'arrow' — под тем ключом уже лежит стрела-снаряд game/arrow.png)
     this.load.image('cursor-arrow', asset('tiny-swords', 'ui/cursors/cursor-01.png'));
-    // cursor-04 — четыре угла рамки в одной картинке 128×128. Сама рамка
-    // годна только под квадрат, поэтому углы вырезаны из неё по
-    // квадрантам скриптом scripts/prepare-assets.mjs, а из них
-    // systems/Corners.ts собирает рамку, тянущуюся под любой размер
-    this.load.image('corner-tl', asset('game', 'corner-tl.png'));
-    this.load.image('corner-tr', asset('game', 'corner-tr.png'));
-    this.load.image('corner-br', asset('game', 'corner-br.png'));
-    this.load.image('corner-bl', asset('game', 'corner-bl.png'));
+    // cursor-04 — четыре угла рамки в одной картинке 128×128. Отдельных
+    // corner-*.png больше нет: углы регистрируются кадрами этой текстуры в
+    // create() (см. addFrame ниже), а systems/Corners.ts рисует рамку
+    // из них под любой размер.
+    this.load.image('cursor-04', asset('tiny-swords', 'ui/cursors/cursor-04.png'));
 
     // Ленты для заголовков: торцы + растягиваемая середина
     this.load.image('ribbon-blue', asset('game', 'ribbon-blue.png'));
@@ -197,12 +198,24 @@ export class BootScene extends Phaser.Scene {
     // Иконка лука — тот же рисунок стрелы, отдельного файла в ассете нет
     this.load.image('icon-bow', asset('tiny-swords', 'units/black/archer/arrow.png'));
     this.load.image('spear', asset('game', 'spear.png'));
-    this.load.image('barrel', asset('game', 'barrel.png'));
+    // Динамит: спрайт-лист 384×64 (6 кадров по 64×64, горит фитиль).
+    // Ключ 'barrel' сохранён — его используют враг-камикадзе (data.ts) и
+    // снаряд бомбы (Projectiles.throwBomb).
+    this.load.spritesheet('barrel', asset('tiny-swords', 'units/extra/dynamite/dynamite.png'), {
+      frameWidth: 64, frameHeight: 64,
+    });
     this.load.image('slash', asset('game', 'slash.png'));
     this.load.image('aoe-ring', asset('game', 'aoe-ring.png'));
-    // Обрезанная по содержимому версия terrain/tileset/shadow.png: та же
-    // картинка, но 14 КБ → 3 КБ. Копия оправдана — иначе в бандл едет лишнее.
-    this.load.image('shadow', asset('game', 'shadow-soft.png'));
+    // Тень: исходный Shadow.png 192×192 (содержимое 79×80 @ 57,56). Пустые
+    // поля компенсируются при отрисовке (origin + масштаб), отдельной обрезки
+    // не нужно — см. SHADOW_BOX в constants.ts.
+    this.load.image('shadow', asset('tiny-swords', 'terrain/tileset/shadow.png'));
+
+    // ---- Полосы: три детали в ряд в каждом листе ----
+    // Отдельных bar-*-cap/mid.png больше нет: детали регистрируются кадрами
+    // этих текстур в create(), а systems/Bar.ts собирает из них полосу.
+    this.load.image('bar-base-big', asset('tiny-swords', 'ui/bars/bigbar-base.png'));
+    this.load.image('bar-base-small', asset('tiny-swords', 'ui/bars/smallbar-base.png'));
     this.load.image('knife', asset('game', 'knife.png'));
     this.load.image('treasure', asset('tiny-swords', 'terrain/resources/gold-stones/gold-stone-6.png'));
     this.load.spritesheet('fx-treasure', asset('tiny-swords', 'terrain/resources/gold-stones/gold-stone-6-highlight.png'), { frameWidth: 128, frameHeight: 128 });
@@ -237,14 +250,9 @@ export class BootScene extends Phaser.Scene {
     this.load.image('table9', asset('game', 'table9.png'));
 
     // ---- Полосы HP/XP: собраны из трёх деталей, см. systems/Bar.ts ----
-    // Рамка: торцы + растягиваемая середина
-    for (const size of ['small', 'big']) {
-      this.load.image(`bar-${size}-cap-l`, asset('game', `bar-${size}-cap-l.png`));
-      this.load.image(`bar-${size}-mid`, asset('game', `bar-${size}-mid.png`));
-      this.load.image(`bar-${size}-cap-r`, asset('game', `bar-${size}-cap-r.png`));
-    }
-    // Заливки: исходная bar-big-fill перекрашена под цвета gameplay,
-    // потому что setTint умножает, а не заменяет цвет текстуры
+    // Детали — кадры текстур bar-base-{small,big} (загружены выше), отдельных
+    // bar-*-cap/mid.png больше нет. Заливки: исходная bar-big-fill перекрашена
+    // под цвета gameplay, потому что setTint умножает, а не заменяет цвет.
     for (const c of ['blue', 'green', 'yellow', 'red', 'ghost', 'white']) {
       this.load.image(`bar-fill-${c}`, asset('game', `bar-fill-${c}.png`));
     }
@@ -260,8 +268,38 @@ export class BootScene extends Phaser.Scene {
   }
 
   create(): void {
+    this.registerFrames();
     this.createAnims();
     this.scene.start('Menu');
+  }
+
+  /**
+   * Кадры из сырых текстур пака. Отдельные обрезанные копии в src/assets/game
+   * больше не генерируются (scripts/prepare-assets.mjs): нужные прямоугольники
+   * регистрируются как кадры тех же самых текстур, что грузит игра. Так в
+   * репозитории нет дубликатов картинок пака.
+   */
+  private registerFrames(): void {
+    // Тайл травы 64×64 из tilemap-color3 (сетка 9×6 тайлов): второй тайл
+    // верхней строки.
+    this.textures.get('grass-source').add('grass-tile', 0, 64, 64, 64, 64);
+
+    // Углы рамки: по 21×25 в квадрантах 64×64 картинки 128×128.
+    const cursor = this.textures.get('cursor-04');
+    cursor.add('corner-tl', 0, 3, 3, 21, 25);
+    cursor.add('corner-tr', 0, 104, 3, 21, 25);
+    cursor.add('corner-br', 0, 104, 100, 21, 25);
+    cursor.add('corner-bl', 0, 3, 100, 21, 25);
+
+    // Полосы: три детали в ряд в каждом листе (торец, середина, торец).
+    const bigBar = this.textures.get('bar-base-big');
+    bigBar.add('bar-big-cap-l', 0, 40, 9, 24, 51);
+    bigBar.add('bar-big-mid', 0, 128, 9, 64, 51);
+    bigBar.add('bar-big-cap-r', 0, 256, 9, 24, 51);
+    const smallBar = this.textures.get('bar-base-small');
+    smallBar.add('bar-small-cap-l', 0, 49, 22, 15, 19);
+    smallBar.add('bar-small-mid', 0, 128, 22, 64, 19);
+    smallBar.add('bar-small-cap-r', 0, 256, 22, 15, 19);
   }
 
   private sheet(animKey: string, textureKey: string, count: number, rate = 10): void {
@@ -283,6 +321,13 @@ export class BootScene extends Phaser.Scene {
   }
 
   private createAnims(): void {
+    // Динамит: горящий фитиль (6 кадров спрайт-листа 384×64)
+    this.anims.create({
+      key: 'barrel-burn',
+      frames: this.anims.generateFrameNumbers('barrel', { start: 0, end: 5 }),
+      frameRate: 8,
+      repeat: -1,
+    });
     // Игрок
     this.sheet('player-idle', 'player-idle', 8, 8);
     this.sheet('player-run', 'player-run', 6, 10);

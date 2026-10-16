@@ -319,9 +319,11 @@ export interface EnemyDef {
   kind: EnemyKind;
   name: string;
   texture: string;      // ключ текстуры спрайта
-  frameW: number;       // ширина кадра (192 или 320)
+  frameW: number;       // ширина кадра (192, 320 или 64 у динамита)
   scale: number;
   bodyRadius: number;
+  /** Круг коллизации в координатах кадра; если задан — заменяет расчёт от frameW */
+  body?: { cx: number; cy: number; r: number };
   hp: number;
   speed: number;
   damage: number;
@@ -354,8 +356,11 @@ export const ENEMIES: Record<EnemyKind, EnemyDef> = {
     bodyRadius: 20, hp: 20, speed: 60, damage: 8, xp: 3, gem: 'gem-green',
   },
   bomber: {
-    kind: 'bomber', name: t('enemy.bomber.name'), texture: 'barrel', frameW: 192, scale: 0.42,
-    bodyRadius: 17, hp: 16, speed: 105, damage: 4, xp: 2, gem: 'gem-green',
+    // Динамит-камикадзе: спрайт-лист 384×64 (6 кадров по 64×64, горит фитиль).
+    // Круг коллизии — по кадру 64×64: содержимое динамита 58×52 @ 20,1.
+    kind: 'bomber', name: t('enemy.bomber.name'), texture: 'barrel', frameW: 64, scale: 0.42,
+    bodyRadius: 17, body: { cx: 49, cy: 27, r: 24 },
+    hp: 16, speed: 105, damage: 4, xp: 2, gem: 'gem-green',
     explodeDmg: 24, explodeRadius: 150,
   },
   // --- Новые враги 5–9 минут (v1.8) ---

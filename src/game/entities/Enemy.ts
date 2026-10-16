@@ -1,5 +1,5 @@
 import Phaser from 'phaser';
-import { DEPTH, DESPAWN_DIST, WORLD, SHADOW_SCALE } from '../constants';
+import { DEPTH, DESPAWN_DIST, WORLD, SHADOW_SCALE, SHADOW_BOX, SHADOW_SRC } from '../constants';
 import { ENEMIES, type EnemyDef, type EnemyKind } from '../data';
 import { audio } from '../systems/Audio';
 
@@ -72,22 +72,27 @@ export class Enemy extends Phaser.Physics.Arcade.Sprite {
     this.setScale(def.scale);
     this.setDepth(DEPTH.ENTITY_BASE + y);
     if (kind === 'bomber') {
-      // Бочка-камикадзе: без анимаций ходьбы, крутится при качении
-      this.anims.stop();
-      this.setFrame(0);
+      // Динамит-камикадзе: фитиль горит, пока катится к игроку
+      this.play('barrel-burn');
     } else {
       this.play(`${this.animPrefix()}idle`);
     }
 
-    // Круглое тело у ног
-    const frame = def.frameW;
-    const cx = frame / 2;
-    const cy = frame === 320 ? 258 : 150;
-    const r = def.bodyRadius / def.scale;
-    this.setCircle(r, cx - r, cy - r);
+    // Круглое тело у ног (кадры 192 или 320); у динамита — свой круг из дефа
+    if (def.body) {
+      const rb = def.body.r / def.scale;
+      this.setCircle(rb, def.body.cx - rb, def.body.cy - rb);
+    } else {
+      const frame = def.frameW;
+      const cx = frame / 2;
+      const cy = frame === 320 ? 258 : 150;
+      const r = def.bodyRadius / def.scale;
+      this.setCircle(r, cx - r, cy - r);
+    }
     this.setCollideWorldBounds(false);
 
     this.shadow = scene.add.image(x, y + 8 * def.scale, 'shadow')
+      .setOrigin((SHADOW_BOX.x + SHADOW_BOX.w / 2) / SHADOW_SRC, (SHADOW_BOX.y + SHADOW_BOX.h / 2) / SHADOW_SRC)
       .setScale(SHADOW_SCALE * def.scale, SHADOW_SCALE * 0.6 * def.scale)
       .setAlpha(0.3)
       .setDepth(DEPTH.SHADOW);

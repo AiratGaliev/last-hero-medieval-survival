@@ -8,6 +8,10 @@ import { FONT } from '../constants';
 // Середина непрозрачна целиком и уже содержит тёмное «корыто», поэтому
 // под заливкой ничего досоздавать не нужно.
 //
+// Детали — кадры текстур bar-base-{big,small}: BootScene грузит листы из
+// пака и регистрирует в них кадры bar-{big,small}-cap-l/mid/r (координаты
+// измерены по листам). Отдельных обрезанных копий в src/assets/game нет.
+//
 // Заливку НЕ тонируем: setTint в Phaser умножает цвет текстуры на тон,
 // а исходная bar-big-fill красная — синий тон дал бы тёмно-красный.
 // Вместо этого prepare-assets.mjs перекрашивает её в нужные цвета
@@ -73,13 +77,14 @@ export class StatBar {
     const innerW = this.innerWidth;
     const innerH = this.innerHeight;
 
-    // Рамка: торцы плюс растянутая середина
+    // Рамка: торцы плюс растянутая середина. Детали — кадры текстуры
+    // bar-base-{big,small} (лист из трёх деталей в ряд, нарезан в BootScene).
     this.frame = [
-      scene.add.image(-this.width / 2 + geom.cap / 2, 0, 'bar-' + size + '-cap-l')
+      scene.add.image(-this.width / 2 + geom.cap / 2, 0, 'bar-base-' + size, 'bar-' + size + '-cap-l')
         .setDisplaySize(geom.cap, geom.height),
-      scene.add.image(0, 0, 'bar-' + size + '-mid')
+      scene.add.image(0, 0, 'bar-base-' + size, 'bar-' + size + '-mid')
         .setDisplaySize(this.width - geom.cap * 2, geom.height),
-      scene.add.image(this.width / 2 - geom.cap / 2, 0, 'bar-' + size + '-cap-r')
+      scene.add.image(this.width / 2 - geom.cap / 2, 0, 'bar-base-' + size, 'bar-' + size + '-cap-r')
         .setDisplaySize(geom.cap, geom.height),
     ];
 

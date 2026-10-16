@@ -147,7 +147,8 @@ export class MenuScene extends Phaser.Scene {
     }
 
     // Фон: травка + вода (полосы шире видимой области — под зум)
-    this.add.tileSprite(width / 2, height / 2, coverW, coverH, 'grass-tile');
+    // Кадр 'grass-tile' зарегистрирован в текстуре 'grass-source' (BootScene)
+    this.add.tileSprite(width / 2, height / 2, coverW, coverH, 'grass-source', 'grass-tile');
     this.add.tileSprite(width / 2, -60, coverW + 400, 200, 'water-tile');
     this.add.tileSprite(width / 2, height + 60, coverW + 400, 200, 'water-tile');
     this.add.tileSprite(-80, height / 2, 200, coverH + 400, 'water-tile');

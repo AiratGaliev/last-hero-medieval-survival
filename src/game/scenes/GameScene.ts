@@ -213,8 +213,8 @@ export class GameScene extends Phaser.Scene {
     const water = this.add.tileSprite(S / 2, S / 2, S, S, 'water-tile')
       .setDepth(DEPTH.WATER - 20);
     void water;
-    // Трава (арена)
-    const grass = this.add.tileSprite(S / 2, S / 2, S - m * 2, S - m * 2, 'grass-tile')
+    // Трава (арена). Кадр 'grass-tile' зарегистрирован в 'grass-source'
+    const grass = this.add.tileSprite(S / 2, S / 2, S - m * 2, S - m * 2, 'grass-source', 'grass-tile')
       .setDepth(DEPTH.GROUND);
     void grass;
 

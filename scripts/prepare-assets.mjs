@@ -1,10 +1,18 @@
 // ============ Генерация производных игровых текстур ============
 // Запуск: node scripts/prepare-assets.mjs
 //
-// Исходники (ассеты Tiny Swords) не меняются. Здесь из них штампуются
-// бесшовные девятислайсы и детали полос, которые Phaser умеет растягивать.
-// Результат кладётся в src/assets/game/ и коммитится — чтобы игру можно было
-// собрать, не запуская этот скрипт.
+// Исходники (ассеты Tiny Swords) не меняются. Здесь из них штампуются только
+// то, что в игре не воспроизвести без подготовки:
+//   • бесшовные девятислайсы кнопок и панелей (исходники с прозрачными зазорами
+//     между тайлами нельзя растягивать напрямую);
+//   • перекрашенные заливки полос (setTint умножает цвет, а исходная заливка
+//     красная — тон дал бы тёмно-красный);
+//   • мечи логотипа (три детали с зазорами склеиваются вплотную).
+//
+// Всё остальное, что можно взять из пака как есть, в src/assets/game НЕ кладётся:
+// портреты, углы рамки, детали полос, тень и тайл травы грузятся из
+// tiny-swords напрямую (см. BootScene.registerFrames) — обрезки и дубликаты в
+// репозитории только раздувают его.
 //
 // ============ ЧТО ЛЕЖИТ В src/assets/game ============
 // Папка делится на три части, и важно их не путать:
@@ -120,74 +128,12 @@ for (const [srcName, outName] of [
 // ui/bars устроены иначе: это три детали в ряд — левый торец, середина с
 // вертикальным градиентом (растягивается по длине) и правый торец. Плюс
 // отдельная текстура заливки. Собираются в Phaser тремя спрайтами.
-console.log('\n[полосы HP/XP — три детали + заливка]');
-
-/** Делит картинку на N частей по вертикальным промежуткам без содержимого. */
-function splitIntoPieces(img, count) {
-  const stride = img.width * 4;
-  const occupied = new Array(img.width).fill(false);
-  for (let y = 0; y < img.height; y++) {
-    for (let x = 0; x < img.width; x++) {
-      if (img.data[y * stride + x * 4 + 3] > 8) occupied[x] = true;
-    }
-  }
-  const groups = [];
-  let start = -1;
-  for (let x = 0; x < img.width; x++) {
-    if (occupied[x] && start < 0) start = x;
-    if (!occupied[x] && start >= 0) {
-      groups.push({ x: start, w: x - start });
-      start = -1;
-    }
-  }
-  if (start >= 0) groups.push({ x: start, w: img.width - start });
-  if (groups.length !== count) return null;
-  // contentBounds ищет границы ВНУТРИ среза, поэтому x возвращается
-  // относительно начала группы — прибавляем смещение самой группы
-  return groups.map((g) => {
-    const b = contentBounds(img.data, img.width, g.x, 0, g.w, img.height);
-    return { x: g.x + b.x, y: b.y, w: b.w, h: b.h };
-  });
-}
-
-/**
- * Полосы устроены по-разному:
- *  • `*-base.png` — три детали в ряд (торец, середина, торец), их надо разрезать;
- *  • `*-fill.png` — одна цельная деталь, её только обрезать по содержимому.
- */
-function emitBar(srcName, prefix, label) {
-  const img = read(srcName);
-  const isBase = srcName.includes('base');
-
-  if (isBase) {
-    const parts = splitIntoPieces(img, 3);
-    if (!parts) throw new Error(`${srcName}: не удалось разделить на 3 детали`);
-    const names = ['cap-l', 'mid', 'cap-r'];
-    parts.forEach((p, i) => {
-      write(`bar-${prefix}-${names[i]}.png`, crop(img, p.x, p.y, p.w, p.h), label);
-    });
-    return;
-  }
-
-  const b = contentBounds(img.data, img.width, 0, 0, img.width, img.height);
-  if (!b) throw new Error(`${srcName}: пустая картинка`);
-  write(`bar-${prefix}-fill.png`, crop(img, b.x, b.y, b.w, b.h), label);
-}
-
-// Заливки полос (`*-fill.png`) больше НЕ вырезаются: в игре грузятся
-// перекрашенные `bar-fill-*.png` (см. следующий блок), а исходные куски полос
-// не использует никто. Раньше они просто занимали место в бандле.
-for (const [srcName, prefix, label] of [
-  ['ui/bars/bigbar-base.png', 'big', 'полоса босса'],
-  ['ui/bars/smallbar-base.png', 'small', 'полоса HUD'],
-]) {
-  emitBar(srcName, prefix, label);
-}
-
-// ============================================================== заливки
 //
-// Цвета под gameplay: синий — опыт, зелёный — здоровье, жёлтый — мало,
-// красный — на грани. Глянец — белый.
+// Сами детали в src/assets/game не нарезаются: игра грузит листы
+// ui/bars/{big,small}bar-base.png целиком и берёт из них кадры
+// bar-{big,small}-cap-l/mid/r (координаты — в BootScene.registerFrames).
+console.log('\n[полосы HP/XP — детали как кадры листов + заливка]');
+
 console.log('\n[заливки полос — перекрашенные под gameplay]');
 {
   const src = read('ui/bars/bigbar-fill.png');
@@ -245,23 +191,11 @@ console.log('\n[портреты героев]');
 // ui/cursors/cursor-04 — четыре угла рамки, собранные в одной картинке
 // 128×128. В таком виде рамка годится только под квадрат, а рамки выделения
 // нужны произвольного размера (карточка героя, карточка левел-апа, чип
-// сложности). Поэтому углы вырезаются по квадрантам и дальше растягиваются
-// по краям пустотой между ними — см. systems/Corners.ts.
-//
-// Legacy/ui/pointers для этого больше не используется: тот же набор углов
-// там есть, но ассеты берутся только из ui/.
-console.log('\n[рамка выделения — углы из cursor-04]');
-{
-  const img = read('ui/cursors/cursor-04.png');
-  const half = img.width / 2;
-  for (const [name, qx, qy] of [
-    ['tl', 0, 0], ['tr', half, 0], ['br', half, half], ['bl', 0, half],
-  ]) {
-    const b = contentBounds(img.data, img.width, qx, qy, half, half);
-    if (!b) throw new Error(`cursor-04: пустой угол ${name}`);
-    write('corner-' + name + '.png', crop(img, qx + b.x, qy + b.y, b.w, b.h), 'угол рамки');
-  }
-}
+// сложности). Поэтому из квадрантов 64×64 регистрируются кадры
+// corner-tl/tr/br/bl (по 21×25 каждый), а systems/Corners.ts собирает из них
+// рамку, тянущуюся под любой размер. Отдельных копий corner-*.png в
+// src/assets/game нет.
+console.log('\n[рамка выделения — углы как кадры cursor-04]');
 
 // ============================================================== мечи логотипа
 //
@@ -317,18 +251,14 @@ console.log('\n[мечи логотипа — два ряда из сетки 3�
 // ============================================================== прочее
 console.log('\n[прочее]');
 {
-  // Тень из тайлсета вместо самодельной
-  const img = read('terrain/tileset/shadow.png');
-  const b = contentBounds(img.data, img.width, 0, 0, img.width, img.height);
-  if (b) write('shadow-soft.png', crop(img, b.x, b.y, b.w, b.h), 'мягкая тень');
-}
-
-// Трава одним тайлом 64×64 из тайлсета tilemap-color3 (сетка 9×6).
-// Копия обязательна: фон арены и меню рисуется tileSprite'ом, а тайлсет
-// растянул бы всю карту 576×384 в качестве одного тайла.
-{
-  const img = read('terrain/tileset/tilemap-color3.png');
-  write('grass-tile.png', crop(img, 64, 64, 64, 64), 'трава 64x64 для tileSprite');
+  // Тень и траву в src/assets/game не вырезаем — это точные фрагменты картинок
+  // пака (Shadow.png 192×192 и тайл 64×64 из tilemap-color3), игра берёт их
+  // кадрами тех же текстур (см. BootScene.registerFrames). Пустые поля
+  // компенсируются при отрисовке — см. SHADOW_BOX и портреты выше.
+  const shadow = read('terrain/tileset/shadow.png');
+  const sb = contentBounds(shadow.data, shadow.width, 0, 0, shadow.width, shadow.height);
+  console.log(`  shadow ← terrain/tileset/shadow.png  содержимое: ${sb.w}x${sb.h} @ ${sb.x},${sb.y}`);
+  console.log('  grass-tile ← terrain/tileset/tilemap-color3.png  тайл 64x64 @ 64,64 (сетка 9x6)');
 }
 
 // ============================================================== отчёт

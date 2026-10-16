@@ -1721,3 +1721,46 @@ DevTools Protocol, `Input.dispatchMouseEvent` по координатам кно
 - `npm run check` чисто; `npm run build:yg` — 444 файла, 6,19 МБ, zip 4,55 МБ.
 - Рантайм в headless Chrome: меню и бой без ошибок, портреты на карточках на
   месте и стали крупнее (пустые поля паке больше не вычитаются из размера).
+
+---
+
+## R28 — фрагменты пака в src/assets/game заменены кадрами текстур
+
+### Проверено
+- Все 51 файл `src/assets/game` сверены с паком по содержимому (побайтово,
+  обрезка по содержимому, поиск подпрямоугольника в картинках пака).
+- **12 файлов — точные фрагменты пака**, отдельные копии не нужны:
+  - `bar-{big,small}-cap-l/mid/r` — детали листов `ui/bars/{big,small}bar-base.png`;
+  - `corner-{tl,tr,br,bl}` — квадранты `ui/cursors/cursor-04.png`;
+  - `shadow-soft` — содержимое `terrain/tileset/shadow.png` (79×80 @ 57,56);
+  - `grass-tile` — тайл 64×64 @ 64,64 из `terrain/tileset/tilemap-color3.png`.
+- Остальные 39 файлов — либо настоящие трансформации (девятислайсы
+  `btn-*/paper*/banner9/table9`, перекраска `bar-fill-*`, склейка
+  `sword-{blue,red}` из сетки с зазорами), либо графика, которой в текущем
+  паке нет вовсе (`icon-*`, `gem-*`, `ribbon-*`, `barrel`, `knife`, `spear`,
+  `slash`, `aoe-ring` — из удалённого в R25 legacy-набора): трогать нечего.
+
+### Сделано
+1. **`BootScene.registerFrames()`** — кадры из сырых текстур: `grass-tile` в
+   `grass-source`, `corner-*` в `cursor-04`, `bar-{big,small}-cap-l/mid/r` в
+   `bar-base-{big,small}` (прямоугольники измерены по листам: big —
+   24×51 @ 40,9 / 64×51 @ 128,9 / 24×51 @ 256,9; small — 15×19 @ 49,22 /
+   64×19 @ 128,22 / 15×19 @ 256,22; углы — 21×25 в квадрантах).
+2. **`BootScene`** грузит исходники пака вместо копий: `grass-source`
+   (spritesheet 64×64), `cursor-04`, `bar-base-{big,small}`,
+   `terrain/tileset/shadow.png` (на ключ `shadow`).
+3. **`Bar.ts`** берёт детали кадрами из `bar-base-*`; **`Corners.ts`** — кадрами
+   из `cursor-04`; **`MenuScene`/`GameScene`** рисуют траву как
+   `tileSprite(..., 'grass-source', 'grass-tile')`; тень в `Player`/`Enemy`
+   центрируется по `SHADOW_BOX` (origin) с масштабом `SHADOW_SCALE = 0.2`.
+4. **`prepare-assets.mjs`** эти 12 файлов больше не штампует (16 вместо 32) —
+   только печатает координаты для сверки.
+
+### Проверено
+- `npm run check` чисто; `npm run build:yg` — 444 файла, 6,19 МБ, zip 4,54 МБ.
+- Рантайм в headless Chrome: меню и бой без ошибок — 0 сообщений консоли,
+  0 исключений, 0 `__MISSING`-текстур (179 текстур вместо 186: семь копий
+  заменены кадрами). Скриншоты меню и боя просмотрены: рамки карточек,
+  полосы HUD, тени и трава на месте.
+- Текстур стало меньше на 7 (6 деталей полос → 2 листа, 4 угла → 1 лист),
+  дубликатов картинок пака в `src/assets/game` больше нет.

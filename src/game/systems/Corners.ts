@@ -1,12 +1,14 @@
 // ============ Угловая рамка из ассетов Tiny Swords ============
 //
 // ui/cursors/cursor-04 — четыре угла рамки, собранные в одной картинке
-// 128×128. В таком виде рамка годится только под квадрат, поэтому скрипт
-// scripts/prepare-assets.mjs вырезает углы по квадрантам в отдельные
-// текстуры corner-tl/tr/br/bl. Собрав их по углам прямоугольника,
+// 128×128. В таком виде рамка годится только под квадрат, поэтому из
+// квадрантов 64×64 регистрируются кадры corner-tl/tr/br/bl (по 21×25 каждый,
+// см. BootScene.registerFrames). Собрав их по углам прямоугольника,
 // получаем рамку, которая тянется под любой размер элемента: углы
 // остаются натуральными, растягивается только пустота между ними. Это
 // заметно чище прямоугольной обводки и в духе Tiny Swords.
+//
+// Отдельных обрезанных копий corner-*.png в src/assets/game нет.
 //
 // Каждый угол — 21×25 px, толщина ломаной ~13 px (см. scripts/probe-cursors.mjs).
 
@@ -15,6 +17,9 @@ import { FONT } from '../constants';
 
 /** Ключи углов: порядок обхода по часовой стрелке от левого верхнего. */
 const CORNERS = ['corner-tl', 'corner-tr', 'corner-br', 'corner-bl'] as const;
+
+/** Текстура, в которой зарегистрированы кадры углов. */
+const CORNER_TEXTURE = 'cursor-04';
 
 export interface CornerFrame {
   container: Phaser.GameObjects.Container;
@@ -40,7 +45,7 @@ export function makeCornerFrame(
   const scale = opts.cornerScale ?? 1;
   const container = scene.add.container(x, y);
   const corners = CORNERS.map((key) =>
-    scene.add.image(0, 0, key).setScale(scale).setOrigin(0.5, 0.5),
+    scene.add.image(0, 0, CORNER_TEXTURE, key).setScale(scale).setOrigin(0.5, 0.5),
   );
   container.add(corners);
   container.setDepth(opts.depth ?? 10);

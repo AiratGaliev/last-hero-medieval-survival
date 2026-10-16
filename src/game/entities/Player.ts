@@ -1,5 +1,5 @@
 import Phaser from 'phaser';
-import { DEPTH, SHADOW_SCALE } from '../constants';
+import { DEPTH, SHADOW_SCALE, SHADOW_BOX, SHADOW_SRC } from '../constants';
 import type { HeroDef } from '../data';
 
 // ============ Игрок ============
@@ -34,9 +34,12 @@ export class Player extends Phaser.Physics.Arcade.Sprite {
     const r = 24 / hero.scale;
     this.setCircle(r, cx - r, cy - r);
 
-    // Тень под ногами
+        // Тень под ногами
+    // Исходник Shadow.png 192×192, персонаж лежит в рамке SHADOW_BOX —
+    // origin ставится в её центр, чтобы пустые поля не сдвигали тень.
     const shadowDy = frame === 320 ? 36 : 6;
     this.shadow = scene.add.image(x, y + shadowDy, 'shadow')
+      .setOrigin((SHADOW_BOX.x + SHADOW_BOX.w / 2) / SHADOW_SRC, (SHADOW_BOX.y + SHADOW_BOX.h / 2) / SHADOW_SRC)
       .setScale(SHADOW_SCALE * 1.1, SHADOW_SCALE * 0.65)
       .setAlpha(0.35)
       .setDepth(DEPTH.SHADOW);

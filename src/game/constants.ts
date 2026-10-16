@@ -60,7 +60,12 @@ export const COMBO = {
  * мягкое пятно 79×80 в центре и зря занимал 14 КБ. После обрезки тот же
  * видимый размер даётся увеличением масштаба во 192/79 ≈ 2.43 раза.
  */
-export const SHADOW_SCALE = 0.2 * (192 / 79);
+/** Тень: рамка содержимого в исходнике Shadow.png 192×192 (файл грузится целиком). */
+export const SHADOW_BOX = { x: 57, y: 56, w: 79, h: 80 } as const;
+/** Ширина исходника Shadow.png — для пересчёта origin. */
+export const SHADOW_SRC = 192;
+/** Масштаб тени: 0.2 от ширины содержимого (79 px). */
+export const SHADOW_SCALE = 0.2;
 
 export const FONT = '"Pixelify Sans", "Press Start 2P", "Courier New", monospace';
 
