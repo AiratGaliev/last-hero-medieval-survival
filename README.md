@@ -94,7 +94,7 @@ npm run build:yg     # -> release/tiny-sword-survivors.zip
 │   ├── main.ts              вход: язык → SDK → lifecycle → игра
 │   ├── styles.css           @font-face (шрифт в архиве) + сброс страницы
 │   ├── assets/
-│   │   ├── tiny-swords/     590 PNG — исходники Pixel Frog (импорт: scripts/sync-assets.mjs)
+│   │   ├── tiny-swords/     570 PNG — исходники Pixel Frog (импорт: scripts/sync-assets.mjs)
 │   │   ├── game/            производные игровые текстуры (девятислайсы, полосы, портреты)
 │   │   └── font/            3 woff2 — Pixelify Sans (SIL OFL 1.1)
 │   ├── i18n/                ru.ts (эталон) + en.ts + выбор языка
@@ -213,7 +213,7 @@ npm run build:yg     # -> release/tiny-sword-survivors.zip
 663 исходника → 649 уникальных по содержимому.
 
 `src/assets/tiny-swords` — импорт пака [Tiny Swords](https://pixelfrog-assets.itch.io/tiny-swords):
-590 PNG, все имена приведены к правилам проекта (ASCII, нижний регистр,
+570 PNG, все имена приведены к правилам проекта (ASCII, нижний регистр,
 kebab-case), служебные файлы Unity (`.meta`, `.anim`, `.controller`) и
 справочник `Unity Tile Guide` не импортируются. Обновление пака — одна команда:
 
@@ -242,7 +242,7 @@ Phaser грузит только ключи из `BootScene.preload()` (97 фа�
 бросает исключение, если файл переименован, — это лучше молчаливого
 пустого спрайта.
 
-Библиотека шире, чем используемая часть: из 590 PNG грузится 119
+Библиотека шире, чем используемая часть: из 570 PNG грузится 119
 (`units/` — 60, `terrain/` — 38, `ui/` — 11, `buildings/` — 6,
 `particle-fx/` — 4), а `enemies/` (123), `resources/` (30) и остатки `units/`
 пока не задействованы — это материал для будущих врагов и базы. Хранить
