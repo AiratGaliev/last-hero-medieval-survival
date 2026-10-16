@@ -215,6 +215,22 @@ export const PASSIVES: Record<PassiveId, PassiveDef> = {
 
 export type HeroId = 'warrior' | 'archer' | 'lancer' | 'monk';
 
+/**
+ * Портрет героя: файл из `ui/avatars` пака плюс прямоугольник, в котором внутри
+ * картинки 256×256 лежит сам персонаж (по краям пустое поле).
+ *
+ * Отдельных обрезанных копий в `src/assets/game` не делаем — грузим исходник
+ * целиком и рисуем его со смещением: `origin` = центр этого прямоугольника,
+ * масштаб = размер портрета / большая сторона рамки. Прямоугольники измерены
+ * по файлам пака; какой портрет какому герю — в scripts/prepare-assets.mjs.
+ */
+export interface PortraitDef {
+  /** Путь относительно src/assets/tiny-swords */
+  file: string;
+  /** Границы персонажа внутри картинки 256×256 */
+  box: { x: number; y: number; w: number; h: number };
+}
+
 export interface HeroDef {
   id: HeroId;
   name: string;
@@ -227,36 +243,40 @@ export interface HeroDef {
   speed: number;
   baseRegen: number;   // innate HP/s (монах)
   anims: { idle: string; run: string; atk1: string; atk2: string };
-  /** Портрет из ui/avatars для карточки выбора и таблицы рекордов */
-  portrait: string;
+  /** Портрет из ui/avatars для карточки выбора */
+  portrait: PortraitDef;
 }
 
 export const HEROES: Record<HeroId, HeroDef> = {
   warrior: {
     id: 'warrior', name: t('hero.warrior.name'), title: t('hero.warrior.title'),
     traits: [t('hero.warrior.t1'), t('hero.warrior.t2')],
-    frameW: 192, scale: 0.55, startWeapon: 'sword', portrait: 'avatar-warrior',
+    frameW: 192, scale: 0.55, startWeapon: 'sword',
+    portrait: { file: 'ui/avatars/avatars-01.png', box: { x: 22, y: 31, w: 197, h: 182 } },
     maxHp: 110, speed: 200, baseRegen: 0,
     anims: { idle: 'player-idle', run: 'player-run', atk1: 'player-atk1', atk2: 'player-atk2' },
   },
   archer: {
     id: 'archer', name: t('hero.archer.name'), title: t('hero.archer.title'),
     traits: [t('hero.archer.t1'), t('hero.archer.t2'), t('hero.archer.t3')],
-    frameW: 192, scale: 0.55, startWeapon: 'bow', portrait: 'avatar-archer',
+    frameW: 192, scale: 0.55, startWeapon: 'bow',
+    portrait: { file: 'ui/avatars/avatars-03.png', box: { x: 64, y: 29, w: 140, h: 160 } },
     maxHp: 90, speed: 230, baseRegen: 0,
     anims: { idle: 'hero-archer-idle', run: 'hero-archer-run', atk1: 'hero-archer-atk', atk2: 'hero-archer-atk' },
   },
   lancer: {
     id: 'lancer', name: t('hero.lancer.name'), title: t('hero.lancer.title'),
     traits: [t('hero.lancer.t1'), t('hero.lancer.t2'), t('hero.lancer.t3')],
-    frameW: 320, scale: 0.34, startWeapon: 'spear', portrait: 'avatar-lancer',
+    frameW: 320, scale: 0.34, startWeapon: 'spear',
+    portrait: { file: 'ui/avatars/avatars-02.png', box: { x: 52, y: 58, w: 149, h: 129 } },
     maxHp: 130, speed: 190, baseRegen: 0,
     anims: { idle: 'hero-lancer-idle', run: 'hero-lancer-run', atk1: 'hero-lancer-atk', atk2: 'hero-lancer-atk' },
   },
   monk: {
     id: 'monk', name: t('hero.monk.name'), title: t('hero.monk.title'),
     traits: [t('hero.monk.t1'), t('hero.monk.t2')],
-    frameW: 192, scale: 0.55, startWeapon: 'aura', portrait: 'avatar-monk',
+    frameW: 192, scale: 0.55, startWeapon: 'aura',
+    portrait: { file: 'ui/avatars/avatars-04.png', box: { x: 57, y: 44, w: 144, h: 155 } },
     maxHp: 100, speed: 195, baseRegen: 0.5,
     anims: { idle: 'hero-monk-idle', run: 'hero-monk-run', atk1: 'hero-monk-atk', atk2: 'hero-monk-atk' },
   },

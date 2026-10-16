@@ -95,7 +95,7 @@ npm run build:yg     # -> release/tiny-sword-survivors.zip
 │   ├── styles.css           @font-face (шрифт в архиве) + сброс страницы
 │   ├── assets/
 │   │   ├── tiny-swords/     570 PNG — исходники Pixel Frog (импорт: scripts/sync-assets.mjs)
-│   │   ├── game/            производные игровые текстуры (девятислайсы, полосы, портреты)
+│   │   ├── game/            производные игровые текстуры (девятислайсы, полосы, рамки)
 │   │   └── font/            3 woff2 — Pixelify Sans (SIL OFL 1.1)
 │   ├── i18n/                ru.ts (эталон) + en.ts + выбор языка
 │   ├── platform/            изолированный слой Yandex Games

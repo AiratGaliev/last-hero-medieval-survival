@@ -1,6 +1,7 @@
 import Phaser from 'phaser';
 import { FONT } from '../constants';
 import { asset } from '../assets';
+import { HEROES } from '../data';
 import { t } from '../../i18n';
 
 // ============ Загрузчик ассетов + анимации ============
@@ -248,9 +249,11 @@ export class BootScene extends Phaser.Scene {
       this.load.image(`bar-fill-${c}`, asset('game', `bar-fill-${c}.png`));
     }
 
-    // ---- Портреты героев (обрезаны из ui/avatars) ----
-    for (const h of ['warrior', 'archer', 'lancer', 'monk']) {
-      this.load.image('avatar-' + h, asset('game', 'avatar-' + h + '.png'));
+    // ---- Портреты героев: прямо из исходников ui/avatars пака ----
+    // Обрезанных копий в src/assets/game больше нет: картинка 256×256 грузится
+    // целиком, а рамка персонажа (HeroDef.portrait.box) применяется при отрисовке.
+    for (const hero of Object.values(HEROES)) {
+      this.load.image(`avatar-${hero.id}`, asset('tiny-swords', hero.portrait.file));
     }
 
 

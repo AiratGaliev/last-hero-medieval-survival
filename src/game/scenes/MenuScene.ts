@@ -45,6 +45,9 @@ interface DiffChip {
 const HERO_ORDER: HeroId[] = ['warrior', 'archer', 'lancer', 'monk'];
 const DIFF_ORDER: DifficultyId[] = ['normal', 'nightmare'];
 
+/** Размер файла портрета в ui/avatars: 256×256, персонаж лежит в рамке HeroDef.portrait.box */
+const PORTRAIT_SIZE = 256;
+
 /**
  * Три части меча как отдельные фреймы той же текстуры: рукоять с гардой,
  * ровная часть клинка и наконечник. Тянется только клинок — остальное
@@ -434,9 +437,15 @@ export class MenuScene extends Phaser.Scene {
     // оружия — на 200 px это две кляксы поверх бумаги, и выбранный герой
     // отличался от остальных только рамкой и «дыханием». Остались портрет
     // и рамка выделения.
+    //
+    // Файл портрета 256×256, персонаж занимает рамку portrait.box, остальное —
+    // прозрачные поля. Поэтому origin ставится в центр рамки, а масштаб
+    // считается от неё: пустое поле не «съедает» место на карточке.
     const portraitSize = Math.min(cardH * (cardW < 215 ? 0.34 : 0.40), cardW * 0.62);
-    const portrait = this.add.image(0, -cardH * 0.27, hero.portrait)
-      .setDisplaySize(portraitSize, portraitSize);
+    const box = hero.portrait.box;
+    const portrait = this.add.image(0, -cardH * 0.27, `avatar-${hero.id}`)
+      .setOrigin((box.x + box.w / 2) / PORTRAIT_SIZE, (box.y + box.h / 2) / PORTRAIT_SIZE)
+      .setScale(portraitSize / Math.max(box.w, box.h));
     container.add(portrait);
 
     const name = this.add.text(0, cardH * 0.05, hero.name, {
