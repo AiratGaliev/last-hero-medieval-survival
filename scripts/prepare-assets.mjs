@@ -5,6 +5,32 @@
 // бесшовные девятислайсы и детали полос, которые Phaser умеет растягивать.
 // Результат кладётся в src/assets/game/ и коммитится — чтобы игру можно было
 // собрать, не запуская этот скрипт.
+//
+// ============ ЧТО ЛЕЖИТ В src/assets/game ============
+// Папка делится на три части, и важно их не путать:
+//
+// 1. ВЫВОД ЭТОГО СКРИПТА — обязательные производные: девятислайсы кнопок и
+//    панелей, детали полос, портреты героев, углы рамки, мечи логотипа,
+//    мягкая тень, тайл травы. В tiny-swords они лежат внутри больших листов;
+//    Phaser не умеет брать произвольный кусок листа как отдельную текстуру,
+//    поэтому куски режутся заранее.
+//
+// 2. ВЫВОД scripts/make-ribbons.mjs — ленты экрана левел-апа из
+//    ui/ribbons/bigribbons.png.
+//
+// 3. АВТОРСКИЕ ОРИГИНАЛЫ — перекрашенные и уникальные:
+//      · gem-*.png — перекраска золотых жил (камня нужного оттенка в ассете нет);
+//      · icon-{spear,bomb,aura,boots,magnet,heart,might,haste,knives}.png —
+//        пиксельно совпадающих файлов в tiny-swords НЕТ (проверено сравнением
+//        RGBA со всеми 410 файлами ассета), нарисованы отдельно;
+//      · aoe-ring, slash, spear, knife, barrel.png — эффекты и реквизит,
+//        которых в ассете тоже нет.
+//
+// ПРАВИЛО: сюда НЕ кладутся копии файлов tiny-swords. Если картинка уже есть
+// в ассете — грузится прямо оттуда (см. BootScene: meat, arrow и иконки
+// ui/icons грузятся из tiny-swords). Копия оправдана только когда оригинал
+// не годится: обрезка ради размера (shadow-soft) или потому что Phaser не
+// возьмёт кусок листа (всё из пункта 1).
 
 import fs from 'node:fs';
 import path from 'node:path';
@@ -148,11 +174,12 @@ function emitBar(srcName, prefix, label) {
   write(`bar-${prefix}-fill.png`, crop(img, b.x, b.y, b.w, b.h), label);
 }
 
+// Заливки полос (`*-fill.png`) больше НЕ вырезаются: в игре грузятся
+// перекрашенные `bar-fill-*.png` (см. следующий блок), а исходные куски полос
+// не использует никто. Раньше они просто занимали место в бандле.
 for (const [srcName, prefix, label] of [
   ['ui/bars/bigbar-base.png', 'big', 'полоса босса'],
   ['ui/bars/smallbar-base.png', 'small', 'полоса HUD'],
-  ['ui/bars/bigbar-fill.png', 'big', 'заливка'],
-  ['ui/bars/smallbar-fill.png', 'small', 'подсветка'],
 ]) {
   emitBar(srcName, prefix, label);
 }
@@ -277,6 +304,14 @@ console.log('\n[прочее]');
   const img = read('terrain/tileset/shadow.png');
   const b = contentBounds(img.data, img.width, 0, 0, img.width, img.height);
   if (b) write('shadow-soft.png', crop(img, b.x, b.y, b.w, b.h), 'мягкая тень');
+}
+
+// Трава одним тайлом 64×64 из тайлсета tilemap-color3 (сетка 9×6).
+// Копия обязательна: фон арены и меню рисуется tileSprite'ом, а тайлсет
+// растянул бы всю карту 576×384 в качестве одного тайла.
+{
+  const img = read('terrain/tileset/tilemap-color3.png');
+  write('grass-tile.png', crop(img, 64, 64, 64, 64), 'трава 64x64 для tileSprite');
 }
 
 // ============================================================== отчёт

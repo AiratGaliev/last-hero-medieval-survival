@@ -94,7 +94,7 @@ npm run build:yg     # -> release/tiny-sword-survivors.zip
 │   ├── main.ts              вход: язык → SDK → lifecycle → игра
 │   ├── styles.css           @font-face (шрифт в архиве) + сброс страницы
 │   ├── assets/
-│   │   ├── tiny-swords/     607 PNG — исходники Pixel Frog
+│   │   ├── tiny-swords/     590 PNG — исходники Pixel Frog (импорт: scripts/sync-assets.mjs)
 │   │   ├── game/            производные игровые текстуры (девятислайсы, полосы, портреты)
 │   │   └── font/            3 woff2 — Pixelify Sans (SIL OFL 1.1)
 │   ├── i18n/                ru.ts (эталон) + en.ts + выбор языка
@@ -115,6 +115,7 @@ npm run build:yg     # -> release/tiny-sword-survivors.zip
 │   └── vendor/yandex-sdk.js SDK площадки (копируется в архив как есть)
 ├── scripts/
 │   ├── build-archive.mjs    проверка требований + упаковка zip
+│   ├── sync-assets.mjs      импорт исходников Tiny Swords (правила имён + сверка хешей)
 │   ├── prepare-assets.mjs   генерация производных текстур из ассетов
 │   ├── preview-avatars.mjs  контактный лист портретов (подбор под героев)
 │   └── lib/                 свой PNG-ридер/писатель и штамповщик девятислайсов
@@ -209,11 +210,44 @@ npm run build:yg     # -> release/tiny-sword-survivors.zip
 Файлы лежат в `src/assets` и подключаются через `import.meta.glob`
 (`src/game/assets.ts`), поэтому в `dist` попадают с хешем в имени — после
 деплоя браузер тянет свежие спрайты. Vite также схлопывает одинаковые файлы:
-642 исходника → 392 уникальных PNG.
+663 исходника → 649 уникальных по содержимому.
+
+`src/assets/tiny-swords` — импорт пака [Tiny Swords](https://pixelfrog-assets.itch.io/tiny-swords):
+590 PNG, все имена приведены к правилам проекта (ASCII, нижний регистр,
+kebab-case), служебные файлы Unity (`.meta`, `.anim`, `.controller`) и
+справочник `Unity Tile Guide` не импортируются. Обновление пака — одна команда:
+
+```
+node scripts/sync-assets.mjs            # сухая сверка: что разошлось
+node scripts/sync-assets.mjs --write    # копировать только различающиеся файлы
+```
+
+Скрипт сам строит карту «пак → проект» по правилам в начале файла, сверяет
+SHA-256 и копирует байт в байт; совпадающие файлы не трогает, ничего не
+удаляет, а на неизвестную папку в паке падает с ошибкой вместо молчаливого
+импорта. Имена, которые kebab-case ломает (`bigbluebutton-regular.png`,
+`lancer-downright-attack.png`), перечислены в `FILE_OVERRIDES` — на них ссылается
+код, переименование сломало бы загрузку.
+
+Сам пак дублирует картинки в нескольких местах (`Pawn and Resources/Pawn/*` =
+`Units/*/Pawn/*`, `Gold Resource 2..7` = `Gold Stone 1..6`, `Bush 1..4` =
+`Bushe1..4`). Копии в проект не тащатся: их отсекает `DEDUPE_DIRS` (сравнение
+идёт по содержимому всего пака, а не по диску — результат не зависит от
+порядка обхода и работает при импорте с нуля) и список `SKIP_FILES`.
+Одинаковые картинки под разными именами, которые значат разное
+(`Attack.png`/`Inven_Attack.png`, `arrow.png`, `heal-effect.png`), наоборот,
+сохраняются все.
 
 Phaser грузит только ключи из `BootScene.preload()` (97 файлов). `asset()`
 бросает исключение, если файл переименован, — это лучше молчаливого
 пустого спрайта.
+
+Библиотека шире, чем используемая часть: из 590 PNG грузится 119
+(`units/` — 60, `terrain/` — 38, `ui/` — 11, `buildings/` — 6,
+`particle-fx/` — 4), а `enemies/` (123), `resources/` (30) и остатки `units/`
+пока не задействованы — это материал для будущих врагов и базы. Хранить
+стоит: Vite схлопывает одинаковые файлы по хешу, неиспользуемое просто лежит
+на диске и браузером не качается.
 
 Шрифт Pixelify Sans лежит в архиве: `fonts.googleapis.com` из России
 недоступен, а это ~60% аудитории Yandex Games.
@@ -232,6 +266,5 @@ Phaser грузит только ключи из `BootScene.preload()` (97 фа�
 ## Лицензия
 
 Код — MIT. Графика — [Tiny Swords](https://pixelfrog-assets.itch.io/tiny-swords)
-© Pixel Frog (бесплатный пакет с itch.io; CC0-версия в
-`src/assets/tiny-swords/legacy`). Шрифт Pixelify Sans — SIL OFL 1.1.
+© Pixel Frog (бесплатный пакет с itch.io). Шрифт Pixelify Sans — SIL OFL 1.1.
 Атрибуция Pixel Frog желательна при публикации.

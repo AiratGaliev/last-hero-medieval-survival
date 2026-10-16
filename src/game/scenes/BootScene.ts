@@ -182,22 +182,36 @@ export class BootScene extends Phaser.Scene {
     this.load.image('gem-red', asset('game', 'gem-red.png'));
     this.load.image('gem-purple', asset('game', 'gem-purple.png'));
     this.load.image('gem-gold', asset('game', 'gem-gold.png'));
-    this.load.image('meat', asset('game', 'meat.png'));
-    this.load.image('arrow', asset('game', 'arrow.png'));
+    // ---- Стрела-снаряд, мясо, иконки: берём прямо из tiny-swords ----
+    // Раньше эти файлы лежали копиями в src/assets/game. Копии удалены —
+    // здесь ссылка на оригинал, второй источник правды не нужен.
+    this.load.image('meat', asset('tiny-swords', 'terrain/resources/meat-resource/meat-resource.png'));
+    this.load.image('arrow', asset('tiny-swords', 'units/black/archer/arrow.png'));
+    this.load.image('icon-sword', asset('tiny-swords', 'ui/icons/icon-05.png'));
+    this.load.image('icon-hammer', asset('tiny-swords', 'ui/icons/icon-01.png'));
+    this.load.image('icon-meat', asset('tiny-swords', 'ui/icons/icon-04.png'));
+    this.load.image('icon-coin', asset('tiny-swords', 'ui/icons/icon-03.png'));
+    this.load.image('icon-gem', asset('tiny-swords', 'ui/icons/icon-07.png'));
+    this.load.image('icon-shield', asset('tiny-swords', 'ui/icons/icon-06.png'));
+    // Иконка лука — тот же рисунок стрелы, отдельного файла в ассете нет
+    this.load.image('icon-bow', asset('tiny-swords', 'units/black/archer/arrow.png'));
     this.load.image('spear', asset('game', 'spear.png'));
     this.load.image('barrel', asset('game', 'barrel.png'));
     this.load.image('slash', asset('game', 'slash.png'));
     this.load.image('aoe-ring', asset('game', 'aoe-ring.png'));
-    // Обрезанная по содержимому версия shadow.png — та же картинка, но 14 КБ → 3 КБ
+    // Обрезанная по содержимому версия terrain/tileset/shadow.png: та же
+    // картинка, но 14 КБ → 3 КБ. Копия оправдана — иначе в бандл едет лишнее.
     this.load.image('shadow', asset('game', 'shadow-soft.png'));
     this.load.image('knife', asset('game', 'knife.png'));
     this.load.image('treasure', asset('tiny-swords', 'terrain/resources/gold-stones/gold-stone-6.png'));
     this.load.spritesheet('fx-treasure', asset('tiny-swords', 'terrain/resources/gold-stones/gold-stone-6-highlight.png'), { frameWidth: 128, frameHeight: 128 });
 
     // ---- Иконки ----
-    for (const ic of ['icon-sword', 'icon-bow', 'icon-spear', 'icon-hammer', 'icon-bomb', 'icon-aura',
-      'icon-boots', 'icon-shield', 'icon-magnet', 'icon-heart', 'icon-might', 'icon-haste', 'icon-meat', 'icon-coin',
-      'icon-knives', 'icon-gem']) {
+    // Эти девять есть только в src/assets/game — в tiny-swords нет ни одного
+    // пиксельно совпадающего файла. Остальные иконки грузятся из ui/icons
+    // (см. блок выше) — дублей копий больше нет.
+    for (const ic of ['icon-spear', 'icon-bomb', 'icon-aura',
+      'icon-boots', 'icon-magnet', 'icon-heart', 'icon-might', 'icon-haste', 'icon-knives']) {
       this.load.image(ic, asset('game', `${ic}.png`));
     }
 

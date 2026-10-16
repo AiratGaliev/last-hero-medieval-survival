@@ -12,7 +12,7 @@ export interface ShopUpgradeDef {
   id: ShopUpgradeId;
   name: string;
   desc: string;
-  icon: string;              // /assets/game/<icon>.png
+  icon: string;              // ключ текстуры, загружается в BootScene
   costs: [number, number, number]; // цена уровня 1/2/3
 }
 

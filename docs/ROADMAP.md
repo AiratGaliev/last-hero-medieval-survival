@@ -345,9 +345,10 @@ emit `change`) → `cooldown` (0.5 сек) → `walk`.
 
 **Ассеты (проверено, готовые пикапы в `tiny-swords/terrain/resources/`):**
 `wood-resource.png`, `meat-resource.png`, `gold-resource.png`. Иконки из
-`src/assets/game/icon-*.png` **не использовать** — там стиль игрового UI, а
-ресурсные пикапы того же ассета Tiny Swords читаются на карте. `icon-coin.png`
-остаётся пикапом золота матча за убийства.
+`src/assets/game/icon-*.png` для HUD **не использовать** — там стиль игрового
+UI, а ресурсные пикапы того же ассета Tiny Swords читаются на карте. Пикап
+золота матча за убийства — `src/assets/tiny-swords/ui/icons/icon-03.png`
+(ключ `icon-coin`; копии в `src/assets/game` больше нет).
 
 - [ ] `src/game/scenes/BootScene.ts` — загрузить `res-wood` ← `wood-resource.png`,
       `res-meat` ← `meat-resource.png`, **`res-ore`** ← `gold-resource.png`
@@ -393,8 +394,8 @@ emit `change`) → `cooldown` (0.5 сек) → `walk`.
 - [ ] `src/game/scenes/BootScene.ts` — циклом по тирам и типам загрузить
       44 спрайт-листа по схеме `${kind}-${tier}-${anim}` с размерами кадров
       из таблицы выше. Стрелы врагов **не грузить** — используется общий
-      `arrow` из `src/assets/game/` (TZ §C.2). Существующие `player-*` и
-      `hero-*` (синяя фракция) **не трогать**
+      `arrow` из `src/assets/tiny-swords/units/black/archer/arrow.png` (TZ §C.2).
+      Существующие `player-*` и `hero-*` (синяя фракция) **не трогать**
 - [ ] `src/game/systems/Spawner.ts` — `pickRegularKind(minute, rng)` возвращает
       `{ kind, tier }`; тир по минутам (TZ §C.2), тип — по «появлению» (§A.2);
       два независимых вызова `rng()`. Кольца `WAVE_EVENTS` получают тир
