@@ -13,9 +13,9 @@ export const en: Record<TranslationKey, string> = {
   'common.you': 'You',
   'common.back': 'BACK',
   // Game title: split across the two swords in the menu (see MenuScene)
-  'common.gameTitle': 'Medieval Survival',
-  'common.titleTop': 'MEDIEVAL',
-  'common.titleBottom': 'SURVIVAL',
+  'common.gameTitle': 'The Last Hero: Medieval Survival',
+  'common.titleTop': 'THE LAST HERO',
+  'common.titleBottom': 'MEDIEVAL SURVIVAL',
 
   // ---------- Loading ----------
   'boot.loading': 'Loading...',
@@ -31,7 +31,7 @@ export const en: Record<TranslationKey, string> = {
   'menu.shop': 'SHOP',
   'menu.achievements': 'TROPHIES',
   'menu.chronicle': 'YOUR RECORD',
-  'menu.version': 'v1.10 • Phaser 4 • Pixel Frog “Tiny Swords” assets',
+  'menu.version': 'v1.12 • Phaser 4 • Pixel Frog "Tiny Swords" assets',
 
   // ---------- How to play ----------
   'howto.title': 'HOW TO PLAY',

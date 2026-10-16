@@ -15,9 +15,9 @@ export const ru = {
   'common.you': 'Вы',
   'common.back': 'НАЗАД',
   // Название игры: в меню оно разложено по двум мечам (см. MenuScene)
-  'common.gameTitle': 'Средневековое выживание',
-  'common.titleTop': 'СРЕДНЕВЕКОВОЕ',
-  'common.titleBottom': 'ВЫЖИВАНИЕ',
+  'common.gameTitle': 'Последний герой: Средневековое выживание',
+  'common.titleTop': 'ПОСЛЕДНИЙ ГЕРОЙ',
+  'common.titleBottom': 'СРЕДНЕВЕКОВОЕ ВЫЖИВАНИЕ',
 
   // ---------- Загрузка ----------
   'boot.loading': 'Загрузка...',
@@ -33,7 +33,7 @@ export const ru = {
   'menu.shop': 'ЛАВКА',
   'menu.achievements': 'ДОСТИЖЕНИЯ',
   'menu.chronicle': 'ТВОЯ ИСТОРИЯ',
-  'menu.version': 'v1.10 • Phaser 4 • ассеты Pixel Frog «Tiny Swords»',
+  'menu.version': 'v1.12 • Phaser 4 • ассеты Pixel Frog «Tiny Swords»',
 
   // ---------- Как играть ----------
   'howto.title': 'КАК ИГРАТЬ',

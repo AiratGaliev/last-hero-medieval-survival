@@ -1,9 +1,9 @@
 {
-  "name": "tiny-sword-survivors",
-  "version": "1.0.0",
+  "name": "last-hero-medieval-survival",
+  "version": "1.12.0",
   "private": true,
   "type": "module",
-  "description": "Tiny Sword Survivors — bullet-heaven роглайт на нативном Phaser 4 для Yandex Games",
+  "description": "Последний герой: Средневековое выживание — bullet-heaven роглайт на нативном Phaser 4 для Yandex Games",
   "license": "MIT",
   "scripts": {
     "dev": "vite",

@@ -1,4 +1,4 @@
-# Tiny Sword Survivors
+# Последний герой: Средневековое выживание (The Last Hero: Medieval Survival)
 
 Bullet-heaven роглайт (клон Vampire Survivors) на **нативном Phaser 4** для
 **Yandex Games**. Ассеты — [Tiny Swords](https://pixelfrog-assets.itch.io/tiny-swords)
