@@ -125,7 +125,12 @@ async function sceneObjects(page: Page): Promise<UiObject[]> {
       }
     };
     visit(scene.sys.displayList.list);
-    return all;
+    // Never return Phaser instances across the Playwright boundary: they keep
+    // references to the Scene/Game and form circular structures.
+    return all.map((object) => ({
+      type: object.type,
+      text: typeof object.text === 'string' ? object.text : undefined,
+    }));
   });
 }
 
