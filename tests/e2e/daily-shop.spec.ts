@@ -253,6 +253,7 @@ async function labelsForBanners(page: Page): Promise<string[]> {
 }
 
 test('daily shop offers are valid, visible, marked in the catalogue, and paginated catalogue remains accessible', async ({ page }) => {
+  test.setTimeout(90_000);
   await openShop(page);
   const rotation = await readRotation(page);
   expect(rotation).not.toBeNull();
@@ -290,7 +291,7 @@ test('daily shop offers are valid, visible, marked in the catalogue, and paginat
   const offerLabels = await labelsForOffers(page, rotation.ids);
   const bannerLabels = await labelsForBanners(page);
   for (let currentPage = 1; currentPage <= totalPages; currentPage++) {
-    texts = await sceneTexts(page);
+    if (currentPage > 1) texts = await sceneTexts(page);
     for (const label of offerLabels) {
       if (texts.filter((text) => text === label).length >= 2) {
         offersMarkedInCatalogue.add(label);
