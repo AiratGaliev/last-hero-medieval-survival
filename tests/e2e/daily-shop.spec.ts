@@ -227,6 +227,21 @@ async function labelsForOffers(page: Page, ids: string[]): Promise<string[]> {
   }, ids);
 }
 
+
+async function labelsForBanners(page: Page): Promise<string[]> {
+  return page.evaluate(async () => {
+    const metaUrl = new URL('/src/game/meta.ts', window.location.origin).href;
+    const i18nUrl = new URL('/src/i18n/index.ts', window.location.origin).href;
+    const [meta, i18n] = await Promise.all([
+      import(/* @vite-ignore */ metaUrl) as Promise<{
+        BANNERS: Array<{ id: string; nameKey: string }>;
+      }>,
+      import(/* @vite-ignore */ i18nUrl) as Promise<{ t: (key: string) => string }>,
+    ]);
+    return meta.BANNERS.map((banner) => i18n.t(banner.nameKey));
+  });
+}
+
 test('daily shop offers are valid, visible, marked in the catalogue, and paginated catalogue remains accessible', async ({ page }) => {
   await openShop(page);
   const rotation = await readRotation(page);
@@ -260,19 +275,19 @@ test('daily shop offers are valid, visible, marked in the catalogue, and paginat
   const totalPages = Number(firstPage?.split('/')[1]?.trim());
   expect(totalPages).toBeGreaterThan(1);
 
-  const bannerSection = await page.evaluate(async () => {
-    const url = new URL('/src/i18n/index.ts', window.location.origin).href;
-    const i18n = await import(/* @vite-ignore */ url) as { t: (key: string) => string };
-    return i18n.t('skins.banner').toUpperCase();
-  });
   const offersMarkedInCatalogue = new Set<string>();
+  const bannersVisibleInCatalogue = new Set<string>();
   const offerLabels = await labelsForOffers(page, rotation.ids);
+  const bannerLabels = await labelsForBanners(page);
   for (let currentPage = 1; currentPage <= totalPages; currentPage++) {
     texts = await sceneTexts(page);
     for (const label of offerLabels) {
       if (texts.filter((text) => text === label).length >= 2) {
         offersMarkedInCatalogue.add(label);
       }
+    }
+    for (const label of bannerLabels) {
+      if (texts.includes(label)) bannersVisibleInCatalogue.add(label);
     }
     if (currentPage < totalPages) {
       await clickSceneText(page, '›');
@@ -282,8 +297,8 @@ test('daily shop offers are valid, visible, marked in the catalogue, and paginat
     }
   }
   expect([...offersMarkedInCatalogue]).toEqual(expect.arrayContaining(offerLabels));
+  expect([...bannersVisibleInCatalogue]).toEqual(expect.arrayContaining(bannerLabels));
   texts = await sceneTexts(page);
-  expect(texts).toContain(bannerSection);
   expect(texts).toContain(dailyOffersLabel('ru'));
 });
 
