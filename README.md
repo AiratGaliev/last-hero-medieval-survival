@@ -69,6 +69,25 @@ npm run build:yg     # -> release/tiny-sword-survivors.zip
 | `npm run typecheck` | `tsc --noEmit` |
 | `npm run lint` | ESLint по репозиторию |
 | `npm run check` | typecheck + lint |
+| `npm run test:e2e` | Playwright smoke tests (Chromium desktop + mobile; RU + EN startup) |
+| `npm run test:e2e:ui` | Playwright interactive test runner |
+
+---
+
+## Автоматические браузерные проверки
+
+Playwright проверяет запуск игры в Chromium на настольном и мобильном размерах экрана,
+в русском и английском режимах. Перед локальным запуском установите зависимости и браузер:
+
+```bash
+npm install
+npx playwright install chromium
+npm run test:e2e
+```
+
+GitHub Actions запускает typecheck, ESLint, production build и браузерные smoke-тесты
+на push в `main`, для каждого Pull Request и вручную через вкладку Actions.
+При падении тестов workflow сохраняет скриншоты, trace и видео как артефакты.
 
 ---
 
