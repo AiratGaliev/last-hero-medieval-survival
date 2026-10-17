@@ -32,15 +32,18 @@ for (const language of ['ru', 'en'] as const) {
 }
 
 
-test('a skipped interstitial does not start the cooldown, but a shown ad does', async ({ page }) => {
+
+test('Yandex callback ads resolve after completion and throttle only shown interstitials', async ({ page }) => {
   await page.addInitScript(() => {
     localStorage.setItem('tss-meta2', JSON.stringify({ matchesPlayed: 5 }));
 
     const probe = window as unknown as {
       __interstitialCalls: number;
+      __rewardedCalls: number;
       YaGames: { init: () => Promise<unknown> };
     };
     probe.__interstitialCalls = 0;
+    probe.__rewardedCalls = 0;
 
     const sdk = {
       environment: { i18n: { lang: 'en', tld: 'com' } },
@@ -49,11 +52,28 @@ test('a skipped interstitial does not start the cooldown, but a shown ad does', 
         GameplayAPI: { start: () => {}, stop: () => {} },
       },
       adv: {
-        showFullscreenAdv: async () => {
+        showFullscreenAdv: (options?: {
+          callbacks?: { onClose?: (wasShown: boolean) => void; onError?: (error: object) => void };
+        }) => {
           probe.__interstitialCalls += 1;
-          return probe.__interstitialCalls > 1;
+          const shown = probe.__interstitialCalls > 1;
+          queueMicrotask(() => options?.callbacks?.onClose?.(shown));
         },
-        showRewardedVideo: async () => ({ rewarded: true }),
+        showRewardedVideo: (options?: {
+          callbacks?: {
+            onOpen?: () => void;
+            onRewarded?: () => void;
+            onClose?: (wasShown: boolean) => void;
+            onError?: (error: object) => void;
+          };
+        }) => {
+          probe.__rewardedCalls += 1;
+          queueMicrotask(() => {
+            options?.callbacks?.onOpen?.();
+            options?.callbacks?.onRewarded?.();
+            options?.callbacks?.onClose?.(true);
+          });
+        },
       },
       auth: { openAuthDialog: async () => {} },
       leaderboards: {
@@ -83,14 +103,34 @@ test('a skipped interstitial does not start the cooldown, but a shown ad does', 
   const result = await page.evaluate(async () => {
     const moduleUrl = new URL('/src/platform/ads.ts', window.location.origin).href;
     const ads = await import(/* @vite-ignore */ moduleUrl) as {
-      showInterstitial: () => Promise<boolean>;
+      showInterstitial: (hooks: { pause: () => void; resume: () => void }) => Promise<boolean>;
+      showRewarded: (hooks: { pause: () => void; resume: () => void }) => Promise<{ rewarded: boolean; available: boolean }>;
     };
-    const first = await ads.showInterstitial();
-    const second = await ads.showInterstitial();
-    const third = await ads.showInterstitial();
-    const probe = window as unknown as { __interstitialCalls: number };
-    return { first, second, third, calls: probe.__interstitialCalls };
+    let pauses = 0;
+    let resumes = 0;
+    const hooks = { pause: () => { pauses += 1; }, resume: () => { resumes += 1; } };
+
+    const first = await ads.showInterstitial(hooks);
+    const second = await ads.showInterstitial(hooks);
+    const third = await ads.showInterstitial(hooks);
+    const rewarded = await ads.showRewarded(hooks);
+    const probe = window as unknown as { __interstitialCalls: number; __rewardedCalls: number };
+    return {
+      first, second, third, rewarded,
+      interstitialCalls: probe.__interstitialCalls,
+      rewardedCalls: probe.__rewardedCalls,
+      pauses, resumes,
+    };
   });
 
-  expect(result).toEqual({ first: false, second: true, third: false, calls: 2 });
+  expect(result).toEqual({
+    first: false,
+    second: true,
+    third: false,
+    rewarded: { rewarded: true, available: true },
+    interstitialCalls: 2,
+    rewardedCalls: 1,
+    pauses: 3,
+    resumes: 3,
+  });
 });
