@@ -25,6 +25,7 @@ type GameForTest = {
     getScene: (key: string) => PhaserScene;
   };
   scale: { width: number; height: number };
+  canvas: HTMLCanvasElement;
 };
 type TestWindow = Window & { __tss?: GameForTest };
 
@@ -164,24 +165,25 @@ async function clickSceneText(page: Page, label: string): Promise<void> {
     const text = all.find((object) => object.type === 'Text' && object.text === target);
     const bounds = text?.getBounds?.();
     if (!bounds) return null;
+
+    // Use Phaser's own canvas element and calculate CSS-pixel coordinates
+    // in the same page evaluation as the Phaser object lookup. This avoids a
+    // detached/ambiguous "#game canvas" locator between the two operations.
+    const canvas = game.canvas;
+    if (!canvas.isConnected) throw new Error('Phaser canvas is detached from the document');
+    const rect = canvas.getBoundingClientRect();
+    if (rect.width <= 0 || rect.height <= 0) {
+      throw new Error('Phaser canvas has no visible layout bounds');
+    }
     return {
-      x: bounds.centerX,
-      y: bounds.centerY,
-      width: game.scale.width,
-      height: game.scale.height,
+      x: rect.left + (bounds.centerX / game.scale.width) * rect.width,
+      y: rect.top + (bounds.centerY / game.scale.height) * rect.height,
     };
   }, label);
 
-  expect(point, `Could not find visible Phaser text/button "${label}"`).not.toBeNull();
-  if (!point) throw new Error(`Could not find Phaser text/button "${label}"`);
-
-  const canvas = await page.locator('#game canvas').boundingBox();
-  expect(canvas).not.toBeNull();
-  if (!canvas) throw new Error('Game canvas has no browser bounds');
-  await page.mouse.click(
-    canvas.x + (point.x / point.width) * canvas.width,
-    canvas.y + (point.y / point.height) * canvas.height,
-  );
+  expect(point, \`Could not find visible Phaser text/button "\${label}"\`).not.toBeNull();
+  if (!point) throw new Error(\`Could not find Phaser text/button "\${label}"\`);
+  await page.mouse.click(point.x, point.y);
 }
 
 async function readRotation(page: Page): Promise<Rotation | null> {
