@@ -123,7 +123,7 @@ function requestRewardedAd(sdk: YandexSdk): Promise<boolean> {
  * При отсутствии SDK, гостевом режиме или ошибке молча возвращает false.
  */
 export async function showInterstitial(hooks: AdPause = NO_PAUSE): Promise<boolean> {
-  if (!interstitialAllowed()) return false;
+  if (!interstitialAllowed() || fullscreenAdInFlight) return false;
 
   const now = Date.now();
   if (now - lastInterstitialAt < INTERSTITIAL_MIN_INTERVAL_MS) return false;
@@ -131,6 +131,9 @@ export async function showInterstitial(hooks: AdPause = NO_PAUSE): Promise<boole
   const sdk = getSdk();
   if (!sdk) return false;
 
+  // Claim the shared lock synchronously before invoking the platform API.
+  // This prevents rapid UI events from opening multiple fullscreen ads.
+  fullscreenAdInFlight = true;
   try {
     lastError = null;
     const shown = await withPaused(hooks, () => requestFullscreenAd(sdk));
@@ -146,6 +149,8 @@ export async function showInterstitial(hooks: AdPause = NO_PAUSE): Promise<boole
     track('ad_error', { kind: 'interstitial', message: lastError });
     console.warn('[ads] межстраничная не показана:', err);
     return false;
+  } finally {
+    fullscreenAdInFlight = false;
   }
 }
 
@@ -197,8 +202,8 @@ export const PLACEMENT_LIMITS: Record<AdPlacement, { limit: number; period: 'run
 };
 
 const usedPlacements = new Map<AdPlacement, number>();
-/** True while any rewarded video is being requested or shown. */
-let rewardedInFlight = false;
+/** Yandex's fullscreen ad API is single-flight across interstitial and rewarded ads. */
+let fullscreenAdInFlight = false;
 
 const LS_AD_DAY = 'tss-ads-day';
 
@@ -228,9 +233,8 @@ function usedCount(p: AdPlacement): number {
 
 /** Доступен ли показ: лимит не исчерпан и платформа умеет показывать. */
 export function placementAvailable(p: AdPlacement): boolean {
-  // Yandex permits one rewarded video at a time. Hide/disable every rewarded
-  // placement while another one is in flight, not just after it is rewarded.
-  if (rewardedInFlight || !rewardedAvailable()) return false;
+  // A fullscreen ad already in progress blocks every rewarded placement.
+  if (fullscreenAdInFlight || !rewardedAvailable()) return false;
   return usedCount(p) < PLACEMENT_LIMITS[p].limit;
 }
 
@@ -326,19 +330,19 @@ async function requestRewarded(hooks: AdPause = NO_PAUSE): Promise<RewardedResul
   }
 }
 
-/** Prevent overlapping rewarded videos across all placements and direct callers. */
+/** Prevent overlapping fullscreen ads across placements and direct callers. */
 export async function showRewarded(hooks: AdPause = NO_PAUSE): Promise<RewardedResult> {
-  if (rewardedInFlight) {
+  if (fullscreenAdInFlight) {
     return { rewarded: false, available: false };
   }
 
-  rewardedInFlight = true;
+  fullscreenAdInFlight = true;
   try {
     // Keep the lock through callback completion/error and at least one
     // microtask in mock mode, so rapid repeated activations cannot race.
     return await requestRewarded(hooks);
   } finally {
-    rewardedInFlight = false;
+    fullscreenAdInFlight = false;
   }
 }
 
