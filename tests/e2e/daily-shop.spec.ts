@@ -181,8 +181,8 @@ async function clickSceneText(page: Page, label: string): Promise<void> {
     };
   }, label);
 
-  expect(point, \`Could not find visible Phaser text/button "\${label}"\`).not.toBeNull();
-  if (!point) throw new Error(\`Could not find Phaser text/button "\${label}"\`);
+  expect(point, `Could not find visible Phaser text/button "${label}"`).not.toBeNull();
+  if (!point) throw new Error(`Could not find Phaser text/button "${label}"`);
   await page.mouse.click(point.x, point.y);
 }
 
