@@ -5,7 +5,7 @@ import { FONT } from '../constants';
 import { HEROES, WEAPONS, PASSIVES, DIFFICULTIES, EVOLUTIONS, type HeroId, type DifficultyId } from '../data';
 import { audio } from '../systems/Audio';
 import { makePanel, makeButton, fitTextWidth } from '../systems/Ui';
-import { loadShop, buyUpgrade, SHOP_UPGRADES } from '../shop';
+import { loadShop } from '../shop';
 import { ACHIEVEMENTS, loadUnlocked, loadMeta } from '../achievements';
 import { t, num, clock, type TranslationKey, type TranslateParams } from '../../i18n';
 import { topScores } from '../../platform/leaderboard';
@@ -112,7 +112,6 @@ export class MenuScene extends Phaser.Scene {
 
   // Лавка
   private shopRowEls: Phaser.GameObjects.Container[] = [];
-  private shopBalanceText: Phaser.GameObjects.Text | null = null;
   private shopRowsY = 0;
   /** Высота строки лавки — подгоняется под высоту экрана. */
   private shopRowH = 64;
@@ -151,7 +150,6 @@ export class MenuScene extends Phaser.Scene {
     this.overlay = null;
     this.overlayExtras = [];
     this.shopRowEls = [];
-    this.shopBalanceText = null;
     this.bonusChip = null;
     this.preChipTexts = [null, null, null, null];
     this.consRowEls = [];
@@ -672,7 +670,6 @@ export class MenuScene extends Phaser.Scene {
     this.overlayExtras = [];
     for (const r of this.shopRowEls) r.destroy(true);
     this.shopRowEls = [];
-    this.shopBalanceText = null;
     for (const r of this.consRowEls) r.destroy();
     this.consRowEls = [];
     this.achDesc = null;
@@ -950,154 +947,6 @@ export class MenuScene extends Phaser.Scene {
       container.add(els);
       this.recordsListEls.push(...els);
     });
-  }
-
-  // ================================================================
-  // «Лавка торговца» — мета-магазин за золото матчей
-  // ================================================================
-
-  private showShop(): void {
-    this.beginOverlay();
-    const width = this.vw;
-    const height = this.vh;
-    const paperW = Math.min(560, width - 50);
-    const paperH = Math.min(590, height - 50);
-    const cx = width / 2;
-    const cy = height / 2;
-    const paper = makePanel(this, cx, cy, 'paper', paperW, paperH);
-    this.overlay?.add(paper);
-    const top = cy - paperH / 2;
-
-    this.overlay?.add(this.add.text(cx, top + 38, t('shop.title'), {
-      fontFamily: FONT, fontSize: '26px', color: '#3b2410',
-    }).setOrigin(0.5));
-    this.overlay?.add(this.add.text(cx, top + 62, t('shop.subtitle'), {
-      fontFamily: FONT, fontSize: '11px', color: '#8a5b12',
-    }).setOrigin(0.5));
-
-    // Кошелёк
-    const balBg = this.add.graphics();
-    balBg.fillStyle(0xf7e7c3, 1).fillRoundedRect(cx - 112, top + 78, 224, 36, 9);
-    balBg.lineStyle(2, 0xc9a25e, 1).strokeRoundedRect(cx - 112, top + 78, 224, 36, 9);
-    this.overlay?.add(balBg);
-    this.overlay?.add(this.add.image(cx - 90, top + 96, 'icon-coin').setDisplaySize(22, 22));
-    this.shopBalanceText = this.add.text(cx + 16, top + 96, '0', {
-      fontFamily: FONT, fontSize: '18px', color: '#7a4e0e',
-    }).setOrigin(0.5);
-    this.overlay?.add(this.shopBalanceText);
-
-    // Строки лавки подгоняются под свободную высоту пергамента
-    const shopFooterY = top + paperH - 44;
-    this.shopRowsY = top + 132;
-    this.shopRowH = Math.max(
-      44,
-      Math.min(64, (shopFooterY - this.shopRowsY - 4 * 10) / SHOP_UPGRADES.length),
-    );
-    this.renderShopRows();
-
-    this.overlay?.add(this.add.text(cx, top + paperH - 28, t('shop.footer'), {
-      fontFamily: FONT, fontSize: '10px', color: '#8a5b12',
-    }).setOrigin(0.5));
-
-    this.backButton(top + paperH + 42);
-    this.refreshShopBalance();
-  }
-
-  private renderShopRows(flashIdx?: number): void {
-    for (const r of this.shopRowEls) r.destroy(true);
-    this.shopRowEls = [];
-    const st = loadShop();
-    const width = this.vw;
-    const paperW = Math.min(560, width - 50);
-    const rowW = paperW - 56;
-    const rowH = this.shopRowH;
-    const gap = 10;
-    // На низких экранах иконка и подписи ужимаются вместе со строкой
-    const dense = rowH < 58;
-    const iconSize = dense ? 24 : 32;
-    const nameY = dense ? -rowH * 0.2 : -14;
-    const descY = dense ? rowH * 0.18 : 8;
-    const btnH = dense ? Math.max(26, rowH - 20) : 34;
-
-    SHOP_UPGRADES.forEach((u, i) => {
-      const lvl = st.upgrades[u.id];
-      const maxed = lvl >= 3;
-      const price = maxed ? null : u.costs[lvl];
-      const affordable = price !== null && st.balance >= price;
-      const y = this.shopRowsY + i * (rowH + gap) + rowH / 2;
-
-      const row = this.add.container(width / 2, y);
-      const bg = this.add.graphics();
-      bg.fillStyle(0xfff6df, 1).fillRoundedRect(-rowW / 2, -rowH / 2, rowW, rowH, 10);
-      bg.lineStyle(2, 0xc9a25e, 1).strokeRoundedRect(-rowW / 2, -rowH / 2, rowW, rowH, 10);
-      row.add(bg);
-
-      const icon = this.add.image(-rowW / 2 + 22, 0, u.icon).setDisplaySize(iconSize, iconSize);
-      row.add(icon);
-
-      const textX = -rowW / 2 + 22 + iconSize / 2 + 8;
-      const name = this.add.text(textX, nameY, u.name, {
-        fontFamily: FONT, fontSize: dense ? '12px' : '14px', color: '#3b2410',
-      }).setOrigin(0, 0.5);
-      row.add(name);
-
-      const desc = this.add.text(textX, descY, u.desc, {
-        fontFamily: FONT, fontSize: dense ? '8px' : '9px', color: '#8a5b12',
-      }).setOrigin(0, 0.5);
-      row.add(desc);
-
-      const dots = this.add.text(rowW / 2 - (dense ? 118 : 132), -2, '●'.repeat(lvl) + '○'.repeat(3 - lvl), {
-        fontFamily: FONT, fontSize: dense ? '9px' : '11px', color: '#b0803a',
-      }).setOrigin(0.5);
-      row.add(dots);
-
-      if (maxed) {
-        row.add(this.add.text(rowW / 2 - 56, 0, t('shop.max'), {
-          fontFamily: FONT, fontSize: dense ? '11px' : '13px', color: '#2e7d32',
-          stroke: '#dcecc9', strokeThickness: 3,
-        }).setOrigin(0.5));
-      } else {
-        // Кнопка занимает всю строку: так по ней попасть проще, чем по
-        // маленькой ценке, а состояния (наведение/нажатие/недоступно)
-        // достаются из makeButton.
-        const buy = (): void => {
-          const res = buyUpgrade(u.id);
-          if (res.ok) {
-            audio.play('levelup');
-            this.renderShopRows(i);
-            this.refreshShopBalance();
-          } else if (res.reason === 'poor') {
-            // Не хватило золота: короткая встряска самой кнопки
-            const btnImg = priceBtn.img;
-            this.tweens.add({
-              targets: btnImg, x: { from: btnImg.x - 5, to: btnImg.x }, duration: 180,
-            });
-          }
-        };
-        const priceBtn = makeButton(
-          this, rowW / 2 - 56, 0, 92, btnH, String(price), buy, 'blue', dense ? 10 : 12,
-          { disabled: !affordable, hitW: rowW, hitH: rowH, stopPropagation: true },
-        );
-        row.add([priceBtn.img, priceBtn.txt, priceBtn.hit]);
-        if (!affordable) {
-          row.setAlpha(0.62);
-          priceBtn.txt.setColor('#f0e4c8');
-        }
-      }
-
-      row.setSize(rowW, rowH);
-
-      if (i === flashIdx) {
-        row.setScale(1.12);
-        this.tweens.add({ targets: row, scale: 1, duration: 260, ease: 'Back.easeOut' });
-      }
-      this.shopRowEls.push(row);
-    });
-  }
-
-  private refreshShopBalance(): void {
-    const st = loadShop();
-    this.shopBalanceText?.setText(num(st.balance));
   }
 
   // ================================================================

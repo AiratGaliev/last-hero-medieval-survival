@@ -41,6 +41,3 @@ export function asset(pack: AssetPack, path: string): string {
 }
 
 /** Диагностика: сколько ассетов реально попало в бандл (для QA). */
-export function assetCount(): number {
-  return Object.keys(ASSETS).length;
-}

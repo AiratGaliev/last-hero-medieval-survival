@@ -190,7 +190,10 @@ export class Spawner {
 
   /** Осады по расписанию §E.4.3 или по фиксированному интервалу-оверрайду. */
   private scheduleSiegeTick(): void {
-    const alarm = this.scene.registry.get('tss-alarm') ? 8 : SIEGE.ANNOUNCE_SEC;
+    // «Набат» (карта §H.5) — 8 сек; «Дозорные» (узел d3, §H.16) — +2 сек (итого 7)
+    const alarm = this.scene.registry.get('tss-alarm')
+      ? 8
+      : SIEGE.ANNOUNCE_SEC + Math.max(0, Number(this.scene.registry.get('tss-siege-warn') ?? 0));
     const interval = this.o.siegeIntervalSec ?? null;
     if (interval !== null) {
       // Контракт «Осадное положение» / указ «Двойные осады» / сезон «Долгая
@@ -240,7 +243,9 @@ export class Spawner {
     const interval = this.o.siegeIntervalSec ?? 90;
     const wave = this.siegeIdx + 1;
     const at = interval * wave;
-    const alarm = this.scene.registry.get('tss-alarm') ? 8 : SIEGE.ANNOUNCE_SEC;
+    const alarm = this.scene.registry.get('tss-alarm')
+      ? 8
+      : SIEGE.ANNOUNCE_SEC + Math.max(0, Number(this.scene.registry.get('tss-siege-warn') ?? 0));
     let s = this.endlessProfile(wave, at);
     // Благословение «Первая осада» работает и в бесконечном (A2)
     if (this.siegeIdx === 0 && (this.o.firstSiegeTrim ?? 0) > 0) s = this.maybeTrim(s, 0);

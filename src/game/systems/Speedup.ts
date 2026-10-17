@@ -1,5 +1,6 @@
 import { SPEEDUP_COST } from '../constants';
 import { spendGold } from '../shop';
+import { spendSpeedupToken, speedupTokenBalance } from '../meta';
 import { showPlacementRewarded, placementAvailable } from '../../platform/ads';
 import { track } from '../../platform/analytics';
 import type { Economy } from './Economy';
@@ -15,7 +16,7 @@ export type SpeedupKind = 'repair' | 'heal';
 
 export type SpeedupResult =
   | { ok: true }
-  | { ok: false; reason: 'noTarget' | 'poor' | 'adUnavailable' };
+  | { ok: false; reason: 'noTarget' | 'poor' | 'adUnavailable' | 'noToken' };
 
 export class Speedup {
   private eco: Economy;
@@ -29,6 +30,20 @@ export class Speedup {
     if (kind === 'repair') return this.eco.activeRepair !== null;
     return this.eco.usedHealSlots() > 0
       || this.eco.pawns.some((p) => p.state === 'bleeding' && !p.dead);
+  }
+
+  /** Есть ли жетон ускорения (награды пропуска/сундуков, §J.6.2). */
+  hasToken(): boolean {
+    return speedupTokenBalance() > 0;
+  }
+
+  /** Купить за жетон ускорения (списание атомарно, эффект мгновенный §J.9). */
+  buyWithToken(kind: SpeedupKind): SpeedupResult {
+    if (!this.hasTarget(kind)) return { ok: false, reason: 'noTarget' };
+    if (!spendSpeedupToken()) return { ok: false, reason: 'noToken' };
+    this.apply(kind);
+    track('speedup_bought', { kind, currency: 'token' });
+    return { ok: true };
   }
 
   /**

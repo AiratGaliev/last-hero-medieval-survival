@@ -1,4 +1,5 @@
 import { SUCCESSION_COST, SUCCESSION_GOLD, SUCCESSION_TYPES, type ResourceCost, type PawnWeapon, type HeroId } from '../data';
+import { loadJson, saveJson } from '../storage';
 import type { Economy } from './Economy';
 import type { Settlement } from './Settlement';
 import type { Pawn } from '../entities/Pawn';
@@ -33,14 +34,23 @@ export class Succession {
   /** Контракт «Один в поле» (§H.9): ветвь «за ресурсы» недоступна —
    *  остаются живой воин, реклама и золото матча. */
   private resourcesBranchDisabled: boolean;
+  /** «Дорога героя» (узел m2, §H.16): цена преемства ×0.90. */
+  private costMult: number;
 
-  constructor(eco: Economy, settlement: Settlement, opts: { resourcesBranchDisabled?: boolean } = {}) {
+  constructor(eco: Economy, settlement: Settlement, opts: { resourcesBranchDisabled?: boolean; successionCostMult?: number } = {}) {
     this.eco = eco;
     this.settlement = settlement;
     this.resourcesBranchDisabled = opts.resourcesBranchDisabled === true;
-    try {
-      this.freeUsed = localStorage.getItem('tss-succession-free') === '1';
-    } catch { this.freeUsed = false; }
+    this.costMult = Math.max(0.1, opts.successionCostMult ?? 1);
+    // lifetime-флаг через storage.ts (префикс tss-); миграция старого ключа
+    const legacy = (() => { try { return localStorage.getItem('tss-succession-free'); } catch { return null; } })();
+    if (legacy === '1') {
+      this.freeUsed = true;
+      saveJson('succession-free', true);
+      try { localStorage.removeItem('tss-succession-free'); } catch { /* приватный режим */ }
+    } else {
+      this.freeUsed = loadJson<boolean>('succession-free') === true;
+    }
   }
 
   /** Ветвь 1: живой воин на карте (wounded/retreat не считаются, §F.4). */
@@ -62,14 +72,21 @@ export class Succession {
     }));
   }
 
-  /** Цена ветви 2 по номеру смены (§F.7). */
+  /** Цена ветви 2 по номеру смены (§F.7) с узлом «Дорога героя» ×0.90 (§H.16). */
   resourceCost(): ResourceCost {
-    return SUCCESSION_COST[Math.min(this.successionsDone, SUCCESSION_COST.length - 1)];
+    const base = SUCCESSION_COST[Math.min(this.successionsDone, SUCCESSION_COST.length - 1)];
+    if (this.costMult === 1) return base;
+    const out: ResourceCost = {};
+    if (base.wood !== undefined) out.wood = Math.max(1, Math.round(base.wood * this.costMult));
+    if (base.ore !== undefined) out.ore = Math.max(1, Math.round(base.ore * this.costMult));
+    if (base.meat !== undefined) out.meat = Math.max(1, Math.round(base.meat * this.costMult));
+    return out;
   }
 
-  /** Цена золота матча ветви 3 (§F.8). */
+  /** Цена золота матча ветви 3 (§F.8) с узлом «Дорога героя» ×0.90 (§H.16). */
   goldCost(): number {
-    return SUCCESSION_GOLD[Math.min(this.successionsDone, SUCCESSION_GOLD.length - 1)];
+    const base = SUCCESSION_GOLD[Math.min(this.successionsDone, SUCCESSION_GOLD.length - 1)];
+    return Math.max(1, Math.round(base * this.costMult));
   }
 
   /** Первая преемственность аккаунта бесплатна (§F.4). */
@@ -80,7 +97,7 @@ export class Succession {
   /** Отметить использование бесплатной преемственности. */
   markFreeUsed(): void {
     this.freeUsed = true;
-    try { localStorage.setItem('tss-succession-free', '1'); } catch { /* приватный режим */ }
+    saveJson('succession-free', true);
   }
 
   /** Ветвь 1: воин становится героем. Пешка выпадает из гарнизона (§F.12).

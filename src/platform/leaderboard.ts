@@ -15,7 +15,7 @@
 // за 5 минут), поэтому ответ кэшируем на короткое время — отдельно на борд.
 
 import { getSdk, isOnYandex } from './sdk';
-import { loadJson, saveJson, removeKey } from '../game/storage';
+import { loadJson, saveJson } from '../game/storage';
 import { isAuthorized, LEADERBOARD_ID } from './player';
 
 /** Техническое имя таблицы «вызов дня» (создаётся в Консоли Яндекса). */
@@ -226,14 +226,4 @@ async function fetchOnline(limit: number, boardId: string): Promise<ScoreEntry[]
 }
 
 /** Можно ли игроку вообще попасть в общий зал (для подсказки в меню). */
-export function onlineAvailable(): boolean {
-  return isOnYandex() && isAuthorized();
-}
-
 /** Сбрасывает кэш и локальные записи. Только для отладочных прогонов. */
-export function resetRecords(): void {
-  cacheByBoard.clear();
-  removeKey(LS_RECORDS);
-  removeKey(localKeyFor(LEADERBOARD_DAILY));
-  removeKey(localKeyFor(LEADERBOARD_ENDLESS));
-}

@@ -277,15 +277,6 @@ export class Pickups {
   }
 
   /** Собрать всё (победа/конец игры) */
-  vacuumAll(px: number, py: number): void {
-    for (const g of this.gems) {
-      if (g.kind === 'chest') continue;
-      g.pulling = true;
-      g.img.x = Phaser.Math.Linear(g.img.x, px, 0.5);
-      g.img.y = Phaser.Math.Linear(g.img.y, py, 0.5);
-    }
-  }
-
   /**
    * Финальный вакуум при ПОБЕДЕ: кристаллы по-настоящему долетают до игрока
    * (tween), а их ценность выдаётся колбэком — золото/лечение/очки не теряются.

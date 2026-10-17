@@ -192,6 +192,7 @@ export const en: Record<TranslationKey, string> = {
   'spawn.shaman': '⚠ SHAMANS RALLY THE HORDE!',
   'spawn.pig-rider': '⚠ PIG RIDERS!',
   'spawn.bomb-fish': '⚠ BOMB FISH!',
+  'spawn.goblin': '⚠ GOBLINS!',
 
   // ---------- Weapons ----------
   'weapon.sword.name': 'Warrior’s Sword',
@@ -373,6 +374,7 @@ export const en: Record<TranslationKey, string> = {
   'building.tower.name': 'Tower',
   'building.archery.name': 'Archery Range',
   'building.monastery.name': 'Monastery',
+  'building.castle.name': 'Castle',
   'building.cannot': 'Not enough resources',
   'building.noSpot': 'No free spot',
   'building.built': 'Construction complete: {v}',

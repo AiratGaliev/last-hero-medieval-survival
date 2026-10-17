@@ -9,7 +9,7 @@ import type { createGame as CreateGame } from './game/config';
 import { audio } from './game/systems/Audio';
 import { initSdk, isOnYandex, getSdk } from './platform/sdk';
 import { initPayments } from './platform/payments';
-import { initAnalytics } from './platform/analytics';
+import { initAnalytics, exportBuffer } from './platform/analytics';
 import { loadPlayer } from './platform/player';
 import { detectLanguage, t } from './i18n';
 import { installLifecycle, setLifecycleHandlers, gameplayStop } from './platform/lifecycle';
@@ -44,6 +44,22 @@ async function waitForFont(): Promise<void> {
 
 function removeBootScreen(): void {
   document.getElementById(BOOT_ID)?.remove();
+}
+
+/**
+ * Dev-выгрузка телеметрии (TZ §K.1): `?export` скачивает JSON-буфер событий.
+ * Только для dev-сборок — в релизе параметр игнорируется.
+ */
+function maybeExportTelemetry(): void {
+  if (!import.meta.env.DEV) return;
+  if (!new URLSearchParams(window.location.search).has('export')) return;
+  const blob = new Blob([exportBuffer()], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `tss-telemetry-${Date.now()}.json`;
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(url), 2000);
 }
 
 /**
@@ -122,6 +138,7 @@ const boot = async (): Promise<void> => {
   // T0 аналитики (§K.1): шина поднимается до любых механик — session_start
   // уходит первым, sessionIdx проставляется всем событиям сессии.
   initAnalytics({ dev: import.meta.env.DEV });
+  maybeExportTelemetry();
   // §J.6.1 (1.13.1): платёжный слой + консумирование необработанных покупок —
   // ДО первого purchase() и до старта сцен. Вне Яндекса — no-op заглушка.
   if (isOnYandex()) await initPayments();

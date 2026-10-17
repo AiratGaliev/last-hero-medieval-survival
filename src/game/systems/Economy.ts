@@ -1,7 +1,6 @@
 import Phaser from 'phaser';
 import {
   NEW_VILLAGER, REPAIR, VEIN_YIELD, VEIN_CHARGES, HIRE_COST, HIRE_TIME_MS,
-  HEAL_HP_PER_SEC,
 } from '../constants';
 import {
   RESOURCES, BUILDING_PLANS, BUILD_SPOTS, TOOL_BY_RESOURCE,
@@ -13,8 +12,10 @@ import { Building } from '../entities/Building';
 import { ResourceNode } from '../entities/ResourceNode';
 import { PawnAI } from './PawnAI';
 import { HealerAI } from './HealerAI';
+import { Monastery } from './Monastery';
 import { audio } from './Audio';
 import { lang } from '../../i18n';
+import { track } from '../../platform/analytics';
 
 // ============ Экономика поселения (TZ §B) ============
 //
@@ -40,6 +41,9 @@ interface BuildJob {
   building: Building;
   progress: number;   // мс
   pawn: Pawn | null;
+  /** Телеметрия §K.2 (economy_stuck): job висит, а стройка не растёт. */
+  ageMs?: number;
+  stuckReported?: boolean;
 }
 
 interface RepairJob {
@@ -178,7 +182,8 @@ export class Economy extends Phaser.Events.EventEmitter {
   /** Сводка рана (§K.2): суммарное HP лечения пешек и спасённые обители. */
   healHpTotal = 0;
   monasteryHealed = 0;
-  private tune: Tune;
+  /** Модификаторы рана (читаются системами домена: Monastery и др.). */
+  readonly tune: Tune;
   /** Бесконечный режим: накопитель 5-минутного восстановления жил (§H.12). */
   private veinRegenAcc = 0;
 
@@ -221,7 +226,11 @@ export class Economy extends Phaser.Events.EventEmitter {
     HealerAI.hpsBonus = opts.monkHpsBonus ?? 0;
     this.pawnAI = new PawnAI(scene, this);
     this.healerAI = new HealerAI(this);
+    this.monastery = new Monastery(this);
   }
+
+  /** Система обители (§G.10): места, лечение, выписка. */
+  readonly monastery: Monastery;
 
   // ---------- Лимиты ----------
 
@@ -617,9 +626,16 @@ export class Economy extends Phaser.Events.EventEmitter {
       const working = p && !p.dead && p.state === 'work'
         && Math.hypot(p.x - j.spot.x, p.y - j.spot.y) < 90;
       if (working) {
-        const speedMult = 1 + 0.1 * this.card('forestry'); // заглушка: работа быстрее от карт
-        // «Каменный век» (A2): время стройки ×1.3 — прогресс медленнее
-        j.progress += dtMs * (this.card('assembly') > 0 ? 1.1 : 1) * speedMult / this.tune.buildTime;
+        // Застрявшая стройка (§B.9, §K.2): job висит >45 c, а прогресс <25% —
+        // сигнал телеметрии (дебаг-гейт Economy.debugLog).
+        j.ageMs = (j.ageMs ?? 0) + dtMs;
+        if (!j.stuckReported && j.ageMs > 45000
+          && j.progress < BUILDING_PLANS[j.spot.kind].timeMs * 0.25) {
+          j.stuckReported = true;
+          track('economy_stuck', { kind: j.spot.kind, t_sec: Math.round(j.ageMs / 1000) });
+        }
+        // «Каменный век» (A2): время стройки ×1.3 — учтено в tune.buildTime
+        j.progress += dtMs / this.tune.buildTime;
         if (j.progress >= BUILDING_PLANS[j.spot.kind].timeMs) {
           j.building.finishConstruction();
           this.buildJobs.splice(i, 1);
@@ -764,59 +780,21 @@ export class Economy extends Phaser.Events.EventEmitter {
     return TOOL_BY_RESOURCE[res];
   }
 
-  /** Обитель: ближайший живой монастырь. */
+  /** Обитель: ближайший живой монастырь (делегирует системе Monastery, §G.10). */
   nearestMonastery(from: Pawn): Building | null {
-    let best: Building | null = null;
-    let bestD = Infinity;
-    for (const b of this.buildings) {
-      if (!b.alive || b.kind !== 'monastery' || b.underConstruction) continue;
-      const d = Math.hypot(b.x - from.x, b.y - from.y);
-      if (d < bestD) { bestD = d; best = b; }
-    }
-    return best;
+    return this.monastery.nearest(from);
   }
 
   totalHealSlots(): number {
-    let n = 0;
-    for (const b of this.buildings) {
-      if (b.alive && b.kind === 'monastery' && !b.underConstruction) n += b.plan.slots ?? 0;
-    }
-    return n;
+    return this.monastery.totalSlots();
   }
 
   usedHealSlots(): number {
-    let n = 0;
-    for (const b of this.buildings) {
-      if (b.alive && b.kind === 'monastery') n += b.occupiedSlots;
-    }
-    return n;
+    return this.monastery.usedSlots();
   }
 
-  /** Лечение в обители: 12 HP/с (+3 «Чистые перевязи» §H.16), 1 дерево за 15 HP;
-   *  «Бережные руки» ×0.7 и «Чума» ×2 (A2); пустой склад — пауза (§G.3). */
+  /** Лечение в обители — доменные правила в системе Monastery (§G.10). */
   monasteryHealTick(dtMs: number): void {
-    const hpPerSec = HEAL_HP_PER_SEC + this.tune.healHps;
-    for (const b of this.buildings) {
-      if (!b.alive || b.kind !== 'monastery' || b.underConstruction) continue;
-      for (let s = 0; s < b.healSlots.length; s++) {
-        const unit = b.healSlots[s] as Pawn | null;
-        if (!unit || !unit.active) continue;
-        const woodPerSec = hpPerSec / 15 * (this.card('fieldmedic') > 0 ? 0.75 : 1) * this.tune.healWood;
-        if (this.resources.wood < woodPerSec * (dtMs / 1000)) continue; // склад пуст — HP не растёт
-        this.resources.wood -= woodPerSec * (dtMs / 1000);
-        const amount = hpPerSec * (dtMs / 1000);
-        unit.healBy(amount);
-        this.healHpTotal += amount;
-        if (unit.hp >= unit.maxHp) {
-          b.releaseHealSlot(s);
-          unit.monasterySlot = null;
-          unit.state = 'idle';
-          unit.cooldown = 0.5;
-          this.monasteryHealed += 1;
-          this.emit('pawnSaved', { pawn: unit, inMonastery: true });
-          this.emit('change');
-        }
-      }
-    }
+    this.monastery.healTick(dtMs);
   }
 }

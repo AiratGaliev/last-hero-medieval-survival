@@ -1,5 +1,6 @@
 import Phaser from 'phaser';
 import { t } from '../../i18n';
+import { track } from '../../platform/analytics';
 import { loadJson, saveJson } from '../storage';
 
 // ============ Движок подсказок FTUE (TZ §I.1) ============
@@ -21,7 +22,7 @@ export class Hints {
   private scene: Phaser.Scene;
   private shown = new Set<HintId>();
   private lastShownAt = 0;
-  private current: { text: Phaser.GameObjects.Text; bg: Phaser.GameObjects.Rectangle; ttl: Phaser.Math.Vector2 } | null = null;
+  private current: { id: HintId; text: Phaser.GameObjects.Text; bg: Phaser.GameObjects.Rectangle; ttl: Phaser.Math.Vector2 } | null = null;
   private enabled = true;
 
   constructor(scene: Phaser.Scene) {
@@ -50,6 +51,8 @@ export class Hints {
 
     const w = this.scene.scale.width;
     const text = t(`hint.${id}` as `hint.${typeof id}`);
+    // Телеметрия §K.2: показ подсказки
+    track('hint_shown', { hint_id: id });
     const bg = this.scene.add.rectangle(w / 2, 92, Math.min(560, w - 40), 40, 0x1a0f08, 0.88)
       .setStrokeStyle(1, 0x8a6d3b)
       .setScrollFactor(0)
@@ -58,13 +61,15 @@ export class Hints {
     const label = this.scene.add.text(w / 2, 92, text, {
       fontFamily: 'monospace', fontSize: '13px', color: '#ffe9b0', align: 'center', wordWrap: { width: Math.min(540, w - 60) },
     }).setOrigin(0.5).setScrollFactor(0).setDepth(9601);
-    bg.on('pointerdown', () => this.hide());
-    this.current = { text: label, bg, ttl: new Phaser.Math.Vector2(0, 0) };
+    bg.on('pointerdown', () => this.hide(true));
+    this.current = { id, text: label, bg, ttl: new Phaser.Math.Vector2(0, 0) };
     this.scene.time.delayedCall(6000, () => this.hide());
   }
 
-  private hide(): void {
+  private hide(byUser = false): void {
     if (!this.current) return;
+    // Телеметрия §K.2: скрытие (тап игрока или TTL)
+    track('hint_dismissed', { hint_id: this.current.id, source: byUser ? 'user' : 'ttl' });
     this.current.text.destroy();
     this.current.bg.destroy();
     this.current = null;

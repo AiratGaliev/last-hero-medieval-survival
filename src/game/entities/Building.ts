@@ -33,7 +33,6 @@ export class Building extends Phaser.GameObjects.Image {
   lastSiegeIdx = -1;
   /** Стройка: нулевой HP до завершения. */
   underConstruction = false;
-  buildProgress = 0;
   /** Монастырь: занятые места (индексы 0..9, null = свободно). */
   healSlots: (unknown | null)[] = [];
   /** Горение: DoT поджога (§E.4.1). */

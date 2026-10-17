@@ -1,6 +1,7 @@
 import Phaser from 'phaser';
 import { SIEGE, TAUNT, SCORE } from '../constants';
 import { SUCCESSION_SOURCES, type BuildingKind } from '../data';
+import { track } from '../../platform/analytics';
 import type { Economy } from './Economy';
 import { Building } from '../entities/Building';
 import type { Pawn } from '../entities/Pawn';
@@ -172,6 +173,8 @@ export class Settlement {
         amount -= share;
         this.eco.woundPawn(sword, share, this.scene.time.now);
         this.scene.events.emit('garrison_taunt', b.kind, share);
+        // Телеметрия §K.2: таунт перетянул долю урона на себя
+        track('garrison_taunt', { weapon: sword.weapon ?? 'sword', building_kind: b.kind, dmg_redirected: Math.round(share * 10) / 10 });
       }
     }
 

@@ -1,7 +1,8 @@
 import Phaser from 'phaser';
-import { AGGRO, GARRISON, RETREAT_HP, KITE, HEALER } from '../constants';
+import { AGGRO, GARRISON, RETREAT_HP, KITE, HEALER, BLEEDOUT_SEC } from '../constants';
 import { RESOURCES, FIGHTERS, BUILDING_PLANS, type BuildingKind } from '../data';
 import { t } from '../../i18n';
+import { track } from '../../platform/analytics';
 import { HealerAI } from './HealerAI';
 import type { Economy } from './Economy';
 import type { Pawn } from '../entities/Pawn';
@@ -217,6 +218,45 @@ export class PawnAI {
       }
     }
 
+    // --- 5.5 «Вече» (§H.5): при дефиците рабочие рук стройка/ремонт
+    // приоритетнее сбора. Сборщик подключается молотком, когда строитель/
+    // ремонтник уже заняты, а работы ещё остались (+1 лимит — в Economy).
+    if (p.kind === 'collector' && this.eco.card('assembly') > 0) {
+      const freeSpot = this.pickBuildSpot(p);
+      if (freeSpot) {
+        const cost = BUILDING_PLANS[freeSpot.kind].cost;
+        const afford = this.eco.resources.wood >= (cost.wood ?? 0)
+          && this.eco.resources.ore >= (cost.ore ?? 0);
+        const buildersBusy = this.eco.buildJobs.filter((j) => j.pawn).length;
+        const builderAlive = this.eco.pawns.some((x) => x.kind === 'builder' && !x.dead);
+        // Дефицит рук: строитель есть и занят, либо его вообще нет
+        if (afford && (!builderAlive || buildersBusy >= 1)
+          && Phaser.Math.Distance.Between(p.x, p.y, freeSpot.x, freeSpot.y) < 400) {
+          if (Phaser.Math.Distance.Between(p.x, p.y, freeSpot.x, freeSpot.y) < 70) {
+            if (this.eco.tryStartBuild(freeSpot.kind, p)) {
+              p.state = 'work';
+              p.taskProgress = 0;
+              return;
+            }
+          } else {
+            p.state = 'walk';
+            this.walkTo(p, freeSpot.x, freeSpot.y, dtMs);
+            return;
+          }
+        }
+      }
+      const damaged = this.mostDamagedBuilding();
+      if (damaged && this.eco.resources.wood >= 30) {
+        const repairersBusy = this.eco.repairJobs.filter((j) => j.pawn).length;
+        const repairerAlive = this.eco.pawns.some((x) => x.kind === 'repairer' && !x.dead);
+        if ((!repairerAlive || repairersBusy >= 1) && this.eco.repair(damaged, p)) {
+          p.state = 'work';
+          p.taskProgress = 0;
+          return;
+        }
+      }
+    }
+
     // --- 6. Сборщик: узел по потребности (§B.6) + обход врагов ---
     if (p.kind === 'collector') {
       const node = this.pickNodeFor(p);
@@ -254,11 +294,9 @@ export class PawnAI {
     if (p.taskProgress >= def.workMs * def.ticksPerCycle) {
       p.taskProgress = 0;
       p.workNode = null;
-      const exhausted = !node.extract();
+      node.extract();
       node.release(p);
-      if (!exhausted || node.kind !== 'vein') {
-        // жила не исчезает сразу: добыча уходит даже на последнем цикле
-      }
+      // Жила не исчезает сразу: добыча уходит даже на последнем цикле
       p.carrying = node.res;
       p.carriedAmount = this.eco.workYield(node.res);
       p.state = 'carry';
@@ -373,8 +411,9 @@ export class PawnAI {
     if (!mon) {
       // Монастыря нет вообще → сразу bleeding у замка (§G.3)
       p.state = 'bleeding';
-      p.bleedTimer = 45;
-      this.eco.emit('feed', { text: t('pawn.bleeding', { v: p.name, s: 45 }), color: '#ff6655' });
+      p.bleedTimer = BLEEDOUT_SEC;
+      this.eco.emit('feed', { text: t('pawn.bleeding', { v: p.name, s: BLEEDOUT_SEC }), color: '#ff6655' });
+      track('pawn_bleeding_start', { fatal: true, monastery: false });
       return;
     }
     const d = Phaser.Math.Distance.Between(p.x, p.y, mon.x, mon.y);
@@ -382,7 +421,8 @@ export class PawnAI {
       const slot = mon.claimHealSlot(p);
       if (slot === null) {
         p.state = 'bleeding';
-        p.bleedTimer = 45;
+        p.bleedTimer = BLEEDOUT_SEC;
+        track('pawn_bleeding_start', { fatal: true, monastery: true });
       } else {
         p.monasterySlot = slot;
         p.state = 'wounded'; // лечится внутри; monasteryHealTick поднимет
@@ -418,6 +458,8 @@ export class PawnAI {
     if (p.state !== 'retreat' && p.hp < p.maxHp * RETREAT_HP) {
       p.state = 'retreat';
       p.attackCd = 0;
+      // Телеметрия §K.2: отступление гарнизона
+      track('garrison_retreat', { weapon: p.weapon ?? 'sword', hp_pct: Math.round((p.hp / p.maxHp) * 100) });
     }
     if (p.state === 'retreat') {
       // Поле лечения монаха может поднять — тогда вернётся в строй
@@ -557,6 +599,10 @@ export class PawnAI {
         const nx = p.x - e.x, ny = p.y - e.y;
         const len = Math.max(1, Math.hypot(nx, ny));
         this.walkTo(p, p.x + (nx / len) * KITE.STEP, p.y + (ny / len) * KITE.STEP, this.curTickMs, 1);
+        if (p.state !== 'kite') {
+          // Телеметрия §K.2: кайтинг лучника
+          track('garrison_kite', { weapon: 'bow', hp_pct: Math.round((p.hp / p.maxHp) * 100) });
+        }
         p.state = 'kite';
       } else if (d > def.range) {
         this.walkTo(p, e.x, e.y, this.curTickMs);
