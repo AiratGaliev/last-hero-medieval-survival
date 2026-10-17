@@ -14,12 +14,15 @@ type UiObject = {
   list?: UiObject[];
   getBounds?: () => UiBounds;
 };
-type ShopScene = { sys: { displayList: { list: UiObject[] } } };
+type ScenePlugin = { launch: (key: string, data?: { tab: string }) => void };
+type PhaserScene = {
+  scene: ScenePlugin;
+  sys?: { displayList: { list: UiObject[] } };
+};
 type GameForTest = {
   scene: {
-    launch: (key: string, data?: { tab: string }) => void;
     isActive: (key: string) => boolean;
-    getScene: (key: string) => ShopScene;
+    getScene: (key: string) => PhaserScene;
   };
   scale: { width: number; height: number };
 };
@@ -92,7 +95,10 @@ async function launchSkinsShop(page: Page): Promise<void> {
   await page.evaluate(() => {
     const game = (window as unknown as TestWindow).__tss;
     if (!game) throw new Error('Phaser game is not available');
-    game.scene.launch('Shop', { tab: 'skins' });
+    // Scene operations belong to ScenePlugin, available on a scene instance;
+    // Phaser.Game.scene is only the global SceneManager.
+    const menu = game.scene.getScene('Menu');
+    menu.scene.launch('Shop', { tab: 'skins' });
   });
   await expect.poll(() => page.evaluate(() => {
     const game = (window as unknown as TestWindow).__tss;
@@ -117,6 +123,7 @@ async function sceneObjects(page: Page): Promise<UiObject[]> {
     const game = (window as unknown as TestWindow).__tss;
     if (!game || !game.scene.isActive('Shop')) return [];
     const scene = game.scene.getScene('Shop');
+    if (!scene.sys) return [];
     const all: UiObject[] = [];
     const visit = (objects: UiObject[]): void => {
       for (const object of objects) {
@@ -145,6 +152,7 @@ async function clickSceneText(page: Page, label: string): Promise<void> {
     const game = (window as unknown as TestWindow).__tss;
     if (!game || !game.scene.isActive('Shop')) return null;
     const scene = game.scene.getScene('Shop');
+    if (!scene.sys) return [];
     const all: UiObject[] = [];
     const visit = (objects: UiObject[]): void => {
       for (const object of objects) {
