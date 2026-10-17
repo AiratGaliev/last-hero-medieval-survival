@@ -876,6 +876,10 @@ export const en: Record<TranslationKey, string> = {
   'banner.store_2': 'Merchant banner',
 
   'store.title': 'CROWNS',
+  'store.dailyOffers': 'DAILY OFFERS',
+  'store.refreshAd': 'REFRESH FOR AD',
+  'store.refreshUnavailable': 'AD UNAVAILABLE',
+  'store.refreshDone': 'REFRESHED TODAY',
   'store.locked': 'The showcase opens after your 5th match',
   'store.crowns_s': '90 crowns',
   'store.crowns_m': '500 crowns (+11%)',
