@@ -46,7 +46,7 @@ export default tseslint.config(
 
   // ---------- Скрипты сборки и упаковки: Node ----------
   {
-    files: ['scripts/**/*.mjs', 'scripts/**/*.js'],
+    files: ['scripts/**/*.mjs', 'scripts/**/*.js', 'playwright.config.ts', 'tests/e2e/**/*.ts'],
     languageOptions: {
       globals: globals.node,
     },
