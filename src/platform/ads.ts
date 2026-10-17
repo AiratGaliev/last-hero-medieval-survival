@@ -124,8 +124,8 @@ const LS_AD_DAY = 'tss-ads-day';
 interface AdDayState { date: string; used: Record<string, number> }
 
 function todayKey(): string {
-  const d = new Date(serverNow());
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  // Daily rewarded limits must roll over at the same UTC boundary as daily offers.
+  return new Date(serverNow()).toISOString().slice(0, 10);
 }
 
 function loadDay(): AdDayState {

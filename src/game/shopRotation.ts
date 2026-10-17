@@ -17,8 +17,9 @@ const eligibleIds = (): string[] =>
     .map((skin) => skin.id);
 
 function dateKey(): string {
-  const d = new Date(serverNow());
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  // serverNow() is an epoch timestamp; UTC keeps rotations identical in every
+  // browser timezone and prevents local timezone changes from resetting offers.
+  return new Date(serverNow()).toISOString().slice(0, 10);
 }
 
 function hashSeed(value: string): number {

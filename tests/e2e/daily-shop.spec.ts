@@ -201,10 +201,7 @@ async function readAdDay(page: Page): Promise<AdDay | null> {
 }
 
 async function browserToday(page: Page): Promise<string> {
-  return page.evaluate(() => {
-    const date = new Date();
-    return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
-  });
+  return page.evaluate(() => new Date(Date.now()).toISOString().slice(0, 10));
 }
 
 async function eligibleSkinIds(page: Page): Promise<string[]> {
@@ -413,6 +410,37 @@ test('expired rotation rolls over to today and resets the refresh flag', async (
   expect(rotation.ids).toHaveLength(3);
   expect(new Set(rotation.ids).size).toBe(3);
   expect(await sceneTexts(page)).toContain(refreshLabel('en', 'available'));
+});
+
+test('daily shop rotation uses UTC even when the browser is in a different timezone', async ({ browser }) => {
+  const context = await browser.newContext({
+    baseURL: 'http://127.0.0.1:3000',
+    timezoneId: 'Pacific/Kiritimati',
+  });
+  const page = await context.newPage();
+
+  try {
+    // Pin Date.now near UTC midnight: Kiritimati is already on the next day.
+    // Phaser still uses its monotonic animation clock, so gameplay timers remain live.
+    await page.addInitScript(() => {
+      const fixedNow = Date.UTC(2026, 9, 18, 23, 30, 0);
+      Date.now = () => fixedNow;
+    });
+    await openShop(page, { language: 'en' });
+
+    const rotation = await readRotation(page);
+    expect(rotation).not.toBeNull();
+    expect(rotation?.date).toBe('2026-10-18');
+    expect(await page.evaluate(() => new Date(Date.now()).getDate())).toBe(19);
+
+    await clickSceneText(page, 'REFRESH FOR AD');
+    await expect.poll(async () => (await readRotation(page))?.refreshed ?? false).toBe(true);
+    const adDay = await readAdDay(page);
+    expect(adDay?.date).toBe(rotation?.date);
+    expect(adDay?.used['shop-refresh']).toBe(1);
+  } finally {
+    await context.close();
+  }
 });
 
 test('daily shop is hidden before the fifth match while the skin catalogue remains available', async ({ page }) => {
