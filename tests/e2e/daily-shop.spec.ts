@@ -152,7 +152,7 @@ async function clickSceneText(page: Page, label: string): Promise<void> {
     const game = (window as unknown as TestWindow).__tss;
     if (!game || !game.scene.isActive('Shop')) return null;
     const scene = game.scene.getScene('Shop');
-    if (!scene.sys) return [];
+    if (!scene.sys) return null;
     const all: UiObject[] = [];
     const visit = (objects: UiObject[]): void => {
       for (const object of objects) {
