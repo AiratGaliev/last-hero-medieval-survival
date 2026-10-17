@@ -911,6 +911,10 @@ export const ru = {
   'store.firstBonus': 'Первая покупка ×2!',
   'store.sold': 'Куплено',
   'store.fail': 'Покупка не состоялась',
+  'store.dailyOffers': 'ПРЕДЛОЖЕНИЯ ДНЯ',
+  'store.refreshAd': 'ОБНОВИТЬ ЗА РОЛИК',
+  'store.refreshUnavailable': 'РОЛИК НЕДОСТУПЕН',
+  'store.refreshDone': 'ОБНОВЛЕНО СЕГОДНЯ',
 
   // ---------- Экран конца матча: фаза Q ----------
   'over.glory': 'Слава: +{v}',

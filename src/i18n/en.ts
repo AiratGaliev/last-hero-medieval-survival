@@ -891,6 +891,10 @@ export const en: Record<TranslationKey, string> = {
   'store.firstBonus': 'First purchase ×2!',
   'store.sold': 'Owned',
   'store.fail': 'Purchase failed',
+  'store.dailyOffers': 'DAILY OFFERS',
+  'store.refreshAd': 'REFRESH FOR AD',
+  'store.refreshUnavailable': 'AD UNAVAILABLE',
+  'store.refreshDone': 'REFRESHED TODAY',
 
   'over.glory': 'Glory: +{v}',
   'over.gloryCap': 'ceiling {v}',
