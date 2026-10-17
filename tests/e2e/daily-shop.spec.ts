@@ -252,11 +252,33 @@ test('daily shop offers are valid, visible, marked in the catalogue, and paginat
 
   const firstPage = texts.find((text) => /^\d+\s*\/\s*\d+$/.test(text));
   expect(firstPage).toMatch(/^1\s*\/\s*\d+$/);
-  await clickSceneText(page, '›');
-  await expect.poll(async () => (
-    await sceneTexts(page)
-  ).find((text) => /^\d+\s*\/\s*\d+$/.test(text)) ?? '').toMatch(/^2\s*\/\s*\d+$/);
+  const totalPages = Number(firstPage?.split('/')[1]?.trim());
+  expect(totalPages).toBeGreaterThan(1);
+
+  const bannerSection = await page.evaluate(async () => {
+    const url = new URL('/src/i18n/index.ts', window.location.origin).href;
+    const i18n = await import(/* @vite-ignore */ url) as { t: (key: string) => string };
+    return i18n.t('skins.banner').toUpperCase();
+  });
+  const offersMarkedInCatalogue = new Set<string>();
+  const offerLabels = await labelsForOffers(page, rotation.ids);
+  for (let currentPage = 1; currentPage <= totalPages; currentPage++) {
+    texts = await sceneTexts(page);
+    for (const label of offerLabels) {
+      if (texts.filter((text) => text === label).length >= 2) {
+        offersMarkedInCatalogue.add(label);
+      }
+    }
+    if (currentPage < totalPages) {
+      await clickSceneText(page, '›');
+      await expect.poll(async () => (
+        (await sceneTexts(page)).find((text) => /^\d+\s*\/\s*\d+$/.test(text)) ?? ''
+      )).toBe(String(currentPage + 1) + ' / ' + String(totalPages));
+    }
+  }
+  expect([...offersMarkedInCatalogue]).toEqual(expect.arrayContaining(offerLabels));
   texts = await sceneTexts(page);
+  expect(texts).toContain(bannerSection);
   expect(texts).toContain(dailyOffersLabel('ru'));
 });
 
