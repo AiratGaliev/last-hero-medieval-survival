@@ -36,7 +36,7 @@ import { t } from '../../i18n';
 import { loadText } from '../storage';
 import { gameplayStart, gameplayStop } from '../../platform/lifecycle';
 import { resetPlacementLimits, hideStickyBanner } from '../../platform/ads';
-import { track, beginRun } from '../../platform/analytics';
+import { track, beginRun, flushRunTelemetry } from '../../platform/analytics';
 import {
   consumeRunConfig, loadMetaState, rollMetaDay, nodeEffects, seasonDef,
   takeConsumables, applyRunToMeta, contractDef, QUEST_POOL, markCodex,
@@ -324,6 +324,8 @@ export class GameScene extends Phaser.Scene {
     takeConsumables(this.mods.consumables);
     const meta = loadMetaState();
     this.fx = nodeEffects(meta.nodes);
+    // «Дозорные» (узел d3, §H.16): +2 сек к анонсу осады — Spawner читает реестр
+    if (this.fx.siegeWarnBonus > 0) this.registry.set('tss-siege-warn', this.fx.siegeWarnBonus);
     this.seasonMod = seasonDef().modifier;
     this.contractId = contractDef(this.mods.contract)?.id ?? null;
     this.challengeMods = new Set<string>(this.mods.challenge?.mods ?? []);
@@ -529,6 +531,8 @@ export class GameScene extends Phaser.Scene {
     this.succession = new Succession(this.economy, this.settlement, {
       // Контракт «Один в поле» (§H.9): ветвь «за ресурсы» недоступна
       resourcesBranchDisabled: this.contractId === 'c_lone_hero',
+      // «Дорога героя» (узел m2, §H.16): цена преемства ×0.90
+      successionCostMult: this.fx.successionCostMult,
     });
     this.speedup = new Speedup(this.economy);
     this.hints = new Hints(this);
@@ -937,7 +941,15 @@ export class GameScene extends Phaser.Scene {
       if (kind === 'barracks') this.builtBarracks++;
       else if (kind === 'monastery') this.builtMonastery++;
       else if (kind === 'archery') this.builtArchery++;
-      if (kind === 'house' && this.firstHouseMin === 0) this.firstHouseMin = this.elapsed / 60;
+      if (kind === 'house' && this.firstHouseMin === 0) {
+        this.firstHouseMin = this.elapsed / 60;
+        // Телеметрия §K.2: первый дом (гейт фазы E)
+        track('first_house', { t_sec: Math.floor(this.elapsed) });
+      }
+      if (kind === 'barracks' && this.builtBarracks === 1) {
+        // Телеметрия §K.2: первые казармы
+        track('first_barracks', { t_sec: Math.floor(this.elapsed) });
+      }
       // Скин построек (§J.6.2): новая постройка тоже под tint
       if (this.bldTint !== null) this.tintAllBuildings();
       this.hud.announce(t('building.built', { v: t(`building.${kind}.name` as Parameters<typeof t>[0]) }), '#7dc95e');
@@ -983,6 +995,13 @@ export class GameScene extends Phaser.Scene {
       } else {
         track('pawn_died', { kind: pawn.kind });
       }
+      // Телеметрия §K.2: потеря гарнизона (невосполнима без найма, §B.7.1)
+      if (pawn.cls === 'garrison') {
+        track('garrison_lost', {
+          weapon: pawn.weapon ?? 'sword',
+          cause: pawn.state === 'bleeding' ? 'bleedout' : 'collapse',
+        });
+      }
       // «Чума» (A2): павшая пешка оставляет сундук; если сундук уже лежит —
       // роняем золотые кристаллы, чтобы ценность не потерялась
       if (this.challengeMods.has('cm_plague') && !this.gameEnded) {
@@ -1026,6 +1045,12 @@ export class GameScene extends Phaser.Scene {
           this.hud.feed(t('contract.no_repair.name'), '#ff8866');
           return;
         }
+        // Порядок валют §G.8 + §J.6.2: жетон (награда) → кошелёк → реклама.
+        const byToken = this.speedup.buyWithToken('repair');
+        if (byToken.ok) {
+          this.hud.announce(t('speedup.done'), '#7dc95e');
+          return;
+        }
         // §G.8: обе валюты доступны обоим ускорениям — кошелёк первичен,
         // реклама — резерв, когда золота не хватает
         const res = this.speedup.buyWithGold('repair');
@@ -1039,6 +1064,12 @@ export class GameScene extends Phaser.Scene {
         });
       },
       heal: () => {
+        // Порядок валют §G.8 + §J.6.2: жетон → кошелёк → реклама
+        const byToken = this.speedup.buyWithToken('heal');
+        if (byToken.ok) {
+          this.hud.announce(t('speedup.done'), '#7dc95e');
+          return;
+        }
         const res = this.speedup.buyWithGold('heal');
         if (res.ok) {
           this.hud.announce(t('speedup.done'), '#7dc95e');
@@ -1683,7 +1714,9 @@ export class GameScene extends Phaser.Scene {
     this.hud.feed(t('building.destroyed', { v: t(`building.${b.kind}.name` as Parameters<typeof t>[0]) }), '#ff6655');
     this.hud.announce(t('building.destroyed', { v: t(`building.${b.kind}.name` as Parameters<typeof t>[0]) }), '#ff6655');
     audio.play('explosion');
-    track('building_destroyed', { kind: b.kind, hp_before: Math.round(b.hp), source: 'siege' });
+    // Источник: фаза 2 босса или осада (§K.2 building_destroyed.source)
+    const destroySource = this.boss?.active && this.boss.siege ? 'boss' : 'siege';
+    track('building_destroyed', { kind: b.kind, hp_before: Math.round(b.hp), source: destroySource });
     if (b === this.settlement.castle) {
       // Условие №2: замок разрушен (§E.3)
       this.loseCause = 'castle';
@@ -2000,12 +2033,22 @@ export class GameScene extends Phaser.Scene {
     // Скин героя (§J.6.2): преемник тоже под tint
     const heroTint = heroSkinTint();
     if (heroTint !== null) this.player.setTint(heroTint);
-    // Полный сброс личного: уровень 1, билд пуст, серия сброшена (§F.9)
+    // Полный сброс личного: уровень 1, билд пуст, серия сброшена (§F.9).
+    // «Крепкая память I/II» (узлы m3/m7, §H.16): преемник сохраняет 25/50% опыта
+    const keptXp = Math.round((this.xp + this.xpNext) * Math.min(0.5, Math.max(0, this.fx.xpKeep)));
     this.level = 1;
     this.xp = 0;
     this.xpNext = XP_CURVE(1);
     this.pendingLevelUps = 0;
+    // «Наследие мастера» (узел m9, §H.16): преемник хранит одну пассивку I ур.
+    const keptPassive = this.fx.successionPassiveKeep
+      ? [...this.passiveLevels.keys()][0]
+      : undefined;
     this.passiveLevels.clear();
+    if (keptPassive) {
+      this.passiveLevels.set(keptPassive, 1);
+      this.hud.setIcon(keptPassive, PASSIVES[keptPassive].icon, 1, true);
+    }
     this.combo = 0;
     this.comboTimer = 0;
     this.kills = 0;
@@ -2025,6 +2068,16 @@ export class GameScene extends Phaser.Scene {
     this.hud.setIcon(this.heroDef.startWeapon, WEAPONS[this.heroDef.startWeapon].icon, 1, false);
     this.recomputeStats();
     this.player.iframesUntil = this.time.now + 3000; // ровно 3 сек (§F.9)
+    // Сохранённый опыт возвращается после сброса (может сразу дать карточки)
+    if (keptXp > 0) {
+      this.xp += keptXp;
+      while (this.xp >= this.xpNext && this.level < MAX_LEVEL) {
+        this.xp -= this.xpNext;
+        this.level++;
+        this.xpNext = XP_CURVE(this.level);
+        this.pendingLevelUps++;
+      }
+    }
     // Вспышка у врат (juice №12 §H.13)
     this.effects.goldBurst(pos.x, pos.y - 20, 18);
     this.cameras.main.startFollow(this.player, true, 0.12, 0.1);
@@ -2686,6 +2739,8 @@ export class GameScene extends Phaser.Scene {
       sieges_defended: this.settlement.facts.siegesDefended,
       ideal,
     });
+    // Персистентный буфер телеметрии (§K.1): ран уходит в хранилище
+    flushRunTelemetry();
     this.commitMatchMeta(victory, score);
     // Мета фаз Q/S (§K.2): сводка рана → applyRunToMeta ровно один раз,
     // результат прикрепляется к payload stats.meta

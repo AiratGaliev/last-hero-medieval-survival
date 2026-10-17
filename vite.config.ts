@@ -12,6 +12,9 @@ export default defineConfig({
   server: {
     port: 3000,
     strictPort: true,
+    // Слушаем все интерфейсы (IPv4+IPv6): шлюз песочницы проксирует на
+    // localhost:3000, а по умолчанию Vite биндится только на [::1].
+    host: true,
     // В песочнице dev-сервер доступен через шлюз-прокси с чужим Host-заголовком,
     // без этого Vite отвечает «Blocked request» (403). На сборку не влияет.
     allowedHosts: true,

@@ -117,10 +117,6 @@ export function spendGold(amount: number): BuyResult {
 }
 
 /** Текущий баланс кошелька (HUD матча, TZ §G.10). */
-export function getWalletBalance(): number {
-  return loadShop().balance;
-}
-
 export interface BuyResult {
   ok: boolean;
   reason?: 'max' | 'poor' | 'unknown';

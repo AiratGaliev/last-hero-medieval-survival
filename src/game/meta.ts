@@ -1422,10 +1422,6 @@ export function bonusAvailable(): boolean {
   return st.dailyBonus.last !== todayKey();
 }
 
-export function bonusStreak(): number {
-  return rollMetaDay().dailyBonus.streak;
-}
-
 // ============================================================
 // Ежедневный сундук — точка R7 (§J.3): 2 показа в день
 // ============================================================
@@ -1495,13 +1491,6 @@ export function convertCrownsToGold(): { ok: boolean; reason?: 'limit' | 'poor' 
 }
 
 /** Кроны капают бесплатно (§J.7) — учитываются вне инапов, витрина честна. */
-export function addCrowns(n: number): void {
-  if (n <= 0) return;
-  const st = rollMetaDay();
-  st.crowns += Math.floor(n);
-  saveMetaState(st);
-}
-
 /** Начисление за покупку SKU (вызывается из platform/payments). */
 export function grantSku(sku: string): { crowns: number; skin?: string; consumable?: ConsumableId } {
   const st = rollMetaDay();
@@ -1625,14 +1614,6 @@ export function activeBanner(): BannerDef | null {
 }
 
 /** Списать кроны (внутриигровые траты фазы S, кроме скинов). */
-export function spendCrowns(n: number): boolean {
-  const st = rollMetaDay();
-  if (st.crowns < n) return false;
-  st.crowns -= n;
-  saveMetaState(st);
-  return true;
-}
-
 // ============================================================
 // Утилиты доступа
 // ============================================================
@@ -1646,6 +1627,20 @@ export function addGlory(n: number): void {
 
 export function gloryBalance(): number {
   return rollMetaDay().glory;
+}
+
+/** Баланс жетонов ускорений (награды пропуска/сундуков, §J.6.2 → §G.8). */
+export function speedupTokenBalance(): number {
+  return rollMetaDay().speedupTokens;
+}
+
+/** Атомарное списание жетона ускорения (§J.9: без двойного списания). */
+export function spendSpeedupToken(): boolean {
+  const st = rollMetaDay();
+  if (st.speedupTokens <= 0) return false;
+  st.speedupTokens -= 1;
+  saveMetaState(st);
+  return true;
 }
 
 export function matchesPlayed(): number {

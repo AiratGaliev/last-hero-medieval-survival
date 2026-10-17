@@ -1,5 +1,6 @@
 import Phaser from 'phaser';
 import { HEALER } from '../constants';
+import { track } from '../../platform/analytics';
 import type { Economy } from './Economy';
 import type { Pawn } from '../entities/Pawn';
 
@@ -15,7 +16,6 @@ import type { Pawn } from '../entities/Pawn';
 export class HealerAI {
   private eco: Economy;
   private switchAt = 0;
-  private heroHealer: Pawn | null = null;
   /** «Братья-целители» (§H.16): +2 HP/с к полевому лечению. Ставит Economy
    *  из мета-модификаторов рана; читается в статическом fieldHealTick. */
   static hpsBonus = 0;
@@ -71,7 +71,6 @@ export class HealerAI {
       best.healTarget = need.pawn;
       best.orderTarget = { x: need.x, y: need.y };
       best.taskProgress = now; // метка последнего назначения
-      if (!need.pawn) this.heroHealer = best;
     }
     for (const m of free) {
       if (m.healTarget) m.healTarget = null;
@@ -93,15 +92,18 @@ export class HealerAI {
     monk.state = 'heal';
     // Спасение на поле: 50% maxHP → wounded снят, слот обители не занят (§B.7.2)
     if (target.state === 'wounded' && target.hp >= target.maxHp * HEALER.WOUNDED_FREE_AT) {
+      const slotFreed = target.monasterySlot !== null;
       target.state = 'idle';
       target.cooldown = 0.5;
       if (target.monasterySlot !== null) {
-        // слот не занимался (полевое) — но если успел занять, освобождаем
+        const freedIdx = target.monasterySlot;
         for (const b of eco.buildings) {
-          if (b.kind === 'monastery' && b.alive) b.releaseHealSlot(target.monasterySlot);
+          if (b.kind === 'monastery' && b.alive) b.releaseHealSlot(freedIdx);
         }
         target.monasterySlot = null;
       }
+      // Телеметрия §K.2: полевое спасение освобождает слот (§B.7.2)
+      track('field_heal_save', { target_kind: target.kind, hp_restored: Math.round(target.hp), monastery_slot_freed: slotFreed });
       eco.emit('pawnSaved', { pawn: target });
       monk.healTarget = null;
     }

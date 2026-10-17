@@ -126,11 +126,4 @@ function bindSdkEvents(): void {
 }
 
 /** Идёт ли сейчас активный геймплей (для отладки и тестов). */
-export function isGameplayRunning(): boolean {
-  return gameplayRunning;
-}
-
 /** Запрашивает ли площадка сейчас паузу. */
-export function isPlatformPaused(): boolean {
-  return platformPaused > 0;
-}

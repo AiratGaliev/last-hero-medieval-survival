@@ -83,10 +83,6 @@ export class WeaponSystem {
     return [...this.levels.keys()];
   }
 
-  evolvedIds(): WeaponId[] {
-    return [...this.evolved];
-  }
-
   /** Кулдаун с учётом Ловкости */
   private effCd(id: WeaponId): number {
     const lvl = this.levels.get(id)!;

@@ -194,6 +194,7 @@ export const ru = {
   'spawn.shaman': '⚠ КОЛДУНЫ ВЕДУТ ТОЛПУ!',
   'spawn.pig-rider': '⚠ ВСАДНИКИ!',
   'spawn.bomb-fish': '⚠ РЫБЫ-ПОДРЫВНИКИ!',
+  'spawn.goblin': '⚠ ГОБЛИНЫ!',
 
   // ---------- Оружие ----------
   'weapon.sword.name': 'Меч воина',
@@ -375,6 +376,7 @@ export const ru = {
   'building.tower.name': 'Башня',
   'building.archery.name': 'Лучный тир',
   'building.monastery.name': 'Монастырь',
+  'building.castle.name': 'Замок',
   'building.cannot': 'Не хватает ресурсов',
   'building.noSpot': 'Нет свободного места',
   'building.built': 'Постройка завершена: {v}',

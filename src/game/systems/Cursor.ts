@@ -44,12 +44,6 @@ export class Cursor {
    * Взяли джойстик мышью: пока тянем, уголок вместо любого другого
    * курсора — так видно, что персонаж едет и отпускать надо мышь.
    */
-  setDragging(on: boolean): void {
-    if (this.dragging === on) return;
-    this.dragging = on;
-    this.apply();
-  }
-
   private onOver(_p: Phaser.Input.Pointer, obj: Phaser.GameObjects.GameObject): void {
     this.hover = obj.getData(CURSOR_DATA) === 'disabled' ? 'disabled' : 'pointer';
     this.apply();

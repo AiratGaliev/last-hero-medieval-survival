@@ -29,7 +29,8 @@ export type AnalyticsEvent =
   | 'iap_purchase' | 'iap_consume_fail';
 
 const MAX_BUFFER = 400;   // события последнего рана (сжатый буфер §K.1)
-const MAX_RUNS = 50;      // Player Data: буфер 50 ранов
+const MAX_RUNS = 50;      // персистентный буфер: 50 ранов (§K.1)
+const RUNS_KEY = 'tss-telemetry';
 
 interface BufferedEvent { e: AnalyticsEvent; p?: Params; t: number; run: number }
 
@@ -54,8 +55,22 @@ export function initAnalytics(opts?: { ymId?: number; dev?: boolean }): void {
   track('session_start', { sessionIdx });
 }
 
-export function getSessionIdx(): number {
-  return sessionIdx;
+/**
+ * Персистентный буфер телеметрии (§K.1): события рана уходят в localStorage
+ * (SDK Яндекса подменяет его надёжным облачным хранилищем) — переживает
+ * потерю сети и закрытие вкладки. Хранятся последние 50 ранов.
+ */
+export function flushRunTelemetry(): void {
+  const drained = drainRunBuffer();
+  if (drained.length === 0) return;
+  try {
+    const prev = JSON.parse(window.localStorage.getItem(RUNS_KEY) ?? '[]') as BufferedEvent[][];
+    prev.push(drained);
+    while (prev.length > MAX_RUNS) prev.shift();
+    window.localStorage.setItem(RUNS_KEY, JSON.stringify(prev));
+  } catch {
+    // приватный режим/нет доступа — буфер в памяти всё сохранил
+  }
 }
 
 /** Метка нового рана: события группируются для буфера Player Data. */
@@ -80,9 +95,15 @@ export function track(event: AnalyticsEvent, params?: Params): void {
   if (devLog) console.info(`[track] ${event}`, p);
 }
 
-/** Экспорт буфера (debug `?export`): JSON-файл локально. */
+/** Экспорт буфера (debug `?export`): JSON персистентных + текущих событий. */
 export function exportBuffer(): string {
-  return JSON.stringify(buffer, null, 1);
+  let persisted: BufferedEvent[][] = [];
+  try {
+    persisted = JSON.parse(window.localStorage.getItem(RUNS_KEY) ?? '[]') as BufferedEvent[][];
+  } catch {
+    // нет данных — экспортируем только текущий буфер
+  }
+  return JSON.stringify({ runs: persisted, current: buffer }, null, 1);
 }
 
 /** Срез событий текущего рана — для выгрузки в Player Data (§K.1). */
