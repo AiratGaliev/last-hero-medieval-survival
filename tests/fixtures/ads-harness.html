@@ -1,0 +1,69 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Fullscreen ad concurrency harness</title>
+  </head>
+  <body>
+    <p id="status">Preparing ad test harness…</p>
+    <script>
+      (() => {
+        // Keep this platform-layer test independent from Phaser and the live Yandex SDK.
+        localStorage.setItem('tss-meta2', JSON.stringify({ matchesPlayed: 5 }));
+
+        const state = { calls: [], callbacks: [] };
+        window.__adsHarnessState = state;
+        window.YaGames = {
+          init: async () => ({
+            environment: { i18n: { lang: 'en', tld: 'com' } },
+            features: {
+              LoadingAPI: { ready() {} },
+              GameplayAPI: { start() {}, stop() {} },
+            },
+            adv: {
+              showFullscreenAdv(options = {}) {
+                state.calls.push('interstitial');
+                state.callbacks.push(options.callbacks || {});
+              },
+              showRewardedVideo(options = {}) {
+                state.calls.push('rewarded');
+                state.callbacks.push(options.callbacks || {});
+              },
+            },
+            auth: { openAuthDialog: async () => {} },
+            leaderboards: {
+              getDescription: async () => ({}),
+              setScore: async () => {},
+              getPlayerEntry: async () => ({ rank: 1, score: 0, extraData: '', player: { publicName: '', uniqueID: '' } }),
+              getEntries: async () => ({ entries: [], userRank: 0 }),
+            },
+            isAvailableMethod: async () => true,
+            getPlayer: async () => ({
+              isAuthorized: () => false,
+              getUniqueID: () => '',
+              getName: () => undefined,
+              getPhoto: () => undefined,
+            }),
+            getServerTime: async () => Date.now(),
+            on() {},
+            off() {},
+          }),
+        };
+      })();
+    </script>
+    <script type="module">
+      import { initSdk } from '/src/platform/sdk.ts';
+      import { showInterstitial, showRewarded } from '/src/platform/ads.ts';
+
+      await initSdk();
+      window.__adsHarness = {
+        showInterstitial,
+        showRewarded,
+        state: window.__adsHarnessState,
+      };
+      document.getElementById('status').textContent = 'Ready';
+      document.documentElement.dataset.adsReady = 'true';
+    </script>
+  </body>
+</html>
