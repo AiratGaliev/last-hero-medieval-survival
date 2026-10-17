@@ -3,6 +3,7 @@ import { expect, test } from '@playwright/test';
 type AdCallbacks = {
   onClose?: (wasShown: boolean) => void;
   onRewarded?: () => void;
+  onError?: (error: object) => void;
 };
 type AdsHarness = {
   showInterstitial: () => Promise<boolean>;
@@ -78,4 +79,26 @@ test('interstitial cannot overlap an in-flight rewarded ad', async ({ page }) =>
   expect(result.callsBeforeClose).toEqual(['rewarded']);
   expect(result.rewarded).toEqual({ rewarded: true, available: true });
   expect(result.interstitial).toBe(false);
+});
+
+test('failed interstitial releases the fullscreen lock without consuming cooldown', async ({ page }) => {
+  await openHarness(page);
+
+  const result = await page.evaluate(async () => {
+    const harness = (window as HarnessWindow).__adsHarness;
+    const first = harness.showInterstitial();
+    harness.state.callbacks[0]?.onError?.({ message: 'simulated ad failure' });
+    const firstResult = await first;
+
+    const second = harness.showInterstitial();
+    const callsBeforeClose = [...harness.state.calls];
+    harness.state.callbacks[1]?.onClose?.(true);
+    const secondResult = await second;
+
+    return { callsBeforeClose, firstResult, secondResult };
+  });
+
+  expect(result.callsBeforeClose).toEqual(['interstitial', 'interstitial']);
+  expect(result.firstResult).toBe(false);
+  expect(result.secondResult).toBe(true);
 });
