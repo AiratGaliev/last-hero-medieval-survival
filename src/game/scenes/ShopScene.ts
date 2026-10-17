@@ -540,7 +540,21 @@ export class ShopScene extends Phaser.Scene {
     box.add([refreshButton.img, refreshButton.txt, refreshButton.hit]);
     this.contentButtons.push(refreshButton);
 
-    let y = top + (isCompact ? 34 : 38);
+    // On short landscape viewports, keep the offer names and action compact so
+    // the paged catalogue can still be reached without scrolling or clipping.
+    if (isCompact) {
+      const labels = rotation.ids.map((id) => {
+        const def = SKINS.find((skin) => skin.id === id);
+        return def ? skinLabel(def) : id;
+      });
+      box.add(this.add.text(this.px, top + 31, labels.join(' · '), {
+        fontFamily: FONT, fontSize: '8px', color: '#6b4a1e',
+        align: 'center', wordWrap: { width: cw - 12 },
+      }).setOrigin(0.5, 0.5));
+      return top + 50;
+    }
+
+    let y = top + 38;
     for (const id of rotation.ids) {
       const def = SKINS.find((skin) => skin.id === id);
       if (!def) continue;
