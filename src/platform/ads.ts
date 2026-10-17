@@ -59,10 +59,14 @@ export async function showInterstitial(hooks: AdPause = NO_PAUSE): Promise<boole
 
   try {
     const shown = await withPaused(hooks, () => sdk.adv.showFullscreenAdv());
-    lastInterstitialAt = Date.now();
     lastError = null;
-    if (shown === true) interstitialSessionCount += 1;
-    return shown === true;
+    // The cooldown and session quota track actual impressions, not attempts.
+    // A skipped ad must not prevent the next eligible trigger from trying again.
+    if (shown !== true) return false;
+
+    lastInterstitialAt = Date.now();
+    interstitialSessionCount += 1;
+    return true;
   } catch (err) {
     lastError = String(err);
     track('ad_error', { kind: 'interstitial', message: lastError });
