@@ -8,6 +8,8 @@ import Phaser from 'phaser';
 import type { createGame as CreateGame } from './game/config';
 import { audio } from './game/systems/Audio';
 import { initSdk, isOnYandex, getSdk } from './platform/sdk';
+import { initPayments } from './platform/payments';
+import { initAnalytics } from './platform/analytics';
 import { loadPlayer } from './platform/player';
 import { detectLanguage, t } from './i18n';
 import { installLifecycle, setLifecycleHandlers, gameplayStop } from './platform/lifecycle';
@@ -116,6 +118,13 @@ const boot = async (): Promise<void> => {
     },
   });
   installLifecycle();
+
+  // T0 аналитики (§K.1): шина поднимается до любых механик — session_start
+  // уходит первым, sessionIdx проставляется всем событиям сессии.
+  initAnalytics({ dev: import.meta.env.DEV });
+  // §J.6.1 (1.13.1): платёжный слой + консумирование необработанных покупок —
+  // ДО первого purchase() и до старта сцен. Вне Яндекса — no-op заглушка.
+  if (isOnYandex()) await initPayments();
 
   if (isOnYandex()) await loadPlayer();
 

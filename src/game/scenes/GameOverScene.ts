@@ -3,12 +3,20 @@ import { Cursor } from '../systems/Cursor';
 import { FONT } from '../constants';
 import { makePanel, makeButton, fitTextWidth, type Button } from '../systems/Ui';
 import { audio } from '../systems/Audio';
-import { t, num, clock } from '../../i18n';
-import { submitScore } from '../../platform/leaderboard';
+import { t, num, clock, type TranslationKey } from '../../i18n';
+import { submitScore, LEADERBOARD_DAILY, LEADERBOARD_ENDLESS } from '../../platform/leaderboard';
 import { isAuthorized, displayName } from '../../platform/player';
-import { showInterstitial, showRewarded, rewardedAvailable } from '../../platform/ads';
+import {
+  placementAvailable, registerRunOutcome, showInterstitial, showPlacementRewarded,
+  showStickyBanner,
+} from '../../platform/ads';
 import { gameplayStop } from '../../platform/lifecycle';
+import { track } from '../../platform/analytics';
 import { loadText, saveText } from '../storage';
+import {
+  addGlory, challengeVictoryToday, gloryDoubleExtra, loadMetaState, markChallengeVictory, saveRunConfig,
+} from '../meta';
+import { depositGold } from '../shop';
 
 // ============ Экран конца матча: статистика + рекорд + монетизация ============
 // Всё внутри Phaser: гость вводит имя в нативный <input> (DOMElement),
@@ -20,6 +28,10 @@ import { loadText, saveText } from '../storage';
 // Раньше всё складывалось одной переменной `cursor` сверху вниз, и на
 // 1280×720 с полным набором оружия кнопка «Сохранить» уезжала за экран —
 // рекорд было физически не сохранить.
+//
+// Монетизация конца матча (§J.3, точки R5/R9): компактные ×2-кнопки рядом
+// с сохранением (или отдельным рядом над ним, если по ширине не встают)
+// и вход в бесконечный режим третьей кнопкой в ряду действий.
 
 export interface GameOverStats {
   victory: boolean;
@@ -34,21 +46,72 @@ export interface GameOverStats {
   bestCombo?: number;
   weapons?: { id: string; icon: string; name: string; dmg: number; kills: number; evolved?: boolean }[];
   newAch?: { name: string; emoji: string }[];
+  // Поселение (§E.8, §H.3): ставки, хроника и near-miss
+  loseCause?: string;
+  ideal?: boolean;
+  settlement?: {
+    defence: number;
+    population: number;
+    buildings: number;
+    pawns: number;
+    castleHp: number;
+    siegesTotal: number;
+    siegesDefended: number;
+    monasteryFallenAt: string | null;
+    monasteryVictims: number;
+    bledOutName?: string | null;
+    bledOutShort?: number;
+  };
+  veterans?: Array<{ name: string; stars: number }>;
+  // Раунд 2 (фазы Q/S): итоги применения рана к мета-состоянию.
+  // Заполняется GameScene в gameOver() через applyRunToMeta().
+  meta?: {
+    glory: { base: number; bonus: number; total: number; cap: number } | null;
+    questsDone: number;
+    questsCompletedNow: { descKey: string; reward: number }[];
+    passLevels: number;
+    passRewards: { kind: string; amount: number }[];
+    chainUnlocks: { nameKey: string; tier: number }[];
+    endlessWave: number;
+    crownsEarned: number;
+    challenge: boolean;
+    ukaz: string | null;
+    endless: boolean;
+  };
 }
 
 interface GameOverData {
   stats: GameOverStats;
 }
 
+/** План ряда действий: третья кнопка «ДЕРЖАТЬ КРЕПОСТЬ» (§H.7). */
+interface ActionPlan {
+  threeInRow: boolean;
+  rowY: number;
+  wAgain: number;
+  wEndless: number;
+  wMenu: number;
+}
+
+/** План ×2-кнопок: рядом с сохранением или отдельным рядом над ним (§J.3). */
+interface X2Layout {
+  gold: boolean;
+  glory: boolean;
+  flank: boolean;
+  rowY: number;
+  saveW: number;
+  goldW: number;
+  gloryW: number;
+}
+
+/** ×2-кнопки компактнее основных; тач-гейт §I.6 — не меньше 44 px. */
+const X2_H = 44;
+const X2_FONT = 13;
+
 type SaveState = 'idle' | 'saving' | 'saved' | 'error';
 
 /** Что удалось показать игрок�� после сохранения. */
 type SaveTarget = 'none' | 'online' | 'local' | 'error';
-
-/** Минимальный контракт GameScene, нужный сцене конца матча. */
-interface GameOverReviveTarget {
-  revive?(): boolean;
-}
 
 export class GameOverScene extends Phaser.Scene {
   private payload!: GameOverData;
@@ -60,12 +123,15 @@ export class GameOverScene extends Phaser.Scene {
   private saveBtn: Button | null = null;
   private saveMsg: Phaser.GameObjects.Text | null = null;
   private saveTarget: SaveTarget = 'none';
-  private reviveBtn: (Button & { hint: Phaser.GameObjects.Text }) | null = null;
-  /** Один раз за матч. Сбрасывается вместе с lastStatsRef. */
-  private reviveUsed = false;
-  /** Защита от двойного клика: два параллельных showRewarded — лишний вызов SDK. */
-  private revivePending = false;
   private saveY = 0;
+  // ×2-кнопки (R5/R9): удвоение переживает рестарт сцены (ресайз),
+  // но сбрасывается новым матчем — как saveState по lastStatsRef
+  private goldBtn: Button | null = null;
+  private gloryBtn: Button | null = null;
+  private goldDoubled = false;
+  private gloryDoubled = false;
+  /** Разовые за матч действия: исход для рекламы, вызов дня, вторичные борды. */
+  private matchHandled: GameOverStats | null = null;
 
   constructor() {
     super('GameOver');
@@ -80,20 +146,22 @@ export class GameOverScene extends Phaser.Scene {
     this.cursor = new Cursor(this);
     this.payload = payload;
     if (this.lastStatsRef !== payload.stats) {
-      // Новый матч — сбрасываем прогресс сохранения и право на воскрешение.
-      // Раньше reviveUsed жил на экземпляре сцены, а Phaser переиспользует
-      // сцену между матчами: воскрешение работало один раз за загрузку
-      // страницы, а не один раз за матч.
+      // Новый матч — сбрасываем прогресс сохранения и ×2-удвоения.
       this.saveState = 'idle';
       this.lastStatsRef = payload.stats;
-      this.reviveUsed = false;
       this.saveTarget = 'none';
       this.nameValue = loadText('tss-name') ?? '';
+      this.goldDoubled = false;
+      this.gloryDoubled = false;
+      this.matchHandled = null;
     }
     this.nameInput = null;
     this.saveBtn = null;
     this.saveMsg = null;
-    this.reviveBtn = null;
+    this.goldBtn = null;
+    // Стики-баннер (§J.5): экран конца — вне рана
+    showStickyBanner();
+    this.gloryBtn = null;
 
     // Бой окончен — площадка не должна считать это активным геймплеем
     gameplayStop();
@@ -102,6 +170,10 @@ export class GameOverScene extends Phaser.Scene {
     const { width, height } = this.scale;
     const compact = height < 520;
 
+    // Разовые за матч действия (исход для политики рекламы, награда вызова
+    // дня, авто-сабмит вторичных бордов) — рестарт сцены их не повторяет
+    this.handleMatchOnce(s);
+
     this.add.rectangle(width / 2, height / 2, width + 40, height + 40, 0x0a0a12, 0.78)
       .setScrollFactor(0);
 
@@ -109,24 +181,61 @@ export class GameOverScene extends Phaser.Scene {
     // Шапка и низ получают фиксированную долю экрана, тело — остаток.
     // Каждый блок тела умещается в отведённую высоту и ничего не выходит
     // за нижнюю границу, поэтому кнопки всегда доступны на любом размере.
-    const showRevive = this.canRevive();
     const actH = compact ? 40 : 50;
     const saveH = compact ? 38 : 44;
     const inputH = compact ? 34 : 44;
-    const reviveH = compact ? 36 : 42;
+
+    // Кнопка бесконечного режима (§H.7): видна после первой победы
+    const showEndless = loadMetaState().firstWin || !!s.meta?.endless;
+    const actRowH = showEndless ? Math.max(44, actH) : actH;
+    // Ширины по контенту измеряем заранее — от них зависит число рядов
+    const endlessPlan: ActionPlan | null = showEndless
+      ? {
+          wAgain: this.btnWidthFor(t('over.again'), 16, 110, 240),
+          wEndless: this.btnWidthFor(t('over.endlessEnter'), 15, 150, Math.max(160, width - 40)),
+          wMenu: this.btnWidthFor(t('over.toMenu'), 15, 96, 200),
+          threeInRow: false,
+          rowY: 0,
+        }
+      : null;
+    if (endlessPlan) {
+      endlessPlan.threeInRow =
+        endlessPlan.wAgain + endlessPlan.wEndless + endlessPlan.wMenu + 20 + 24 <= width;
+    }
+
+    // ×2-кнопки (R5/R9): в компактном режиме прячем, чтобы не ломать низ
+    const x2 = {
+      gold: !compact && s.gold > 0 && (this.goldDoubled || placementAvailable('wallet-x2')),
+      glory: !compact && !!s.meta?.glory && (this.gloryDoubled || placementAvailable('glory-x2')),
+    };
+    const saveW = Math.min(280, width - 70);
+    // Обе кнопки рядом обязаны влезать в ряд: ограничиваем ширину заранее
+    const x2Cap = x2.gold && x2.glory ? Math.floor((width - 42) / 2) : Math.max(120, width - 70);
+    const x2GoldW = x2.gold ? this.btnWidthFor(t('over.goldX2'), X2_FONT, 120, Math.max(120, x2Cap)) : 0;
+    const x2GloryW = x2.glory ? this.btnWidthFor(t('over.gloryX2'), X2_FONT, 120, Math.max(120, x2Cap)) : 0;
+    const x2Sum = (x2GoldW > 0 ? x2GoldW + 12 : 0) + (x2GloryW > 0 ? x2GloryW + 12 : 0);
+    // Хватает ли ширины, чтобы поставить ×2 рядом с кнопкой сохранения
+    const x2Flank = x2Sum > 0 && saveW + x2Sum + 24 <= width;
 
     // Низ: считаем снизу вверх — так он гарантированно на экране
-    let fy = height - actH / 2 - 8;
+    let fy = height - actRowH / 2 - 8;
     const actionsY = fy;
-    fy -= actH / 2 + 10;
+    fy -= actRowH / 2 + 10;
+
+    // Узкий экран: «ДЕРЖАТЬ КРЕПОСТЬ» уходит отдельным рядом сверху
+    if (endlessPlan && !endlessPlan.threeInRow) {
+      endlessPlan.rowY = fy - actRowH / 2;
+      fy = endlessPlan.rowY - actRowH / 2 - 10;
+    }
 
     this.saveY = fy - saveH / 2;
     fy = this.saveY - saveH / 2 - 8;
 
-    let reviveY = 0;
-    if (showRevive) {
-      reviveY = fy - reviveH / 2;
-      fy -= reviveH / 2 + (compact ? 16 : 22); // + пояснение под кнопкой
+    // Если рядом с сохранением ×2 не развернулись — отдельный ряд над ним
+    let x2RowY = 0;
+    if (x2Sum > 0 && !x2Flank) {
+      x2RowY = fy - X2_H / 2;
+      fy = x2RowY - X2_H / 2 - 6;
     }
 
     const inputY = fy - inputH / 2;
@@ -137,8 +246,11 @@ export class GameOverScene extends Phaser.Scene {
     // На меньшей высоте торцы сжимаются, и завитки превращаются в рваную
     // бумагу. В компактном ландшафте (высота < 520) баннера нет вовсе:
     // 200 px там — это половина экрана.
-    const BANNER_MIN_H = 179;
-    const bannerH = compact || height < BANNER_MIN_H + 60 ? 0 : 200;
+    // ⚠️ Прежний порог «< 239» оказался ловушкой: при 1280×578 баннер съедал
+    // 200 px, телу оставалось ~140 px, и блоки мета-итогов (слава/задания/
+    // волны), хроника, урон по оружию и достижения молча не помещались.
+    // Ниже 620 px баннер убираем целиком — итоги важнее декора.
+    const bannerH = compact || height < 620 ? 0 : 200;
     const titleSize = compact ? 22 : Phaser.Math.Clamp(height * 0.045, 28, 38);
 
     let headerBottom = 6;
@@ -156,6 +268,16 @@ export class GameOverScene extends Phaser.Scene {
     }).setOrigin(0.5, 0).setScrollFactor(0);
     headerBottom = title.y + title.height + (compact ? 6 : 8);
 
+    // Бейдж идеальной победы (§E.7, слой 3): босс убит + замок цел + ≥3 пешек
+    if (s.ideal) {
+      const badge = this.add.text(width / 2, headerBottom + 2, t('over.idealVictory'), {
+        fontFamily: FONT, fontSize: compact ? '13px' : '16px', color: '#ffd700',
+        stroke: '#5a0808', strokeThickness: 6,
+      }).setOrigin(0.5, 0).setScrollFactor(0);
+      this.tweens.add({ targets: badge, scale: { from: 0.7, to: 1 }, duration: 380, ease: 'Back.easeOut' });
+      headerBottom = badge.y + badge.height + 4;
+    }
+
     // ---------- Тело ----------
     // Если шапка съела слишком много, тело начинается ниже: итоги важнее
     // расстояния между блоками.
@@ -164,9 +286,12 @@ export class GameOverScene extends Phaser.Scene {
 
     // ---------- Низ ----------
     this.createNameInput(inputY, inputH);
-    if (showRevive) this.createReviveUi(reviveY, reviveH);
     this.createSaveUi(saveH);
-    this.createActions(actionsY, actH, width);
+    this.createActions(actionsY, actRowH, width, endlessPlan);
+    this.createDoubleButtons({
+      gold: x2.gold, glory: x2.glory, flank: x2Flank, rowY: x2RowY, saveW,
+      goldW: x2GoldW, gloryW: x2GloryW,
+    });
 
     // При изменении размера окна (поворот телефона) — перерисовать на новых координатах
     this.scale.on('resize', this.rebuild, this);
@@ -180,6 +305,42 @@ export class GameOverScene extends Phaser.Scene {
       this.nameInput = null;
       this.scale.off('resize', this.rebuild, this);
     });
+  }
+
+  /**
+   * Разовые за матч действия: регистрация исхода для рекламной политики,
+   * награда за победу в вызове дня, авто-сабмит вторичных бордов.
+   * Переживает рестарт сцены (ресайз) — повторяется только в новом матче.
+   */
+  private handleMatchOnce(s: GameOverStats): void {
+    if (this.matchHandled === s) return;
+    this.matchHandled = s;
+
+    // Политике interstitial (§J.4) нужен исход ровно один раз: create()
+    // вызывается повторно при каждом ресайзе с той же статистикой
+    registerRunOutcome(s.victory);
+
+    const m = s.meta;
+    if (!m) return;
+
+    // Победа в вызове дня: награда раз в сутки, функция сама защищена
+    if (m.challenge && s.victory && !challengeVictoryToday()) markChallengeVictory();
+
+    // Авто-сабмит технических бордов. Имя — без зависимости от input:
+    // гость берётся из 'tss-name', авторизованному подставит профиль
+    const name = displayName(this.nameValue);
+    if (m.endless) {
+      void submitScore(
+        { name, score: s.score, kills: s.kills, level: s.level, timeSurvived: s.time, victory: s.victory },
+        LEADERBOARD_ENDLESS,
+      );
+    }
+    if (m.challenge) {
+      void submitScore(
+        { name, score: s.score, kills: s.kills, level: s.level, timeSurvived: s.time, victory: s.victory },
+        LEADERBOARD_DAILY,
+      );
+    }
   }
 
   // ================================================================
@@ -265,6 +426,25 @@ export class GameOverScene extends Phaser.Scene {
       y += compact ? 18 : 22;
     }
 
+    // --- ЗАЩИТА / НАСЕЛЕНИЕ (§E.8) — ставка слоя 2 в итогах ---
+    const st = s.settlement;
+    if (st && top + y + 20 <= bottom) {
+      body.add(this.add.text(cx, y, `${t('over.statsSettlement', { v: num(st.defence) })}   ${t('over.statsPopulation', { v: num(st.population) })}`, {
+        fontFamily: FONT, fontSize: compact ? '11px' : '13px', color: '#9fd8ff',
+        stroke: '#1b1008', strokeThickness: 4,
+      }).setOrigin(0.5, 0));
+      y += compact ? 18 : 22;
+    }
+
+    // --- Мета-итоги (фазы Q/S): слава, задания, пропуск, цепи, вызов, волны ---
+    y = this.renderMetaLines(body, s, y, width, compact, bottom - top - y - pad);
+
+    // --- Хроника поселения (§H.3, блок 1): 3–6 строк авто-текста по фактам ---
+    y = this.renderChronicle(body, s, y, width, compact, bottom - top - y - pad);
+
+    // --- Near-miss (§H.3, блок 2): ровно одна строка, приоритет сверху вниз ---
+    y = this.renderNearMiss(body, s, y, width, compact, bottom - top - y - pad);
+
     // --- Урон по оружию ---
     y = this.renderWeaponStats(body, s, y, width, compact, bottom - top - y - pad);
 
@@ -307,6 +487,68 @@ export class GameOverScene extends Phaser.Scene {
     // при запасе — по центру.
     const regionH = Math.max(40, bottom - top - pad);
     body.y = top + pad + Math.max(0, (regionH - y) / 2);
+  }
+
+  /**
+   * Мета-итоги (фазы Q/S): начисление славы с потолком и бонусом, задания
+   * дня, пропуск и цепочки, победа в вызове, волны бесконечного режима.
+   * Компактные строки между сводкой поселения и хроникой; строка рисуется,
+   * только если влезает в остаток тела.
+   */
+  private renderMetaLines(
+    body: Phaser.GameObjects.Container, s: GameOverStats, cursor: number,
+    width: number, compact: boolean, avail: number,
+  ): number {
+    const m = s.meta;
+    if (!m || avail < 14) return cursor;
+    const cx = width / 2;
+    const fs = compact ? 10 : 12;
+    const lines: Array<{ text: string; color: string }> = [];
+
+    // Начисление славы за матч; потолок и бонус идеальной победы (§H.16)
+    if (m.glory) {
+      let text = t('over.glory', { v: num(m.glory.total) });
+      if (m.glory.base >= m.glory.cap) text += ` · ${t('over.gloryCap', { v: num(m.glory.cap) })}`;
+      if (m.glory.bonus > 0) text += ` · ${t('over.gloryIdeal', { v: num(m.glory.bonus) })}`;
+      lines.push({ text, color: '#ffd700' });
+    }
+
+    // Задания дня: сколько закрыто всего и какие выполнились сейчас (§H.17)
+    const doneNow = m.questsCompletedNow ?? [];
+    if (doneNow.length > 0) {
+      const list = doneNow.map((q) => t(q.descKey as TranslationKey)).join(' · ');
+      lines.push({ text: `${t('over.questsDone', { v: num(m.questsDone) })}: ${list}`, color: '#ffe9b0' });
+    }
+
+    // Пропуск «Хроника» и цепочки достижений — по числу (§J, §H.12)
+    const passParts: string[] = [];
+    if (m.passLevels > 0) passParts.push(t('over.passUp', { v: num(m.passLevels) }));
+    if ((m.chainUnlocks ?? []).length > 0) {
+      passParts.push(t('over.chainsUp', { v: num(m.chainUnlocks.length) }));
+    }
+    if (passParts.length > 0) lines.push({ text: passParts.join('   '), color: '#ffe9b0' });
+
+    // Победа в вызове дня (§H.8) и волны бесконечного режима (§H.7)
+    if (m.challenge && s.victory) lines.push({ text: t('over.challengeWin'), color: '#ffd700' });
+    if (m.endless) lines.push({ text: t('endless.result', { v: num(m.endlessWave) }), color: '#ffe9b0' });
+
+    const wrap = Math.min(520, Math.max(160, width - 50));
+    let y = cursor;
+    for (const line of lines) {
+      const txt = this.add.text(cx, y, line.text, {
+        fontFamily: FONT, fontSize: `${fs}px`, color: line.color,
+        stroke: '#1b1008', strokeThickness: 4,
+        align: 'center', wordWrap: { width: wrap }, lineSpacing: 2,
+      }).setOrigin(0.5, 0);
+      if (txt.height > avail - (y - cursor)) {
+        // Не влезло — дальше тоже тесно: важнее итоги матча, чем детали
+        txt.destroy();
+        break;
+      }
+      body.add(txt);
+      y += txt.height + (compact ? 2 : 4);
+    }
+    return y;
   }
 
   // ================================================================
@@ -383,10 +625,91 @@ export class GameOverScene extends Phaser.Scene {
     return cursor + HEAD + shown.length * ROW + 10;
   }
 
+  /** Ширина кнопки по тексту: кегль + запас на торцы девятислайса. */
+  private btnWidthFor(label: string, fontSize: number, min: number, max: number): number {
+    const probe = this.add.text(0, 0, label, { fontFamily: FONT, fontSize: `${fontSize}px` });
+    const w = probe.width;
+    probe.destroy();
+    return Phaser.Math.Clamp(Math.ceil(w) + 44, min, max);
+  }
+
   private fmtDmg(v: number): string {
     if (v >= 10000) return `${(v / 1000).toFixed(1)}k`;
     if (v >= 1000) return `${(v / 1000).toFixed(2)}k`;
     return `${Math.round(v)}`;
+  }
+
+  /** Хроника поселения (§H.3): сторителлинг итога по фактам матча. */
+  private renderChronicle(
+    body: Phaser.GameObjects.Container, s: GameOverStats, cursor: number,
+    width: number, compact: boolean, avail: number,
+  ): number {
+    const st = s.settlement;
+    if (!st || avail < 56) return cursor;
+    const cx = width / 2;
+    const lines: string[] = [
+      s.victory ? t('chron.line.survived') : t('chron.line.fell'),
+    ];
+    if (s.veterans && s.veterans.length >= 2) {
+      lines.push(t('chron.line.veterans', { a: s.veterans[0].name, b: s.veterans[1].name, n: 3 }));
+    }
+    if (st.monasteryFallenAt) {
+      lines.push(t('chron.line.monastery', { t: st.monasteryFallenAt, v: st.monasteryVictims }));
+    }
+    if (st.castleHp > 0) lines.push(t('chron.line.castleHp', { v: st.castleHp }));
+    else lines.push(t('chron.line.castleFell'));
+    lines.push(t('chron.line.summary', { a: st.pawns, b: st.buildings }));
+    lines.push(s.ideal ? t('chron.line.ideal') : t('chron.line.idealNo'));
+
+    const wrap = Math.min(500, width - 60);
+    const text = lines.join('\n');
+    // Замер — с ТЕМ ЖЕ lineSpacing, что и рендер: без него need занижался
+    // на 4 px × (строк−1), и следующий блок (near-miss) налезал на хронику
+    const probe = this.add.text(0, 0, text, {
+      fontFamily: FONT, fontSize: compact ? '10px' : '12px', wordWrap: { width: wrap }, align: 'center', lineSpacing: 4,
+    });
+    const need = 16 + probe.height + 8;
+    probe.destroy();
+    if (avail < need) return cursor;
+
+    body.add(this.add.text(cx, cursor, t('over.chronicleTitle'), {
+      fontFamily: FONT, fontSize: '11px', color: '#cbb389',
+      stroke: '#1b1008', strokeThickness: 4,
+    }).setOrigin(0.5, 0));
+    body.add(this.add.text(cx, cursor + 16, text, {
+      fontFamily: FONT, fontSize: compact ? '10px' : '12px', color: '#ffe9b0',
+      stroke: '#1b1008', strokeThickness: 4,
+      align: 'center', wordWrap: { width: wrap }, lineSpacing: 4,
+    }).setOrigin(0.5, 0));
+    return cursor + need;
+  }
+
+  /** Near-miss (§H.3, блок 2): «чуть-чуть» — триггер ещё одного рана. */
+  private renderNearMiss(
+    body: Phaser.GameObjects.Container, s: GameOverStats, cursor: number,
+    width: number, compact: boolean, avail: number,
+  ): number {
+    if (avail < 26) return cursor;
+    const st = s.settlement;
+    let line = '';
+    if (!s.victory) {
+      if (s.loseCause === 'castle' && st) line = t('chron.line.nearCastle', { v: Math.max(0, Math.round(st.castleHp)) });
+      else if (s.loseCause === 'population') line = t('chron.line.fell');
+      else if (st?.bledOutName) line = t('chron.line.nearBleed', { v: st.bledOutName, n: st.bledOutShort ?? 45 });
+      else if (st && st.castleHp < 500) line = t('chron.line.nearCastle', { v: Math.max(1, Math.round(500 - st.castleHp)) });
+      else line = t('chron.line.nearBoss', { v: clock(Math.max(0, 900 - s.time)) });
+    } else if (!s.ideal && st) {
+      line = st.castleHp < 500
+        ? t('chron.line.idealNo')
+        : t('chron.line.nearIdeal', { v: t('chron.needPawns') });
+    }
+    if (!line) return cursor;
+    body.add(this.add.text(width / 2, cursor, `${t('over.nearMiss')} ${line}`, {
+      fontFamily: FONT, fontSize: compact ? '10px' : '12px', color: '#ffd76e',
+      stroke: '#1b1008', strokeThickness: 4,
+      align: 'center', wordWrap: { width: Math.min(500, width - 60) },
+    }).setOrigin(0.5, 0));
+    return cursor + (compact ? 20 : 24);
   }
 
   // ================================================================
@@ -533,9 +856,6 @@ export class GameOverScene extends Phaser.Scene {
       audio.play('ach');
       // Перерисовываем нижний блок: кнопка сменяется сообщением о результате
       this.createSaveUi();
-
-      // Показ рекламы не должен ломать экран — ошибки внутри ads.ts глотаются
-      void showInterstitial({ pause: () => audio.silence(), resume: () => audio.unsilence() });
     } catch (err) {
       console.warn('[gameover] сохранение не удалось:', err);
       this.saveState = 'error';
@@ -550,69 +870,109 @@ export class GameOverScene extends Phaser.Scene {
   };
 
   // ================================================================
-  // Воскрешение за rewarded-ролик
+  // ×2-кнопки конца матча (TZ §J.3, точки R5/R9)
   // ================================================================
 
-  private canRevive(): boolean {
-    if (this.reviveUsed || this.revivePending) return false;
-    if (this.payload.stats.victory) return false;
-    return rewardedAvailable();
-  }
-
-  private createReviveUi(y: number, h = 42): void {
+  /**
+   * Две компактные кнопки (высота 40, ширина по тексту): удвоение золота
+   * матча и удвоение начисления славы за матч. Встают по бокам кнопки
+   * сохранения, а если по ширине не помещаются — отдельным рядом над ней
+   * (план и бюджет высоты считает create(), чтобы низ не поехал).
+   * В компактном режиме (height < 520) не рисуются вовсе.
+   */
+  private createDoubleButtons(L: X2Layout): void {
     const width = this.scale.width;
-    const w = Math.min(300, width - 70);
+    const make = (label: string, w: number, x: number, y: number, onClick: () => void): Button =>
+      makeButton(this, x, y, w, X2_H, label, onClick, 'blue', X2_FONT, {
+        // Хит-зоны почти вплотную: широкие зоны по умолчанию перекрывали
+        // бы хит-зону кнопки сохранения
+        hitW: w + 12, hitH: X2_H + 14,
+      });
 
-    // Текст кнопки прямо называет награду — требование 4.5.1.
-    const b = makeButton(this, width / 2, y, w, h, t('over.revive'), () => {
-      void this.revive();
-    }, 'blue', 15);
-    b.img.setScrollFactor(0);
-    b.txt.setScrollFactor(0);
-    b.hit.setScrollFactor(0);
+    const scroll = (b: Button): Button => {
+      b.img.setScrollFactor(0);
+      b.txt.setScrollFactor(0);
+      b.hit.setScrollFactor(0);
+      return b;
+    };
 
-    const hint = this.add.text(width / 2, y + h / 2 + 13, t('over.reviveHint'), {
-      fontFamily: FONT, fontSize: '10px', color: '#cbb389',
-      stroke: '#1b1008', strokeThickness: 3,
-    }).setOrigin(0.5).setScrollFactor(0);
+    /** Центр ×2-кнопки сбоку от сохранения: side −1 — слева, 1 — справа. */
+    const nextToSave = (w: number, side: 1 | -1): number =>
+      width / 2 + side * (L.saveW / 2 + 12 + w / 2);
 
-    this.reviveBtn = { ...b, hint };
+    if (L.gold && L.glory) {
+      if (L.flank) {
+        this.goldBtn = scroll(make(t('over.goldX2'), L.goldW, nextToSave(L.goldW, -1), this.saveY, this.watchGoldX2));
+        this.gloryBtn = scroll(make(t('over.gloryX2'), L.gloryW, nextToSave(L.gloryW, 1), this.saveY, this.watchGloryX2));
+      } else {
+        const total = L.goldW + 12 + L.gloryW;
+        this.goldBtn = scroll(make(t('over.goldX2'), L.goldW, width / 2 - total / 2 + L.goldW / 2, L.rowY, this.watchGoldX2));
+        this.gloryBtn = scroll(make(t('over.gloryX2'), L.gloryW, width / 2 + total / 2 - L.gloryW / 2, L.rowY, this.watchGloryX2));
+      }
+    } else if (L.gold) {
+      this.goldBtn = L.flank
+        ? scroll(make(t('over.goldX2'), L.goldW, nextToSave(L.goldW, 1), this.saveY, this.watchGoldX2))
+        : scroll(make(t('over.goldX2'), L.goldW, width / 2, L.rowY, this.watchGoldX2));
+    } else if (L.glory) {
+      this.gloryBtn = L.flank
+        ? scroll(make(t('over.gloryX2'), L.gloryW, nextToSave(L.gloryW, 1), this.saveY, this.watchGloryX2))
+        : scroll(make(t('over.gloryX2'), L.gloryW, width / 2, L.rowY, this.watchGloryX2));
+    }
+
+    // Уже удвоено в этом матче (переживает рестарт сцены) — рисуем выключенной
+    if (this.goldDoubled) {
+      this.goldBtn?.setEnabled(false);
+      this.goldBtn?.setLabel(t('over.x2Done'));
+    }
+    if (this.gloryDoubled) {
+      this.gloryBtn?.setEnabled(false);
+      this.gloryBtn?.setLabel(t('over.x2Done'));
+    }
   }
 
-  private revive = async (): Promise<void> => {
-    // Без этой защиты два быстрых клика давали два параллельных
-    // showRewardedVideo — лишний вызов SDK и лишняя реклама у игрока.
-    if (!this.canRevive()) return;
-    this.revivePending = true;
-    this.reviveBtn?.setEnabled(false);
-
-    try {
-      const res = await showRewarded({ pause: () => audio.silence(), resume: () => audio.unsilence() });
-
-      if (!res.rewarded) {
-        // Ролик не досмотрен или недоступен — честно говорим об этом
-        this.reviveBtn?.hint.setText(t('over.reviveUnavailable'));
-        this.reviveBtn?.hint.setColor('#ff8a7a');
-        return;
-      }
-
-      const game = this.scene.get('Game') as GameOverReviveTarget;
-      if (!game || typeof game.revive !== 'function' || !game.revive()) {
-        this.reviveBtn?.hint.setText(t('over.reviveUnavailable'));
-        return;
-      }
-
-      this.reviveUsed = true;
-      this.reviveBtn?.destroy();
-      this.reviveBtn = null;
-
-      // Порядок важен: сначала снимаем экран смерти, потом возвращаем бой
-      this.scene.stop('GameOver');
-      this.scene.resume('Game');
-    } finally {
-      this.revivePending = false;
+  /** R5: ролик — и золото матча второй раз уходит в кошелёк (итог ×2). */
+  private watchGoldX2 = async (): Promise<void> => {
+    const gold = this.payload.stats.gold;
+    if (gold <= 0 || this.goldDoubled) return;
+    this.goldBtn?.setEnabled(false);
+    const res = await showPlacementRewarded('wallet-x2', {
+      pause: () => audio.silence(),
+      resume: () => audio.unsilence(),
+    });
+    if (res.rewarded) {
+      depositGold(gold);
+      this.goldDoubled = true;
+      this.goldBtn?.setLabel(t('over.x2Done'));
+      audio.play('ach');
+      return;
     }
+    // Не досмотрел — вернём кнопку, если показ ещё доступен
+    this.goldBtn?.setEnabled(placementAvailable('wallet-x2'));
   };
+
+  /** R9: ролик — начисление удваивается в пределах того же потолка (§H.16). */
+  private watchGloryX2 = async (): Promise<void> => {
+    const g = this.payload.stats.meta?.glory;
+    if (!g || this.gloryDoubled) return;
+    this.gloryBtn?.setEnabled(false);
+    const res = await showPlacementRewarded('glory-x2', {
+      pause: () => audio.silence(),
+      resume: () => audio.unsilence(),
+    });
+    if (res.rewarded) {
+      addGlory(gloryDoubleExtra(g));
+      this.gloryDoubled = true;
+      this.gloryBtn?.setLabel(t('over.x2Done'));
+      audio.play('ach');
+      return;
+    }
+    this.gloryBtn?.setEnabled(placementAvailable('glory-x2'));
+  };
+
+  // ================================================================
+  // Воскрешение за rewarded-ролик удалено (TZ §F.12): его роль перешла
+  // к преемственности (SuccessionScene).
+  // ================================================================
 
   // ================================================================
   // Навигация
@@ -623,30 +983,82 @@ export class GameOverScene extends Phaser.Scene {
     this.scene.restart({ stats: this.payload.stats });
   };
 
-  private createActions(y: number, actH: number, width: number): void {
+  /**
+   * Ряд действий. Без бесконечного режима — прежние две кнопки.
+   * С ним (§H.7): на широких экранах три кнопки в ряд (ЕЩЁ РАЗ /
+   * ДЕРЖАТЬ КРЕПОСТЬ / В МЕНЮ, ширины по контенту), на узких —
+   * «ДЕРЖАТЬ КРЕПОСТЬ» отдельным рядом сверху.
+   */
+  private createActions(y: number, actH: number, width: number, plan: ActionPlan | null): void {
     const w1 = Math.min(240, width * 0.55);
     const w2 = Math.min(150, width * 0.30);
     const gapB = 12;
-    if (w1 + w2 + gapB <= width - 30) {
-      this.btn(width / 2 - (w1 + w2 + gapB) / 2 + w1 / 2, y, t('over.playAgain'), 'blue', w1, actH, () => this.restart(), 16);
+    const sideBySide = w1 + w2 + gapB <= width - 30;
+
+    if (!plan) {
+      if (sideBySide) {
+        this.btn(width / 2 - (w1 + w2 + gapB) / 2 + w1 / 2, y, t('over.again'), 'blue', w1, actH, () => this.restart(), 16);
+        this.btn(width / 2 + (w1 + w2 + gapB) / 2 - w2 / 2, y, t('over.toMenu'), 'red', w2, actH, () => this.toMenu(), 15);
+      } else {
+        this.btn(width / 2, y - actH * 0.55, t('over.again'), 'blue', w1, actH, () => this.restart(), 15);
+        this.btn(width / 2, y + actH * 0.55, t('over.toMenu'), 'red', w2, Math.max(30, actH - 6), () => this.toMenu(), 14);
+      }
+      return;
+    }
+
+    if (plan.threeInRow) {
+      const gap = 10;
+      const x0 = width / 2 - (plan.wAgain + plan.wEndless + plan.wMenu + gap * 2) / 2;
+      this.btn(x0 + plan.wAgain / 2, y, t('over.again'), 'blue', plan.wAgain, actH, () => this.restart(), 16);
+      this.btn(x0 + plan.wAgain + gap + plan.wEndless / 2, y, t('over.endlessEnter'), 'blue', plan.wEndless, actH, () => this.enterEndless(), 15);
+      this.btn(x0 + plan.wAgain + gap + plan.wEndless + gap + plan.wMenu / 2, y, t('over.toMenu'), 'red', plan.wMenu, actH, () => this.toMenu(), 15);
+      return;
+    }
+
+    // Узкий экран: сверху — «ДЕРЖАТЬ КРЕПОСТЬ», снизу — привычный ряд
+    this.btn(width / 2, plan.rowY, t('over.endlessEnter'), 'blue', plan.wEndless, actH, () => this.enterEndless(), 15);
+    if (sideBySide) {
+      this.btn(width / 2 - (w1 + w2 + gapB) / 2 + w1 / 2, y, t('over.again'), 'blue', w1, actH, () => this.restart(), 16);
       this.btn(width / 2 + (w1 + w2 + gapB) / 2 - w2 / 2, y, t('over.toMenu'), 'red', w2, actH, () => this.toMenu(), 15);
     } else {
-      this.btn(width / 2, y - actH * 0.55, t('over.playAgain'), 'blue', w1, actH, () => this.restart(), 15);
+      this.btn(width / 2, y - actH * 0.55, t('over.again'), 'blue', w1, actH, () => this.restart(), 15);
       this.btn(width / 2, y + actH * 0.55, t('over.toMenu'), 'red', w2, Math.max(30, actH - 6), () => this.toMenu(), 14);
     }
   }
 
-  private restart = (): void => {
-    // Гасим возможные зависшие оверлеи (левел-ап/пауза)
+  /** Вход в бесконечный режим: чистый ран с флагом endless (§H.7). */
+  private enterEndless = (): void => {
+    track('end_screen_action', { block: 'chronicle', action: 'endless' });
+    saveRunConfig({
+      contract: null, ukaz: null, challenge: null, blessing: null,
+      consumables: [], endless: true, weeklyChallenge: false,
+    });
+    // Гасим возможные зависшие оверлеи — как в restart()
     this.scene.stop('LevelUp');
     this.scene.stop('Pause');
+    this.scene.stop('Succession');
+    this.scene.stop('Game');
+    this.scene.start('Game');
+  };
+
+  private restart = (): void => {
+    track('end_screen_action', { block: 'chronicle', action: 'rerun' });
+    // Межстраничная по §J.4: триггер — тап «ЕЩЁ РАЗ» (поражение И победа).
+    // Ошибки показа глотаются внутри ads.ts; политика частотности там же.
+    void showInterstitial({ pause: () => audio.silence(), resume: () => audio.unsilence() });
+    // Гасим возможные зависшие оверлеи (левел-ап/пауза/преемственность)
+    this.scene.stop('LevelUp');
+    this.scene.stop('Pause');
+    this.scene.stop('Succession');
     this.scene.stop('Game');
     this.scene.start('Game');
   };
 
   private toMenu = (): void => {
+    track('end_screen_action', { block: 'chronicle', action: 'close' });
     this.scene.stop('LevelUp');
     this.scene.stop('Pause');
+    this.scene.stop('Succession');
     this.scene.stop('Game');
     this.scene.start('Menu');
   };

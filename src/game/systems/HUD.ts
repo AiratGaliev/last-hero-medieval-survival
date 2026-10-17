@@ -107,6 +107,18 @@ export class HUD {
   private toastQueue: AchievementDef[] = [];
   private toastBusy = false;
 
+  // ---- Поселение (TZ §B.8, §E.11, §H.2) ----
+  private resGroup!: Phaser.GameObjects.Container;
+  private resTexts: Record<string, Phaser.GameObjects.Text> = {};
+  private resVisible = false;
+  private settleGroup!: Phaser.GameObjects.Container;
+  private settleInfraBar!: Phaser.GameObjects.Rectangle;
+  private settlePopBar!: Phaser.GameObjects.Rectangle;
+  private garrisonText!: Phaser.GameObjects.Text;
+  private feedItems: Array<Phaser.GameObjects.Container> = [];
+  private speedupBtns: Record<string, Phaser.GameObjects.Container> = {};
+  private speedupHandlers: { repair: () => void; heal: () => void } = { repair: () => {}, heal: () => {} };
+
   private resizeHandler = () => { resetSafeInsets(); this.layout(); };
 
   constructor(scene: Phaser.Scene, onPause: () => void, opts: HudOpts = {}) {
@@ -248,6 +260,35 @@ export class HUD {
     this.indChest = this.makeIndicator(0xffe9b0);
     this.indEnemy = this.makeIndicator(0xff5040);
 
+    // ---- Блок РЕСУРСЫ (дерево/мясо/руда) — скрыт, пока всё по нулям (§B.8) ----
+    this.resGroup = this.scene.add.container(0, 0).setVisible(false);
+    const resDefs: Array<[string, string, number]> = [
+      ['wood', 'res-wood', 0xffffff], ['meat', 'res-meat', 0xffffff], ['ore', 'res-ore', 0xfff0b0],
+    ];
+    resDefs.forEach(([key, tex, tint], i) => {
+      const ic = this.scene.add.image(0, i * 20, tex).setDisplaySize(15, 15).setOrigin(0, 0.5);
+      if (tint !== 0xffffff) ic.setTint(tint);
+      const txt = this.scene.add.text(20, i * 20, '0', {
+        fontFamily: FONT, fontSize: '11px', color: '#ffe9b0',
+        stroke: '#1b1008', strokeThickness: 3,
+      }).setOrigin(0, 0.5);
+      this.resTexts[key] = txt;
+      this.resGroup.add([ic, txt]);
+    });
+
+    // ---- Индикатор поселения: две мини-полосы (§E.11 — обязателен) ----
+    this.settleGroup = this.scene.add.container(0, 0);
+    const castleIc = this.scene.add.image(0, 0, 'castle').setDisplaySize(16, 13).setOrigin(0, 0.5);
+    const barBgI = this.scene.add.rectangle(20, -4, 100, 5, 0x1b1008, 0.85).setOrigin(0, 0.5);
+    const barBgP = this.scene.add.rectangle(20, 4, 100, 5, 0x1b1008, 0.85).setOrigin(0, 0.5);
+    this.settleInfraBar = this.scene.add.rectangle(20, -4, 100, 5, 0xd0a050).setOrigin(0, 0.5);
+    this.settlePopBar = this.scene.add.rectangle(20, 4, 100, 5, 0x6db44a).setOrigin(0, 0.5);
+    this.garrisonText = this.scene.add.text(0, 14, '', {
+      fontFamily: FONT, fontSize: '9px', color: '#d8c9a8',
+      stroke: '#1b1008', strokeThickness: 3,
+    }).setOrigin(0, 0.5);
+    this.settleGroup.add([castleIc, barBgI, barBgP, this.settleInfraBar, this.settlePopBar, this.garrisonText]);
+
     // Порядок добавления = порядок отрисовки (снизу вверх):
     // полосы/тексты → босс-бар → виньетка → анонс → тосты достижений
     // (добавляются динамически). Пауза — отдельным top-level объектом.
@@ -262,6 +303,7 @@ export class HUD {
       this.bossGroup, ...this.vignetteRects, this.announceText,
       this.comboBarBg, this.comboBar, this.comboText,
       this.indChest, this.indEnemy,
+      this.resGroup, this.settleGroup,
     );
     this.root.add(base);
 
@@ -287,6 +329,10 @@ export class HUD {
     this.statsText.setPosition(12 + sa.left, 78 + sa.top);
     this.goldIcon.setPosition(12 + sa.left, 98 + sa.top);
     this.goldText.setPosition(30 + sa.left, 98 + sa.top);
+    // Блок РЕСУРСЫ: под золотом матча (левый столбец, §B.8)
+    this.resGroup.setPosition(12 + sa.left, 120 + sa.top);
+    // Индикатор поселения: под ресурсами
+    this.settleGroup.setPosition(12 + sa.left, 184 + sa.top);
     // Правый верхний угол занят кнопкой паузы: весь блок (счёт, метка
     // сложности, серия) заканчивается левее неё, иначе цифры ложились
     // прямо на кнопку.
@@ -396,6 +442,91 @@ export class HUD {
     this.hpBar.setFraction(frac);
     this.hpText.setText(`${Math.ceil(hp)}/${maxHp}`);
     this.hpText.setColor(frac > 0.25 ? '#ffffff' : '#ff9a8a');
+  }
+
+  // ================= ПОСЕЛЕНИЕ: HUD (TZ §B.8, §E.11) =================
+
+  /** Блок РЕСУРСЫ: обновление по событию economy 'change', не каждый кадр. */
+  updateResources(res: { wood: number; ore: number; meat: number }): void {
+    const any = res.wood > 0 || res.ore > 0 || res.meat > 0;
+    this.resGroup.setVisible(any);
+    this.settleGroup.setPosition(12 + safeInsets().left, (any ? 184 : 122) + safeInsets().top);
+    if (!any && !this.resVisible) return;
+    this.resVisible = any;
+    this.resTexts.wood.setText(`${res.wood}`);
+    this.resTexts.meat.setText(`${res.meat}`);
+    this.resTexts.ore.setText(`${res.ore}`);
+  }
+
+  /** Две полосы поселения + счётчик гарнизона (§E.11). */
+  updateSettlement(infraFrac: number, popFrac: number, garrison: string): void {
+    this.settleInfraBar.width = Math.max(2, 100 * Phaser.Math.Clamp(infraFrac, 0, 1));
+    this.settlePopBar.width = Math.max(2, 100 * Phaser.Math.Clamp(popFrac, 0, 1));
+    this.settleInfraBar.setFillStyle(infraFrac > 0.5 ? 0xd0a050 : infraFrac > 0.25 ? 0xe0a030 : 0xd03028);
+    this.settlePopBar.setFillStyle(popFrac > 0.5 ? 0x6db44a : popFrac > 0.25 ? 0xe0a030 : 0xd03028);
+    if (this.garrisonText.text !== garrison) this.garrisonText.setText(garrison);
+  }
+
+  /** Лента поселения: именные события, 3 последних по 6 сек (§H.2). */
+  feed(text: string, color = '#ffe9b0'): void {
+    const W = this.scene.scale.width;
+    const H = this.scene.scale.height;
+    const c = this.scene.add.container(14, H - 120);
+    const bg = this.scene.add.rectangle(0, 0, Math.min(300, W - 28), 22, 0x1b1008, 0.78).setOrigin(0, 0.5);
+    const label = this.scene.add.text(8, 0, text, {
+      fontFamily: FONT, fontSize: '10px', color,
+      stroke: '#1b1008', strokeThickness: 3,
+      wordWrap: { width: Math.min(284, W - 44) },
+    }).setOrigin(0, 0.5);
+    c.add([bg, label]);
+    this.root.add(c);
+    this.feedItems.push(c);
+    // Старые записи выталкиваются вверх и гаснут
+    while (this.feedItems.length > 3) {
+      const old = this.feedItems.shift()!;
+      this.scene.tweens.add({ targets: old, alpha: 0, duration: 300, onComplete: () => old.destroy() });
+    }
+    this.scene.tweens.add({ targets: c, y: c.y - this.feedItems.length * 0, duration: 1 });
+    this.scene.time.delayedCall(6000, () => {
+      const i = this.feedItems.indexOf(c);
+      if (i >= 0) this.feedItems.splice(i, 1);
+      this.scene.tweens.add({ targets: c, alpha: 0, duration: 400, onComplete: () => c.destroy() });
+    });
+  }
+
+  /** Кнопки ускорений (§G.8): видны только когда есть цель; callback’и GameScene. */
+  setSpeedupHandlers(h: { repair: () => void; heal: () => void }): void {
+    this.speedupHandlers = h;
+  }
+
+  updateSpeedups(repairTarget: boolean, healTarget: boolean): void {
+    const H = this.scene.scale.height;
+    const defs: Array<[string, string, boolean, number]> = [
+      ['repair', t('speedup.repair'), repairTarget, 0],
+      ['heal', t('speedup.heal'), healTarget, 46],
+    ];
+    for (const [key, label, enabled, dy] of defs) {
+      let c = this.speedupBtns[key];
+      if (!enabled) {
+        c?.destroy();
+        delete this.speedupBtns[key];
+        continue;
+      }
+      if (!c) {
+        c = this.scene.add.container(0, 0);
+        const bg = this.scene.add.rectangle(0, 0, 148, 30, 0x1b1008, 0.9).setOrigin(1, 0.5)
+          .setStrokeStyle(1, 0x8a6d3b).setInteractive({ useHandCursor: true });
+        const txt = this.scene.add.text(-8, 0, label, {
+          fontFamily: FONT, fontSize: '10px', color: '#ffe9b0',
+        }).setOrigin(1, 0.5);
+        c.add([bg, txt]);
+        bg.on('pointerdown', () => this.speedupHandlers[key as 'repair' | 'heal']());
+        c.setSize(148, 30);
+        this.speedupBtns[key] = c;
+        this.root.add(c);
+      }
+      c.setPosition(this.scene.scale.width - 14, H - hudBottomInset() - 60 - dy);
+    }
   }
 
   /** Обновление серии убийств: счётчик ×N + полоса окна */
@@ -537,8 +668,8 @@ export class HUD {
     this.indEnemy.setVisible(this.indEnemyShown);
   }
 
-  /** Кино-заставка босса: чёрные полосы + имя (не блокирует игру) */
-  bossIntro(name: string, subtitle = t('hud.bossSubtitleFinal')): void {
+  /** Кино-заставка босса/элиты: чёрные полосы + аватар + имя (не блокирует игру) */
+  bossIntro(name: string, subtitle = t('hud.bossSubtitleFinal'), face?: string): void {
     const W = this.scene.scale.width;
     const H = this.scene.scale.height;
     const barH = Math.max(38, H * 0.085);
@@ -554,6 +685,13 @@ export class HUD {
       stroke: '#5a0808', strokeThickness: 8,
     }).setOrigin(0.5).setAlpha(0).setScale(0.7);
     c.add([topBar, botBar, sub, title]);
+    // Аватар существа из enemies/avatars — крупно над именем
+    let avatar: Phaser.GameObjects.Image | null = null;
+    if (face && this.scene.textures.exists(face)) {
+      avatar = this.scene.add.image(W / 2, H / 2 - 110, face)
+        .setOrigin(0.5).setAlpha(0).setScale(0.4);
+      c.add(avatar);
+    }
     this.root.add(c);
     // Полосы въезжают
     this.scene.tweens.add({ targets: topBar, y: barH / 2 + 1, duration: 240, ease: 'Cubic.easeOut' });
@@ -561,9 +699,13 @@ export class HUD {
     // Имя вспыхивает
     this.scene.tweens.add({ targets: [sub, title], alpha: 1, duration: 200, delay: 160 });
     this.scene.tweens.add({ targets: title, scale: 1, duration: 340, delay: 160, ease: 'Back.easeOut' });
+    if (avatar) {
+      this.scene.tweens.add({ targets: avatar, alpha: 1, scale: 1, duration: 320, delay: 120, ease: 'Back.easeOut' });
+    }
     // ...и всё уезжает
+    const fadeTargets: Phaser.GameObjects.GameObject[] = avatar ? [sub, title, avatar] : [sub, title];
     this.scene.tweens.add({
-      targets: [sub, title], alpha: 0, duration: 260, delay: 1750,
+      targets: fadeTargets, alpha: 0, duration: 260, delay: 1750,
       onComplete: () => {
         this.scene.tweens.add({
           targets: topBar, y: -barH / 2 - 2, duration: 260, ease: 'Cubic.easeIn',

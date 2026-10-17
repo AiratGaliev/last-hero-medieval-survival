@@ -12,6 +12,9 @@ export default tseslint.config(
       'src/assets/**',
       // Скрипт SDK Яндекс Игр — сторонний минифицированный код, логинить его незачем
       'public/vendor/**',
+      // Инфраструктура песочницы (не часть проекта; см. .gitignore)
+      'skills/**',
+      '.zscripts/**',
     ],
   },
 

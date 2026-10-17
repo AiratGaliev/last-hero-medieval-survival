@@ -5,6 +5,9 @@ import { GameScene } from './scenes/GameScene';
 import { LevelUpScene } from './scenes/LevelUpScene';
 import { PauseScene } from './scenes/PauseScene';
 import { GameOverScene } from './scenes/GameOverScene';
+import { SuccessionScene } from './scenes/SuccessionScene';
+import { MetaScene } from './scenes/MetaScene';
+import { ShopScene } from './scenes/ShopScene';
 
 // ============ Конфигурация Phaser-игры ============
 
@@ -29,6 +32,7 @@ export function createGame(parent: HTMLElement): Phaser.Game {
     },
     pixelArt: true,
     roundPixels: true,
-    scene: [BootScene, MenuScene, GameScene, LevelUpScene, PauseScene, GameOverScene],
+    // MetaScene/ShopScene — оверлеи поверх меню (фазы Q/S, ROADMAP)
+    scene: [BootScene, MenuScene, GameScene, LevelUpScene, PauseScene, GameOverScene, SuccessionScene, MetaScene, ShopScene],
   });
 }

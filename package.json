@@ -13,6 +13,7 @@
     "preview": "vite preview",
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
+    "db:push": "exit 0",
     "check": "npm run typecheck && npm run lint"
   },
   "dependencies": {

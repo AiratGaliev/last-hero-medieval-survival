@@ -7,10 +7,16 @@
 // Плюс частотность: между межстраничными держим собственную паузу, чтобы
 // не вызывать показ на каждом втором проигрыше.
 
-import { getSdk, isOnYandex } from './sdk';
+import { getSdk, isOnYandex, isMockMode, serverNow } from './sdk';
+import { loadJson, saveJson } from '../game/storage';
+import { hasNoInterstitial, matchesPlayed } from '../game/meta';
+import { track } from './analytics';
 
-/** Пауза между межстраничными показами. */
-const INTERSTITIAL_COOLDOWN_MS = 150_000;
+/**
+ * Пауза между межстраничными показами (TZ §J.4): ≥ 120 сек свой таймер
+ * поверх политики площадки.
+ */
+const INTERSTITIAL_MIN_INTERVAL_MS = 120_000;
 
 let lastInterstitialAt = 0;
 let lastError: string | null = null;
@@ -38,14 +44,15 @@ async function withPaused<T>(hooks: AdPause, fn: () => Promise<T>): Promise<T> {
 }
 
 /**
- * Межстраничная реклама. Показывается по кулдауну; при отсутствии SDK,
- * гостевом режиме или ошибке молча возвращает false.
+ * Межстраничная реклама по политике §J.4: не раньше 3-го матча, ≥ 120 сек,
+ * ≤ 6 за сессию, не после 2 поражений подряд, отключается SKU no_interstitial.
+ * При отсутствии SDK, гостевом режиме или ошибке молча возвращает false.
  */
 export async function showInterstitial(hooks: AdPause = NO_PAUSE): Promise<boolean> {
-  if (!isOnYandex()) return false;
+  if (!interstitialAllowed()) return false;
 
   const now = Date.now();
-  if (now - lastInterstitialAt < INTERSTITIAL_COOLDOWN_MS) return false;
+  if (now - lastInterstitialAt < INTERSTITIAL_MIN_INTERVAL_MS) return false;
 
   const sdk = getSdk();
   if (!sdk) return false;
@@ -54,9 +61,11 @@ export async function showInterstitial(hooks: AdPause = NO_PAUSE): Promise<boole
     const shown = await withPaused(hooks, () => sdk.adv.showFullscreenAdv());
     lastInterstitialAt = Date.now();
     lastError = null;
+    if (shown === true) interstitialSessionCount += 1;
     return shown === true;
   } catch (err) {
     lastError = String(err);
+    track('ad_error', { kind: 'interstitial', message: lastError });
     console.warn('[ads] межстраничная не показана:', err);
     return false;
   }
@@ -69,22 +78,162 @@ export interface RewardedResult {
   available: boolean;
 }
 
+// ============ Реестр rewarded-плейсментов (TZ §J.3) ============
+// Лимиты централизованы. События ad_* шлются из одной точки (§K.2).
+//
+// За ран (сбрасываются resetPlacementLimits() в начале матча):
+//   R1 succession        — преемственность: выбор воина бесплатно
+//   R2 repair-speedup    — ускорение ремонта
+//   R3 heal-speedup      — ускорение лечения
+//   R4 blessing          — благословение перед раном (1 из 3)
+//   R5 wallet-x2         — ×2 золота в кошелёк (end-экран)
+//   R9 glory-x2          — ×2 славы (end-экран; потолок не поднимает, §H.16)
+//
+// За день (даты — с сервера Яндекса, персистятся):
+//   R6 challenge-reroll  — реролл модификаторов вызова дня (1/день)
+//   R7 daily-chest       — ежедневный сундук (2/день)
+//   R8 shop-refresh      — освежение лавки (1/день)
+//   R10 quest-reroll     — реролл задания дня (3/день)
+//   R11 bonus-x2         — ×2 дар ежедневки (1/день)
+//   R12 consumable       — «Подкова удачи» за рекламу (расходник, 2 активных)
+export type AdPlacement =
+  | 'succession' | 'repair-speedup' | 'heal-speedup'
+  | 'blessing' | 'wallet-x2' | 'glory-x2'
+  | 'challenge-reroll' | 'daily-chest' | 'shop-refresh' | 'quest-reroll'
+  | 'bonus-x2' | 'consumable';
+
+/** Лимит за ран (per-run) или за день (daily), TZ §J.3. */
+export const PLACEMENT_LIMITS: Record<AdPlacement, { limit: number; period: 'run' | 'day' }> = {
+  succession: { limit: 1, period: 'run' },
+  'repair-speedup': { limit: 1, period: 'run' },
+  'heal-speedup': { limit: 1, period: 'run' },
+  blessing: { limit: 1, period: 'run' },
+  'wallet-x2': { limit: 1, period: 'run' },
+  'glory-x2': { limit: 1, period: 'run' },
+  'challenge-reroll': { limit: 1, period: 'day' },
+  'daily-chest': { limit: 2, period: 'day' },
+  'shop-refresh': { limit: 1, period: 'day' },
+  'quest-reroll': { limit: 3, period: 'day' },
+  'bonus-x2': { limit: 1, period: 'day' },
+  consumable: { limit: 1, period: 'day' },
+};
+
+const usedPlacements = new Map<AdPlacement, number>();
+const LS_AD_DAY = 'tss-ads-day';
+
+interface AdDayState { date: string; used: Record<string, number> }
+
+function todayKey(): string {
+  const d = new Date(serverNow());
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
+function loadDay(): AdDayState {
+  const raw = loadJson<AdDayState | null>(LS_AD_DAY);
+  const date = todayKey();
+  if (!raw || raw.date !== date) return { date, used: {} };
+  return { date, used: raw.used ?? {} };
+}
+
+function saveDay(st: AdDayState): void {
+  saveJson(LS_AD_DAY, st);
+}
+
+function usedCount(p: AdPlacement): number {
+  const def = PLACEMENT_LIMITS[p];
+  if (def.period === 'day') return loadDay().used[p] ?? 0;
+  return usedPlacements.get(p) ?? 0;
+}
+
+/** Доступен ли показ: лимит не исчерпан и платформа умеет показывать. */
+export function placementAvailable(p: AdPlacement): boolean {
+  if (!rewardedAvailable()) return false;
+  return usedCount(p) < PLACEMENT_LIMITS[p].limit;
+}
+
+/** Показ rewarded-ролика под плейсмент с учётом лимита. */
+export async function showPlacementRewarded(
+  placement: AdPlacement,
+  hooks: AdPause = NO_PAUSE,
+): Promise<RewardedResult> {
+  if (!placementAvailable(placement)) {
+    return { rewarded: false, available: false };
+  }
+  const res = await showRewarded(hooks);
+  if (res.rewarded) {
+    if (PLACEMENT_LIMITS[placement].period === 'day') {
+      const day = loadDay();
+      day.used[placement] = (day.used[placement] ?? 0) + 1;
+      saveDay(day);
+    } else {
+      usedPlacements.set(placement, (usedPlacements.get(placement) ?? 0) + 1);
+    }
+  }
+  return res;
+}
+
+/** Сброс лимитов за ран (в начале матча). Дневные лимиты не трогаем. */
+export function resetPlacementLimits(): void {
+  usedPlacements.clear();
+}
+
+// ============ Interstitial-политика (TZ §J.4) ============
+//
+// Триггеры: экран поражения (тап «ЕЩЁ РАЗ») и экран победы (тап продолжения).
+//   • не раньше 3-го матча аккаунта (FTUE-защита);
+//   • интервал ≥ 120 сек между показами (свой таймер поверх политики YG);
+//   • потолок ≤ 6 показов за сессию;
+//   • запрет: во время рана, на SuccessionScene, после 2 поражений подряд;
+//   • ошибка/таймаут — молча пропускаем, показ не засчитывается;
+//   • SKU no_interstitial отключает межстраничные (rewarded остаётся).
+
+const INTERSTITIAL_MAX_SESSION = 6;
+
+let interstitialSessionCount = 0;
+let lossesInRow = 0;
+
+/** Матч закончился поражением/победой — вызывается экраном результата. */
+export function registerRunOutcome(victory: boolean): void {
+  lossesInRow = victory ? 0 : lossesInRow + 1;
+}
+
+/** Можно ли показать межстраничный по политике §J.4 (без гарантии показа). */
+export function interstitialAllowed(): boolean {
+  if (!isOnYandex()) return false;
+  if (hasNoInterstitial()) return false;                  // SKU фазы S
+  if (matchesPlayed() < 3) return false;                  // FTUE: не раньше 3-го матча
+  if (interstitialSessionCount >= INTERSTITIAL_MAX_SESSION) return false;
+  if (lossesInRow >= 2) return false;                     // anti-churn §H.14
+  return true;
+}
+
 /**
  * Rewarded-ролик за воскрешение. `blockers` должны глушить звук на время
  * показа; награду начисляет вызывающий код — только здесь она не выдаётся,
  * чтобы её нельзя было получить дважды на одном показе.
  */
 export async function showRewarded(hooks: AdPause = NO_PAUSE): Promise<RewardedResult> {
+  // QA-режим (?ysdk=mock): ролик «досмотрен» мгновенно — вся реестр R1–R11
+  // проверяется end-to-end без Консоли (покупки в mock и так выдаются локально)
+  if (isMockMode()) {
+    track('ad_impression', { kind: 'rewarded', mock: true });
+    track('ad_rewarded_complete', { mock: true });
+    return { rewarded: true, available: true };
+  }
   if (!isOnYandex()) return { rewarded: false, available: false };
 
   const sdk = getSdk();
   if (!sdk) return { rewarded: false, available: false };
 
   try {
+    track('ad_impression', { kind: 'rewarded' });
     const res = await withPaused(hooks, () => sdk.adv.showRewardedVideo());
-    return { rewarded: res?.rewarded === true, available: true };
+    const rewarded = res?.rewarded === true;
+    if (rewarded) track('ad_rewarded_complete', {});
+    return { rewarded, available: true };
   } catch (err) {
     lastError = String(err);
+    track('ad_error', { kind: 'rewarded', message: lastError });
     console.warn('[ads] rewarded не показан:', err);
     return { rewarded: false, available: true };
   }
@@ -98,4 +247,36 @@ export function rewardedAvailable(): boolean {
 /** Последняя ошибка показа — для отладочной панели. */
 export function lastAdError(): string | null {
   return lastError;
+}
+
+// ============ Стики-баннер (TZ §J.5) ============
+// Только вне рана: меню / мета-сцены / экран конца. В бою и оверлеях рана
+// баннер скрыт — иначе перекрывает HUD и злит игрока (антиспам §J.9).
+
+let bannerVisible = false;
+
+/** Показать стики-баннер (idempotent: повторный вызов без SDK — no-op). */
+export function showStickyBanner(): void {
+  if (bannerVisible) return;
+  const sdk = getSdk();
+  if (!sdk?.adv?.showBanner) return;
+  try {
+    sdk.adv.showBanner({});
+    bannerVisible = true;
+  } catch (err) {
+    console.warn('[ads] showBanner не удался:', err);
+  }
+}
+
+/** Скрыть стики-баннер (idempotent). */
+export function hideStickyBanner(): void {
+  if (!bannerVisible) return;
+  const sdk = getSdk();
+  if (!sdk?.adv?.hideBanner) return;
+  try {
+    sdk.adv.hideBanner();
+    bannerVisible = false;
+  } catch (err) {
+    console.warn('[ads] hideBanner не удался:', err);
+  }
 }

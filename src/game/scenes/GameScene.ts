@@ -2,13 +2,26 @@ import Phaser from 'phaser';
 import { Cursor } from '../systems/Cursor';
 import {
   WORLD, PLAYER_BASE, DEPTH, ENEMY_CAP, SCORE, XP_CURVE, COMBO, MAX_LEVEL,
+  AGGRO, SIEGE, LONGPRESS_MS, VEIN_COUNT, VEIN_CHARGES, VEIN_YIELD,
+  TOWER, BOSS_GOLD, HEAL_HP_PER_SEC,
 } from '../constants';
 import {
   WEAPONS, PASSIVES, HEROES, ENEMIES, DIFFICULTIES, EVOLUTIONS,
+  SETTLEMENT_CARDS, BUILD_SPOTS,
   type WeaponId, type PassiveId, type EnemyKind, type UpgradeCard, type HeroId, type HeroDef, type DifficultyId, type DifficultyDef,
+  type SiegeProfile, type BuildingKind,
 } from '../data';
 import { Player } from '../entities/Player';
 import { Enemy, type EnemyContext } from '../entities/Enemy';
+import { Pawn } from '../entities/Pawn';
+import { Building } from '../entities/Building';
+import { ResourceNode } from '../entities/ResourceNode';
+import { Economy } from '../systems/Economy';
+import { Settlement, type LoseCause } from '../systems/Settlement';
+import { Succession } from '../systems/Succession';
+import { Speedup } from '../systems/Speedup';
+import { Hints } from '../systems/Hints';
+import { OrderMenu } from '../systems/OrderMenu';
 import { audio } from '../systems/Audio';
 import { Effects } from '../systems/Effects';
 import { Pickups } from '../systems/Pickups';
@@ -18,10 +31,19 @@ import { WeaponSystem, type WeaponCtx } from '../systems/Weapons';
 import { HUD } from '../systems/HUD';
 import { Joystick } from '../systems/Joystick';
 import { AchTracker, commitMeta } from '../achievements';
-import { getShopLevels, type ShopLevels } from '../shop';
+import { depositGold, getShopLevels, type ShopLevels } from '../shop';
 import { t } from '../../i18n';
 import { loadText } from '../storage';
 import { gameplayStart, gameplayStop } from '../../platform/lifecycle';
+import { resetPlacementLimits, hideStickyBanner } from '../../platform/ads';
+import { track, beginRun } from '../../platform/analytics';
+import {
+  consumeRunConfig, loadMetaState, rollMetaDay, nodeEffects, seasonDef,
+  takeConsumables, applyRunToMeta, contractDef, QUEST_POOL, markCodex,
+  heroSkinTint, buildingSkinTint, trailSkinTint, activeBanner, matchesPlayed,
+  type RunModifiers, type NodeEffects, type SeasonModifier, type RunSummary,
+  type QuestMetric,
+} from '../meta';
 
 type Keys = Record<string, Phaser.Input.Keyboard.Key>;
 
@@ -50,7 +72,28 @@ export class GameScene extends Phaser.Scene {
   private weapons!: WeaponSystem;
   private hud!: HUD;
   private boss: Enemy | null = null;
-  private midboss: Enemy | null = null;
+
+  // ---- Поселение (TZ §B, §E, §F, §G) ----
+  private economy!: Economy;
+  private settlement!: Settlement;
+  private succession!: Succession;
+  private speedup!: Speedup;
+  private hints!: Hints;
+  private orderMenu!: OrderMenu;
+  /** Замок стоит в центре-севере арены (как декор раньше). */
+  private readonly castleX = WORLD.SIZE / 2;
+  private readonly castleY = WORLD.SIZE / 2 - 460;
+  /** Активная осада: состав, цель, окно (§E.4). */
+  private siegeAlive = false;
+  private siegeDestroyed = 0;
+  /** Причина поражения для экрана и телеметрии (§E.3). */
+  private loseCause: LoseCause = 'hero';
+  /** Сдача на экране преемственности — для cause='surrender' в run_end (§K.2). */
+  private surrendered = false;
+  /** Тик башни: следующий выстрел по времени сцены (фаза M). */
+  private towerNextShot = 0;
+  /** Long-press приказов (§B.6). */
+  private pressState: { x: number; y: number; t: number; pawn: Pawn | null; building: Building | null } | null = null;
 
   // Состояние матча
   private elapsed = 0;
@@ -79,9 +122,11 @@ export class GameScene extends Phaser.Scene {
 
   private lastMove = { x: 1, y: 0 };
   private lastHudUpdate = 0;
+  private lastSettleHud = 0;
   private lastDespawn = 0;
   private lastDieSound = 0;
   private lastIndicatorUpdate = 0;
+  private extinctAt: number | null = null;
   private sepGrid = new Map<number, Enemy[]>();
   private heroDef: HeroDef = HEROES.warrior;
   private diffDef: DifficultyDef = DIFFICULTIES.normal;
@@ -92,9 +137,9 @@ export class GameScene extends Phaser.Scene {
   private hitstopUntil = 0;
   private ach: AchTracker | null = null;
   private shopLevels: ShopLevels = { might: 0, vitality: 0, speed: 0, magnet: 0, luck: 0 };
-  // Новые типы врагов: счётчики для достижений
-  private guardsSlain = 0;
-  private taskmastersSlain = 0;
+  // Существа: счётчики для достижений (TZ §A.6)
+  private skullsSlain = 0;
+  private shamansSlain = 0;
   /** Статистика урона/убийств по оружию */
   private weaponStats = new Map<WeaponId, { dmg: number; kills: number }>();
   /** Амбиентная тонировка суток (MULTIPLY-прямоугольник на весь экран) */
@@ -104,6 +149,66 @@ export class GameScene extends Phaser.Scene {
   private combo = 0;
   private comboTimer = 0;
   private bestCombo = 0;
+
+  // ============ Мета-модификаторы рана (фазы Q/S, TZ §H.7–H.18, §J) ============
+  /** Конфиг рана: контракт/указ/вызов/благословение/расходники/бесконечный. */
+  private mods: RunModifiers = {
+    contract: null, ukaz: null, challenge: null, blessing: null,
+    consumables: [], endless: false, weeklyChallenge: false,
+  };
+  /** Эффекты дерева «Хроника Долины» (§H.16). */
+  private fx!: NodeEffects;
+  /** Сезонный модификатор мира (§H.18). */
+  private seasonMod: SeasonModifier | null = null;
+  private contractId: string | null = null;
+  private challengeMods = new Set<string>();
+  private consumableSet = new Set<string>();
+  /** Узел m8 «Клятва долины»: стартовый мечник получает +20 HP. */
+  private oathM8 = false;
+  /** applyRunToMeta вызывается ровно один раз за ран (§K.2). */
+  private metaApplied = false;
+  /** Волны бесконечного режима (счётчик осад, §H.12). */
+  private wave = 0;
+  // ---- Сводка рана (RunSummary §K.2) ----
+  private killsByKind: Record<string, number> = {};
+  private buildingsBuilt = 0;
+  private builtBarracks = 0;
+  private builtMonastery = 0;
+  private builtArchery = 0;
+  /** Время (минуты) первой постройки дома — задание «Новый дом» §H.17. */
+  private firstHouseMin = 0;
+  private hires = 0;
+  private successions = 0;
+  private bossKilled = false;
+  private cardsPicked: string[] = [];
+  /** Контракт «Пацифист-герой» (§H.9): золото мимо сводки → в кошелёк лавки. */
+  private pacifistGold = 0;
+  /** Золото за убийства: «Чёрный рынок» ×1.5, «Туман» ×1.2 (§H.9, A2). */
+  private killGoldMult = 1;
+  /** «Кровавая луна»/«Подкова удачи»: множитель XP поверх пассивок (A2, §J.6.2). */
+  private xpEventMult = 1;
+  /** QA-хук (?qa_hero_hp=N): бонус к HP героя, применяется в recomputeStats. */
+  private qaHeroHpBonus = 0;
+  /** «Кровавая луна»: скорость врагов ×1.1 (A2). */
+  private enemySpeedMult = 1;
+  /** Благословение «Комбо» (A2): вехи 20/40/80 вместо 25/50/100/200. */
+  private comboMilestones: readonly number[] = COMBO.MILESTONES;
+  /** Контракт «Ночь»/«Туман»: затемнение ambient (светлого пятна в сцене нет). */
+  private ambientDarkMult = 1;
+  /** Скин построек (§J.6.2): tint для замка и всех построек. */
+  private bldTint: number | null = null;
+  /** Шлейф героя (§J.6.2): эмиттер частиц за спрайтом. */
+  private trailEmitter: Phaser.GameObjects.Particles.ParticleEmitter | null = null;
+  /** Тосты заданий дня: одноразовость внутри рана (§H.17). */
+  private questToastDone = new Set<string>();
+  private questCheckAcc = 0;
+  /** FTUE (§I.2): тепличный первый матч — плотность волн −20% первые 3 минуты. */
+  private ftueSoftStart = false;
+  /** Подсказка «построй дом» — один раз при 30 дерева (§I.2). */
+  private houseHintArmed = true;
+  /** perf_fps (§K.2): накопитель среднего FPS за 30-секундное окно. */
+  private perfAcc = 0;
+  private perfFrames = 0;
 
   constructor() {
     super('Game');
@@ -120,8 +225,25 @@ export class GameScene extends Phaser.Scene {
     this.initHero(payload?.hero);
     this.initDifficulty(payload?.diff);
     this.shopLevels = getShopLevels();
+    // Т0 аналитики: реестр плейсментов и метка рана — до любых механик (§K.1)
+    resetPlacementLimits();
+    beginRun();
+    track('run_start', { hero: this.heroDef.id, difficulty: this.diffDef.id });
+    // Стики-баннер (§J.5) показывается только вне рана — в бою гасим
+    hideStickyBanner();
     this.buildWorld();
     this.buildPlayer();
+    // «Первый урок» (§H.16): +1 стартовый уровень героя (единственный
+    // узел дерева, дающий силу — правило честности §H.16)
+    if (this.fx.startLevelBonus > 0) {
+      this.level = 1 + this.fx.startLevelBonus;
+      this.xpNext = XP_CURVE(this.level);
+    }
+    // Скин героя (§J.6.2): setTint палитры тира — без новых ассетов
+    const heroTint = heroSkinTint();
+    if (heroTint !== null) this.player.setTint(heroTint);
+    // «Вторые ворота» (§H.16): щит героя на 5 сек в начале матча
+    if (this.fx.heroShieldMs > 0) this.player.iframesUntil = this.time.now + this.fx.heroShieldMs;
     // Зум камеры ДО создания HUD: HUD читает зум при постройке и
     // компенсирует его (иначе первый кадр рисует HUD не на месте).
     this.resizeZoom();
@@ -144,6 +266,8 @@ export class GameScene extends Phaser.Scene {
       this.weapons?.destroy();
       this.hud?.destroy();
       this.pickups?.destroy();
+      this.trailEmitter?.destroy();
+      this.trailEmitter = null;
       audio.stopMusic();
     });
 
@@ -163,7 +287,12 @@ export class GameScene extends Phaser.Scene {
     this.pendingLevelUps = 0; this.overlayOpen = false; this.gameEnded = false;
     this.victoryPending = false;
     this.boss = null;
-    this.midboss = null;
+    this.siegeAlive = false;
+    this.siegeDestroyed = 0;
+    this.loseCause = 'hero';
+    this.surrendered = false;
+    this.towerNextShot = 0;
+    this.pressState = null;
     this.passiveLevels.clear();
     this.armorMult = 1; this.magnetRadius = PLAYER_BASE.MAGNET_RADIUS;
     this.regen = 0; this.mightMult = 1; this.cdMult = 1; this.critChance = 0;
@@ -172,8 +301,10 @@ export class GameScene extends Phaser.Scene {
     this.chestsOpened = 0;
     this.elitesSlain = 0;
     this.hitstopUntil = 0;
-    this.guardsSlain = 0;
-    this.taskmastersSlain = 0;
+    this.skullsSlain = 0;
+    this.shamansSlain = 0;
+    this.extinctAt = null;
+    this.lastSettleHud = 0;
     this.weaponStats.clear();
     this.ambientRect?.destroy();
     this.ambientRect = null;
@@ -184,6 +315,48 @@ export class GameScene extends Phaser.Scene {
     this.registry.set('tss-freeze', 0);
     this.lastMove = { x: 1, y: 0 };
     this.sepGrid.clear();
+    this.trailEmitter?.destroy();
+    this.trailEmitter = null;
+
+    // ---- Конфиг рана (фазы Q/S): читается и гасится один раз (§H.7–H.18, §J) ----
+    this.mods = consumeRunConfig();
+    if (this.mods.endless) track('endless_start', {});
+    takeConsumables(this.mods.consumables);
+    const meta = loadMetaState();
+    this.fx = nodeEffects(meta.nodes);
+    this.seasonMod = seasonDef().modifier;
+    this.contractId = contractDef(this.mods.contract)?.id ?? null;
+    this.challengeMods = new Set<string>(this.mods.challenge?.mods ?? []);
+    this.consumableSet = new Set<string>(this.mods.consumables);
+    this.oathM8 = meta.nodes.includes('m8');
+    this.metaApplied = false;
+    this.wave = 0;
+    this.killsByKind = {};
+    this.buildingsBuilt = 0; this.builtBarracks = 0; this.builtMonastery = 0; this.builtArchery = 0;
+    this.firstHouseMin = 0;
+    this.hires = 0;
+    this.successions = 0;
+    this.bossKilled = false;
+    this.cardsPicked = [];
+    this.pacifistGold = 0;
+    // Множители из модов вызова/контрактов/расходников (§H.9, A2, §J.6.2)
+    this.killGoldMult = (this.contractId === 'c_black_market' ? 1.5 : 1)
+      * (this.challengeMods.has('cm_fog') ? 1.2 : 1);
+    this.xpEventMult = (this.challengeMods.has('cm_blood_moon') ? 1.15 : 1)
+      * (this.consumableSet.has('cs_horseshoe') ? 1.25 : 1);
+    this.enemySpeedMult = this.challengeMods.has('cm_blood_moon') ? 1.1 : 1;
+    // Благословение «Комбо» (A2): вехи чаще
+    this.comboMilestones = this.mods.blessing === 'bl_combo' ? [20, 40, 80] : COMBO.MILESTONES;
+    // «Ночь» −25% / «Туман» −20%: затемняем ambient (радиус обзора условно)
+    this.ambientDarkMult = this.contractId === 'c_night' ? 0.75
+      : this.challengeMods.has('cm_fog') ? 0.8 : 1;
+    this.questToastDone = new Set();
+    this.questCheckAcc = 0;
+    this.ftueSoftStart = matchesPlayed() === 0; // первый матч аккаунта (§I.2)
+    this.houseHintArmed = true;
+    this.perfAcc = 0;
+    this.perfFrames = 0;
+    this.bldTint = buildingSkinTint();
   }
 
   private initDifficulty(diffId?: DifficultyId): void {
@@ -280,11 +453,97 @@ export class GameScene extends Phaser.Scene {
       Phaser.Math.Clamp(rng.between(m + 80, S - m - 80), margin, S - margin),
     ];
 
-    // Замок — дом игрока
-    const castle = this.add.image(cx, cy - 460, 'castle').setScale(0.9)
-      .setDepth(DEPTH.ENTITY_BASE + cy - 460);
-    void castle;
-    place(cx, cy - 460, 200);
+    // ---- Экономика и поселение (TZ §B): до декора, чтобы узлы
+    // ресурсов регистрировались сразу. Замок — Building с HP (§E). ----
+    this.economy = new Economy(this, {
+      castleX: this.castleX,
+      castleY: this.castleY,
+      onBuildComplete: (kind) => this.onBuildComplete(kind),
+      onRepairComplete: () => {},
+      onBurnDamage: (b, amount) => this.settlement.damageBuilding(b, amount, b.lastSiegeIdx, false),
+      onBuildingDestroyed: (b) => this.settlement.onBuildingDestroyed(b),
+      // ---- Мета-эффекты рана (§H.16 дерево, §H.17 указы, §H.9 контракты, A2, §J.6.2) ----
+      pawnSpeedMult: this.fx.pawnSpeedMult
+        * (this.mods.blessing === 'bl_pawn_speed' ? 1.10 : 1)
+        * (this.challengeMods.has('cm_winter') ? 0.85 : 1),
+      workSpeedMult: this.fx.workSpeedMult * (this.consumableSet.has('cs_forester') ? 1.25 : 1),
+      buildCostMult: this.fx.buildCostMult * (this.contractId === 'c_black_market' ? 1.5 : 1),
+      houseCostMult: this.challengeMods.has('cm_winter') ? 0.8 : 1,
+      buildTimeMult: this.challengeMods.has('cm_stone') ? 1.3 : 1,
+      hireCostMult: this.fx.hireCostMult,
+      bowMonkCostMult: this.fx.bowMonkCostMult,
+      hireTimeMult: this.fx.hireTimeMult,
+      veinYieldMult: this.fx.veinYieldMult * (this.seasonMod === 'gold_rush_world' ? 1.5 : 1),
+      sheepYieldMult: this.fx.sheepYieldMult,
+      woodYieldMult: this.mods.ukaz === 'ukaz_drought' ? 0.7 : 1,
+      garrisonHpMult: this.consumableSet.has('cs_horn') ? 1.25 : 1,
+      garrisonSlotsBonus: this.fx.garrisonSlotsBonus,
+      barracksSlotsBonus: this.fx.barracksSlotsBonus,
+      buildingHpMult: this.fx.buildingHpMult
+        * (this.challengeMods.has('cm_stone') ? 1.3 : 1)
+        * (this.mods.ukaz === 'ukaz_fragile' ? 0.75 : 1),
+      houseHpMult: this.fx.houseHpMult,
+      healHpsBonus: this.fx.healHpsBonus,
+      monkHpsBonus: this.fx.monkHpsBonus,
+      healWoodMult: this.fx.healWoodMult
+        * (this.mods.blessing === 'bl_heal_wood' ? 0.75 : 1)
+        * (this.challengeMods.has('cm_plague') ? 2 : 1),
+      repairCostMult: this.fx.repairCostMult,
+      meatDisabled: this.contractId === 'c_hunger',
+      hireDisabled: this.mods.ukaz === 'ukaz_lone',
+      repairDisabled: this.contractId === 'c_no_repair',
+      monasterySlots: this.mods.ukaz === 'ukaz_silent_monastery' ? 5 : undefined,
+      extraHouseSpots: this.fx.extraBuildSpots + (this.mods.endless ? 4 : 0),
+      endless: this.mods.endless,
+      veinCharges: this.challengeMods.has('cm_gold_rush') ? VEIN_CHARGES * 2 : VEIN_CHARGES,
+    });
+    // «Стартовые припасы» (§H.16) + благословение «Старт +20 дерева» (A2)
+    if (this.fx.startWood > 0 || this.mods.blessing === 'bl_wood_start') {
+      this.economy.resources.wood += this.fx.startWood + (this.mods.blessing === 'bl_wood_start' ? 20 : 0);
+      this.economy.emit('change');
+    }
+    if (this.fx.startOre > 0) this.economy.resources.ore += this.fx.startOre;
+    this.settlement = new Settlement(this, this.economy, {
+      onFeed: (text, color) => this.hud?.feed(text, color),
+      onDefeat: (cause) => this.onSettlementDefeat(cause),
+      onVeteran: (pawn) => {
+        // Микро-награды ветеранства: +100 очков, +25 XP (§E.8, §H.6)
+        this.score += 100;
+        this.addXp(25);
+        this.effects.popup(pawn.x, pawn.y - 60, '+100', '#ffd76e', 14);
+      },
+      onMonasteryFalling: (victims) => {
+        this.hud?.announce(t('siege.monasteryFalling', { v: victims }), '#ff5544');
+        track('monastery_falling', { victims });
+      },
+      onMonasteryCollapsed: (victims) => {
+        this.hud?.announce(t('siege.monasteryCollapsed', { v: victims }), '#ff5544');
+        this.economy.emit('feed', { text: t('siege.monasteryCollapsed', { v: victims }) });
+        track('monastery_collapsed', { victims });
+      },
+      onBuildingDestroyed: (b) => this.onBuildingDestroyed(b),
+      onSiegeScore: (outcome, index) => this.onSiegeScore(outcome, index),
+      heroX: () => this.player.x,
+      heroY: () => this.player.y,
+    });
+    this.succession = new Succession(this.economy, this.settlement, {
+      // Контракт «Один в поле» (§H.9): ветвь «за ресурсы» недоступна
+      resourcesBranchDisabled: this.contractId === 'c_lone_hero',
+    });
+    this.speedup = new Speedup(this.economy);
+    this.hints = new Hints(this);
+    this.orderMenu = new OrderMenu(this);
+    void cx; void cy;
+
+    // Замок — база поселения (Building с HP, создаётся в Settlement)
+    place(this.castleX, this.castleY, 200);
+    // Пятна стройки: мягкие маркеры на земле (§I.2 — игрок видит, где будет дом)
+    for (const spot of BUILD_SPOTS) {
+      const sx = this.castleX + spot.dx, sy = this.castleY + spot.dy;
+      this.add.image(sx, sy, 'aoe-ring')
+        .setScale(0.85).setAlpha(0.16).setDepth(DEPTH.GEM);
+      place(sx, sy, 96);
+    }
     this.add.image(cx - 240, cy - 420, 'house2').setScale(0.8).setDepth(DEPTH.ENTITY_BASE + cy - 420);
     this.add.image(cx + 230, cy - 430, 'house1').setScale(0.8).setDepth(DEPTH.ENTITY_BASE + cy - 430);
     this.add.image(cx - 320, cy - 300, 'tower').setScale(0.85).setDepth(DEPTH.ENTITY_BASE + cy - 300);
@@ -309,8 +568,7 @@ export class GameScene extends Phaser.Scene {
       }
     }
     // ---- Деревья: четыре породы разной высоты ----
-    // Раньше выбор был из двух видов, и карта читалась как копия
-    // одного объекта. tree2/tree4 отличаются силуэтом и высотой.
+    // Каждое дерево — ResourceNode: пешка рубит его и уносит 5 дерева (§B.3).
     const TREE_KEYS = ['tree1', 'tree2', 'tree3', 'tree4'] as const;
     for (let i = 0; i < 96; i++) {
       const [x, y] = randPos();
@@ -322,6 +580,7 @@ export class GameScene extends Phaser.Scene {
       if (t.anims.currentAnim) t.setFrame(rng.between(0, 7));
       t.setDepth(DEPTH.ENTITY_BASE + y);
       place(x, y, 80);
+      this.economy.registerNode(new ResourceNode(this, 'tree', 'wood', x, y, 1, t));
     }
     // Пни у опушек: закрывают пустоты, где полноценное дерево не влезает
     for (let i = 0; i < 22; i++) {
@@ -391,50 +650,56 @@ export class GameScene extends Phaser.Scene {
       ease: 'Sine.easeInOut',
     });
 
-    // ---- Жители: крестьяне, которые работают у ресурсов ----
-    // Арена была пустошей: кроме овец, никого. Крестьяне с анимацией
-    // труда делают карту обжитой и объясняют, откуда на ней мясо и золото.
-    //
-    // Две фракции (синяя и жёлтая), чтобы толпа не была одного цвета.
-    const WORK_TOOLS = ['axe', 'hammer', 'knife', 'pickaxe'] as const;
-    for (let i = 0; i < 16; i++) {
-      const [x, y] = randPos();
-      if (!canPlace(x, y, 44)) continue;
-      const prefix = i % 2 === 0 ? 'pawn' : 'pawny';
-      const work = prefix + '-work-' + WORK_TOOLS[rng.between(0, WORK_TOOLS.length - 1)];
-
-      const v = this.add.sprite(x, y, prefix + '-idle').setScale(0.42);
-      v.play(prefix + '-idle');
-      v.setFrame(rng.between(0, 7));
-      v.setDepth(DEPTH.ENTITY_BASE + y - 1);
-      place(x, y, 44);
-
-      // Цикл «работает — отдыхает». Планировщик — time.delayedCall,
-      // а не твин с задержкой: твин без анимации отрабатывает onComplete
-      // в том же кадре, и рекурсия вешает браузер насмерть.
-      const workMs = 2400 + rng.between(0, 2600);
-      const restMs = 900 + rng.between(0, 1800);
-      const cycle = (): void => {
-        if (!v.scene) return;
-        v.play(work);
-        this.time.delayedCall(workMs, () => {
-          if (!v.scene) return;
-          v.play(prefix + '-idle');
-          this.time.delayedCall(restMs, cycle);
-        });
-      };
-      this.time.delayedCall(rng.between(600, 3200), cycle);
+    // ---- Стартовые пешки поселения: 2 сборщика, строитель, ремонтник (§B.2) ----
+    // Блок декоративных 16 жителей удалён — его роль у настоящих пешек.
+    this.economy.spawnInitial();
+    // «Дополнительный сборщик» (§H.16): старт 3 сборщика вместо 2
+    for (let i = 0; i < this.fx.extraCollector; i++) this.economy.spawnPawn('collector');
+    // «Гарнизон долины» (§H.16): стартовый мечник у замка — без казарм,
+    // бесплатно, слот не расходует; «Клятва долины» (m8) даёт ему +20 HP
+    if (this.fx.startSword) {
+      const sword = this.economy.spawnFighter('sword');
+      if (sword && this.oathM8) {
+        sword.maxHp += 20;
+        sword.hp = sword.maxHp;
+      }
+    }
+    // Скин построек (§J.6.2): tint на замок сразу (дальнейшие — по 'built')
+    this.tintAllBuildings();
+    // Знамя поселения (§J.6.2): над замком с первой секунды матча
+    const banner = activeBanner();
+    if (banner) {
+      // Слайсы banner9 крупнее полотна 46×64 — ограничиваем половиной,
+      // как это делает Ui.fitSlices для панелей
+      const ns = this.add.nineslice(
+        this.castleX, this.castleY - 150, 'banner9', undefined, 46, 64,
+        Math.min(100, 23), Math.min(84, 23), Math.min(68, 32), Math.min(111, 32),
+      );
+      ns.setTint(banner.tint).setDepth(DEPTH.HPBAR);
+    }
+    // Благословение «Замок +50 HP» (A2)
+    if (this.mods.blessing === 'bl_castle_hp') {
+      this.settlement.castle.maxHp += 50;
+      this.settlement.castle.hp += 50;
     }
 
-    // Овечки
-    for (let i = 0; i < 10; i++) {
+    // ---- Овечки: ресурс мяса — 3 за цикл, овца исчезает (§B.3) ----
+    // «Дефицит» (A2): овец ×2; контракт «Голодный год» (§H.9): овцы не доятся
+    const sheepCount = this.challengeMods.has('cm_scarcity') ? 20 : 10;
+    for (let i = 0; i < sheepCount; i++) {
       const [x, y] = randPos();
       if (!canPlace(x, y, 50)) continue;
       const sh = this.add.sprite(x, y, 'sheep').setScale(0.8);
       sh.play('sheep-idle');
       sh.setDepth(DEPTH.ENTITY_BASE + y);
       place(x, y, 50);
+      if (this.contractId !== 'c_hunger') {
+        this.economy.registerNode(new ResourceNode(this, 'sheep', 'meat', x, y, 1, sh));
+      }
     }
+    // ---- Золотые жилы: 10 штук, 4 цикла × 20 руды (§B.3) ----
+    // Благословение «+1 жила» (A2) добавляет одиннадцатую
+    this.spawnVeins(rng, canPlace, place, VEIN_COUNT + (this.mods.blessing === 'bl_vein' ? 1 : 0));
     // Облака (дрейф вправо, относительный твин с переносом)
     for (let i = 0; i < 10; i++) {
       const [x, y] = [rng.between(0, S), rng.between(0, S)];
@@ -455,6 +720,53 @@ export class GameScene extends Phaser.Scene {
 
   private buildPlayer(): void {
     this.player = new Player(this, WORLD.SIZE / 2, WORLD.SIZE / 2 + 260, this.heroDef);
+    // QA-хук (?qa_hero_hp=N, dev-сборки): увеличенное HP героя — чтобы
+    // проверять осады/волны/поражение поселения E2E без смерти героя.
+    // Бонус применяется в recomputeStats — иначе он перетирался бы heroDef.
+    try {
+      if (import.meta.env.DEV) {
+        const v = parseInt(new URLSearchParams(window.location.search).get('qa_hero_hp') ?? '', 10);
+        if (Number.isFinite(v) && v > 0) this.qaHeroHpBonus = v - this.heroDef.maxHp;
+      }
+    } catch {
+      // вне браузера — хук не нужен
+    }
+  }
+
+  /** Золотые жилы: 10 точек, не ближе 200 px к замку (§B.3).
+   *  Заряды — через Economy: «Золотая лихорадка» ×2 + карта «Глубокие шахты». */
+  private spawnVeins(
+    rng: Phaser.Math.RandomDataGenerator,
+    canPlace: (x: number, y: number, r: number) => boolean,
+    place: (x: number, y: number, r: number) => void,
+    count: number,
+  ): void {
+    let created = 0;
+    let attempts = 0;
+    while (created < count && attempts < 300) {
+      attempts++;
+      const x = rng.between(WORLD.GRASS_MARGIN + 120, WORLD.SIZE - WORLD.GRASS_MARGIN - 120);
+      const y = rng.between(WORLD.GRASS_MARGIN + 120, WORLD.SIZE - WORLD.GRASS_MARGIN - 120);
+      if (Math.hypot(x - this.castleX, y - this.castleY) < 200) continue;
+      if (!canPlace(x, y, 70)) continue;
+      const variant = rng.between(1, 5);
+      const img = this.add.image(x, y, `gold-vein-${variant}`).setScale(0.9)
+        .setDepth(DEPTH.ENTITY_BASE + y);
+      const pulse = this.add.sprite(x, y, `gold-vein-pulse-${variant}`)
+        .setScale(0.9).setDepth(DEPTH.GEM + 1).setBlendMode(Phaser.BlendModes.ADD);
+      pulse.play(`gold-vein-pulse-${variant}`);
+      place(x, y, 70);
+      // Заряды жилы: 4 цикла (+1 карта «Глубокие шахты», ×2 «Золотая лихорадка» — §B.3, A2)
+      this.economy.registerNode(new ResourceNode(this, 'vein', 'ore', x, y, this.economy.veinCharges(), img, pulse));
+      created++;
+    }
+    void VEIN_YIELD;
+  }
+
+  /** Скин построек (§J.6.2): setTint на замок и все здания. */
+  private tintAllBuildings(): void {
+    if (this.bldTint === null) return;
+    for (const b of this.economy.buildings) b.setTint(this.bldTint);
   }
 
   private buildSystems(): void {
@@ -464,8 +776,10 @@ export class GameScene extends Phaser.Scene {
       (v) => this.addXp(v),
       (v) => this.player.heal(v),
       (x, y) => this.openChest(x, y),
-      (v, x, y) => this.addGold(v, x, y),
+      (v, x, y) => this.addGold(Math.round(v * this.killGoldMult), x, y),
     );
+    // Контракт «Пацифист-герой» (§H.9): чистое золото не липнет к магниту
+    this.pickups.heroCollectsGold = this.contractId !== 'c_pacifist';
     this.projectiles = new Projectiles(this, {
       onExplode: (x, y, dmg, radius, mini) => {
         this.explode(x, y, dmg, radius, 'bomb', mini !== true);
@@ -475,9 +789,47 @@ export class GameScene extends Phaser.Scene {
     this.enemyGroup = this.physics.add.group();
     this.enemyCtxStore = this.makeEnemyCtx();
 
+    // Контекст AI пешек (создаётся с Economy — контекст подкидывается сюда)
+    this.registry.set('tss-pawnai-ctx', {
+      enemies: () => this.activeEnemies(),
+      playerX: () => this.player.x,
+      playerY: () => this.player.y,
+      pawnAttackEnemy: (e: Enemy, dmg: number, weapon: string) => this.damageEnemyByPawn(e, dmg, weapon),
+      shootArrow: (from: Pawn, target: Enemy) => {
+        const a = Math.atan2(target.y - from.y, target.x - from.x);
+        this.projectiles.fireFriendlyArrow(from.x, from.y, a, 10);
+        audio.play('shoot');
+      },
+      besiegedBuilding: () => this.settlement.siegeIdx >= 0
+        ? this.economy.buildings.find((b) => b.lastSiegeIdx === this.settlement.siegeIdx) ?? null
+        : null,
+    });
+    // Выбор цели врагом §A.5: гарнизон приоритетнее гражданских.
+    // Гражданские в ядре поселения (≤360 px от замка) — вне досягаемости:
+    // у разбега нет гарнизона, и без этого первая же волна вычищает
+    // экономику за минуту. Осада — единственный механизм угрозы базе (§D.1).
+    this.registry.set('tss-picktarget', (e: Enemy): Pawn | null => {
+      let best: Pawn | null = null;
+      let bestScore = Infinity;
+      for (const p of this.economy.pawns) {
+        if (p.dead || !p.active) continue;
+        if (p.state === 'wounded' || p.state === 'bleeding') continue;
+        const d = Math.hypot(p.x - e.x, p.y - e.y);
+        if (d > AGGRO.NPC) continue;
+        if (p.cls === 'civilian'
+          && Math.hypot(p.x - this.castleX, p.y - this.castleY) < 360) continue;
+        const score = p.cls === 'garrison' ? d : d + 500; // гарнизон ближе к врагу в приоритете
+        if (score < bestScore) { bestScore = score; best = p; }
+      }
+      return best;
+    });
+
     const spawnCtx: SpawnerCtx = {
       spawn: (kind, x, y) => this.spawnEnemy(kind, x, y),
       spawnElite: (kind) => {
+        // Кодекс (§H.10): элита засчитана фактом встречи
+        if (kind === 'bear') markCodex('boss_bear');
+        else if (kind === 'minotaur') markCodex('boss_minotaur');
         // За пределами видимой области: радиус берём от камеры, а не
         // фиксированный. На широком экране 700 px попадали в кадр —
         // элита возникала перед глазами без предупреждения.
@@ -490,9 +842,15 @@ export class GameScene extends Phaser.Scene {
         if (this.spawnEnemy(kind, x, y)) {
           audio.play('boss');
           this.cameras.main.shake(220, 0.004);
+          const def = ENEMIES[kind];
+          this.hud.bossIntro(
+            def.name,
+            this.diffDef.id === 'nightmare' ? t('hud.bossSubtitleEliteNightmare') : t('hud.bossSubtitleElite'),
+            `face-${kind}`,
+          );
         }
       },
-      spawnBoss: () => this.spawnBoss(),
+      spawnBoss: (hpMult) => this.spawnBoss(hpMult ?? 1),
       playerX: () => this.player.x,
       playerY: () => this.player.y,
       announce: (t, c) => this.hud.announce(t, c),
@@ -521,8 +879,27 @@ export class GameScene extends Phaser.Scene {
           WORLD.SIZE - WORLD.GRASS_MARGIN - 60,
         );
       },
+      beginSiege: (profile, index) => this.startSiege(profile, index),
     };
-    this.spawner = new Spawner(this, spawnCtx, this.diffDef.id);
+    this.spawner = new Spawner(this, spawnCtx, this.diffDef.id, {
+      // ---- Мета-режимы директора волн (§H.9, §H.12, §H.17, §H.18, A2) ----
+      endless: this.mods.endless,
+      // Осады каждые 180 с: контракт «Осадное положение», указ «Двойные осады»
+      // и мод «Осадное положение» не суммируются; сезон «Долгая осада» — 270 с
+      siegeIntervalSec: this.mods.endless ? null
+        : (this.contractId === 'c_siege_state' || this.mods.ukaz === 'ukaz_double_siege'
+          || this.challengeMods.has('cm_martial')) ? 180
+        : this.seasonMod === 'long_siege' ? 270 : null,
+      rateMultOverride: this.challengeMods.has('cm_horde') ? 0.85 : null,
+      season: this.seasonMod,
+      contractQuiet: this.contractId === 'c_quiet',
+      bloodMoon: this.challengeMods.has('cm_blood_moon'),
+      redValley: this.seasonMod === 'red_valley',
+      firstSiegeTrim: this.mods.blessing === 'bl_first_siege' ? 1 : 0,
+      extraSiege: this.challengeMods.has('cm_gold_rush'),
+      // FTUE (§I.2): первый матч аккаунта — плотность волн −20% первые 3 минуты
+      ftueSoftStart: this.ftueSoftStart,
+    });
 
     const weaponCtx: WeaponCtx = {
       player: () => this.player,
@@ -544,6 +921,135 @@ export class GameScene extends Phaser.Scene {
     });
     this.hud.setIcon(startId, WEAPONS[startId].icon, 1, false);
     this.ach = new AchTracker((a) => this.hud.achievementToast(a));
+
+    // ---- Подписки HUD на экономику (обновление по событию, §B.8) ----
+    this.economy.on('change', () => {
+      this.hud.updateResources(this.economy.resources);
+      this.hud.updateSettlement(
+        this.settlement.infrastructureHp / this.settlement.infrastructureMax,
+        this.economy.pawns.length / Math.max(1, this.economy.pawnLimit),
+        t('hud.garrison', { a: this.economy.garrison.length, b: Math.max(this.economy.garrisonLimit('sword'), this.economy.garrisonLimit('bow')) }),
+      );
+    });
+    this.economy.on('built', ({ kind, first }) => {
+      // Сводка рана (§K.2): постройки, время первого дома (§H.17)
+      this.buildingsBuilt++;
+      if (kind === 'barracks') this.builtBarracks++;
+      else if (kind === 'monastery') this.builtMonastery++;
+      else if (kind === 'archery') this.builtArchery++;
+      if (kind === 'house' && this.firstHouseMin === 0) this.firstHouseMin = this.elapsed / 60;
+      // Скин построек (§J.6.2): новая постройка тоже под tint
+      if (this.bldTint !== null) this.tintAllBuildings();
+      this.hud.announce(t('building.built', { v: t(`building.${kind}.name` as Parameters<typeof t>[0]) }), '#7dc95e');
+      if (first) this.hud.announce(t('pawn.arrived', { v: '…' }), '#ffe9b0');
+      audio.play('levelup');
+    });
+    this.economy.on('pawnArrived', ({ pawn }) => {
+      this.hud.feed(t('pawn.arrived', { v: `${this.pawnTitle(pawn)} ${pawn.name}` }), '#9fd8ff');
+    });
+    this.economy.on('pawnWounded', ({ pawn }) => {
+      this.hud.feed(t('pawn.wounded', { v: `${this.pawnTitle(pawn)} ${pawn.name}` }), '#ffb090');
+      track('pawn_wounded', { name_role: `${pawn.kind}:${pawn.name}`, monastery_exists: this.economy.nearestMonastery(pawn) !== null });
+      if (pawn.cls === 'civilian') this.hints?.show('monastery');
+    });
+    this.economy.on('pawnSaved', ({ pawn }) => {
+      this.hud.feed(t('pawn.saved', { v: `${this.pawnTitle(pawn)} ${pawn.name}` }), '#7dc95e');
+      track('pawn_saved', { name_role: `${pawn.kind}:${pawn.name}` });
+    });
+    this.economy.on('hireDone', ({ weapon }) => {
+      this.hires++; // сводка рана (§K.2): наём дружины (§H.17)
+      this.hud.feed(t('hire.started', { v: t(`hire.${weapon}` as Parameters<typeof t>[0]) }), '#9fd8ff');
+      this.economy.emit('change');
+    });
+    this.economy.on('pawnDied', ({ pawn }) => {
+      // Near-miss «истёк кровью» (§H.3): имя павшего и сколько секунд не хватило
+      // до ближайшего освобождённого места обители (для хроники на end-экране)
+      if (pawn.state === 'bleeding' && !this.settlement.facts.bledOutName) {
+        let short: number | null = null;
+        for (const b of this.economy.buildings) {
+          if (!b.alive || b.kind !== 'monastery' || b.underConstruction) continue;
+          for (const unit of b.healSlots) {
+            const u = unit as import('../entities/Pawn').Pawn | null;
+            if (!u || !u.active) continue;
+            const remain = (u.maxHp - u.hp) / Math.max(1, HEAL_HP_PER_SEC);
+            short = short === null ? remain : Math.min(short, remain);
+          }
+        }
+        if (short !== null) {
+          this.settlement.facts.bledOutName = pawn.name;
+          this.settlement.facts.bledOutShort = Math.max(1, Math.ceil(short));
+        }
+        track('pawn_bleeding_start', { fatal: true, monastery: short !== null });
+      } else {
+        track('pawn_died', { kind: pawn.kind });
+      }
+      // «Чума» (A2): павшая пешка оставляет сундук; если сундук уже лежит —
+      // роняем золотые кристаллы, чтобы ценность не потерялась
+      if (this.challengeMods.has('cm_plague') && !this.gameEnded) {
+        if (this.pickups.chestPos()) {
+          for (let i = 0; i < 3; i++) {
+            this.pickups.spawnGoldGem(
+              pawn.x + Phaser.Math.Between(-30, 30),
+              pawn.y + Phaser.Math.Between(-20, 20), 12,
+            );
+          }
+        } else {
+          this.pickups.spawnChest(pawn.x, pawn.y);
+        }
+      }
+    });
+    this.economy.on('repairDone', () => {
+      this.addXp(8);
+      // Скин построек (§J.6.2): ремонт снимает tint руин — возвращаем скин
+      if (this.bldTint !== null) this.tintAllBuildings();
+      this.economy.emit('change');
+    });
+    // Шлейф героя (§J.6.2): эмиттер частиц за спрайтом, tint скина
+    const trailTint = trailSkinTint();
+    if (trailTint !== null) {
+      this.trailEmitter = this.add.particles(0, 0, 'fx-heal', {
+        frame: [0],
+        speed: { min: 4, max: 22 },
+        lifespan: 480,
+        scale: { start: 0.4, end: 0 },
+        alpha: { start: 0.75, end: 0 },
+        tint: trailTint,
+        frequency: 55,
+        emitting: false,
+      }).setDepth(DEPTH.FX);
+      this.trailEmitter.startFollow(this.player, 0, 16);
+    }
+    this.hud.setSpeedupHandlers({
+      repair: () => {
+        // Контракт «Без ремонта» (§H.9): ремонт запрещён — причина в ленту
+        if (this.contractId === 'c_no_repair') {
+          this.hud.feed(t('contract.no_repair.name'), '#ff8866');
+          return;
+        }
+        // §G.8: обе валюты доступны обоим ускорениям — кошелёк первичен,
+        // реклама — резерв, когда золота не хватает
+        const res = this.speedup.buyWithGold('repair');
+        if (res.ok) {
+          this.hud.announce(t('speedup.done'), '#7dc95e');
+          return;
+        }
+        this.speedup.buyWithAd('repair').then((ad) => {
+          if (ad.ok) this.hud.announce(t('speedup.done'), '#7dc95e');
+          else this.hud.announce(t(`speedup.${ad.reason === 'poor' ? 'poor' : ad.reason === 'noTarget' ? 'noTarget' : 'adUnavailable'}` as Parameters<typeof t>[0]), '#ff8866');
+        });
+      },
+      heal: () => {
+        const res = this.speedup.buyWithGold('heal');
+        if (res.ok) {
+          this.hud.announce(t('speedup.done'), '#7dc95e');
+          return;
+        }
+        this.speedup.buyWithAd('heal').then((ad) => {
+          if (ad.ok) this.hud.announce(t('speedup.done'), '#7dc95e');
+          else this.hud.announce(t(`speedup.${ad.reason === 'poor' ? 'poor' : ad.reason === 'noTarget' ? 'noTarget' : 'adUnavailable'}` as Parameters<typeof t>[0]), '#ff8866');
+        });
+      },
+    });
   }
 
   private setupCollisions(): void {
@@ -600,11 +1106,23 @@ export class GameScene extends Phaser.Scene {
       }
     });
 
-    this.physics.add.overlap(this.player, this.projectiles.enemyArrows, (_p, proj) => {
-      const p = proj as unknown as import('../systems/Projectiles').Proj;
+    this.physics.add.overlap(this.player, this.projectiles.enemyShots, (_p, proj) => {
+      const p = proj as unknown as import('../systems/Projectiles').Proj & { shotKind?: import('../entities/Enemy').EnemyShotKind };
       if (!p.active) return;
-      this.projectiles.releaseEnemyArrow(p);
+      if (p.shotKind === 'hex') this.effects.hexBlast(p.x, p.y);
+      this.projectiles.releaseEnemyShot(p);
       this.hurtPlayer(p.dmg);
+    });
+
+    // Стрелы NPC-лучника бьют врагов: KILL растёт, комбо игрока — нет (§B.7.1)
+    this.physics.add.overlap(this.projectiles.friendlyArrows, this.enemyGroup, (proj, e) => {
+      const p = proj as unknown as import('../systems/Projectiles').Proj;
+      const enemy = e as Enemy;
+      if (!p.active || !enemy.active) return;
+      if (p.hitSet?.has(enemy)) return;
+      p.hitSet?.add(enemy);
+      this.damageEnemyByPawn(enemy, p.dmg, 'bow');
+      this.projectiles.release(p);
     });
   }
 
@@ -625,6 +1143,88 @@ export class GameScene extends Phaser.Scene {
     }) as Keys;
     kb.addCapture('UP,DOWN,LEFT,RIGHT,SPACE');
     this.joystick = new Joystick(this);
+
+    // ---- Приказы пешкам: Shift+ЛКМ (десктоп) / лонг-пресс 500 мс (тач) (§B.6) ----
+    this.input.on('pointerdown', (pointer: Phaser.Input.Pointer) => {
+      if (this.gameEnded || this.overlayOpen) return;
+      if (this.orderMenu.isOpen) return;
+      const wp = pointer.worldX, wy = pointer.worldY;
+      const hitPawn = this.findPawnAt(wp, wy, pointer.wasTouch);
+      const hitBuilding = hitPawn ? null : this.findBuildingAt(wp, wy);
+      if (!hitPawn && !hitBuilding) return;
+      const shift = !pointer.wasTouch
+        && ((pointer.event as unknown as { shiftKey?: boolean })?.shiftKey === true);
+      this.pressState = { x: wp, y: wy, t: this.time.now, pawn: hitPawn, building: hitBuilding };
+      if (shift && hitPawn) {
+        // Десктоп: приказ сразу
+        this.openOrderMenu(hitPawn, wp, wy);
+        this.pressState = null;
+      } else if (shift && hitBuilding) {
+        this.openHireMenu(hitBuilding, wp, wy);
+        this.pressState = null;
+      }
+      // Иначе ждём лонг-пресс (обрабатывается в update)
+    });
+    this.input.on('pointerup', () => {
+      this.pressState = null;
+      this.orderMenu.hideRing();
+    });
+  }
+
+  private findPawnAt(x: number, y: number, touch: boolean): Pawn | null {
+    const r = touch ? 40 : 26; // зона попадания ≥ 56 px в диаметре на таче (§B.6)
+    let best: Pawn | null = null;
+    let bestD = r * r;
+    for (const p of this.economy.pawns) {
+      if (p.dead || !p.active) continue;
+      const d = (p.x - x) ** 2 + (p.y - y) ** 2;
+      if (d < bestD) { bestD = d; best = p; }
+    }
+    return best;
+  }
+
+  private findBuildingAt(x: number, y: number): Building | null {
+    let best: Building | null = null;
+    let bestD = Infinity;
+    for (const b of this.economy.buildings) {
+      if (!b.alive || b.underConstruction) continue;
+      if (b.kind !== 'barracks' && b.kind !== 'archery' && b.kind !== 'monastery') continue;
+      const d = Math.hypot(b.x - x, b.y - y);
+      if (d < 110 && d < bestD) { bestD = d; best = b; }
+    }
+    return best;
+  }
+
+  private openOrderMenu(pawn: Pawn, wx: number, wy: number): void {
+    this.orderMenu.open(pawn, wx, wy, (key) => {
+      if (!this.orderMenu.openPawn) return;
+      // Приказ не перебивает carry-фазу — PawnAI применит после сдачи (§B.6)
+      pawn.order = key;
+      if (key === 'hold') pawn.orderTarget = { x: wx, y: wy };
+      track('first_order_used', { order: key });
+      if (pawn.cls === 'civilian') this.hints?.show('orders');
+    });
+  }
+
+  /** Меню найма гарнизона на здании (§B.9.1): казармы/тир/обитель. */
+  private openHireMenu(b: Building, wx: number, wy: number): void {
+    const weapons: Array<import('../data').PawnWeapon> =
+      b.kind === 'barracks' ? ['sword', 'lance'] : b.kind === 'archery' ? ['bow'] : ['staff'];
+    const entries = weapons.map((w) => ({
+      key: w,
+      label: t(`hire.${w}` as Parameters<typeof t>[0]),
+      disabled: !this.economy.canHire(w),
+    }));
+    this.orderMenu.openCustom(entries, wx, wy, (key) => {
+      const w = key as import('../data').PawnWeapon;
+      if (this.economy.hire(w, b)) {
+        this.hud.feed(t('hire.started', { v: t(`hire.${w}` as Parameters<typeof t>[0]) }), '#9fd8ff');
+        track('garrison_hired', { weapon: w });
+        this.economy.emit('change');
+      } else {
+        this.hud.announce(t('building.cannot'), '#ff8866');
+      }
+    });
   }
 
   // ================= ЦИКЛ =================
@@ -642,6 +1242,7 @@ export class GameScene extends Phaser.Scene {
     }
 
     const dt = Math.min(delta, 50) / 1000;
+    const dtMs = Math.min(delta, 50);
 
     // Пауза
     if (Phaser.Input.Keyboard.JustDown(this.keys.esc) || Phaser.Input.Keyboard.JustDown(this.keys.p)) {
@@ -674,11 +1275,55 @@ export class GameScene extends Phaser.Scene {
     if (len > 0.5 && Math.random() < dt * 6) {
       this.effects.dust(this.player.x, this.player.y + 14, 1);
     }
+    // Шлейф скина (§J.6.2): частицы только в движении
+    if (this.trailEmitter) {
+      if (len > 0.4 && !this.trailEmitter.emitting) this.trailEmitter.start();
+      else if (len <= 0.4 && this.trailEmitter.emitting) this.trailEmitter.stop();
+    }
 
     // Системы
     this.weapons.update(delta);
     this.projectiles.update(delta);
     this.spawner.update(dt);
+
+    // Экономика поселения: пешки, стройка, ремонт, найм, обитель (TZ §B)
+    this.economy.tick(dtMs, time);
+    this.economy.monasteryHealTick(dtMs);
+
+    // Осада: таймер отступления 60 сек и исход (§E.4.2)
+    this.siegeTick(time);
+
+    // Условие поражения №3 — вымирание, пересчёт раз в 60 сек (§E.3)
+    if (this.settlement.checkExtinction(time) && this.extinctAt === null) {
+      this.extinctAt = time;
+      this.hud.announce(t('over.extinct'), '#ff5544');
+    }
+    if (this.extinctAt !== null && time - this.extinctAt > 3000) {
+      // 3-секундный экран перед GameOverScene (§E.3)
+      this.loseCause = 'population';
+      this.gameOver(false);
+      return;
+    }
+
+    // Лонг-пресс приказа: кольцо заполнения → меню (§B.6)
+    if (this.pressState && !this.orderMenu.isOpen) {
+      const held = time - this.pressState.t;
+      if (held >= LONGPRESS_MS) {
+        this.orderMenu.hideRing();
+        if (this.pressState.pawn) this.openOrderMenu(this.pressState.pawn, this.pressState.x, this.pressState.y);
+        else if (this.pressState.building) this.openHireMenu(this.pressState.building, this.pressState.x, this.pressState.y);
+        this.pressState = null;
+      } else if (held > 120) {
+        this.orderMenu.showRing(this.pressState.x, this.pressState.y, this.pressState.t);
+        this.orderMenu.updateRing(time, LONGPRESS_MS);
+      }
+    }
+
+    // Фаза 2 босса идёт на замок (§E.6)
+    this.bossPhaseCheck();
+
+    // Башни поселения стреляют по осаде/толпе (фаза M ROADMAP)
+    this.towerTick(time);
 
     // Сундуки с сокровищами
     if (!this.gameEnded) {
@@ -698,26 +1343,18 @@ export class GameScene extends Phaser.Scene {
     // Сепарация врагов
     this.separateEnemies();
 
-    // Деспавн далёких
+    // Деспавн далёких (осадные враги — по таймеру 60 сек, см. siegeTick)
     if (time - this.lastDespawn > 700) {
       this.lastDespawn = time;
       this.despawnFar();
     }
 
-    // Босс / мидбосс — приоритет полосе HP: сначала финальный босс
+    // Босс — приоритет полосе HP
     if (this.boss) {
       if (this.boss.active) {
         this.hud.updateBossBar(this.boss.hp / this.boss.maxHp, this.boss.hp, this.boss.maxHp);
       } else {
         this.boss = null;
-        if (this.midboss && this.midboss.active) this.hud.showBossBar(ENEMIES.midboss.name);
-        else this.hud.hideBossBar();
-      }
-    } else if (this.midboss) {
-      if (this.midboss.active) {
-        this.hud.updateBossBar(this.midboss.hp / this.midboss.maxHp, this.midboss.hp, this.midboss.maxHp);
-      } else {
-        this.midboss = null;
         this.hud.hideBossBar();
       }
     }
@@ -730,6 +1367,20 @@ export class GameScene extends Phaser.Scene {
         level: this.level, xp: this.xp, xpNext: this.xpNext,
         kills: this.kills, score: this.currentScore(), elapsed: this.elapsed, gold: this.gold,
       });
+    }
+    // Поселение и ускорения — реже: события/кнопки не критичны к кадру
+    if (time - this.lastSettleHud > 700) {
+      this.lastSettleHud = time;
+      this.hud.updateSettlement(
+        this.settlement.infrastructureHp / this.settlement.infrastructureMax,
+        this.economy.pawns.length / Math.max(1, this.economy.pawnLimit),
+        t('hud.garrison', { a: this.economy.garrison.length, b: Math.max(this.economy.garrisonLimit('sword'), this.economy.garrisonLimit('bow')) }),
+      );
+      this.hud.updateSpeedups(
+        this.speedup.hasTarget('repair'),
+        this.speedup.hasTarget('heal') && this.economy.usedHealSlots() + this.economy.pawns.filter((p) => p.state === 'bleeding').length > 0,
+      );
+      this.hud.updateResources(this.economy.resources);
     }
 
     // Смена освещения (троттлировано внутри)
@@ -749,6 +1400,30 @@ export class GameScene extends Phaser.Scene {
     if (time - this.lastIndicatorUpdate > 120) {
       this.lastIndicatorUpdate = time;
       this.updateIndicators();
+    }
+
+    // Подсказки FTUE (§I.2): движение в начале, стройка при 30 дерева
+    if (this.elapsed > 2 && this.elapsed < 2.05) this.hints.show('move');
+    if (this.houseHintArmed && this.economy.resources.wood >= 30) {
+      this.houseHintArmed = false;
+      this.hints.show('house');
+    }
+    if (this.elapsed > 20 && this.elapsed < 20.05) this.hints.show('pawns');
+
+    // Тосты заданий дня (§H.17): проверка раз в 5 сек, бой не прерывается
+    this.questCheckAcc += dt;
+    if (this.questCheckAcc >= 5) {
+      this.questCheckAcc = 0;
+      this.checkQuestToasts();
+    }
+
+    // perf_fps (§K.2): средний FPS за 30-секундное окно
+    this.perfAcc += this.game.loop.actualFps;
+    this.perfFrames++;
+    if (this.perfFrames >= 30 * 30) {
+      track('perf_fps', { fps: Math.round(this.perfAcc / this.perfFrames) });
+      this.perfAcc = 0;
+      this.perfFrames = 0;
     }
 
     // Левел-ап
@@ -805,7 +1480,7 @@ export class GameScene extends Phaser.Scene {
     this.cameras.main.shake(160, 0.004);
     for (const e of this.activeEnemies()) {
       const dx = e.x - x, dy = e.y - y;
-      if (Math.hypot(dx, dy) <= radius + e.def.bodyRadius) {
+      if (Math.hypot(dx, dy) <= radius + e.def.body.r) {
         this.damageEnemy(e, dmg, dx, dy, 320, src);
       }
     }
@@ -845,49 +1520,258 @@ export class GameScene extends Phaser.Scene {
   private confirmDefeat(): boolean {
     if (this.defeatPending && !this.gameEnded && !this.victoryPending) {
       this.defeatPending = false;
-      this.gameOver(false);
+      this.onHeroDeath();
       return true;
     }
     this.defeatPending = false;
     return false;
   }
 
-  private onEnemyDeath(e: Enemy, src?: WeaponId): void {
+  // ================= ПОСЕЛЕНИЕ: осады, поражения, стройка =================
+
+  /** Осада стартует: анонс уже прозвучал (Spawner). Отряд спавнится у базы. */
+  private startSiege(profile: SiegeProfile, index: number): void {
+    audio.play('boss');
+    this.cameras.main.flash(200, 190, 40, 30, false);
+    const enemies: Enemy[] = [];
+    // Отряд приходит СТОРОНОЙ к базе: точки на окружности вокруг замка
+    const baseA = Math.random() * Math.PI * 2;
+    let unitIdx = 0;
+    for (const part of profile.squad) {
+      for (let i = 0; i < part.n; i++) {
+        const a = baseA + (unitIdx % 8) * 0.28;
+        unitIdx++;
+        const r = 760 + Math.random() * 220;
+        const x = Phaser.Math.Clamp(this.castleX + Math.cos(a) * r, WORLD.GRASS_MARGIN + 60, WORLD.SIZE - WORLD.GRASS_MARGIN - 60);
+        const y = Phaser.Math.Clamp(this.castleY + Math.sin(a) * r, WORLD.GRASS_MARGIN + 60, WORLD.SIZE - WORLD.GRASS_MARGIN - 60);
+        const e = this.spawnSiegeUnit(part.kind, x, y, part.firer === true);
+        if (e) enemies.push(e);
+      }
+    }
+    this.assignSiegeTarget(profile, enemies);
+    this.settlement.beginSiege(index, profile.woundCap, enemies);
+    this.siegeAlive = true;
+    this.siegeDestroyed = 0;
+    // Бесконечный (§H.12): волна = счётчик осад; HUD-таймер не трогаем —
+    // минимальный маркер волны через анонс (index с нуля → волна с 1)
+    if (this.mods.endless) {
+      this.wave = index + 1;
+      this.hud.announce(t('endless.wave', { v: this.wave }), '#ffd76e');
+    }
+    this.hints?.show('siege');
+    track('siege_start', { index, profile: profile.name });
+  }
+
+  /** Осадный юнит: флаг siege, вне лимита толпы не считается (это волна события). */
+  private spawnSiegeUnit(kind: EnemyKind, x: number, y: number, firer: boolean): Enemy | null {
+    const m = WORLD.GRASS_MARGIN + 40;
+    x = Phaser.Math.Clamp(x, m, WORLD.SIZE - m);
+    y = Phaser.Math.Clamp(y, m, WORLD.SIZE - m);
+    const e = new Enemy(this, x, y, kind, this.spawner.hpMult, this.spawner.dmgMult, this.enemyCtxStore!);
+    if (this.diffDef.speedMult !== 1) e.speed = Math.round(e.speed * this.diffDef.speedMult);
+    // «Кровавая луна» (A2): скорость врагов ×1.1
+    if (this.enemySpeedMult !== 1) e.speed = Math.round(e.speed * this.enemySpeedMult);
+    e.siege = true;
+    e.firer = firer;
+    e.spawnedAt = this.time.now;
+    this.enemyGroup.add(e);
+    return e;
+  }
+
+  /** Цель профиля осады с фолбэком §G.7 (замок > монастырь > казармы > прочее). */
+  private assignSiegeTarget(profile: SiegeProfile, enemies: Enemy[]): void {
+    const pick = (kind: BuildingKind): Building | null =>
+      this.economy.buildings.find((b) => b.alive && b.kind === kind && !b.underConstruction) ?? null;
+    const priorityOrder: BuildingKind[] = ['castle', 'monastery', 'barracks', 'house', 'tower', 'archery'];
+    let target: Building | null = null;
+    if (profile.target === 'houses') {
+      // Дома внешнего кольца: самый дальний от замка дом
+      let bestD = -1;
+      for (const b of this.economy.buildings) {
+        if (b.kind !== 'house' || !b.alive || b.underConstruction) continue;
+        const d = Math.hypot(b.x - this.castleX, b.y - this.castleY);
+        if (d > bestD) { bestD = d; target = b; }
+      }
+      if (!target) target = pick('barracks') ?? pick('monastery') ?? pick('castle');
+    } else {
+      target = pick(profile.target);
+      if (!target) {
+        for (const k of priorityOrder) {
+          target = pick(k);
+          if (target) break;
+        }
+      }
+    }
+    for (const e of enemies) e.buildingTarget = target ?? this.settlement.castle;
+    if (target?.kind === 'monastery') {
+      this.hud.announce(t('siege.monastery'), '#ff5544');
+    }
+  }
+
+  /** Тик осады: отступление по таймеру 60 сек и исход. */
+  private siegeTick(now: number): void {
+    if (!this.siegeAlive || this.settlement.siegeIdx < 0) return;
+    const members = this.settlement.siegeMembers();
+    // Отступление: каждый осадный враг живёт 60 сек с момента появления
+    for (const e of members) {
+      if (e.siege && now - e.spawnedAt > SIEGE.LIFETIME * 1000) {
+        this.enemyGroup.remove(e, true, true);
+      }
+    }
+    const left = this.settlement.siegeMembers();
+    if (left.length === 0) {
+      // Все убиты/ушли: исход — здание не разрушено → отбита (§E.8)
+      const outcome = this.siegeDestroyed === 0 ? 'defended' : 'partial';
+      this.settlement.endSiege(outcome);
+      track('siege_result', { outcome, cap_applied: this.settlement.capApplied });
+      this.siegeAlive = false;
+    }
+  }
+
+  /**
+   * Башни (фаза M ROADMAP): стреляют по ближайшему врагу, приоритет — осада.
+   * Строительство башни — прямой ответ на осады: перехватывает их до стен.
+   * Матч после смерти героя башня не продлевает (не в SUCCESSION_SOURCES).
+   */
+  private towerTick(now: number): void {
+    if (now < this.towerNextShot) return;
+    const towers = this.economy.buildings.filter((b) => b.alive && b.kind === 'tower' && !b.underConstruction);
+    if (towers.length === 0) return;
+    this.towerNextShot = now + TOWER.PERIOD_MS;
+    for (const tw of towers) {
+      // Цель: осадный враг в радиусе (приоритет), иначе ближайший к башне
+      let target: Enemy | null = null;
+      let bestD = Infinity;
+      let siegeTarget: Enemy | null = null;
+      let siegeD = Infinity;
+      for (const e of this.activeEnemies()) {
+        const d = Math.hypot(e.x - tw.x, e.y - tw.y);
+        if (d > TOWER.RANGE) continue;
+        if (e.siege && d < siegeD) { siegeD = d; siegeTarget = e; }
+        if (d < bestD) { bestD = d; target = e; }
+      }
+      const shot = siegeTarget ?? target;
+      if (!shot) continue;
+      const a = Math.atan2(shot.y - (tw.y - 40), shot.x - tw.x);
+      this.projectiles.fireFriendlyArrow(tw.x, tw.y - 40, a, TOWER.DMG);
+      this.effects.hitSpark(tw.x, tw.y - 46);
+      audio.play('shoot');
+    }
+  }
+
+  /** Микро-очки и XP за осаду (§E.8, §H.6). */
+  private onSiegeScore(outcome: 'defended' | 'partial', index: number): void {
+    const n = index + 1;
+    if (outcome === 'defended') {
+      this.score += 150 * n;
+      this.addXp(40 * n);
+      this.hud.announce(t('siege.defended', { v: 150 * n }), '#7dc95e');
+    } else {
+      this.score += 75 * n;
+      this.addXp(20 * n);
+      this.hud.announce(t('siege.partial'), '#e0a030');
+    }
+  }
+
+  /** Здание разрушено: телеметрия + лента + счётчик осады. */
+  private onBuildingDestroyed(b: Building): void {
+    if (import.meta.env.DEV) {
+      // QA-инструментация: поиск источника мгновенного разрушения при рестарте
+      console.warn('[qa] building destroyed:', b.kind, 'alive=', b.alive, 'hp=', b.hp, 'scene=', this.scene.key, new Error('trace').stack?.split('\n').slice(1, 8).join(' | '));
+    }
+    if (this.settlement.siegeIdx >= 0) this.siegeDestroyed++;
+    this.hud.feed(t('building.destroyed', { v: t(`building.${b.kind}.name` as Parameters<typeof t>[0]) }), '#ff6655');
+    this.hud.announce(t('building.destroyed', { v: t(`building.${b.kind}.name` as Parameters<typeof t>[0]) }), '#ff6655');
+    audio.play('explosion');
+    track('building_destroyed', { kind: b.kind, hp_before: Math.round(b.hp), source: 'siege' });
+    if (b === this.settlement.castle) {
+      // Условие №2: замок разрушен (§E.3)
+      this.loseCause = 'castle';
+      this.hud.announce(t('over.castleFell'), '#ff5544');
+      this.time.delayedCall(1600, () => {
+        if (!this.gameEnded) this.gameOver(false);
+      });
+    }
+  }
+
+  /** Сообщение о поражении от Settlement (замок/вымирание). */
+  private onSettlementDefeat(cause: LoseCause): void {
+    this.loseCause = cause;
+  }
+
+  /** Стройка завершена: XP +15, очки +50, метка first_house (§H.6, §E.8). */
+  private onBuildComplete(kind: BuildingKind): void {
+    this.addXp(15);
+    this.score += 50;
+    this.economy.emit('change');
+    track(kind === 'house' ? 'first_house' : kind === 'barracks' ? 'first_barracks' : 'economy_stuck', { t_sec: Math.floor(this.elapsed) });
+    if (kind === 'house' && !this.registry.get('tss-first-house')) {
+      this.registry.set('tss-first-house', true);
+      this.hints?.show('barracks');
+    }
+    void kind;
+  }
+
+  private pawnTitle(pawn: Pawn): string {
+    return t(`pawn.titled.${pawn.kind}` as Parameters<typeof t>[0]);
+  }
+
+  /** Фаза 2 босса: HP < 50% → идёт на замок (§E.6). */
+  private bossPhaseCheck(): void {
+    if (!this.boss?.active) return;
+    if (this.boss.aiState !== 'bossPhase2' && this.boss.hp < this.boss.maxHp * 0.5 && !this.boss.siege) {
+      this.boss.siege = true;
+      this.boss.buildingTarget = this.settlement.castle;
+      this.boss.aiState = 'bossPhase2';
+      this.hud.announce(t('boss.siege'), '#ff5544');
+      audio.play('boss');
+      this.cameras.main.shake(300, 0.006);
+      // Кинематографичный бит: time-freeze 0.8 с (§H.13 №9, §E.6)
+      this.hitstop(800);
+      track('siege_start', { index: -1, profile: 'boss-phase2' });
+    }
+  }
+
+  private onEnemyDeath(e: Enemy, src?: WeaponId, byPawn = false): void {
     if (!e.active) return;
     // Убираем из мира СРАЗУ: цепные взрывы не должны повторно бить погибающего
     const x = e.x, y = e.y;
     this.enemyGroup.remove(e, true, true);
 
     this.kills++;
-    // Серия убийств: множитель растёт с каждым убийством без паузы
-    this.combo++;
-    this.comboTimer = COMBO.WINDOW;
-    if (this.combo > this.bestCombo) this.bestCombo = this.combo;
-    const comboMult = 1 + Math.min(COMBO.BONUS_CAP - 1, this.combo * COMBO.BONUS_STEP);
-    this.score += Math.round(SCORE.KILL * comboMult);
-    if ((COMBO.MILESTONES as readonly number[]).includes(this.combo)) {
-      this.effects.popup(x, y - 30, t('game.combo', { v: this.combo }), '#ffd76e', 16);
-      if (this.combo >= 50) {
-        this.hud.announce(t('game.unstoppable', { v: this.combo }), '#ffd700');
-        audio.play('ach');
-      } else {
-        audio.play('levelup');
+    // Кодекс (§H.10): счётчик встречи по видам — уходит в applyRunToMeta
+    this.killsByKind[e.kind] = (this.killsByKind[e.kind] ?? 0) + 1;
+    // Серия убийств: растёт только от оружия героя — убийство гарнизоном
+    // комбо игрока не поднимает (§B.7.1)
+    if (!byPawn) {
+      this.combo++;
+      this.comboTimer = COMBO.WINDOW;
+      if (this.combo > this.bestCombo) this.bestCombo = this.combo;
+      const comboMult = 1 + Math.min(COMBO.BONUS_CAP - 1, this.combo * COMBO.BONUS_STEP);
+      this.score += Math.round(SCORE.KILL * comboMult);
+      // Комбо-вехи §H.4 (благословение «Комбо» — 20/40/80, A2):
+      // сундучок ресурсов у героя, очков не дают
+      if ((this.comboMilestones as readonly number[]).includes(this.combo)) {
+        this.comboMilestone(this.combo, x, y);
       }
+      this.ach?.event({ type: 'kills', value: this.kills });
+    } else {
+      this.score += SCORE.KILL;
+      track('ally_kill', { target_kind: e.kind, player_combo_grew: false });
     }
-    this.ach?.event({ type: 'kills', value: this.kills });
-    // Счётчики новых врагов → достижения
-    if (e.kind === 'guard') {
-      this.guardsSlain++;
-      this.ach?.event({ type: 'guards', value: this.guardsSlain });
-    } else if (e.kind === 'taskmaster') {
-      this.taskmastersSlain++;
-      this.ach?.event({ type: 'taskmasters', value: this.taskmastersSlain });
+    // Счётчики существ → достижения (TZ §A.6)
+    if (e.kind === 'skull') {
+      this.skullsSlain++;
+      this.ach?.event({ type: 'skulls', value: this.skullsSlain });
+    } else if (e.kind === 'shaman') {
+      this.shamansSlain++;
+      this.ach?.event({ type: 'shamans', value: this.shamansSlain });
     }
-    const big = e.def.isElite || e.def.isBoss || e.def.isMidboss;
+    const big = e.def.isElite || e.def.isBoss;
 
-    // Бочка-камикадзе, убитая оружием: взрыв бьёт врагов (цепная реакция!)
-    if (e.def.kind === 'bomber') {
-      this.bomberExplosion(x, y, false, src);
+    // Рыба-бомба, убитая оружием: взрыв бьёт врагов (цепная реакция!)
+    if (e.def.kind === 'bomb-fish') {
+      this.fishBombExplode(x, y, false, src);
     }
 
     this.effects.explosion(x, y, big ? 1.7 : e.def.scale * 1.15, big ? 2 : 1);
@@ -905,7 +1789,6 @@ export class GameScene extends Phaser.Scene {
         this.pickups.spawnGem(x + ox, y + oy, e.def.gem, Math.ceil(e.xpValue / n));
       }
     }
-    if (e.def.kind === 'brute' && Math.random() < 0.04) this.pickups.spawnMeat(x, y);
     if (e.def.isElite) {
       this.pickups.spawnMeat(x + 30, y);
       this.pickups.spawnMeat(x - 30, y);
@@ -915,20 +1798,14 @@ export class GameScene extends Phaser.Scene {
     }
     // Золотые кристаллы: теперь дают золото
     if (Math.random() < 0.03) this.pickups.spawnGoldGem(x, y, Phaser.Math.Between(3, 8));
-    if (e.def.kind === 'midboss') {
-      this.score += 1500;
-      this.pickups.spawnGoldGem(x + 24, y, 40);
-      this.pickups.spawnGoldGem(x - 24, y, 40);
-      // Опыт мидбосса приходит общим дропом выше: он разбит на три
-      // кристалла из def.xp. Раньше здесь был второй дроп тех же 36 XP.
-      this.hud.announce(t('game.midbossDown'), '#ffd700');
-    }
     if (e.def.isBoss) {
-      // Награда за весь матч. Очки (SCORE.BOSS) начисляет victory(),
-      // здесь — золото в лавку и meat для восстановления после боя.
+      // Награда за весь матч: BOSS_GOLD кристаллами по кругу (TZ §A.4).
+      // Очки (SCORE.BOSS) начисляет victory(), здесь — золото в лавку
+      // и meat для восстановления после боя.
+      const per = Math.round(BOSS_GOLD / 5);
       for (let i = 0; i < 5; i++) {
         const a = (i / 5) * Math.PI * 2;
-        this.pickups.spawnGoldGem(x + Math.cos(a) * 70, y + Math.sin(a) * 70, 60);
+        this.pickups.spawnGoldGem(x + Math.cos(a) * 70, y + Math.sin(a) * 70, per);
       }
       for (let i = 0; i < 4; i++) {
         this.pickups.spawnMeat(x + Phaser.Math.Between(-80, 80), y + Phaser.Math.Between(-80, 80));
@@ -936,13 +1813,227 @@ export class GameScene extends Phaser.Scene {
     }
 
     if (e === this.boss) {
-      this.victory();
+      this.bossKilled = true;
+      if (this.mods.endless) {
+        // Бесконечный (§H.12): босс НЕ заканчивает матч — очки и праздник,
+        // спавн продолжается (новый босс придёт через 300 с)
+        this.boss = null;
+        this.hud.hideBossBar();
+        this.score += SCORE.BOSS;
+        this.hitstop(200);
+        this.cameras.main.shake(400, 0.006);
+        for (let i = 0; i < 6; i++) {
+          this.time.delayedCall(i * 140, () => {
+            if (this.gameEnded) return;
+            this.effects.explosion(
+              this.player.x + Phaser.Math.Between(-260, 260),
+              this.player.y + Phaser.Math.Between(-260, 260), 1.5, 2,
+            );
+          });
+        }
+      } else {
+        this.victory();
+      }
     }
   }
 
-  /** Взрыв бочки-камикадзе. selfDestruct=true — сама доехала до игрока. */
-  private bomberExplosion(x: number, y: number, selfDestruct: boolean, src?: WeaponId): void {
-    const def = ENEMIES.bomber;
+  /** Комбо-веха: дроп ресурсов у героя (лепестки летят к замку, §H.4).
+   *  Благословение «Комбо» (A2) сдвигает вехи на 20/40/80 — награда по индексу. */
+  private comboMilestone(combo: number, x: number, y: number): void {
+    const tier = Math.max(0, (this.comboMilestones as readonly number[]).indexOf(combo));
+    this.effects.popup(x, y - 30, t('game.combo', { v: combo }), '#ffd76e', 16);
+    audio.play('ach');
+    this.hud.announce(t('game.unstoppable', { v: combo }), '#ffd700');
+    track('combo_milestone', { tier: combo });
+    // Сундук летит к замку — carry-визуал (§H.4)
+    const chest = this.add.image(x, y, 'treasure').setScale(0.5).setDepth(DEPTH.FX);
+    this.tweens.add({
+      targets: chest,
+      x: this.castleX, y: this.castleY,
+      duration: 900,
+      delay: 250,
+      ease: 'Quad.easeIn',
+      onComplete: () => {
+        chest.destroy();
+        if (tier === 0) {
+          if (Math.random() < 0.5) this.economy.deposit('wood', 10);
+          else this.player.heal(25);
+        } else if (tier === 1) {
+          if (Math.random() < 0.5) {
+            this.economy.deposit('wood', 10);
+            this.economy.deposit('ore', 10);
+          } else this.player.heal(999);
+        } else if (tier === 2) {
+          this.economy.deposit('wood', 25);
+          this.economy.deposit('ore', 15);
+          this.economy.deposit('meat', 15);
+        } else {
+          this.player.heal(999);
+          this.economy.deposit('wood', 25);
+          this.economy.deposit('ore', 15);
+          this.economy.deposit('meat', 15);
+        }
+      },
+    });
+  }
+
+  /** Убийство врага гарнизоном: KILL растёт, комбо игрока — нет (§B.7.1). */
+  private damageEnemyByPawn(e: Enemy, dmg: number, weapon: string): void {
+    if (!e.active || e.dead) return;
+    const final = Math.max(1, Math.round(dmg * (this.economy.card('militia') > 0 ? 1.25 : 1)));
+    this.effects.damage(e.x, e.y - 40 * e.def.scale, final, false);
+    const died = e.takeDamage(final);
+    if (died) this.onEnemyDeath(e, undefined, true);
+    void weapon;
+  }
+
+  // ================= ПРЕЕМСТВЕННОСТЬ (TZ §F) =================
+
+  /** Герой пал: есть здание-источник? Преемственность или поражение. */
+  private onHeroDeath(): void {
+    if (this.succession.canSucceed()) {
+      this.openSuccession();
+      return;
+    }
+    this.loseCause = 'hero';
+    this.gameOver(false);
+  }
+
+  /** Экран преемственности: часы на паузе, игрок решает (§F.5). */
+  private openSuccession(): void {
+    this.overlayOpen = true;
+    gameplayStop();
+    this.scene.pause();
+    const options = this.succession.options();
+    const living = this.succession.findLivingWarrior();
+    track('succession_shown', {
+      branch_available: [
+        living ? 1 : 0,
+        this.succession.canAffordResources() ? 2 : 0,
+        3,
+      ],
+      buildings: this.settlement.aliveBuildings.map((b) => b.kind).join(','),
+    });
+    this.scene.launch('Succession', {
+      options,
+      livingCount: living ? 1 : 0,
+      livingKind: living?.weapon ?? null,
+      resourceCost: this.succession.resourceCost(),
+      goldCost: this.succession.goldCost(),
+      firstFree: this.succession.isFirstLifetimeFree(),
+      // Ветка 1: живой воин — бесплатно и мгновенно
+      onTakeWarrior: () => {
+        const w = this.succession.findLivingWarrior();
+        if (!w) return false;
+        this.succession.promoteWarrior(w);
+        this.applyHero(w.weapon === 'lance' ? 'lancer' : 'warrior', 'warrior');
+        this.afterSuccession('warrior');
+        return true;
+      },
+      // Ветка 2: ресурсы — новый воин из здания.
+      // Первая преемственность аккаунта бесплатна (§F.4/§I.4): ничего не
+      // списываем, только гасим lifetime-флаг.
+      onTakeResources: (weapon: string) => {
+        if (this.succession.isFirstLifetimeFree()) {
+          this.succession.payFree();
+        } else if (!this.succession.payResources()) return false;
+        const hero = weapon === 'lance' ? 'lancer' : weapon === 'bow' ? 'archer' : weapon === 'staff' ? 'monk' : 'warrior';
+        this.applyHero(hero, weapon);
+        this.afterSuccession('resources');
+        return true;
+      },
+      // Ветка 3: реклама
+      onTakeAd: (weapon: string) => {
+        const hero = weapon === 'lance' ? 'lancer' : weapon === 'bow' ? 'archer' : weapon === 'staff' ? 'monk' : 'warrior';
+        this.succession.payAd();
+        this.applyHero(hero, weapon);
+        this.afterSuccession('ad');
+        return true;
+      },
+      // Ветка 3: золото матча (тоже бесплатно при первом показе, §F.4)
+      onTakeGold: (weapon: string) => {
+        if (this.succession.isFirstLifetimeFree()) {
+          this.succession.payFree();
+        } else {
+          if (this.gold < this.succession.goldCost()) return false;
+          this.gold -= this.succession.goldCost();
+          this.succession.payGold();
+        }
+        const hero = weapon === 'lance' ? 'lancer' : weapon === 'bow' ? 'archer' : weapon === 'staff' ? 'monk' : 'warrior';
+        this.applyHero(hero, weapon);
+        this.afterSuccession('gold');
+        return true;
+      },
+      onSurrender: () => {
+        track('succession_refused');
+        this.surrendered = true;
+        this.loseCause = 'hero';
+        this.scene.resume();
+        this.overlayOpen = false;
+        this.gameOver(false);
+      },
+    });
+  }
+
+  private afterSuccession(branch: string): void {
+    this.successions++; // сводка рана (§K.2): преемственность (§H.11, §H.17)
+    track('succession_taken', { branch, first_lifetime: !this.succession.freeUsed });
+    this.scene.resume();
+    this.overlayOpen = false;
+    gameplayStart();
+    this.hud.announce(t('succession.took'), '#7dc95e');
+    this.hud.setVisible(true);
+    audio.startMusic();
+  }
+
+  /**
+   * Создаёт нового Player по HEROES[id] (преемник §F.9): уровень 1,
+   * стартовое оружие, HP 100%, 3 сек неуязвимости, спавн у врат замка.
+   * Поселение не трогаем, часы матча не сбрасываем.
+   */
+  private applyHero(heroId: HeroId, weapon: string): void {
+    const old = this.player;
+    const pos = { x: this.castleX, y: this.castleY + 120 };
+    old.destroy();
+    this.heroDef = HEROES[heroId];
+    this.player = new Player(this, pos.x, pos.y, this.heroDef);
+    // Скин героя (§J.6.2): преемник тоже под tint
+    const heroTint = heroSkinTint();
+    if (heroTint !== null) this.player.setTint(heroTint);
+    // Полный сброс личного: уровень 1, билд пуст, серия сброшена (§F.9)
+    this.level = 1;
+    this.xp = 0;
+    this.xpNext = XP_CURVE(1);
+    this.pendingLevelUps = 0;
+    this.passiveLevels.clear();
+    this.combo = 0;
+    this.comboTimer = 0;
+    this.kills = 0;
+    this.weapons.destroy();
+    this.weaponStats.clear();
+    this.weapons = new WeaponSystem(this, {
+      player: () => this.player,
+      enemies: () => this.activeEnemies(),
+      damageEnemy: (e, dmg, kx, ky, force, src) => this.damageEnemy(e, dmg, kx, ky, force, src),
+      projectiles: () => this.projectiles,
+      effects: () => this.effects,
+      moveDir: () => this.lastMove,
+      mightMult: () => this.mightMult,
+      cdMult: () => this.cdMult,
+    });
+    this.weapons.add(this.heroDef.startWeapon);
+    this.hud.setIcon(this.heroDef.startWeapon, WEAPONS[this.heroDef.startWeapon].icon, 1, false);
+    this.recomputeStats();
+    this.player.iframesUntil = this.time.now + 3000; // ровно 3 сек (§F.9)
+    // Вспышка у врат (juice №12 §H.13)
+    this.effects.goldBurst(pos.x, pos.y - 20, 18);
+    this.cameras.main.startFollow(this.player, true, 0.12, 0.1);
+    void weapon;
+  }
+
+  /** Взрыв рыбы-бомбы. selfDestruct=true — сама доехала до игрока. */
+  private fishBombExplode(x: number, y: number, selfDestruct: boolean, src?: WeaponId): void {
+    const def = ENEMIES['bomb-fish'];
     const dmg = Math.round((def.explodeDmg ?? 24) * this.spawner.dmgMult);
     const R = def.explodeRadius ?? 150;
     this.effects.explosion(x, y, 1.05, 2);
@@ -1009,37 +2100,35 @@ export class GameScene extends Phaser.Scene {
   private spawnEnemy(kind: EnemyKind, x: number, y: number): boolean {
     const def = ENEMIES[kind];
     // Элиты/боссы не подпадают под лимит толпы
-    if (!def.isElite && !def.isBoss && !def.isMidboss && this.enemyGroup.getLength() >= ENEMY_CAP) return false;
+    if (!def.isElite && !def.isBoss && this.enemyGroup.getLength() >= ENEMY_CAP) return false;
     const m = WORLD.GRASS_MARGIN + 40;
     x = Phaser.Math.Clamp(x, m, WORLD.SIZE - m);
     y = Phaser.Math.Clamp(y, m, WORLD.SIZE - m);
     const e = new Enemy(this, x, y, kind, this.spawner.hpMult, this.spawner.dmgMult, this.enemyCtxStore!);
     if (this.diffDef.speedMult !== 1) e.speed = Math.round(e.speed * this.diffDef.speedMult);
+    // «Кровавая луна» (A2): скорость врагов ×1.1
+    if (this.enemySpeedMult !== 1) e.speed = Math.round(e.speed * this.enemySpeedMult);
     this.enemyGroup.add(e);
-    if (def.isMidboss) {
-      this.midboss = e;
-      this.hud.showBossBar(def.name);
-      this.hud.bossIntro(def.name, t('hud.bossSubtitleGuardian'));
-      this.cameras.main.shake(350, 0.007);
-    }
     return true;
   }
 
   private enemyCtxStore: EnemyContext | null = null;
 
-  private spawnBoss(): void {
+  private spawnBoss(hpMult = 1): void {
     const a = Math.random() * Math.PI * 2;
     const cam = this.cameras.main;
     const r = Math.hypot(cam.width, cam.height) / (2 * cam.zoom) + 160;
     const x = Phaser.Math.Clamp(this.player.x + Math.cos(a) * r, 400, WORLD.SIZE - 400);
     const y = Phaser.Math.Clamp(this.player.y + Math.sin(a) * r, 400, WORLD.SIZE - 400);
-    this.boss = new Enemy(this, x, y, 'boss', 1, 1, this.enemyCtxStore!);
-    this.boss.speed = Math.round(this.boss.speed * this.diffDef.speedMult);
+    // hpMult — эскалация боссов бесконечного режима (§H.12): ×1.5 за каждого
+    this.boss = new Enemy(this, x, y, 'boss', hpMult, 1, this.enemyCtxStore!);
+    this.boss.speed = Math.round(this.boss.speed * this.diffDef.speedMult * this.enemySpeedMult);
     this.enemyGroup.add(this.boss);
     this.hud.showBossBar(ENEMIES.boss.name);
     this.hud.bossIntro(
       ENEMIES.boss.name,
       this.diffDef.id === 'nightmare' ? t('hud.bossSubtitleNightmare') : t('hud.bossSubtitleFinal'),
+      'face-boss',
     );
     this.cameras.main.shake(400, 0.008);
   }
@@ -1052,7 +2141,7 @@ export class GameScene extends Phaser.Scene {
     let worst: Enemy | null = null;
     let worstD = 0;
     for (const e of this.activeEnemies()) {
-      if (e.def.isElite || e.def.isBoss || e.def.isMidboss) continue;
+      if (e.def.isElite || e.def.isBoss) continue;
       const d = (e.x - this.player.x) ** 2 + (e.y - this.player.y) ** 2;
       if (d > worstD) { worstD = d; worst = e; }
     }
@@ -1085,7 +2174,7 @@ export class GameScene extends Phaser.Scene {
             if (o === e || o.x < e.x) continue; // каждая пара один раз
             const dx = o.x - e.x, dy = o.y - e.y;
             const d = Math.hypot(dx, dy);
-            const min = (e.def.bodyRadius + o.def.bodyRadius) * 0.85;
+            const min = (e.def.body.r + o.def.body.r) * 0.85;
             if (d > 0.001 && d < min) {
               const push = (min - d) / 2;
               const nx = dx / d, ny = dy / d;
@@ -1132,8 +2221,17 @@ export class GameScene extends Phaser.Scene {
     }
   }
 
-  /** Пополнение золота (кристаллы/сокровища) с всплывающим текстом */
+  /** Пополнение золота (кристаллы/сокровища) с всплывающим текстом.
+   *  Контракт «Пацифист-герой» (§H.9): золото копится в отдельном счётчике
+   *  и уходит в кошелёк лавки в конце рана — в сводку матча не попадает. */
   private addGold(v: number, x?: number, y?: number): void {
+    if (this.contractId === 'c_pacifist') {
+      this.pacifistGold += v;
+      if (x !== undefined && y !== undefined) {
+        this.effects.popup(x, y - 12, t('game.goldPopup', { v }), '#ffd76e', 12);
+      }
+      return;
+    }
     this.gold += v;
     this.ach?.event({ type: 'gold', value: this.gold });
     if (x !== undefined && y !== undefined) {
@@ -1200,6 +2298,25 @@ export class GameScene extends Phaser.Scene {
       kind: 'gold', title: t('levelup.cardGoldTitle'), subtitle: t('levelup.cardGoldSub'),
       desc: t('levelup.cardGoldDesc'), icon: 'icon-coin',
     });
+
+    // Карты поселения (§H.5): в пул после первого дома, ранг II после I
+    if (this.economy.houses > 0) {
+      const cards: UpgradeCard[] = [];
+      for (const def of SETTLEMENT_CARDS) {
+        const lvl = this.economy.card(def.id);
+        if (lvl >= 2) continue;
+        cards.push({
+          kind: 'settlement', id: def.id, icon: def.icon, rarity: def.rarity,
+          title: t(`settle.${def.id}.name` as Parameters<typeof t>[0]),
+          subtitle: lvl === 0 ? t('settle.subtitle') : t('settle.subtitle') + ' II',
+          desc: t(`settle.${def.id}.desc` as Parameters<typeof t>[0]),
+        });
+      }
+      Phaser.Utils.Array.Shuffle(cards);
+      // Одна карта поселения на выдачу — не вытесняет боевую прокачку
+      if (cards[0]) picked.splice(Phaser.Math.Between(0, Math.min(2, picked.length - 1)), 0, cards[0]);
+      if (picked.length > 3) picked.length = 3;
+    }
 
     let i = 0;
     while (picked.length < 3) {
@@ -1292,6 +2409,16 @@ export class GameScene extends Phaser.Scene {
         this.gold += 100;
         this.ach?.event({ type: 'gold', value: this.gold });
         break;
+      case 'settlement': {
+        // Карточки поселения (§H.5): эффекты применяются в Economy/сценах
+        const id = String(card.id);
+        this.economy.applySettlementCard(id);
+        this.cardsPicked.push(id); // кодекс/сводка рана (§H.10, §K.2)
+        if (id === 'alarm') this.registry.set('tss-alarm', true);
+        this.hud.announce(`${t('settle.subtitle')}: ${card.title}`, '#9fd8ff');
+        track('levelup_card_picked', { card_id: id, settlement_card: true });
+        break;
+      }
     }
   }
 
@@ -1327,8 +2454,10 @@ export class GameScene extends Phaser.Scene {
     this.mightMult = 1 + 0.06 * shop.might + 0.12 * lvl('might');
     this.cdMult = Math.max(0.6, 1 - 0.08 * lvl('haste'));
     this.critChance = 0.05 * shop.luck + 0.15 * lvl('luck');
-    this.xpMult = 1 + 0.15 * lvl('wisdom');
-    const newMax = this.heroDef.maxHp + 15 * shop.vitality + 25 * lvl('vitality');
+    // Множители рана поверх пассивок: «Кровавая луна» ×1.15,
+    // расходник «Подкова удачи» ×1.25 (A2, §J.6.2)
+    this.xpMult = (1 + 0.15 * lvl('wisdom')) * this.xpEventMult;
+    const newMax = this.heroDef.maxHp + 15 * shop.vitality + 25 * lvl('vitality') + this.qaHeroHpBonus;
     if (newMax !== this.player.maxHp) {
       const diff = newMax - this.player.maxHp;
       this.player.maxHp = newMax;
@@ -1349,7 +2478,6 @@ export class GameScene extends Phaser.Scene {
     const chest = this.pickups.chestPos();
     if (chest) targets.push({ x: chest.x, y: chest.y, kind: 'chest' });
     if (this.boss?.active) targets.push({ x: this.boss.x, y: this.boss.y, kind: 'boss' });
-    else if (this.midboss?.active) targets.push({ x: this.midboss.x, y: this.midboss.y, kind: 'boss' });
     if (targets.filter((t) => t.kind === 'boss').length === 0) {
       // ближайшая элита (если босса нет)
       let best: Enemy | null = null;
@@ -1366,10 +2494,14 @@ export class GameScene extends Phaser.Scene {
 
   // ================= ПАУЗА / КОНЕЦ =================
 
-  /** Вызывается площадкой при game_api_resume. Не резumes сцену, если на ней
-     * открыт оверлей (Pause/LevelUp/GameOver) — иначе бой пойдёт под ним. */
+  /** Вызывается площадкой при game_api_resume / возврате вкладки.
+   *  Возвращаем ход ТОЛЬКО если на сцене нет оверлея и матч не кончен —
+   *  иначе бой пойдёт под Pause/LevelUp/GameOver. Прежняя инвертированная
+   *  логика (resume при открытом оверлее) навсегда оставляла сцену на паузе
+   *  после alt-tab: overlayOpen=false → resume не вызывался никогда. */
   platformResume(): void {
-    if (this.overlayOpen || this.gameEnded) this.scene.resume();
+    if (this.overlayOpen || this.gameEnded || this.victoryPending) return;
+    if (this.started && this.scene.isPaused()) this.scene.resume();
     gameplayStart();
   }
 
@@ -1407,10 +2539,11 @@ export class GameScene extends Phaser.Scene {
   }
 
   private currentScore(): number {
+    // §E.8: KILL×комбо + MIN×100 + LVL×50 (золото матча в очки не входит —
+    // оно конвертируется в кошелёк лавки на end-экране, §J.2 валюты не мешаются)
     const base = this.score
       + Math.floor(this.elapsed / 60) * SCORE.MINUTE
-      + this.level * SCORE.LEVEL
-      + this.gold;
+      + this.level * SCORE.LEVEL;
     return Math.round(base * this.diffDef.scoreMult);
   }
 
@@ -1491,7 +2624,14 @@ export class GameScene extends Phaser.Scene {
     // и полосы с тостами светились поверх затемнения экрана результата.
     this.hud.setVisible(false);
 
-    const finalScore = this.currentScore();
+    const finalScore = Math.round((this.currentScore()
+      + this.settlement.settlementScore().defence
+      + this.settlement.settlementScore().population) * this.diffDef.scoreMult);
+    const ideal = this.settlement.isIdealVictory(victory);
+    if (ideal) {
+      // РЕЙТИНГ только за идеальную победу (§E.8)
+      this.score += SCORE.RATING;
+    }
     // Статистика оружия: сортировка по суммарному урону; эволюционные формы — с ★
     const weapons: WeaponStat[] = [...this.weaponStats.entries()]
       .map(([id, st]) => {
@@ -1503,23 +2643,170 @@ export class GameScene extends Phaser.Scene {
         };
       })
       .sort((a, b) => b.dmg - a.dmg);
-    const stats = {
+    const score = victory ? finalScore : Math.round(this.currentScore() * this.diffDef.scoreMult);
+    // meta (итоги applyRunToMeta) дописывается ниже — тип из GameOverStats
+    const stats: import('./GameOverScene').GameOverStats = {
       victory,
       time: Math.floor(this.elapsed),
       kills: this.kills,
       level: this.level,
       gold: this.gold,
-      score: finalScore,
+      score,
       hero: this.heroDef.name,
       difficulty: this.diffDef.name,
       difficultyId: this.diffDef.id,
       bestCombo: this.bestCombo,
       weapons,
       newAch: (this.ach?.consumeNewly() ?? []).map((a) => ({ name: a.name, emoji: a.emoji })),
+      // Поселение (§E.8, §H.3): ставки, хроника и near-miss
+      loseCause: this.loseCause,
+      ideal,
+      settlement: {
+        ...this.settlement.settlementScore(),
+        defence: Math.round(this.settlement.settlementScore().defence * this.diffDef.scoreMult),
+        population: Math.round(this.settlement.settlementScore().population * this.diffDef.scoreMult),
+        castleHp: Math.max(0, Math.round(this.settlement.castle.hp)),
+        siegesTotal: this.settlement.facts.siegesTotal,
+        siegesDefended: this.settlement.facts.siegesDefended,
+        monasteryFallenAt: this.settlement.facts.monasteryFallenAt,
+        monasteryVictims: this.settlement.facts.monasteryVictims,
+        bledOutName: this.settlement.facts.bledOutName,
+        bledOutShort: this.settlement.facts.bledOutShort,
+      },
+      veterans: this.economy.pawns.filter((p) => p.veteranStars > 0).slice(0, 2).map((p) => ({ name: p.name, stars: p.veteranStars })),
     };
-    this.commitMatchMeta(victory, finalScore);
+    track('run_end', {
+      cause: victory ? 'victory' : this.surrendered ? 'surrender' : this.loseCause,
+      duration_s: Math.floor(this.elapsed),
+      score,
+      kills: this.kills,
+      level: this.level,
+      buildings: this.settlement.settlementScore().buildings,
+      population: this.economy.pawns.length,
+      sieges_defended: this.settlement.facts.siegesDefended,
+      ideal,
+    });
+    this.commitMatchMeta(victory, score);
+    // Мета фаз Q/S (§K.2): сводка рана → applyRunToMeta ровно один раз,
+    // результат прикрепляется к payload stats.meta
+    const meta = this.applyRunMeta(victory, score, ideal);
+    if (meta) stats.meta = meta;
     this.scene.launch('GameOver', { stats });
     this.scene.pause();
+  }
+
+  /**
+   * Собирает RunSummary (§K.2, все поля) и применяет его к мета-состоянию
+   * РОВНО ОДИН РАЗ (guard this.metaApplied — после воскрешения gameOver
+   * может вызваться повторно). Кодекс-отметки оружия/эволюций — ДО вызова.
+   */
+  private applyRunMeta(victory: boolean, score: number, ideal: boolean): NonNullable<import('./GameOverScene').GameOverStats['meta']> | undefined {
+    // Кодекс (§H.10): использованное оружие (dmg > 0) и эволюции
+    for (const id of this.weapons.ownedIds()) {
+      if ((WEAPONS[id].levels[0]?.dmg ?? 0) > 0) markCodex(`w_${id}`);
+      if (this.weapons.isEvolved(id)) markCodex(`e_${id}`);
+    }
+    if (this.metaApplied) return undefined;
+    this.metaApplied = true;
+    // Контракт «Пацифист-герой» (§H.9): золото героя уходит в кошелёк лавки
+    // (depositGold из '../shop'), минуя сводку матча — без задвоения
+    if (this.pacifistGold > 0) depositGold(Math.floor(this.pacifistGold));
+    const wave = this.mods.endless ? this.spawner.wave : 0;
+    const summary: RunSummary = {
+      victory,
+      ideal,
+      endless: this.mods.endless,
+      wave,
+      time: Math.floor(this.elapsed),
+      kills: this.kills,
+      level: this.level,
+      gold: this.gold,
+      score,
+      difficulty: this.diffDef.id,
+      buildingsBuilt: this.buildingsBuilt,
+      pawnsAlive: this.economy.pawns.length,
+      siegesDefended: this.settlement.facts.siegesDefended,
+      siegesTotal: this.settlement.facts.siegesTotal,
+      monasteryHealed: this.economy.monasteryHealed,
+      healHp: this.economy.healHpTotal,
+      hires: this.hires,
+      successions: this.successions,
+      veterans: this.economy.pawns.filter((p) => p.veteranStars >= 3).length,
+      firstHouseMin: this.firstHouseMin,
+      barracks: this.builtBarracks,
+      monastery: this.builtMonastery,
+      archery: this.builtArchery,
+      bestCombo: this.bestCombo,
+      bossKilled: this.bossKilled,
+      killsByKind: { ...this.killsByKind },
+      cardsPicked: [...this.cardsPicked],
+      contract: this.mods.contract,
+      ukaz: this.mods.ukaz,
+      challengeMods: [...this.challengeMods],
+      blessing: this.mods.blessing,
+      consumables: this.mods.consumables,
+    };
+    const res = applyRunToMeta(summary);
+    return {
+      glory: res.glory,
+      questsDone: res.quests.done.length,
+      questsCompletedNow: res.questsCompleted.map((q) => ({ descKey: q.descKey, reward: q.reward })),
+      passLevels: res.passLevelsGained,
+      passRewards: res.passRewards.map((r) => ({ kind: r.kind, amount: r.amount })),
+      chainUnlocks: res.chainUnlocked.map((c) => ({ nameKey: c.nameKey, tier: c.tier })),
+      endlessWave: wave,
+      crownsEarned: res.crownsEarned,
+      challenge: !!this.mods.challenge,
+      ukaz: this.mods.ukaz,
+      endless: this.mods.endless,
+    };
+  }
+
+  /**
+   * Тосты заданий дня (§H.17): раз в 5 сек сверяем активные задания с
+   * локальными счётчиками; впервые достигнутая цель — анонс. Реальное
+   * начисление славы делает applyRunToMeta в конце рана.
+   */
+  private checkQuestToasts(): void {
+    if (this.gameEnded) return;
+    const st = rollMetaDay();
+    for (const id of st.quests.ids) {
+      if (st.quests.done.includes(id) || this.questToastDone.has(id)) continue;
+      const def = QUEST_POOL.find((q) => q.id === id);
+      if (!def) continue;
+      const rv = this.questRunValue(def.metric);
+      const achieved = def.metric === 'firstHouseMin' ? rv <= def.goal : rv >= def.goal;
+      if (achieved) {
+        this.questToastDone.add(id);
+        this.hud.announce(t('quest.completeToast', { v: def.reward }), '#ffd76e');
+      }
+    }
+  }
+
+  /** Локальная копия маппинга runValue из meta.applyRunToMeta (§H.17). */
+  private questRunValue(m: QuestMetric): number {
+    switch (m) {
+      case 'buildings': return this.buildingsBuilt;
+      case 'siegesDefended': return this.settlement.facts.siegesDefended;
+      case 'monasteryHealed': return this.economy.monasteryHealed;
+      case 'healHp': return Math.round(this.economy.healHpTotal);
+      case 'idealWin': return 0; // идеальная победа определяется только в конце рана
+      case 'hires': return this.hires;
+      case 'successionBoss': return this.successions > 0 && this.bossKilled ? 1 : 0;
+      case 'kills': return this.kills;
+      // «Достигнута, если построил дом до 2:00» — та же формула, что в meta
+      case 'firstHouseMin': return this.firstHouseMin > 0 ? Math.floor(this.firstHouseMin) : 99;
+      case 'barracks': return this.builtBarracks;
+      case 'monastery': return this.builtMonastery;
+      case 'archery': return this.builtArchery;
+      case 'veterans': return this.economy.pawns.filter((p) => p.veteranStars >= 3).length;
+      case 'gold': return this.gold;
+      case 'score': return this.currentScore();
+      case 'time': return Math.floor(this.elapsed);
+      case 'bestCombo': return this.bestCombo;
+      case 'noSuccessionBoss': return this.successions === 0 && this.bossKilled ? 1 : 0;
+      default: return 0;
+    }
   }
 
   /**
@@ -1549,36 +2836,9 @@ export class GameScene extends Phaser.Scene {
     this.metaTime = time;
   }
 
-  /**
-   * Воскрешение за rewarded-ролик (механика монетизации на Yandex Games).
-   *
-   * Сознательно слабое: 40% HP, серия обнуляется, спавн возобновляется с
-   * текущей сложности. Иначе бесплатные «жизни» ломали бы баланс и игрок
-   * получал бесконечное преимущество за просмотр рекламы.
-   *
-   * Вызывается из GameOverScene ДО scene.resume(): сцена на паузе, но прямые
-   * вызовы методов работают.
-   */
-  revive(): boolean {
-    if (!this.gameEnded) return false;
-    this.gameEnded = false;
-    this.defeatPending = false;
-    this.spawner.stopped = false;
-
-    // Серия сбрасывается — награда за рекламу не должна идти в счёт очков
-    this.combo = 0;
-    this.comboTimer = 0;
-
-    this.player.hp = Math.round(this.player.maxHp * 0.4);
-    // Короткая неуязвимость, чтобы не погибнуть сразу тем же уроном
-    this.player.iframesUntil = this.time.now + 1500;
-
-    audio.startMusic();
-    gameplayStart();
-    this.hud.setVisible(true);
-    this.hud.announce(t('over.revived'), '#7dc95e');
-    return true;
-  }
+  // Старый ревайв за рекламу удалён (TZ §F.12): его роль перешла
+  // к преемственности (SuccessionScene) — смерть больше не конец матча,
+  // пока есть здание, выпускающее воина.
 
   private resizeZoom(): void {
     const w = this.scale.width;
@@ -1621,26 +2881,35 @@ export class GameScene extends Phaser.Scene {
       }
     }
     this.ambientRect.setFillStyle(color);
+    // Контракт «Ночь» −25% / «Туман» −20% (§H.9, A2): светлого пятна в сцене
+    // нет — равномерно усиливаем затемнение (радиус обзора условно)
+    if (this.ambientDarkMult !== 1) {
+      const dr = Math.round(((color >> 16) & 0xff) * this.ambientDarkMult);
+      const dg = Math.round(((color >> 8) & 0xff) * this.ambientDarkMult);
+      const db = Math.round((color & 0xff) * this.ambientDarkMult);
+      this.ambientRect.setFillStyle(Phaser.Display.Color.GetColor(dr, dg, db));
+    }
   }
 
   private makeEnemyCtx(): EnemyContext {
     return {
       playerX: () => this.player.x,
       playerY: () => this.player.y,
-      onArcherShoot: (x, y, tx, ty) => {
+      onEnemyShoot: (x, y, proj) => {
+        // Бросок выполняется по ТЕКУЩЕЙ позиции игрока в момент выпуска
+        const tx = this.player.x, ty = this.player.y;
         const a = Math.atan2(ty - y, tx - x);
-        this.projectiles.enemyArrow(x, y, a, Math.round(ENEMIES.archer.damage * this.spawner.dmgMult));
+        const srcDmg = proj === 'bone' ? ENEMIES.gnoll.damage : ENEMIES.shaman.damage;
+        this.projectiles.shootEnemy(proj, x, y, a, Math.round(srcDmg * this.spawner.dmgMult));
       },
-      onBossArrowRing: (x, y) => {
-        for (let i = 0; i < 14; i++) {
-          const dmg = Math.round(14 * this.spawner.dmgMult);
-          this.projectiles.enemyArrow(x, y, (i / 14) * Math.PI * 2, dmg);
-        }
-      },
-      onMonkHeal: (x, y) => {
-        this.effects.heal(x, y);
-        for (const e of this.enemiesNear(x, y, 220)) {
-          if (e !== this.boss) (e as Enemy).heal(34);
+      onBossSlam: (x, y) => {
+        // Ударная волна Огра: урон по радиусу + эффект + тряска
+        const dmg = Math.round(20 * this.spawner.dmgMult);
+        this.effects.explosion(x, y, 1.5, 2);
+        audio.play('explosion');
+        this.cameras.main.shake(180, 0.005);
+        if (Math.hypot(this.player.x - x, this.player.y - y) < 170) {
+          this.hurtPlayer(dmg);
         }
       },
       onBossSummon: (x, y) => {
@@ -1650,19 +2919,50 @@ export class GameScene extends Phaser.Scene {
         let summoned = 0;
         for (let i = 0; i < 6; i++) {
           const a = (i / 6) * Math.PI * 2 + Math.random();
-          const ok = this.spawnEnemy('boss-minion', x + Math.cos(a) * 170, y + Math.sin(a) * 170);
+          const ok = this.spawnEnemy('goblin', x + Math.cos(a) * 170, y + Math.sin(a) * 170);
           if (!ok && !this.makeRoomForSummon()) continue;
           if (ok) summoned++;
         }
         if (summoned > 0) this.hud.announce(t('game.bossSummon'), '#ff8866');
       },
       onBomberExplode: (x, y, self, selfDestruct) => {
-        // Уничтожаем бочку ДО взрыва: взрыв не должен бить саму бочку (иначе рекурсия)
+        // Уничтожаем рыбу-бомбу ДО взрыва: взрыв не должен бить её саму (иначе рекурсия)
         this.enemyGroup.remove(self, true, true);
-        this.bomberExplosion(x, y, selfDestruct);
+        this.fishBombExplode(x, y, selfDestruct);
       },
       enemiesNear: (x, y, r) => this.enemiesNear(x, y, r),
-      healEnemy: (e, hp) => (e as Enemy).heal(hp),
+      // Враг ранит пешку (§A.5): обычный бой — напрямую, осада — по лимиту профиля
+      attackPawn: (pawn, dmg, siege) => {
+        if (pawn.dead) return;
+        if (siege) this.settlement.siegeWoundPawn(pawn, dmg, this.time.now);
+        else {
+          const wounded = this.economy.woundPawn(pawn, dmg, this.time.now);
+          if (wounded) track('pawn_wounded', { name_role: `${pawn.kind}:${pawn.name}`, cause: 'regular' });
+        }
+        this.effects.hitSound(this.time.now);
+      },
+      // Осада бьёт здание: потолок и таунт внутри Settlement (§E.4.2, §B.7.1)
+      attackBuilding: (b, dmg, fire, isBoss) => {
+        const building = b as Building;
+        // Босс — вне потолка осады и таунта (§E.6, §B.7.1)
+        if (fire) building.ignite(isBoss ? -1 : this.settlement.siegeIdx);
+        this.settlement.damageBuilding(building, dmg, isBoss ? -1 : this.settlement.siegeIdx, isBoss);
+        this.effects.hitSpark(building.x, building.y - 20);
+      },
+      // Бросок снаряда по зданию: урон придёт по прибытии (§E.4.1)
+      siegeShoot: (kind, x, y, tx, ty, fire, building) => {
+        const dmg = kind === 'hex' ? (ENEMIES.shaman.buildingDmg ?? 5) : (ENEMIES.gnoll.buildingDmg ?? 2);
+        this.projectiles.shootAtBuilding(kind, x, y, tx, ty, dmg, fire, (shot) => {
+          const b = building as Building;
+          if (b && b.alive) {
+            if (fire) {
+              b.ignite(this.settlement.siegeIdx);
+              this.effects.hexBlast(shot.x, shot.y);
+            }
+            this.settlement.damageBuilding(b, dmg, this.settlement.siegeIdx, false);
+          }
+        });
+      },
     };
   }
 }

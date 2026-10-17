@@ -93,8 +93,8 @@ export type AchEvent =
   | { type: 'gold'; value: number }
   | { type: 'chests'; value: number }
   | { type: 'elites'; value: number }
-  | { type: 'guards'; value: number }
-  | { type: 'taskmasters'; value: number }
+  | { type: 'skulls'; value: number }
+  | { type: 'shamans'; value: number }
   | { type: 'evolution' }
   | { type: 'victory'; difficulty: string };
 
@@ -126,10 +126,10 @@ export class AchTracker {
       case 'elites':
         if (!this.unlocked.has('elites-2') && ev.value >= 2) this.unlock('elites-2');
         break;
-      case 'guards':
+      case 'skulls':
         if (!this.unlocked.has('shieldbreaker') && ev.value >= 12) this.unlock('shieldbreaker');
         break;
-      case 'taskmasters':
+      case 'shamans':
         if (!this.unlocked.has('riot-quell') && ev.value >= 8) this.unlock('riot-quell');
         break;
       case 'evolution':

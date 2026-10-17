@@ -200,7 +200,7 @@ export class WeaponSystem {
     for (const e of this.ctx.enemies()) {
       const dx = e.x - p.x, dy = e.y - p.y;
       const d = Math.hypot(dx, dy);
-      if (d > range + e.def.bodyRadius) continue;
+      if (d > range + e.def.body.r) continue;
       const diff = Math.abs(Phaser.Math.Angle.Wrap(Math.atan2(dy, dx) - angle));
       if (diff <= arcHalf) {
         this.ctx.damageEnemy(e, dmg, dx, dy, 130, 'sword');
@@ -319,7 +319,7 @@ export class WeaponSystem {
         this.scene.cameras.main.shake(evolved ? 150 : 120, 0.003);
         for (const e of this.ctx.enemies()) {
           const dx = e.x - x, dy = e.y - y;
-          if (Math.hypot(dx, dy) <= radius + e.def.bodyRadius) {
+          if (Math.hypot(dx, dy) <= radius + e.def.body.r) {
             this.ctx.damageEnemy(e, dmg, dx, dy, 260, 'hammer');
           }
         }
@@ -348,7 +348,7 @@ export class WeaponSystem {
     audio.play('slam');
     for (const e of this.ctx.enemies()) {
       const dx = e.x - x, dy = e.y - y;
-      if (Math.hypot(dx, dy) <= radius + e.def.bodyRadius) {
+      if (Math.hypot(dx, dy) <= radius + e.def.body.r) {
         this.ctx.damageEnemy(e, dmg, dx, dy, 180, 'hammer');
       }
     }
@@ -389,7 +389,7 @@ export class WeaponSystem {
     const p = this.ctx.player();
     for (const e of this.ctx.enemies()) {
       const dx = e.x - p.x, dy = e.y - p.y;
-      if (Math.hypot(dx, dy) <= radius + e.def.bodyRadius) {
+      if (Math.hypot(dx, dy) <= radius + e.def.body.r) {
         this.ctx.damageEnemy(e, dmg, 0, 0, 0, 'aura');
       }
     }
@@ -413,10 +413,10 @@ export class WeaponSystem {
     for (const e of this.ctx.enemies()) {
       const dx = e.x - p.x, dy = e.y - p.y;
       const d = Math.hypot(dx, dy);
-      if (d <= novaRadius + e.def.bodyRadius) {
+      if (d <= novaRadius + e.def.body.r) {
         this.ctx.damageEnemy(e, novaDmg, dx, dy, 120, 'aura');
       }
-      if (d <= (w.radius ?? 215) + e.def.bodyRadius) inAura++;
+      if (d <= (w.radius ?? 215) + e.def.body.r) inAura++;
     }
     if (inAura >= 3) {
       (p as Player).heal(3);

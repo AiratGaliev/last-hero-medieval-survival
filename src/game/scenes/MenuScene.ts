@@ -7,12 +7,41 @@ import { audio } from '../systems/Audio';
 import { makePanel, makeButton, fitTextWidth } from '../systems/Ui';
 import { loadShop, buyUpgrade, SHOP_UPGRADES } from '../shop';
 import { ACHIEVEMENTS, loadUnlocked, loadMeta } from '../achievements';
-import { t, num, clock } from '../../i18n';
+import { t, num, clock, type TranslationKey, type TranslateParams } from '../../i18n';
 import { topScores } from '../../platform/leaderboard';
 import { notifyReady } from '../../platform/lifecycle';
-import { loadText, saveText } from '../storage';
+import { loadText, saveText, removeKey } from '../storage';
 import { isAuthorized, offerAuth, displayName } from '../../platform/player';
 import { isOnYandex } from '../../platform/sdk';
+import { placementAvailable, showPlacementRewarded, showStickyBanner, rewardedAvailable } from '../../platform/ads';
+import { track } from '../../platform/analytics';
+import {
+  BLESSINGS,
+  bonusAvailable,
+  challengeForToday,
+  challengeVictoryToday,
+  CHALLENGE_MODS,
+  claimDailyBonus,
+  claimDailyChest,
+  CONSUMABLES,
+  CONSUMABLE_MAX,
+  contractDef,
+  CONTRACTS,
+  DAILY_BONUS,
+  dailyChestLeft,
+  loadMetaState,
+  matchesPlayed,
+  ORDERS,
+  ordersUnlocked,
+  rollBlessings,
+  saveMetaState,
+  saveRunConfig,
+  type ConsumableId,
+  type ContractId,
+  type DailyBonusKind,
+  type OrderId,
+  type RunModifiers,
+} from '../meta';
 
 // ============ Главное меню: герой + сложность + вся мета-навигация ============
 // Вся оболочка игры живёт здесь: «Как играть», «Зал славы», «Лавка торговца»
@@ -94,6 +123,13 @@ export class MenuScene extends Phaser.Scene {
   private recordsOnline = false;
   private recordsListEls: Phaser.GameObjects.GameObject[] = [];
 
+  // Мета-фаза Q/S: чип дара дня, пре-ран выбор, расходники
+  private bonusChip: Phaser.GameObjects.Container | null = null;
+  private preChipTexts: Array<Phaser.GameObjects.Text | null> = [null, null, null, null];
+  private preChipW = 0;
+  private preChipFont = 10;
+  private consRowEls: Phaser.GameObjects.GameObject[] = [];
+
   // Достижения
   private achDesc: Phaser.GameObjects.Text | null = null;
 
@@ -116,6 +152,9 @@ export class MenuScene extends Phaser.Scene {
     this.overlayExtras = [];
     this.shopRowEls = [];
     this.shopBalanceText = null;
+    this.bonusChip = null;
+    this.preChipTexts = [null, null, null, null];
+    this.consRowEls = [];
 
     // Мобильная раскладка: контент позиционируется на виртуальном полотне 460×800,
     // затем камера уменьшает его до реального размера экрана — ничего не обрезается.
@@ -176,9 +215,9 @@ export class MenuScene extends Phaser.Scene {
     this.add.image(width * 0.17, height * 0.14, 'castle').setScale(0.5).setAlpha(0.45);
     const sheep = this.add.sprite(width * 0.1, height * 0.9, 'sheep').setScale(0.65).setAlpha(0.9);
     sheep.play('sheep-idle');
-    const pawn = this.add.sprite(width * 0.9, height * 0.92, 'grunt-idle').setScale(0.45).setAlpha(0.9);
-    pawn.play('grunt-idle');
-    void sheep; void pawn;
+    const goblin = this.add.sprite(width * 0.9, height * 0.92, 'goblin-idle').setScale(0.5).setAlpha(0.9);
+    goblin.play('goblin-idle');
+    void sheep; void goblin;
 
     // ---------- Сетка карточек героя ----------
     // Считается до логотипа: над карточками теперь два меча, и им нужно
@@ -190,12 +229,12 @@ export class MenuScene extends Phaser.Scene {
     const rows = Math.ceil(HERO_ORDER.length / cols);
     const gap = 14;
     const cardW = Math.min(width < 760 ? 205 : 225, (width - 36 - (cols - 1) * gap) / cols);
-    const cardH = width < 760 ? 160 : 214;
+    const cardH = width < 760 ? 146 : 214;
     const blockH = rows * cardH + (rows - 1) * gap;
-    // От низа карточек до низа экрана: 34 до чипов сложности, 34 + 58 до
-    // кнопки «Играть», дальше навигация (на мобильных она в два ряда).
+    // От низа карточек до низа экрана: 28 до чипов сложности, ряд пре-рана
+    // (контракт/указ/расходники/вызов), кнопка «Играть» и навигация.
     const navStack = mobile ? 34 + 58 + 90 : 34 + 58 + 44;
-    const maxCardsY = height - 18 - navStack - 64 - blockH / 2;
+    const maxCardsY = height - 18 - navStack - 77 - blockH / 2;
     const cardsY = Math.min(height * 0.55, maxCardsY);
     const heroTop = cardsY - blockH / 2;
     const heroBottom = cardsY + blockH / 2;
@@ -316,47 +355,54 @@ export class MenuScene extends Phaser.Scene {
     });
 
     // ---------- Выбор сложности ----------
-    const chipsY = heroBottom + 34;
+    const chipsY = heroBottom + 28;
     const chipW = Math.min(200, (width - 90) / 2);
     DIFF_ORDER.forEach((id, i) => {
       const x = width / 2 + (i === 0 ? -chipW / 2 - 8 : chipW / 2 + 8);
       this.createDiffChip(x, chipsY, chipW, 40, id);
     });
 
+    // ---------- Пре-ран ряд: контракт / указ / расходники / вызов дня ----------
+    const preY = chipsY + 38;
+    this.createPreRow(width, preY, mobile);
+
     // ---------- Кнопки ----------
-    const btnY = Math.min(height * 0.85, chipsY + 34 + 30);
+    const btnY = Math.min(height * 0.85, preY + 48);
     makeButton(this, width / 2, btnY, Math.min(320, width - 80), 58, t('menu.play'), () => {
       audio.unlock();
       saveText('tss-hero', this.selectedHero);
       saveText('tss-diff', this.selectedDiff);
-      this.scene.start('Game', { hero: this.selectedHero, diff: this.selectedDiff });
+      this.startRun();
     }, 'blue', mobile ? 20 : 24);
 
-    // Навигация по мета-экранам — всё внутри Phaser
+    // Навигация по мета-экранам — всё внутри Phaser. «Лавка торговца»
+    // теперь отдельная сцена 'Shop' (фаза S), мета — сцена 'Meta' (фаза Q).
     const navItems: Array<[string, () => void]> = [
       [t('menu.howTo'), () => this.showHowTo()],
       [t('menu.records'), () => { void this.showRecords(); }],
-      [t('menu.shop'), () => this.showShop()],
+      [t('menu.shop'), () => this.openOverlayScene('Shop')],
       [t('menu.achievements'), () => this.showAchievements()],
       [t('menu.chronicle'), () => this.showChronicle()],
+      [t('meta.tab'), () => this.openOverlayScene('Meta')],
     ];
     const navY = btnY + 58;
     if (mobile) {
-      const w1 = Math.min(190, (width - 60 - 12) / 2);
-      navItems.slice(0, 2).forEach(([lbl, action], i) => {
-        makeButton(this, width / 2 + (i === 0 ? -1 : 1) * (w1 / 2 + 6), navY, w1, 42, lbl, action, 'red', 12);
+      // Два ряда по три: шесть кнопок мета-навигации
+      const w3 = Math.min(150, (width - 60 - 24) / 3);
+      navItems.slice(0, 3).forEach(([lbl, action], i) => {
+        const x = width / 2 - (3 * w3 + 24) / 2 + i * (w3 + 12) + w3 / 2;
+        makeButton(this, x, navY, w3, 42, lbl, action, 'red', 11);
       });
-      const w2 = Math.min(150, (width - 60 - 24) / 3);
-      navItems.slice(2).forEach(([lbl, action], i) => {
-        const x = width / 2 - (3 * w2 + 24) / 2 + i * (w2 + 12) + w2 / 2;
-        makeButton(this, x, navY + 48, w2, 42, lbl, action, 'red', 11);
+      navItems.slice(3).forEach(([lbl, action], i) => {
+        const x = width / 2 - (3 * w3 + 24) / 2 + i * (w3 + 12) + w3 / 2;
+        makeButton(this, x, navY + 48, w3, 42, lbl, action, 'red', 11);
       });
     } else {
-      const gapN = 10;
-      const bw = Math.min(185, (width - 80 - 4 * gapN) / 5);
+      const gapN = 8;
+      const bw = Math.min(160, (width - 80 - 5 * gapN) / 6);
       navItems.forEach(([lbl, action], i) => {
-        const x = width / 2 - (5 * bw + 4 * gapN) / 2 + i * (bw + gapN) + bw / 2;
-        makeButton(this, x, navY, bw, 44, lbl, action, 'red', 12);
+        const x = width / 2 - (6 * bw + 5 * gapN) / 2 + i * (bw + gapN) + bw / 2;
+        makeButton(this, x, navY, bw, 44, lbl, action, 'red', 11);
       });
     }
 
@@ -366,6 +412,19 @@ export class MenuScene extends Phaser.Scene {
     // это явная кнопка — и заодно видно, под каким именем игрок записан.
     this.addAccountChip(width, height);
 
+    // Чип дара дня (§H.7): виден, пока дар за сегодня не забран.
+    // На мобильных прижат к верхнему левому углу, на десктопе — в ряд кошелька.
+    if (bonusAvailable()) {
+      this.createBonusChip(96, mobile ? 24 : cyA);
+    }
+    // Ежедневный сундук (R7 §J.3): 2 ролика в день — золото/жетоны.
+    // Показывается только на Яндексе (rewarded недоступен гостям) и пока
+    // лимит дня не исчерпан; встаёт рядом с чипом дара.
+    if (rewardedAvailable() && dailyChestLeft() > 0) {
+      const chipX = bonusAvailable() ? 262 : 96;
+      this.createChestChip(chipX, mobile ? 24 : cyA);
+    }
+
     this.add.text(width / 2, height - 12, t('menu.version'), {
       fontFamily: FONT, fontSize: '11px', color: '#3b2410',
     }).setOrigin(0.5).setAlpha(0.8);
@@ -373,6 +432,9 @@ export class MenuScene extends Phaser.Scene {
     this.refreshSelection();
     this.scale.on('resize', this.layout, this);
     this.events.once('shutdown', () => this.scale.off('resize', this.layout, this));
+
+    // Стики-баннер (§J.5): меню — вне рана, баннер уместен
+    showStickyBanner();
 
     // Тихая тема меню (заставка живёт и после возврата из матча)
     audio.unlock();
@@ -611,6 +673,8 @@ export class MenuScene extends Phaser.Scene {
     for (const r of this.shopRowEls) r.destroy(true);
     this.shopRowEls = [];
     this.shopBalanceText = null;
+    for (const r of this.consRowEls) r.destroy();
+    this.consRowEls = [];
     this.achDesc = null;
   }
 
@@ -1236,5 +1300,680 @@ export class MenuScene extends Phaser.Scene {
     }
 
     this.backButton(top + paperH + 42);
+  }
+
+  // ================================================================
+  // Мета-фаза Q/S (TZ §H.7–H.12, §J): чипы и оверлеи выбора
+  // ================================================================
+
+  /** Перевод по строковому ключу справочников meta.ts (nameKey и т.п.). */
+  private tr(key: string, params?: TranslateParams): string {
+    return t(key as TranslationKey, params);
+  }
+
+  /** Лаунч сцены-оверлея ('Meta' | 'Shop') с защитой от дублей. */
+  private openOverlayScene(key: string): void {
+    audio.unlock();
+    if (this.scene.isActive(key)) this.scene.stop(key);
+    this.scene.launch(key);
+  }
+
+  /** Чип дара дня у верхнего левого угла: лёгкий пульс, клик — оверлей. */
+  private createBonusChip(x: number, y: number): void {
+    const streak = loadMetaState().dailyBonus.streak;
+    const chip = this.add.container(x, y);
+    const g = this.add.graphics();
+    g.fillStyle(0xf7e7c3, 0.95).fillRoundedRect(-75, -20, 150, 40, 10);
+    g.lineStyle(2, 0xc9a25e, 1).strokeRoundedRect(-75, -20, 150, 40, 10);
+    chip.add(g);
+    chip.add(this.add.text(0, -8, t('bonus.title'), {
+      fontFamily: FONT, fontSize: '12px', color: '#7a4e0e',
+    }).setOrigin(0.5));
+    chip.add(this.add.text(0, 9, t('bonus.streak', { v: streak }), {
+      fontFamily: FONT, fontSize: '9px', color: '#8a5b12',
+    }).setOrigin(0.5));
+    // Хит-зона 156×48 ≥ MIN_TOUCH: сама плашка 150×40 чуть меньше тач-гейта
+    chip.setSize(156, 48);
+    chip.setInteractive({ useHandCursor: true });
+    chip.on('pointerdown', () => {
+      audio.play('click');
+      this.showBonusOverlay();
+    });
+    this.tweens.add({
+      targets: chip, scale: { from: 1, to: 1.06 }, duration: 850, yoyo: true, repeat: -1, ease: 'Sine.easeInOut',
+    });
+    this.bonusChip = chip;
+  }
+
+  /** После забора дара чип исчезает (вернётся при следующем рестарте меню). */
+  private refreshBonusChip(): void {
+    if (!bonusAvailable() && this.bonusChip) {
+      this.bonusChip.destroy();
+      this.bonusChip = null;
+    }
+  }
+
+  /** Чип ежедневного сундука (R7 §J.3): «ролик — награда». */
+  private chestChip: Phaser.GameObjects.Container | null = null;
+  private chestChipPos = { x: 96, y: 24 };
+
+  private createChestChip(x: number, y: number): void {
+    this.chestChipPos = { x, y };
+    const left = dailyChestLeft();
+    const chip = this.add.container(x, y);
+    const g = this.add.graphics();
+    g.fillStyle(0xf3d9a4, 0.95).fillRoundedRect(-80, -20, 160, 40, 10);
+    g.lineStyle(2, 0xb98a3a, 1).strokeRoundedRect(-80, -20, 160, 40, 10);
+    chip.add(g);
+    chip.add(this.add.text(0, -8, t('chest.title'), {
+      fontFamily: FONT, fontSize: '12px', color: '#6e4a08',
+    }).setOrigin(0.5));
+    chip.add(this.add.text(0, 9, t('chest.left', { v: left }), {
+      fontFamily: FONT, fontSize: '9px', color: '#8a5b12',
+    }).setOrigin(0.5));
+    chip.setSize(166, 48); // ≥ MIN_TOUCH с учётом полей (§I.6)
+    chip.setInteractive({ useHandCursor: true });
+    chip.on('pointerdown', () => {
+      audio.play('click');
+      void this.openDailyChest();
+    });
+    this.tweens.add({
+      targets: chip, scale: { from: 1, to: 1.05 }, duration: 1000, yoyo: true, repeat: -1, ease: 'Sine.easeInOut',
+    });
+    this.chestChip = chip;
+  }
+
+  /** R7: ролик → награда сундука (золото кошелька / жетоны). */
+  private async openDailyChest(): Promise<void> {
+    if (dailyChestLeft() <= 0) return;
+    const res = await showPlacementRewarded('daily-chest', {
+      pause: () => audio.silence(),
+      resume: () => audio.unsilence(),
+    });
+    if (!res.rewarded) {
+      this.showToast(t('speedup.adUnavailable'));
+      return;
+    }
+    const reward = claimDailyChest();
+    if (!reward) return;
+    const label = reward.kind === 'gold'
+      ? t('bonus.kind.gold', { v: reward.amount })
+      : reward.kind === 'blessing'
+        ? t('chest.blessing', { v: reward.amount })
+        : t('chest.speedup', { v: reward.amount });
+    this.showToast(t('chest.won', { v: label }));
+    audio.play('ach');
+    this.chestChip?.destroy();
+    this.chestChip = null;
+    // Лимит дня 2 показа: пока есть остальные — чип возвращается (R7 §J.3)
+    if (dailyChestLeft() > 0) {
+      this.createChestChip(this.chestChipPos.x, this.chestChipPos.y);
+    }
+    track('daily_chest_claim', { kind: reward.kind, amount: reward.amount });
+  }
+
+  /** Ряд из четырёх чипов пре-рана под чипами сложности. */
+  private createPreRow(width: number, preY: number, mobile: boolean): void {
+    const gap = 10;
+    const chipW = Math.min(mobile ? 118 : 178, (width - 60 - 3 * gap) / 4);
+    this.preChipW = chipW;
+    this.preChipFont = mobile ? 8 : 10;
+
+    const ukazLocked = !ordersUnlocked();
+    const challengeLocked = matchesPlayed() < 3;
+    const chips: Array<{ label: string; enabled: boolean; action: () => void }> = [
+      { label: t('contract.pick', { v: this.contractPickName() }), enabled: true, action: () => this.showContractOverlay() },
+      {
+        label: ukazLocked ? t('ukaz.locked') : t('ukaz.pick', { v: this.ukazPickName() }),
+        enabled: !ukazLocked,
+        action: () => this.showUkazOverlay(),
+      },
+      { label: t('consumable.pick', { v: this.loadPickedConsumables().length }), enabled: true, action: () => this.showConsumablesOverlay() },
+      {
+        label: challengeLocked ? t('challenge.locked') : t('challenge.title'),
+        enabled: !challengeLocked,
+        action: () => this.showChallengeOverlay(),
+      },
+    ];
+
+    chips.forEach((c, i) => {
+      const x = width / 2 - (4 * chipW + 3 * gap) / 2 + i * (chipW + gap) + chipW / 2;
+      const bg = this.add.graphics();
+      bg.fillStyle(0xf7e7c3, 0.95).fillRoundedRect(x - chipW / 2, preY - 16, chipW, 32, 9);
+      bg.lineStyle(2, 0xc9a25e, 1).strokeRoundedRect(x - chipW / 2, preY - 16, chipW, 32, 9);
+      if (!c.enabled) bg.setAlpha(0.72);
+      const txt = this.add.text(x, preY, c.label, {
+        fontFamily: FONT, fontSize: `${this.preChipFont}px`,
+        color: c.enabled ? '#3b2410' : '#8d8577', align: 'center',
+        wordWrap: { width: chipW - 10 },
+      }).setOrigin(0.5);
+      fitTextWidth(txt, chipW - 10, this.preChipFont, 7);
+      const hit = this.add.zone(x, preY, chipW + 8, 44).setInteractive({ useHandCursor: c.enabled });
+      hit.on('pointerdown', () => {
+        if (!c.enabled) return;
+        audio.play('click');
+        c.action();
+      });
+      this.preChipTexts[i] = txt;
+    });
+  }
+
+  /** Обновляет подписи чипов пре-рана после выбора в оверлеях. */
+  private refreshPreChips(): void {
+    const ukazLocked = !ordersUnlocked();
+    const challengeLocked = matchesPlayed() < 3;
+    const labels: Array<string | null> = [
+      t('contract.pick', { v: this.contractPickName() }),
+      ukazLocked ? null : t('ukaz.pick', { v: this.ukazPickName() }),
+      t('consumable.pick', { v: this.loadPickedConsumables().length }),
+      challengeLocked ? t('challenge.locked') : t('challenge.title'),
+    ];
+    labels.forEach((label, i) => {
+      const txt = this.preChipTexts[i];
+      if (!txt || label === null) return;
+      txt.setText(label);
+      fitTextWidth(txt, this.preChipW - 10, this.preChipFont, 7);
+    });
+  }
+
+  private contractPickName(): string {
+    const def = contractDef(loadText('tss-contract-pick'));
+    return def ? this.tr(def.nameKey) : t('contract.none');
+  }
+
+  private ukazPickName(): string {
+    const id = loadText('tss-ukaz-pick');
+    const order = ORDERS.find((o) => o.id === id);
+    return order ? this.tr(order.nameKey) : t('ukaz.none');
+  }
+
+  // ----- Оверлей контракта (§H.9): выбор/снятие, хранение 'tss-contract-pick' -----
+
+  private showContractOverlay(): void {
+    this.beginOverlay();
+    const width = this.vw;
+    const height = this.vh;
+    const pick = loadText('tss-contract-pick');
+    const paperW = Math.min(520, width - 50);
+    const rowCount = CONTRACTS.length + 1;
+    const rowH = Math.min(56, Math.max(46, Math.floor((height - 130) / rowCount)));
+    const paperH = Math.min(108 + rowCount * rowH + 24, height - 50);
+    const cx = width / 2;
+    const cy = height / 2;
+    this.overlay?.add(makePanel(this, cx, cy, 'paper', paperW, paperH));
+    const top = cy - paperH / 2;
+
+    this.overlay?.add(this.add.text(cx, top + 36, t('contract.title'), {
+      fontFamily: FONT, fontSize: '24px', color: '#3b2410',
+    }).setOrigin(0.5));
+
+    const rowW = paperW - 48;
+    const rowsTop = top + 70;
+
+    const drawRow = (i: number, name: string, desc: string, mult: string, id: string | null): void => {
+      const rowCy = rowsTop + i * rowH + rowH / 2;
+      const active = id === null ? !pick : pick === id;
+      const g = this.add.graphics();
+      g.fillStyle(active ? 0xffe9b0 : 0xfff6df, 1)
+        .fillRoundedRect(cx - rowW / 2, rowCy - rowH / 2 + 4, rowW, rowH - 8, 9);
+      g.lineStyle(active ? 3 : 2, active ? 0xd9a520 : 0xc9a25e, 1)
+        .strokeRoundedRect(cx - rowW / 2, rowCy - rowH / 2 + 4, rowW, rowH - 8, 9);
+      this.overlay?.add(g);
+      this.overlay?.add(this.add.text(cx - rowW / 2 + 14, rowCy - 9, active ? `✓ ${name}` : name, {
+        fontFamily: FONT, fontSize: '12px', color: '#3b2410',
+      }).setOrigin(0, 0.5));
+      this.overlay?.add(this.add.text(cx - rowW / 2 + 14, rowCy + 10, desc, {
+        fontFamily: FONT, fontSize: '9px', color: '#8a5b12',
+      }).setOrigin(0, 0.5));
+      this.overlay?.add(this.add.text(cx + rowW / 2 - 14, rowCy, mult, {
+        fontFamily: FONT, fontSize: '11px', color: '#9a6a08',
+      }).setOrigin(1, 0.5));
+      const zone = this.add.zone(cx, rowCy, rowW, rowH).setInteractive({ useHandCursor: true });
+      zone.on('pointerdown', () => {
+        audio.play('click');
+        if (id === null) {
+          removeKey('tss-contract-pick');
+        } else {
+          saveText('tss-contract-pick', id);
+          track('contract_signed', { id });
+        }
+        this.closeOverlay();
+        this.refreshPreChips();
+      });
+      this.overlayExtras.push(zone);
+    };
+
+    drawRow(0, t('contract.none'), '', '', null);
+    CONTRACTS.forEach((c, i) => {
+      drawRow(i + 1, this.tr(c.nameKey), this.tr(c.descKey), t('contract.mult', { v: c.mult }), c.id);
+    });
+
+    this.backButton(top + paperH + 42);
+  }
+
+  // ----- Оверлей указа (§H.17): показывает активный, выбор — в «Хронике» -----
+
+  private showUkazOverlay(): void {
+    this.beginOverlay();
+    const width = this.vw;
+    const height = this.vh;
+    const paperW = Math.min(460, width - 50);
+    const paperH = Math.min(320, height - 60);
+    const cx = width / 2;
+    const cy = height / 2;
+    this.overlay?.add(makePanel(this, cx, cy, 'paper', paperW, paperH));
+    const top = cy - paperH / 2;
+
+    this.overlay?.add(this.add.text(cx, top + 36, t('ukaz.title'), {
+      fontFamily: FONT, fontSize: '24px', color: '#3b2410',
+    }).setOrigin(0.5));
+
+    const id = loadText('tss-ukaz-pick');
+    const order = ORDERS.find((o) => o.id === id);
+    this.overlay?.add(this.add.text(cx, top + 88, t('ukaz.pick', {
+      v: order ? this.tr(order.nameKey) : t('ukaz.none'),
+    }), {
+      fontFamily: FONT, fontSize: '14px', color: '#3b2410', align: 'center',
+      wordWrap: { width: paperW - 60 },
+    }).setOrigin(0.5));
+    if (order) {
+      this.overlay?.add(this.add.text(cx, top + 118, [
+        this.tr(order.descKey),
+        this.tr('ukaz.premium', { v: Math.round(order.gloryPremium * 100) }),
+      ].join('   '), {
+        fontFamily: FONT, fontSize: '10px', color: '#8a5b12', align: 'center',
+        wordWrap: { width: paperW - 60 },
+      }).setOrigin(0.5));
+    }
+
+    const open = makeButton(this, cx, top + paperH - 74, 190, 44, t('meta.tab'), () => {
+      this.closeOverlay();
+      this.openOverlayScene('Meta');
+    }, 'blue', 12);
+    this.overlayExtras.push(open.img, open.txt, open.hit);
+
+    this.backButton(top + paperH + 42);
+  }
+
+  // ----- Оверлей расходников (§J.6.2): запас, выбор до 2, подкова за рекламу -----
+
+  private showConsumablesOverlay(): void {
+    this.beginOverlay();
+    const width = this.vw;
+    const height = this.vh;
+    const paperW = Math.min(520, width - 50);
+    const paperH = Math.min(400, height - 60);
+    const cx = width / 2;
+    const cy = height / 2;
+    this.overlay?.add(makePanel(this, cx, cy, 'paper', paperW, paperH));
+    const top = cy - paperH / 2;
+
+    this.overlay?.add(this.add.text(cx, top + 36, t('consumable.title'), {
+      fontFamily: FONT, fontSize: '24px', color: '#3b2410',
+    }).setOrigin(0.5));
+    this.overlay?.add(this.add.text(cx, top + 62, t('consumable.limit'), {
+      fontFamily: FONT, fontSize: '10px', color: '#8a5b12',
+    }).setOrigin(0.5));
+
+    this.renderConsumableRows(cx, top + 86, paperW - 48);
+    this.backButton(top + paperH + 42);
+  }
+
+  private renderConsumableRows(cx: number, rowsTop: number, rowW: number): void {
+    for (const r of this.consRowEls) r.destroy();
+    this.consRowEls = [];
+    const picked = this.loadPickedConsumables();
+    const rowH = 66;
+
+    CONSUMABLES.forEach((c, i) => {
+      const y = rowsTop + i * rowH + rowH / 2;
+      const stock = loadMetaState().consumables[c.id] ?? 0;
+      const isPicked = picked.includes(c.id);
+      const full = picked.length >= CONSUMABLE_MAX;
+
+      const els: Phaser.GameObjects.GameObject[] = [];
+      const g = this.add.graphics();
+      g.fillStyle(isPicked ? 0xffe9b0 : 0xfff6df, 1)
+        .fillRoundedRect(cx - rowW / 2, y - rowH / 2 + 4, rowW, rowH - 8, 9);
+      g.lineStyle(isPicked ? 3 : 2, isPicked ? 0xd9a520 : 0xc9a25e, 1)
+        .strokeRoundedRect(cx - rowW / 2, y - rowH / 2 + 4, rowW, rowH - 8, 9);
+      els.push(g);
+      els.push(this.add.text(cx - rowW / 2 + 14, y - 11, this.tr(c.nameKey), {
+        fontFamily: FONT, fontSize: '12px', color: '#3b2410',
+      }).setOrigin(0, 0.5));
+      els.push(this.add.text(cx - rowW / 2 + 14, y + 9, this.tr(c.descKey), {
+        fontFamily: FONT, fontSize: '9px', color: '#8a5b12',
+      }).setOrigin(0, 0.5));
+      els.push(this.add.text(cx + rowW / 2 - 128, y - 11, `×${stock}`, {
+        fontFamily: FONT, fontSize: '12px', color: '#57431f',
+      }).setOrigin(1, 0.5));
+
+      const toggle = makeButton(this, cx + rowW / 2 - 62, y + 2, 104, 34,
+        isPicked ? '✓'
+          : stock > 0 && !full ? this.tr('consumable.pick', { v: stock })
+            : stock > 0 ? t('consumable.active', { v: picked.length }) : t('consumable.out'),
+        () => {
+          const list = this.loadPickedConsumables();
+          if (list.includes(c.id)) {
+            this.savePickedConsumables(list.filter((x) => x !== c.id));
+          } else {
+            if (list.length >= CONSUMABLE_MAX || stock <= 0) return;
+            this.savePickedConsumables([...list, c.id]);
+          }
+          this.refreshPreChips();
+          this.renderConsumableRows(cx, rowsTop, rowW);
+        }, 'blue', 9, { disabled: !isPicked && (stock <= 0 || full), hitW: 110, hitH: 44, stopPropagation: true });
+      els.push(toggle.img, toggle.txt, toggle.hit);
+
+      // «Подкова удачи» — единственный расходник за рекламу (R12)
+      if (c.forAd && placementAvailable('consumable')) {
+        const ad = makeButton(this, cx - 128, y + 2, 96, 30, t('consumable.ad'), () => {
+          void this.buyConsumableAd(cx, rowsTop, rowW);
+        }, 'red', 9, { hitW: 102, hitH: 44, stopPropagation: true });
+        els.push(ad.img, ad.txt, ad.hit);
+      }
+
+      this.overlay?.add(els);
+      this.consRowEls.push(...els);
+    });
+  }
+
+  /** +1 «Подковы удачи» в запас за rewarded R12. */
+  private async buyConsumableAd(cx: number, rowsTop: number, rowW: number): Promise<void> {
+    const res = await showPlacementRewarded('consumable');
+    if (!res.rewarded) return;
+    const st = loadMetaState();
+    st.consumables.cs_horseshoe += 1;
+    saveMetaState(st);
+    if (this.overlay) this.renderConsumableRows(cx, rowsTop, rowW);
+  }
+
+  private loadPickedConsumables(): ConsumableId[] {
+    try {
+      const raw = JSON.parse(loadText('tss-consumables-pick') ?? '[]') as unknown;
+      if (Array.isArray(raw)) {
+        return raw
+          .filter((x): x is ConsumableId => CONSUMABLES.some((c) => c.id === x))
+          .slice(0, CONSUMABLE_MAX);
+      }
+    } catch {
+      // битый JSON — начинаем с пустого выбора
+    }
+    return [];
+  }
+
+  private savePickedConsumables(ids: ConsumableId[]): void {
+    saveText('tss-consumables-pick', JSON.stringify(ids.slice(0, CONSUMABLE_MAX)));
+  }
+
+  // ----- Оверлей вызова дня (§H.8): 2 модификатора, реролл R6, старт -----
+
+  private showChallengeOverlay(salt = ''): void {
+    this.beginOverlay();
+    const width = this.vw;
+    const height = this.vh;
+    const paperW = Math.min(500, width - 50);
+    const paperH = Math.min(470, height - 60);
+    const cx = width / 2;
+    const cy = height / 2;
+    this.overlay?.add(makePanel(this, cx, cy, 'paper', paperW, paperH));
+    const top = cy - paperH / 2;
+
+    this.overlay?.add(this.add.text(cx, top + 36, t('challenge.title'), {
+      fontFamily: FONT, fontSize: '24px', color: '#3b2410',
+    }).setOrigin(0.5));
+    this.overlay?.add(this.add.text(cx, top + 64, t('challenge.mods'), {
+      fontFamily: FONT, fontSize: '11px', color: '#8a5b12',
+    }).setOrigin(0.5));
+
+    const ch = challengeForToday(salt);
+    ch.mods.forEach((mid, i) => {
+      const def = CHALLENGE_MODS.find((m) => m.id === mid);
+      if (!def) return;
+      const y = top + 104 + i * 58;
+      this.overlay?.add(this.add.text(cx, y, this.tr(def.nameKey), {
+        fontFamily: FONT, fontSize: '14px', color: '#7a1010',
+      }).setOrigin(0.5));
+      this.overlay?.add(this.add.text(cx, y + 20, this.tr(def.descKey), {
+        fontFamily: FONT, fontSize: '10px', color: '#57431f', align: 'center',
+        wordWrap: { width: paperW - 70 },
+      }).setOrigin(0.5));
+    });
+
+    this.overlay?.add(this.add.text(cx, top + 232, t('challenge.reward'), {
+      fontFamily: FONT, fontSize: '9px', color: '#8a5b12', align: 'center',
+    }).setOrigin(0.5));
+    if (challengeVictoryToday()) {
+      this.overlay?.add(this.add.text(cx, top + 252, t('challenge.done'), {
+        fontFamily: FONT, fontSize: '10px', color: '#2e7d32',
+      }).setOrigin(0.5));
+    }
+
+    const btnY = top + paperH - 92;
+    if (placementAvailable('challenge-reroll')) {
+      const reroll = makeButton(this, cx - 100, btnY, 180, 44, t('challenge.reroll'), () => {
+        void (async () => {
+          const res = await showPlacementRewarded('challenge-reroll');
+          if (res.rewarded && this.overlay) this.showChallengeOverlay(`ad${Date.now()}`);
+        })();
+      }, 'red', 10);
+      this.overlayExtras.push(reroll.img, reroll.txt, reroll.hit);
+    }
+    const start = makeButton(this, cx + 100, btnY, 180, 44, t('challenge.start'), () => {
+      saveRunConfig({
+        contract: null,
+        ukaz: null,
+        challenge: { mods: ch.mods, rerolled: salt !== '' },
+        blessing: null,
+        consumables: [],
+        endless: false,
+        weeklyChallenge: false,
+      });
+      track('challenge_start');
+      this.scene.start('Game', { hero: this.selectedHero, diff: this.selectedDiff });
+    }, 'blue', 12);
+    this.overlayExtras.push(start.img, start.txt, start.hit);
+
+    this.backButton(top + paperH + 42);
+  }
+
+  // ----- Оверлей дара дня (§H.7): 7 кружков недели, забор / ×2 (R11) -----
+
+  private showBonusOverlay(): void {
+    this.beginOverlay();
+    const width = this.vw;
+    const height = this.vh;
+    const paperW = Math.min(470, width - 50);
+    const paperH = Math.min(420, height - 60);
+    const cx = width / 2;
+    const cy = height / 2;
+    this.overlay?.add(makePanel(this, cx, cy, 'paper', paperW, paperH));
+    const top = cy - paperH / 2;
+
+    const streak = loadMetaState().dailyBonus.streak;
+    const todayIdx = streak % 7;
+    this.overlay?.add(this.add.text(cx, top + 36, t('bonus.title'), {
+      fontFamily: FONT, fontSize: '24px', color: '#3b2410',
+    }).setOrigin(0.5));
+    this.overlay?.add(this.add.text(cx, top + 64, [
+      t('bonus.day', { v: todayIdx + 1 }),
+      t('bonus.streak', { v: streak }),
+    ].join('   '), {
+      fontFamily: FONT, fontSize: '11px', color: '#8a5b12',
+    }).setOrigin(0.5));
+
+    const kindKeys: Record<DailyBonusKind, TranslationKey> = {
+      gold: 'bonus.kind.gold',
+      chest: 'bonus.kind.chest',
+      blessing: 'bonus.kind.blessing',
+      crowns: 'bonus.kind.crowns',
+    };
+    const circleY = top + 126;
+    const span = paperW - 110;
+    const step = span / 6;
+    for (let i = 0; i < 7; i++) {
+      const cxx = cx - span / 2 + i * step;
+      const isToday = i === todayIdx;
+      const passed = i < todayIdx;
+      const r = isToday ? 19 : 15;
+      const g = this.add.graphics();
+      g.fillStyle(isToday ? 0xd9a520 : passed ? 0xffe9b0 : 0xefe6d0, 1).fillCircle(cxx, circleY, r);
+      g.lineStyle(isToday ? 3 : 2, isToday ? 0x9a6a08 : 0xc9a25e, 1).strokeCircle(cxx, circleY, r);
+      this.overlay?.add(g);
+      this.overlay?.add(this.add.text(cxx, circleY, `${i + 1}`, {
+        fontFamily: FONT, fontSize: isToday ? '13px' : '11px',
+        color: isToday ? '#ffffff' : passed ? '#9a6a08' : '#8d8577',
+      }).setOrigin(0.5));
+    }
+
+    const def = DAILY_BONUS[todayIdx];
+    if (def) {
+      const rewardText = def.kind === 'gold' || def.kind === 'crowns'
+        ? t(kindKeys[def.kind], { v: num(def.amount) })
+        : t(kindKeys[def.kind]);
+      this.overlay?.add(this.add.text(cx, top + 170, rewardText, {
+        fontFamily: FONT, fontSize: '13px', color: '#9a6a08', align: 'center',
+        wordWrap: { width: paperW - 70 },
+      }).setOrigin(0.5));
+    }
+
+    const btnY = top + paperH - 78;
+    const claim = makeButton(this, cx - 90, btnY, 160, 48, t('bonus.claim'), () => {
+      this.claimBonus(false);
+    }, 'blue', 13);
+    this.overlayExtras.push(claim.img, claim.txt, claim.hit);
+    if (placementAvailable('bonus-x2')) {
+      const x2 = makeButton(this, cx + 90, btnY, 160, 48, t('bonus.claimX2'), () => {
+        void this.claimBonusWithAd();
+      }, 'red', 13);
+      this.overlayExtras.push(x2.img, x2.txt, x2.hit);
+    }
+
+    this.backButton(top + paperH + 42);
+  }
+
+  private claimBonus(doubled: boolean): void {
+    const res = claimDailyBonus(doubled);
+    if (res.ok) {
+      track('daily_bonus_claim', { day: res.day, doubled });
+      audio.play('levelup');
+    }
+    this.closeOverlay();
+    this.refreshBonusChip();
+    this.showToast(t('bonus.claimed'));
+  }
+
+  private async claimBonusWithAd(): Promise<void> {
+    const res = await showPlacementRewarded('bonus-x2');
+    if (!this.overlay) return;
+    if (res.rewarded) this.claimBonus(true);
+  }
+
+  // ----- Благословение перед раном (R4): 1 из 3 за жетон, старт рана -----
+
+  /** Поток кнопки «Играть»: сбор RunModifiers → оверлей благословения → старт. */
+  private startRun(): void {
+    const cfg: RunModifiers = {
+      contract: (loadText('tss-contract-pick') || null) as ContractId | null,
+      ukaz: ordersUnlocked() ? ((loadText('tss-ukaz-pick') || null) as OrderId | null) : null,
+      challenge: null,
+      blessing: null,
+      consumables: this.loadPickedConsumables(),
+      endless: false,
+      weeklyChallenge: false,
+    };
+    const go = (): void => {
+      // takeConsumables вызывает GameScene при старте рана — не здесь
+      saveRunConfig(cfg);
+      this.scene.start('Game', { hero: this.selectedHero, diff: this.selectedDiff });
+    };
+    // Оверлей благословения — только при жетонах или доступной рекламе R4
+    const st = loadMetaState();
+    if (st.blessingTokens > 0 || placementAvailable('blessing')) {
+      this.showBlessingOverlay(cfg, go);
+    } else {
+      go();
+    }
+  }
+
+  private showBlessingOverlay(cfg: RunModifiers, go: () => void): void {
+    this.beginOverlay();
+    const width = this.vw;
+    const height = this.vh;
+    const paperW = Math.min(470, width - 50);
+    const paperH = Math.min(500, height - 60);
+    const cx = width / 2;
+    const cy = height / 2;
+    this.overlay?.add(makePanel(this, cx, cy, 'paper', paperW, paperH));
+    const top = cy - paperH / 2;
+
+    this.overlay?.add(this.add.text(cx, top + 34, t('blessing.title'), {
+      fontFamily: FONT, fontSize: '22px', color: '#3b2410',
+    }).setOrigin(0.5));
+    this.overlay?.add(this.add.text(cx, top + 60, t('blessing.pick'), {
+      fontFamily: FONT, fontSize: '11px', color: '#8a5b12',
+    }).setOrigin(0.5));
+    this.overlay?.add(this.add.text(cx, top + 82,
+      t('meta.blessingTokens', { v: loadMetaState().blessingTokens }), {
+      fontFamily: FONT, fontSize: '11px', color: '#9a6a08',
+    }).setOrigin(0.5));
+
+    const options = rollBlessings(String(Date.now()));
+    const rowH = 64;
+    const rowW = paperW - 60;
+    const tokens = loadMetaState().blessingTokens;
+    options.forEach((bid, i) => {
+      const def = BLESSINGS.find((b) => b.id === bid);
+      if (!def) return;
+      const rowCy = top + 108 + i * rowH + rowH / 2;
+      const affordable = tokens > 0;
+      const g = this.add.graphics();
+      g.fillStyle(affordable ? 0xfff6df : 0xefe6d0, 1)
+        .fillRoundedRect(cx - rowW / 2, rowCy - rowH / 2 + 4, rowW, rowH - 8, 9);
+      g.lineStyle(2, affordable ? 0xc9a25e : 0xbfa77a, 1)
+        .strokeRoundedRect(cx - rowW / 2, rowCy - rowH / 2 + 4, rowW, rowH - 8, 9);
+      this.overlay?.add(g);
+      this.overlay?.add(this.add.text(cx - rowW / 2 + 14, rowCy - 10, this.tr(def.nameKey), {
+        fontFamily: FONT, fontSize: '13px', color: affordable ? '#3b2410' : '#8d8577',
+      }).setOrigin(0, 0.5));
+      this.overlay?.add(this.add.text(cx - rowW / 2 + 14, rowCy + 10, this.tr(def.descKey), {
+        fontFamily: FONT, fontSize: '9px', color: '#8a5b12',
+      }).setOrigin(0, 0.5));
+
+      const zone = this.add.zone(cx, rowCy, rowW, rowH).setInteractive({ useHandCursor: affordable });
+      zone.on('pointerdown', () => {
+        if (!affordable) return;
+        const st = loadMetaState();
+        st.blessingTokens = Math.max(0, st.blessingTokens - 1);
+        saveMetaState(st);
+        cfg.blessing = bid;
+        audio.play('levelup');
+        this.closeOverlay();
+        go();
+      });
+      this.overlayExtras.push(zone);
+    });
+
+    // «+1 жетон за ролик» (R4) и «Пропустить»
+    const footY = top + paperH - 56;
+    if (placementAvailable('blessing')) {
+      const adBtn = makeButton(this, cx - 98, footY, 184, 44, t('blessing.adToken'), () => {
+        void (async () => {
+          const res = await showPlacementRewarded('blessing');
+          if (res.rewarded && this.overlay) {
+            const st = loadMetaState();
+            st.blessingTokens += 1;
+            saveMetaState(st);
+            this.showBlessingOverlay(cfg, go);
+          }
+        })();
+      }, 'red', 10);
+      this.overlayExtras.push(adBtn.img, adBtn.txt, adBtn.hit);
+    }
+    const skip = makeButton(this, cx + 98, footY, 150, 44, t('common.back'), () => {
+      this.closeOverlay();
+      go();
+    }, 'blue', 11);
+    this.overlayExtras.push(skip.img, skip.txt, skip.hit);
   }
 }

@@ -6,12 +6,22 @@
 // только авторизованным), поэтому локальный список нужен в любом случае —
 // он же служит резервом, если запрос к SDK не удался.
 //
+// Мультиборды (фаза Q): кроме основного зала есть технические таблицы
+// «вызов дня» и «бесконечный режим». Все методы параметризованы boardId;
+// локальные записи основного борда по-прежнему лежат в 'tss-records'
+// (совместимость со старыми сохранениями), остальные — в отдельных ключах.
+//
 // Частые методы лидерборда ограничены по частоте (getEntries — 20 запросов
-// за 5 минут), поэтому ответ кэшируем на короткое время.
+// за 5 минут), поэтому ответ кэшируем на короткое время — отдельно на борд.
 
 import { getSdk, isOnYandex } from './sdk';
 import { loadJson, saveJson, removeKey } from '../game/storage';
 import { isAuthorized, LEADERBOARD_ID } from './player';
+
+/** Техническое имя таблицы «вызов дня» (создаётся в Консоли Яндекса). */
+export const LEADERBOARD_DAILY = 'tss_daily';
+/** Техническое имя таблицы «бесконечный режим» (создаётся в Консоли Яндекса). */
+export const LEADERBOARD_ENDLESS = 'tss_endless';
 
 export interface ScoreEntry {
   rank: number;
@@ -37,9 +47,14 @@ export interface NewScore {
 const LS_RECORDS = 'tss-records';
 const LOCAL_LIMIT = 10;
 
-/** Кэш ответа SDK, чтобы не упираться в лимит частоты. */
+/** Кэш ответа SDK по каждому борду, чтобы не упираться в лимит частоты. */
 const CACHE_MS = 60_000;
-let cache: { at: number; entries: ScoreEntry[] } | null = null;
+const cacheByBoard = new Map<string, { at: number; entries: ScoreEntry[] }>();
+
+/** Локальный ключ таблицы борда: основной сохраняет старый ключ целиком. */
+function localKeyFor(boardId: string): string {
+  return boardId === LEADERBOARD_ID ? LS_RECORDS : `${LS_RECORDS}-${boardId}`;
+}
 
 // ---------- Кодирование в extraData ----------
 //
@@ -60,7 +75,7 @@ function decodeExtra(raw: string): Pick<ScoreEntry, 'kills' | 'level' | 'timeSur
   return { kills: n(kills), level: n(level), timeSurvived: n(time), victory: vic === '1' };
 }
 
-// ---------- Локальная таблица ----------
+// ---------- Локальная таблица (параметризована бордом) ----------
 
 const int = (v: unknown): number => Math.max(0, Math.floor(Number(v) || 0));
 const str = (v: unknown, max: number): string =>
@@ -79,8 +94,8 @@ function sanitizeEntry(x: unknown): NewScore {
   };
 }
 
-function readLocal(): NewScore[] {
-  const arr = loadJson<unknown[]>(LS_RECORDS);
+function readLocal(key: string): NewScore[] {
+  const arr = loadJson<unknown[]>(key);
   if (!Array.isArray(arr)) return [];
   return arr
     // Запись без числового счёта — мусор: её не с чем сортировать
@@ -90,22 +105,22 @@ function readLocal(): NewScore[] {
     .slice(0, LOCAL_LIMIT);
 }
 
-function writeLocal(list: NewScore[]): void {
-  saveJson(LS_RECORDS, list.slice(0, LOCAL_LIMIT));
+function writeLocal(list: NewScore[], key: string): void {
+  saveJson(key, list.slice(0, LOCAL_LIMIT));
 }
 
 /** Всегда держит локальную копию, чтобы зал не пустовал при ошибке сети. */
-function pushLocal(score: NewScore): void {
-  const list = readLocal();
+function pushLocal(score: NewScore, key: string): void {
+  const list = readLocal(key);
   const same = list.find(
     (r) => r.score === score.score && r.name === score.name && r.kills === score.kills,
   );
   if (!same) list.push(score);
-  writeLocal(list.sort((a, b) => b.score - a.score));
+  writeLocal(list.sort((a, b) => b.score - a.score), key);
 }
 
-function localEntries(victoryOnly: boolean): ScoreEntry[] {
-  return readLocal()
+function localEntries(victoryOnly: boolean, key: string): ScoreEntry[] {
+  return readLocal(key)
     .filter((r) => (victoryOnly ? r.victory : true))
     .slice(0, LOCAL_LIMIT)
     .map((r, i) => ({ rank: i + 1, ...r, online: false }));
@@ -123,14 +138,17 @@ export interface SaveResult {
 /**
  * Сохраняет результат матча. Всегда пишет в локальную таблицу; в общий зал
  * отправляет только авторизованным — иначе SDK вернёт ошибку.
+ *
+ * boardId отличен от основного — запись уходит в техническую таблицу
+ * (вызов дня, бесконечный режим), локальная копия ведётся отдельно.
  */
-export async function submitScore(raw: NewScore): Promise<SaveResult> {
+export async function submitScore(raw: NewScore, boardId: string = LEADERBOARD_ID): Promise<SaveResult> {
   const score: NewScore = {
     ...sanitizeEntry(raw),
     victory: raw.victory === true,
   };
-  pushLocal(score);
-  cache = null;
+  pushLocal(score, localKeyFor(boardId));
+  cacheByBoard.delete(boardId);
 
   if (!isOnYandex()) return { online: false, reason: 'guest' };
   if (!isAuthorized()) return { online: false, reason: 'guest' };
@@ -140,7 +158,7 @@ export async function submitScore(raw: NewScore): Promise<SaveResult> {
 
   try {
     if (await sdk.isAvailableMethod('leaderboards.setScore')) {
-      await sdk.leaderboards.setScore(LEADERBOARD_ID, Math.max(0, Math.floor(score.score)), encodeExtra(score));
+      await sdk.leaderboards.setScore(boardId, Math.max(0, Math.floor(score.score)), encodeExtra(score));
       return { online: true };
     }
     return { online: false, reason: 'error' };
@@ -160,29 +178,36 @@ export interface TopResult {
 /**
  * Отдаёт зал славы. Фильтр побед применяется на клиенте: фильтров на стороне
  * Яндекса нет, а запросить таблицу дважды ради фильтра нельзя — лимит частоты.
+ * Кэш ведётся отдельно на каждый борд.
  */
-export async function topScores(limit = LOCAL_LIMIT, victoryOnly = false): Promise<TopResult> {
+export async function topScores(
+  limit = LOCAL_LIMIT,
+  victoryOnly = false,
+  boardId: string = LEADERBOARD_ID,
+): Promise<TopResult> {
   if (isOnYandex() && isAuthorized()) {
-    if (!cache || Date.now() - cache.at > CACHE_MS) {
-      const entries = await fetchOnline(limit);
-      if (entries) cache = { at: Date.now(), entries };
+    const stale = cacheByBoard.get(boardId);
+    if (!stale || Date.now() - stale.at > CACHE_MS) {
+      const entries = await fetchOnline(limit, boardId);
+      if (entries) cacheByBoard.set(boardId, { at: Date.now(), entries });
     }
-    if (cache) {
+    const fresh = cacheByBoard.get(boardId);
+    if (fresh) {
       return {
-        entries: cache.entries.filter((e) => (victoryOnly ? e.victory : true)).slice(0, limit),
+        entries: fresh.entries.filter((e) => (victoryOnly ? e.victory : true)).slice(0, limit),
         online: true,
       };
     }
   }
-  return { entries: localEntries(victoryOnly), online: false };
+  return { entries: localEntries(victoryOnly, localKeyFor(boardId)), online: false };
 }
 
-async function fetchOnline(limit: number): Promise<ScoreEntry[] | null> {
+async function fetchOnline(limit: number, boardId: string): Promise<ScoreEntry[] | null> {
   const sdk = getSdk();
   if (!sdk) return null;
   try {
     if (!(await sdk.isAvailableMethod('leaderboards.getEntries'))) return null;
-    const res = await sdk.leaderboards.getEntries(LEADERBOARD_ID, {
+    const res = await sdk.leaderboards.getEntries(boardId, {
       quantityTop: Math.min(20, Math.max(1, limit)),
       includeUser: true,
       quantityAround: 3,
@@ -207,6 +232,8 @@ export function onlineAvailable(): boolean {
 
 /** Сбрасывает кэш и локальные записи. Только для отладочных прогонов. */
 export function resetRecords(): void {
-  cache = null;
+  cacheByBoard.clear();
   removeKey(LS_RECORDS);
+  removeKey(localKeyFor(LEADERBOARD_DAILY));
+  removeKey(localKeyFor(LEADERBOARD_ENDLESS));
 }

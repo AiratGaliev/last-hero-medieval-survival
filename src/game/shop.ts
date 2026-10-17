@@ -102,6 +102,25 @@ export function depositGold(gold: number): void {
   saveShop(st);
 }
 
+/**
+ * Общая покупка за кошелёк (TZ §G.8): ускорения ремонта/лечения.
+ * Списание атомарно: loadShop() → проверка → saveShop() в одном вызове,
+ * иначе двойной клик списал бы дважды.
+ */
+export function spendGold(amount: number): BuyResult {
+  if (amount <= 0) return { ok: false, reason: 'unknown' };
+  const st = loadShop();
+  if (st.balance < amount) return { ok: false, reason: 'poor' };
+  st.balance -= Math.floor(amount);
+  saveShop(st);
+  return { ok: true };
+}
+
+/** Текущий баланс кошелька (HUD матча, TZ §G.10). */
+export function getWalletBalance(): number {
+  return loadShop().balance;
+}
+
 export interface BuyResult {
   ok: boolean;
   reason?: 'max' | 'poor' | 'unknown';

@@ -308,22 +308,29 @@ export const DIFFICULTIES: Record<DifficultyId, DifficultyDef> = {
   },
 };
 
-// ============ Враги ============
+// ============ Враги — существа из пака enemies/ (TZ §A) ============
+// Все спрайт-листы лежат в src/assets/tiny-swords/enemies/ и грузятся в
+// BootScene циклом по CREATURE_SHEETS. Анимации называются `${kind}-<имя>`.
 
 export type EnemyKind =
-  | 'grunt' | 'swarm' | 'brute' | 'archer' | 'bomber'
-  | 'guard' | 'taskmaster' | 'mercenary'
-  | 'elite-lancer' | 'elite-monk' | 'boss' | 'boss-minion' | 'midboss';
+  | 'goblin' | 'thief' | 'gnoll' | 'skull' | 'shaman'
+  | 'pig-rider' | 'bomb-fish'
+  | 'bear' | 'minotaur' | 'boss';
 
 export interface EnemyDef {
   kind: EnemyKind;
   name: string;
-  texture: string;      // ключ текстуры спрайта
-  frameW: number;       // ширина кадра (192, 320 или 64 у динамита)
+  /** Ширина кадра спрайт-листа (192 / 256 / 320 / 384) */
+  frameW: number;
   scale: number;
-  bodyRadius: number;
-  /** Круг коллизации в координатах кадра; если задан — заменяет расчёт от frameW */
-  body?: { cx: number; cy: number; r: number };
+  /** Круг коллизии в координатах кадра (измерен по контенту спрайтов) */
+  body: { cx: number; cy: number; r: number };
+  /** Y стопы в кадре — по нему ставится тень */
+  groundY: number;
+  /** Высота головы от центра кадра — по ней рисуется HP-бар крупных */
+  headOffset?: number;
+  /** true — спрайт смотрит вправо (пещерные существа); остальные смотрят влево */
+  facesRight?: boolean;
   hp: number;
   speed: number;
   damage: number;
@@ -331,157 +338,387 @@ export interface EnemyDef {
   gem: string;          // текстура дропа
   isElite?: boolean;
   isBoss?: boolean;
-  isMidboss?: boolean;  // промежуточный босс «Кошмара» (10-я минута)
-  explodeDmg?: number;   // для бочки-камикадзе
+  explodeDmg?: number;   // для рыбы-бомбы
   explodeRadius?: number;
-  armorFront?: number;   // Гвардеец: доля урона, блокируемая щитом (0.5 = −50%)
-  auraSpeed?: number;    // Приказчик: радиус ауры ускорения союзников
+  armorFront?: number;   // Скелет: доля урона, блокируемая щитом
+  auraSpeed?: number;    // Шаман: радиус ауры ускорения союзников
+  /** Урон по зданиям за удар (TZ §E.4.1, вариант A ×0.65) — НЕ производное от damage */
+  buildingDmg?: number;
 }
 
 export const ENEMIES: Record<EnemyKind, EnemyDef> = {
-  grunt: {
-    kind: 'grunt', name: t('enemy.grunt.name'), texture: 'enemy-grunt', frameW: 192, scale: 0.5,
-    bodyRadius: 20, hp: 12, speed: 70, damage: 8, xp: 1, gem: 'gem-blue',
+  goblin: {
+    // Гоблин с факелом (torch-goblin): базовая пехота с 0:00
+    kind: 'goblin', name: t('enemy.goblin.name'), frameW: 192, scale: 0.5,
+    body: { cx: 83, cy: 118, r: 20 }, groundY: 132,
+    hp: 14, speed: 74, damage: 8, xp: 1, gem: 'gem-blue',
   },
-  swarm: {
-    kind: 'swarm', name: t('enemy.swarm.name'), texture: 'enemy-swarm', frameW: 192, scale: 0.45,
-    bodyRadius: 18, hp: 8, speed: 130, damage: 6, xp: 1, gem: 'gem-blue',
+  thief: {
+    // Вор: быстрый фланговый, много HP не держит
+    kind: 'thief', name: t('enemy.thief.name'), frameW: 192, scale: 0.5,
+    body: { cx: 92, cy: 115, r: 16 }, groundY: 131,
+    hp: 9, speed: 132, damage: 6, xp: 1, gem: 'gem-blue',
   },
-  brute: {
-    kind: 'brute', name: t('enemy.brute.name'), texture: 'enemy-brute', frameW: 192, scale: 0.62,
-    bodyRadius: 26, hp: 55, speed: 55, damage: 16, xp: 3, gem: 'gem-green',
+  gnoll: {
+    // Гнолл: держит дистанцию и швыряет вращающуюся кость (proj-bone)
+    kind: 'gnoll', name: t('enemy.gnoll.name'), frameW: 192, scale: 0.6,
+    body: { cx: 92, cy: 120, r: 22 }, groundY: 134,
+    hp: 24, speed: 66, damage: 8, xp: 3, gem: 'gem-green',
+    buildingDmg: 2,     // обычная кость: 2 HP за 1.5 с ≈ 1.3 HP/с
   },
-  archer: {
-    kind: 'archer', name: t('enemy.archer.name'), texture: 'enemy-archer', frameW: 192, scale: 0.5,
-    bodyRadius: 20, hp: 20, speed: 60, damage: 8, xp: 3, gem: 'gem-green',
+  skull: {
+    // Скелет-щитоносец: щит гасит 45% урона; при потере 40% HP — ярость
+    kind: 'skull', name: t('enemy.skull.name'), frameW: 192, scale: 0.72,
+    body: { cx: 95, cy: 116, r: 18 }, groundY: 129,
+    hp: 60, speed: 56, damage: 13, xp: 5, gem: 'gem-green',
+    armorFront: 0.45,
+    buildingDmg: 1.3,   // 1.3 HP за удар × (1/1.5с) ≈ 0.8 HP/с (§E.4.1)
   },
-  bomber: {
-    // Динамит-камикадзе: спрайт-лист 384×64 (6 кадров по 64×64, горит фитиль).
-    // Круг коллизии — по кадру 64×64: содержимое динамита 58×52 @ 20,1.
-    kind: 'bomber', name: t('enemy.bomber.name'), texture: 'barrel', frameW: 64, scale: 0.42,
-    bodyRadius: 17, body: { cx: 49, cy: 27, r: 24 },
-    hp: 16, speed: 105, damage: 4, xp: 2, gem: 'gem-green',
+  shaman: {
+    // Гекс-шаман: колдун — держится поодаль, швыряет магический шар и
+    // разгоняет толпу аурой (+30% скорости союзникам в 250 px)
+    kind: 'shaman', name: t('enemy.shaman.name'), frameW: 192, scale: 0.62,
+    body: { cx: 92, cy: 120, r: 20 }, groundY: 136,
+    hp: 32, speed: 72, damage: 9, xp: 5, gem: 'gem-purple',
+    auraSpeed: 250,
+    buildingDmg: 5,     // огненный шар: 5 HP + 3 поджог каждые 3 с ≈ 2.6 HP/с
+  },
+  'pig-rider': {
+    // Гоблин-всадник: телеграф 480 мс → рывок 420 px/s → отдых
+    kind: 'pig-rider', name: t('enemy.pig-rider.name'), frameW: 256, scale: 0.55,
+    body: { cx: 127, cy: 145, r: 32 }, groundY: 165,
+    hp: 54, speed: 92, damage: 17, xp: 4, gem: 'gem-green',
+    buildingDmg: 2.6,   // 2.6 HP/удар ≈ 1.6 HP/с + рывок 8 HP раз в 8 с
+  },
+  'bomb-fish': {
+    // Рыба-бомба: камикадзе — разгоняется, мигает и взрывается
+    kind: 'bomb-fish', name: t('enemy.bomb-fish.name'), frameW: 192, scale: 0.5,
+    body: { cx: 92, cy: 118, r: 18 }, groundY: 134,
+    hp: 18, speed: 108, damage: 4, xp: 2, gem: 'gem-green',
     explodeDmg: 24, explodeRadius: 150,
   },
-  // --- Новые враги 5–9 минут (v1.8) ---
-  guard: {
-    // Гвардеец: щит гасит половину урона; при потере 45% HP щит ломается —
-    // ярость (без брони, но быстрее). HP понижено в R10: с 85 копились
-    // неразменными стенами к 13-й минуте (эфф. HP 525 против 212 у громилы)
-    kind: 'guard', name: t('enemy.guard.name'), texture: 'guard-idle', frameW: 192, scale: 0.58,
-    // 5 XP за ~96 эффективного HP = 19 на опыт — сопоставимо с громилой
-    // (18). Прежние 4 давали 24: плата за щит была выше выгоды.
-    bodyRadius: 24, hp: 62, speed: 62, damage: 14, xp: 5, gem: 'gem-green',
-    armorFront: 0.5,
+  bear: {
+    // Пещерный медведь (элита 5:00). Единственный из пула смотрит ВПРАВО
+    kind: 'bear', name: t('enemy.bear.name'), frameW: 256, scale: 1.1,
+    body: { cx: 131, cy: 150, r: 34 }, groundY: 178, headOffset: 49, facesRight: true,
+    hp: 400, speed: 84, damage: 24, xp: 25, gem: 'gem-red', isElite: true,
   },
-  taskmaster: {
-    // Приказчик с молотом: разгоняет толпу (аура +30% скорости союзникам).
-    // Приоритетная цель — убей его и толпа замедлится
-    kind: 'taskmaster', name: t('enemy.taskmaster.name'), texture: 'taskmaster-idle', frameW: 192, scale: 0.5,
-    bodyRadius: 20, hp: 30, speed: 78, damage: 10, xp: 5, gem: 'gem-purple',
-    auraSpeed: 250,
-  },
-  mercenary: {
-    // Наёмник-копейщик: телеграф + рывок (облегчённая версия элиты)
-    kind: 'mercenary', name: t('enemy.mercenary.name'), texture: 'merc-idle', frameW: 320, scale: 0.55,
-    bodyRadius: 24, hp: 48, speed: 88, damage: 18, xp: 4, gem: 'gem-green',
-  },
-  'elite-lancer': {
-    kind: 'elite-lancer', name: t('enemy.elite-lancer.name'), texture: 'enemy-lancer', frameW: 320, scale: 0.75,
-    bodyRadius: 34, hp: 400, speed: 90, damage: 25, xp: 25, gem: 'gem-red', isElite: true,
-  },
-  'elite-monk': {
-    kind: 'elite-monk', name: t('enemy.elite-monk.name'), texture: 'enemy-monk', frameW: 192, scale: 0.6,
-    bodyRadius: 24, hp: 350, speed: 75, damage: 12, xp: 25, gem: 'gem-red', isElite: true,
-  },
-  midboss: {
-    kind: 'midboss', name: t('enemy.midboss.name'), texture: 'enemy-monk', frameW: 192, scale: 0.92,
-    bodyRadius: 32, hp: 1500, speed: 82, damage: 20, xp: 36, gem: 'gem-red', isMidboss: true,
+  minotaur: {
+    // Минотавр (элита 10:00): погон + периодический рывок с телеграфом
+    kind: 'minotaur', name: t('enemy.minotaur.name'), frameW: 320, scale: 0.85,
+    body: { cx: 130, cy: 180, r: 42 }, groundY: 213, headOffset: 77,
+    hp: 1500, speed: 78, damage: 26, xp: 36, gem: 'gem-red', isElite: true,
   },
   boss: {
-    kind: 'boss', name: t('enemy.boss.name'), texture: 'boss', frameW: 320, scale: 2.0,
-    // Босс — кульминация 15-минутного матча и обязан платить лучше
-    // мидбосса: 200 XP и щедрая награда выдаются при смерти в GameScene.
-    bodyRadius: 80, hp: 4000, speed: 110, damage: 40, xp: 200, gem: 'gem-red', isBoss: true,
-  },
-  'boss-minion': {
-    kind: 'boss-minion', name: t('enemy.boss-minion.name'), texture: 'enemy-swarm', frameW: 192, scale: 0.5,
-    bodyRadius: 20, hp: 14, speed: 140, damage: 10, xp: 5, gem: 'gem-purple',
+    // Огр-разрушитель: кульминация 15-минутного матча. Фазы:
+    // замах (windup) → удар с рывком + ударная волна → восстановление.
+    // Призыв гоблинов при HP < 65%, ярость при HP < 30%.
+    kind: 'boss', name: t('enemy.boss.name'), frameW: 384, scale: 1.5,
+    body: { cx: 198, cy: 250, r: 54 }, groundY: 296, headOffset: 111,
+    hp: 4000, speed: 105, damage: 40, xp: 200, gem: 'gem-red', isBoss: true,
+    buildingDmg: 8,     // фаза 2: по замку, ×3 темп = 15 HP/с (§E.6); НЕ ×0.65
   },
 };
 
 // ============ Директор волн ============
 
+export type WaveEventType = 'ring' | 'elite' | 'boss' | 'rate' | 'siege';
+
 export interface WaveEvent {
   t: number;            // секунды от начала матча
-  type: 'ring' | 'elite' | 'boss' | 'rate';
+  type: WaveEventType;
   enemy?: EnemyKind;
   count?: number;
   interval?: number;    // новый интервал спавна (мс)
   note?: string;
   diff?: DifficultyId;  // событие только для указанной сложности
+  /** Осада: состав отряда, цель профиля и лимит ранений (TZ §E.4.3) */
+  siege?: { squad: Array<{ kind: EnemyKind; n: number; firer?: boolean }>; target: 'houses' | 'barracks' | 'monastery' | 'castle'; index: number };
 }
 
 export const WAVE_EVENTS: WaveEvent[] = [
   { t: 0,   type: 'rate', interval: 850 },
-  { t: 60,  type: 'ring', enemy: 'swarm', count: 24 },
+  // 1:00 — первое кольцо гоблинов
+  { t: 60,  type: 'ring', enemy: 'goblin', count: 24 },
   { t: 60,  type: 'rate', interval: 700 },
   { t: 120, type: 'rate', interval: 620 },
   { t: 180, type: 'rate', interval: 560 },
-  { t: 240, type: 'ring', enemy: 'brute', count: 14 },
-  { t: 300, type: 'elite', enemy: 'elite-lancer' },
-  { t: 300, type: 'rate', interval: 500 },
-  { t: 330, type: 'ring', enemy: 'guard', count: 6, note: t('wave.note.shields') },
-  { t: 390, type: 'ring', enemy: 'bomber', count: 8, note: t('wave.note.bombardment') },
-  { t: 410, type: 'ring', enemy: 'taskmaster', count: 3, note: t('wave.note.overseers') },
-  { t: 420, type: 'rate', interval: 450 },
-  { t: 450, type: 'ring', enemy: 'mercenary', count: 5, note: t('wave.note.mercs') },
-  { t: 480, type: 'ring', enemy: 'swarm', count: 32 },
-  { t: 480, type: 'rate', interval: 400 },
-  { t: 540, type: 'ring', enemy: 'guard', count: 8, note: t('wave.note.shields') },
-  { t: 600, type: 'elite', enemy: 'elite-monk', diff: 'normal' },
-  { t: 600, type: 'elite', enemy: 'midboss', diff: 'nightmare' },
-  { t: 600, type: 'rate', interval: 370 },
-  // 11:00 — смешанная волна: собираем всё, что уже встречалось
-  { t: 660, type: 'ring', enemy: 'mercenary', count: 9, note: t('wave.note.mercs') },
-  { t: 690, type: 'rate', interval: 350 },
-  // 12:00 — бочки-камикадзе по плотной толпе
-  { t: 720, type: 'ring', enemy: 'bomber', count: 14, note: t('wave.note.bombardment') },
-  // 12:30 — приказчики: без игрока-цели толпа вязнет
-  { t: 750, type: 'ring', enemy: 'taskmaster', count: 5, note: t('wave.note.overseers') },
-  { t: 780, type: 'rate', interval: 330 },
-  // 13:30 — щитоносцы, к моменту когда у игрока уже есть чем их вскрыть
-  { t: 810, type: 'ring', enemy: 'guard', count: 12, note: t('wave.note.shields') },
-  { t: 840, type: 'ring', enemy: 'brute', count: 20 },
+  // 3:30 — воры заходят флангами
+  { t: 210, type: 'ring', enemy: 'thief', count: 14, note: t('wave.note.thieves') },
+  // 4:00 — первый стрелковый урон: гноллы
+  { t: 240, type: 'ring', enemy: 'gnoll', count: 8, note: t('wave.note.gnolls') },
+  { t: 240, type: 'rate', interval: 500 },
+  // 5:00 — элита: пещерный медведь
+  { t: 300, type: 'elite', enemy: 'bear' },
+  // 5:30 — стена щитов скелетов
+  { t: 330, type: 'ring', enemy: 'skull', count: 6, note: t('wave.note.shields') },
+  { t: 420, type: 'rate', interval: 420 },
+  // 7:30 — колдуны ведут толпу
+  { t: 450, type: 'ring', enemy: 'shaman', count: 3, note: t('wave.note.shamans') },
+  { t: 510, type: 'ring', enemy: 'goblin', count: 30 },
+  { t: 540, type: 'rate', interval: 400 },
+  { t: 570, type: 'ring', enemy: 'thief', count: 20, note: t('wave.note.thieves') },
+  // 10:00 — элита: минотавр
+  { t: 600, type: 'elite', enemy: 'minotaur' },
+  { t: 630, type: 'ring', enemy: 'gnoll', count: 12, note: t('wave.note.gnolls') },
+  { t: 630, type: 'rate', interval: 370 },
+  { t: 690, type: 'ring', enemy: 'shaman', count: 5, note: t('wave.note.shamans') },
+  { t: 720, type: 'rate', interval: 350 },
+  // 12:30 — всадники с рывками
+  { t: 750, type: 'ring', enemy: 'pig-rider', count: 5, note: t('wave.note.riders') },
+  // 13:30 — рыбы-подрывники по плотной толпе
+  { t: 810, type: 'ring', enemy: 'bomb-fish', count: 8, note: t('wave.note.bombfish') },
+  { t: 840, type: 'rate', interval: 330 },
+  // 14:00 — финальная орда гоблинов ~40 голов (TZ §A.3)
+  { t: 840, type: 'ring', enemy: 'goblin', count: 40 },
+  // 15:00 — Огр-разрушитель
   { t: 900, type: 'boss', enemy: 'boss' },
 ];
 
-// Состав обычного спавна по минутам (веса)
+// ============ Осады (TZ §E.4.3): расписание и профили целей ============
+// Ротация целей: окраины → ядро. Первая осада учит на домах, замок бьют
+// последней. Приоритет §G.7 (замок > монастырь > казармы) работает ВНУТРИ
+// профиля — если цель профиля отсутствует.
+export interface SiegeProfile {
+  t: number;
+  name: string;         // ключ i18n
+  squad: Array<{ kind: EnemyKind; n: number; firer?: boolean }>;
+  target: 'houses' | 'barracks' | 'monastery' | 'castle';
+  woundCap: number;
+}
+
+export const SIEGE_SCHEDULE: SiegeProfile[] = [
+  { t: 360,  name: 'siege.profile.scout',  squad: [{ kind: 'skull', n: 3 }],                          target: 'houses',    woundCap: 1 },
+  { t: 480,  name: 'siege.profile.raid',   squad: [{ kind: 'skull', n: 5 }],                          target: 'houses',    woundCap: 1 },
+  { t: 600,  name: 'siege.profile.burn',   squad: [{ kind: 'skull', n: 4 }, { kind: 'shaman', n: 2, firer: true }], target: 'monastery', woundCap: 2 },
+  { t: 720,  name: 'siege.profile.pincer', squad: [{ kind: 'skull', n: 6 }, { kind: 'pig-rider', n: 4 }],           target: 'houses',    woundCap: 2 },
+  { t: 810,  name: 'siege.profile.assault',squad: [{ kind: 'skull', n: 6 }, { kind: 'shaman', n: 2, firer: true }, { kind: 'pig-rider', n: 3 }], target: 'castle', woundCap: 3 },
+];
+
+// Состав обычного спавна по минутам (веса, TZ §A.3): с каждой минутой
+// в пул входят более опасные существа и перераспределяют долю мелочи.
+const SPAWN_WEIGHTS: Array<{ from: number; weights: Partial<Record<EnemyKind, number>> }> = [
+  { from: 0,  weights: { goblin: 1 } },
+  { from: 2,  weights: { goblin: 3, thief: 1 } },
+  { from: 3,  weights: { goblin: 11, thief: 4, gnoll: 5 } },
+  { from: 5,  weights: { goblin: 8, thief: 3, gnoll: 5, skull: 4 } },
+  { from: 7,  weights: { goblin: 6, thief: 2.4, gnoll: 4, skull: 4, shaman: 3.6 } },
+  { from: 9,  weights: { goblin: 5, thief: 2, gnoll: 3, skull: 3, shaman: 3, 'pig-rider': 4 } },
+  { from: 11, weights: { goblin: 4, thief: 1.6, gnoll: 2.4, skull: 2.4, shaman: 2.4, 'pig-rider': 3.2, 'bomb-fish': 4 } },
+];
+
 export function pickRegularKind(minute: number, rng: () => number): EnemyKind {
-  const r = rng();
-  if (minute >= 3 && r < 0.22) return 'brute';
-  if (minute >= 5 && r < 0.38) return 'archer';
-  if (minute >= 1 && r < 0.62) return 'swarm';
-  if (minute >= 4 && r < 0.74) return 'bomber';
-  if (minute >= 5 && r < 0.86) return 'guard';
-  if (minute >= 6 && r < 0.92) return 'taskmaster';
-  if (minute >= 7 && r < 0.99) return 'mercenary';
-  return 'grunt';
+  let w = SPAWN_WEIGHTS[0].weights;
+  for (const row of SPAWN_WEIGHTS) {
+    if (minute >= row.from) w = row.weights;
+  }
+  let total = 0;
+  for (const k in w) total += w[k];
+  let r = rng() * total;
+  for (const k in w) {
+    r -= w[k];
+    if (r < 0) return k as EnemyKind;
+  }
+  return 'goblin';
 }
 
 // Масштабирование врагов по минутам
 export const hpScale = (minute: number) => 1 + minute * 0.22;
 export const dmgScale = (minute: number) => 1 + minute * 0.12;
 
+// ============ Поселение: пешки, ресурсы, здания (TZ §B) ============
+
+export type PawnKind = 'collector' | 'builder' | 'repairer' | 'fighter' | 'healer';
+export type PawnClass = 'civilian' | 'garrison';
+export type PawnWeapon = 'sword' | 'lance' | 'bow' | 'staff';
+export type PawnState =
+  | 'idle' | 'walk' | 'work' | 'carry' | 'flee'
+  | 'fight' | 'retreat' | 'kite' | 'heal'
+  | 'wounded' | 'bleeding' | 'cooldown';
+export type ResourceKind = 'wood' | 'meat' | 'ore';
+export type BuildingKind = 'castle' | 'house' | 'barracks' | 'tower' | 'archery' | 'monastery';
+
+export interface ResourceCost { wood?: number; ore?: number; meat?: number; }
+
+export interface PawnDef {
+  kind: PawnKind;
+  cls: PawnClass;
+  prefix: string;          // 'pawn' (синяя) / 'pawny' (жёлтая)
+  speed: number;
+  hp: number;
+  /** Инструменты работы: work-анимация подбирается по ресурсу (§B.2). */
+  tools?: Array<'axe' | 'pickaxe' | 'knife' | 'hammer'>;
+  weapon?: PawnWeapon;
+}
+
+export const PAWNS: Record<PawnKind, PawnDef> = {
+  collector: { kind: 'collector', cls: 'civilian', prefix: 'pawn', speed: 180, hp: 40, tools: ['axe', 'pickaxe', 'knife'] },
+  builder:   { kind: 'builder',   cls: 'civilian', prefix: 'pawny', speed: 170, hp: 40, tools: ['hammer'] },
+  repairer:  { kind: 'repairer',  cls: 'civilian', prefix: 'pawny', speed: 170, hp: 40, tools: ['hammer'] },
+  fighter:   { kind: 'fighter',   cls: 'garrison', prefix: 'pawn', speed: 150, hp: 120, weapon: 'sword' },
+  healer:    { kind: 'healer',    cls: 'garrison', prefix: 'pawn', speed: 150, hp: 90, weapon: 'staff' },
+};
+
+/**
+ * Гарнизон: боевые характеристики. Никогда не умножаются на hpScale/dmgScale
+ * и сложность — на 13-й минуте мечник остаётся 120 HP (TZ §C.3).
+ */
+export interface FighterDef {
+  hp: number;
+  dmg: number;
+  range: number;
+  period: number;      // мс между атаками
+  speed: number;
+  /** Копьё: рывок и телеграф (мс). */
+  charge?: number;
+  telegraph?: number;
+  /** Лучник: приоритетная цель — осадный шаман (§B.7.1). */
+  prioritise?: 'shaman';
+}
+
+export const FIGHTERS: Record<PawnWeapon, FighterDef> = {
+  sword: { hp: 120, dmg: 14, range: 40, period: 1200, speed: 150 },
+  lance: { hp: 100, dmg: 18, range: 200, period: 8000, speed: 170, charge: 400, telegraph: 480 },
+  bow:   { hp: 70,  dmg: 10, range: 300, period: 1500, speed: 160, prioritise: 'shaman' },
+  staff: { hp: 90,  dmg: 0,  range: 0,   period: 0,    speed: 150 },
+};
+
+/** Ресурсные узлы (TZ §B.3): дерево / овца / золотая жила. */
+export interface ResourceDef {
+  kind: ResourceKind;
+  workMs: number;       // время одного тика работы
+  yieldPerCycle: number;
+  /** Сколько тиков работы даёт узел (дерево 5×0.8с → 5 дерева за цикл). */
+  ticksPerCycle: number;
+}
+
+export const RESOURCES: Record<ResourceKind, ResourceDef> = {
+  wood: { kind: 'wood', workMs: 800,  yieldPerCycle: 5,  ticksPerCycle: 5 },
+  meat: { kind: 'meat', workMs: 750,  yieldPerCycle: 3,  ticksPerCycle: 4 },
+  ore:  { kind: 'ore',  workMs: 1000, yieldPerCycle: 20, ticksPerCycle: 5 }, // 5 с работы → 20 руды за цикл, 4 цикла (§B.3)
+};
+
+export const TOOL_BY_RESOURCE: Record<ResourceKind, 'axe' | 'knife' | 'pickaxe'> = {
+  wood: 'axe',
+  meat: 'knife',
+  ore: 'pickaxe',
+};
+
+/** Здания (TZ §B.4): стоимость, время стройки, HP, функция. */
+export interface BuildingPlan {
+  kind: BuildingKind;
+  cost: ResourceCost;
+  timeMs: number;
+  hp: number;
+  sprites?: string[];        // варианты (дом 1/2/3)
+  slots?: number;            // места лечения (монастырь)
+  noRepair?: boolean;
+  /** Кого нанимает и в каком количестве. */
+  hire?: Partial<Record<PawnWeapon, number>>;
+}
+
+export const BUILDING_PLANS: Record<BuildingKind, BuildingPlan> = {
+  castle:    { kind: 'castle',    cost: {},                     timeMs: 0,    hp: 500, noRepair: true },
+  house:     { kind: 'house',     cost: { wood: 30 },           timeMs: 10000, hp: 150, sprites: ['house1', 'house2', 'house3'] },
+  barracks:  { kind: 'barracks',  cost: { wood: 40, ore: 15 },  timeMs: 20000, hp: 250, hire: { sword: 2, lance: 2 } },
+  tower:     { kind: 'tower',     cost: { wood: 50, ore: 20 },  timeMs: 15000, hp: 200 },
+  archery:   { kind: 'archery',   cost: { wood: 45, ore: 25 },  timeMs: 20000, hp: 180, hire: { bow: 2 } },
+  monastery: { kind: 'monastery', cost: { wood: 60, ore: 40 },  timeMs: 25000, hp: 360, slots: 10, hire: { staff: 1 } },
+};
+
+/** Пятна стройки вокруг замка: 6 под дома + 4 под крупные (TZ §B.4).
+ *  Замок стоит в (S/2, S/2 − 460); пятна заданы относительно него. */
+export interface BuildSpot { kind: BuildingKind; dx: number; dy: number; }
+
+export const BUILD_SPOTS: BuildSpot[] = [
+  { kind: 'barracks', dx: -360, dy: 40 },
+  { kind: 'tower',    dx: 380,  dy: 60 },
+  { kind: 'monastery', dx: 40,  dy: 420 },
+  { kind: 'archery',  dx: -420, dy: 300 },
+  { kind: 'house', dx: -190, dy: 190 },
+  { kind: 'house', dx: 200,  dy: 200 },
+  { kind: 'house', dx: -60,  dy: 300 },
+  { kind: 'house', dx: 120,  dy: 120 },
+  { kind: 'house', dx: -300, dy: 150 },
+  { kind: 'house', dx: 320,  dy: 210 },
+];
+
+/** Порядок найма: казармы/тир/обитель дают своих бойцов (TZ §F.6). */
+export const SUCCESSION_SOURCES: BuildingKind[] = ['barracks', 'archery', 'monastery'];
+
+/** Преемственность (TZ §F.6–F.8): оружие → герой, здание-источник. */
+export const SUCCESSION_TYPES: Array<{ weapon: PawnWeapon; hero: HeroId; source: BuildingKind }> = [
+  { weapon: 'sword', hero: 'warrior', source: 'barracks' },
+  { weapon: 'lance', hero: 'lancer', source: 'barracks' },
+  { weapon: 'bow', hero: 'archer', source: 'archery' },
+  { weapon: 'staff', hero: 'monk', source: 'monastery' },
+];
+
+/** Эскалация цены преемственности за ресурсы (TZ §F.7). */
+export const SUCCESSION_COST: ResourceCost[] = [
+  { wood: 40, ore: 15 },
+  { wood: 80, ore: 35 },
+  { wood: 140, ore: 60 },
+];
+export const SUCCESSION_GOLD = [500, 900, 1500];
+
+/** Карточки поселения (TZ §H.5): в пул левел-апа после первого дома. */
+export interface SettlementCardDef {
+  id: string;
+  rarity: 'common' | 'rare' | 'epic';
+  icon: string;
+}
+
+export const SETTLEMENT_CARDS: SettlementCardDef[] = [
+  { id: 'forestry', rarity: 'common', icon: 'res-wood' },
+  { id: 'masonry', rarity: 'common', icon: 'icon-shield' },
+  { id: 'provisions', rarity: 'common', icon: 'res-meat' },
+  { id: 'deepmines', rarity: 'rare', icon: 'res-ore' },
+  { id: 'fieldmedic', rarity: 'rare', icon: 'icon-heart' },
+  { id: 'militia', rarity: 'rare', icon: 'icon-sword' },
+  { id: 'alarm', rarity: 'rare', icon: 'icon-haste' },
+  { id: 'assembly', rarity: 'epic', icon: 'icon-coin' },
+];
+
+/** Имена пешек (Приложение A1): титул по роли — в i18n.
+ *  RU-пул (PAWN_NAMES_RU) выбирается в Economy по lang(). */
+export const PAWN_NAMES: Record<string, string[]> = {
+  male: [
+    'Thomas', 'Aldric', 'Cedric', 'Rowan', 'Bram', 'Godwin', 'Hal', 'Oswald',
+    'Perrin', 'Wulfric', 'Edgar', 'Milo', 'Osbert', 'Ralf', 'Simon', 'Turin',
+    'Wat', 'Yorick', 'Alwin', 'Dunstan',
+  ],
+  female: [
+    'Agnes', 'Maud', 'Aveline', 'Beatrice', 'Cecilia', 'Edith', 'Gwyn', 'Hawise',
+    'Ida', 'Joan', 'Katherine', 'Lettice', 'Matilda', 'Nesta', 'Odile', 'Philippa',
+    'Rosamund', 'Sabina', 'Thomasin', 'Wulfhilda',
+  ],
+};
+
+/** Имена пешек для русской локали (Приложение A1). */
+export const PAWN_NAMES_RU: Record<string, string[]> = {
+  male: [
+    'Томас', 'Кузьма', 'Яромир', 'Милован', 'Радим', 'Захар', 'Лукьян', 'Демьян',
+    'Прохор', 'Савелий', 'Елисей', 'Гордей', 'Матвей', 'Игнат', 'Фаддей', 'Влас',
+    'Назар', 'Тихон', 'Устин', 'Фрол',
+  ],
+  female: [
+    'Милана', 'Агата', 'Василиса', 'Злата', 'Лукерья', 'Пелагея', 'Дарёна', 'Улита',
+    'Февронья', 'Глафира', 'Аксинья', 'Мирослава', 'Аграфена', 'Веста', 'Добрава',
+    'Ждана', 'Забава', 'Любава', 'Неждана', 'Снежана',
+  ],
+};
+
 // ============ Карты апгрейдов ============
 
 export interface UpgradeCard {
-  kind: 'weapon-new' | 'weapon-up' | 'weapon-evolve' | 'passive' | 'heal' | 'gold';
-  id?: WeaponId | PassiveId;
+  kind: 'weapon-new' | 'weapon-up' | 'weapon-evolve' | 'passive' | 'heal' | 'gold' | 'settlement';
+  id?: WeaponId | PassiveId | string;
   title: string;
   subtitle: string;
   desc: string;
   icon: string;
   levelFrom?: number;
   levelTo?: number;
+  rarity?: 'common' | 'rare' | 'epic';
 }

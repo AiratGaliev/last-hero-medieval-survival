@@ -1,8 +1,9 @@
 import Phaser from 'phaser';
 import { DEPTH, PROJECTILE_CAP } from '../constants';
 import { audio } from './Audio';
+import type { EnemyShotKind } from '../entities/Enemy';
 
-// ============ Снаряды: стрелы, копья, бомбы (игрок) + стрелы врагов ============
+// ============ Снаряды: стрелы, копья, бомбы (игрок) + снаряды существ ============
 
 export interface Proj extends Phaser.Physics.Arcade.Image {
   dmg: number;
@@ -12,6 +13,20 @@ export interface Proj extends Phaser.Physics.Arcade.Image {
   /** Гунгнир: фаза возвращения (копьё разворачивается к игроку) */
   gungnir?: boolean;
   returned?: boolean;
+  /** Стрела NPC-лучника — бьёт врагов, дружественная (§M) */
+  friendly?: boolean;
+}
+
+/** Анимированный снаряд существа (кость гнолла / шар шамана) */
+interface EnemyShot extends Phaser.Physics.Arcade.Sprite {
+  dmg: number;
+  pierceLeft: number;
+  life: number;
+  shotKind?: EnemyShotKind;
+  /** Цель-здание осады (§E.4): снаряд летит к точке и наносит урон */
+  targetB?: { x: number; y: number } | null;
+  fire?: boolean;
+  onArrive?: (s: EnemyShot) => void;
 }
 
 interface Bomb {
@@ -26,6 +41,12 @@ interface Bomb {
   mini?: boolean;
 }
 
+/** Параметры снарядов врагов (кость гнолла / шар шамана) */
+const ENEMY_SHOTS: Record<EnemyShotKind, { tex: string; anim: string; speed: number; life: number; body: number; scale: number }> = {
+  bone: { tex: 'proj-bone', anim: 'proj-bone-spin', speed: 340, life: 2200, body: 26, scale: 1 },
+  hex:  { tex: 'proj-hex',  anim: 'proj-hex-orb',  speed: 300, life: 2600, body: 30, scale: 1 },
+};
+
 export interface ProjectileCtx {
   onExplode(x: number, y: number, dmg: number, radius: number, mini?: boolean): void;
   /** Позиция игрока — для возврата Гунгнира */
@@ -38,11 +59,15 @@ export class Projectiles {
   arrows: Phaser.Physics.Arcade.Group;
   spears: Phaser.Physics.Arcade.Group;
   knives: Phaser.Physics.Arcade.Group;
-  enemyArrows: Phaser.Physics.Arcade.Group;
+  /** Снаряды врагов: вращающаяся кость и магический шар (спрайты с анимацией) */
+  enemyShots: Phaser.Physics.Arcade.Group;
+  /** Стрелы NPC-лучника (гарнизон) — не путать с enemyShots (§M) */
+  friendlyArrows: Phaser.Physics.Arcade.Group;
   private arrowPool: Proj[] = [];
   private spearPool: Proj[] = [];
   private knifePool: Proj[] = [];
-  private enemyArrowPool: Proj[] = [];
+  private enemyShotPool: EnemyShot[] = [];
+  private friendlyArrowPool: Proj[] = [];
   private bombs: Bomb[] = [];
 
   constructor(scene: Phaser.Scene, ctx: ProjectileCtx) {
@@ -51,7 +76,8 @@ export class Projectiles {
     this.arrows = scene.physics.add.group({ allowGravity: false });
     this.spears = scene.physics.add.group({ allowGravity: false });
     this.knives = scene.physics.add.group({ allowGravity: false });
-    this.enemyArrows = scene.physics.add.group({ allowGravity: false });
+    this.enemyShots = scene.physics.add.group({ allowGravity: false });
+    this.friendlyArrows = scene.physics.add.group({ allowGravity: false });
   }
 
   // ---------- Стрелы игрока ----------
@@ -130,20 +156,76 @@ export class Projectiles {
     audio.play('shoot');
   }
 
-  // ---------- Стрелы врагов ----------
-  enemyArrow(x: number, y: number, angle: number, dmg: number): void {
-    const p = this.acquire(this.enemyArrowPool, 'arrow', this.enemyArrows);
+  // ---------- Снаряды врагов: кость гнолла / шар шамана ----------
+  shootEnemy(kind: EnemyShotKind, x: number, y: number, angle: number, dmg: number): void {
+    const p = this.acquireShot(kind);
     if (!p) return;
-    const speed = 380;
+    const cfg = ENEMY_SHOTS[kind];
+    p.shotKind = kind;
+    p.targetB = null;
+    p.onArrive = undefined;
+    p.fire = false;
     p.setPosition(x, y);
-    p.setVelocity(Math.cos(angle) * speed, Math.sin(angle) * speed);
+    p.setVelocity(Math.cos(angle) * cfg.speed, Math.sin(angle) * cfg.speed);
+    p.dmg = dmg;
+    p.pierceLeft = 0;
+    p.life = cfg.life;
+    p.setDepth(DEPTH.PROJECTILE);
+    p.setScale(cfg.scale);
+    const body = p.body as Phaser.Physics.Arcade.Body;
+    body.setSize(cfg.body, cfg.body, true);
+    audio.play('shoot');
+  }
+
+  /** Бросок по зданию осады (§E.4.1): снаряд летит к точке и наносит урон. */
+  shootAtBuilding(
+    kind: EnemyShotKind, x: number, y: number, tx: number, ty: number,
+    dmg: number, fire: boolean, onArrive: (s: EnemyShot) => void,
+  ): void {
+    const p = this.acquireShot(kind);
+    if (!p) return;
+    const cfg = ENEMY_SHOTS[kind];
+    p.shotKind = kind;
+    p.fire = fire;
+    p.onArrive = onArrive;
+    p.targetB = { x: tx, y: ty };
+    p.setPosition(x, y);
+    const a = Math.atan2(ty - y, tx - x);
+    p.setVelocity(Math.cos(a) * cfg.speed, Math.sin(a) * cfg.speed);
+    p.dmg = dmg;
+    p.pierceLeft = 0;
+    p.life = cfg.life;
+    p.setDepth(DEPTH.PROJECTILE);
+    p.setScale(cfg.scale);
+    const body = p.body as Phaser.Physics.Arcade.Body;
+    body.setSize(cfg.body, cfg.body, true);
+    audio.play('shoot');
+  }
+
+  /** Стрела NPC-лучника (§M): отдельный пул с флагом friendly. */
+  fireFriendlyArrow(x: number, y: number, angle: number, dmg: number): void {
+    let p = this.friendlyArrowPool.find((q) => !q.active);
+    if (!p) {
+      if (!this.hasRoom) return;
+      p = this.scene.physics.add.image(0, 0, 'arrow') as Proj;
+      p.setActive(false).setVisible(false);
+      this.friendlyArrows.add(p);
+      this.friendlyArrowPool.push(p);
+    }
+    p.setActive(true).setVisible(true);
+    p.friendly = true;
+    p.clearTint();
+    p.setScale(1);
+    p.setRotation(0);
+    p.setPosition(x, y);
+    p.setVelocity(Math.cos(angle) * 620, Math.sin(angle) * 620);
     p.setRotation(angle);
     p.dmg = dmg;
     p.pierceLeft = 0;
-    p.life = 2200;
+    p.life = 1200;
+    p.hitSet = new Set();
     p.setDepth(DEPTH.PROJECTILE);
-    (p.body as Phaser.Physics.Arcade.Body).setSize(24, 10, true);
-    p.setTint(0xffb0a0);
+    (p.body as Phaser.Physics.Arcade.Body).setSize(30, 10, true);
   }
 
   // ---------- Бомба (навесная) ----------
@@ -173,7 +255,8 @@ export class Projectiles {
     this.updateProjs(this.arrowPool, dtMs);
     this.updateSpears(dtMs);
     this.updateProjs(this.knifePool, dtMs);
-    this.updateProjs(this.enemyArrowPool, dtMs);
+    this.updateProjs(this.friendlyArrowPool, dtMs);
+    this.updateEnemyShots(dtMs);
 
     for (let i = this.bombs.length - 1; i >= 0; i--) {
       const b = this.bombs[i];
@@ -211,6 +294,26 @@ export class Projectiles {
     }
   }
 
+  /** Снаряды врагов: у броска по зданию — прибытие к цели (§E.4.1). */
+  private updateEnemyShots(dtMs: number): void {
+    for (const p of this.enemyShotPool) {
+      if (!p.active) continue;
+      p.life -= dtMs;
+      if (p.targetB) {
+        const d = Math.hypot(p.x - p.targetB.x, p.y - p.targetB.y);
+        if (d < 48) {
+          const cb = p.onArrive;
+          p.targetB = null;
+          p.onArrive = undefined;
+          this.release(p as unknown as Proj);
+          cb?.(p);
+          continue;
+        }
+      }
+      if (p.life <= 0) this.release(p as unknown as Proj);
+    }
+  }
+
   private updateProjs(pool: Proj[], dtMs: number): void {
     for (const p of pool) {
       if (!p.active) continue;
@@ -237,6 +340,29 @@ export class Projectiles {
     b.setAllowGravity(false);
     p.clearTint();
     p.setScale(1);
+    p.setRotation(0);
+    return p;
+  }
+
+  /** Спрайтовый пул снарядов врагов: у кости и шара свои анимации */
+  private acquireShot(kind: EnemyShotKind): EnemyShot | null {
+    const cfg = ENEMY_SHOTS[kind];
+    let p = this.enemyShotPool.find((x) => !x.active && x.shotKind === kind);
+    if (!p) {
+      if (!this.hasRoom) return null;
+      const spr = this.scene.physics.add.sprite(0, 0, cfg.tex) as EnemyShot;
+      spr.setActive(false).setVisible(false);
+      this.enemyShots.add(spr);
+      this.enemyShotPool.push(spr);
+      p = spr;
+    }
+    p.setActive(true).setVisible(true);
+    const b = p.body as Phaser.Physics.Arcade.Body;
+    b.enable = true;
+    b.setAllowGravity(false);
+    p.clearTint();
+    p.setScale(cfg.scale);
+    p.play(cfg.anim, true);
     return p;
   }
 
@@ -256,7 +382,7 @@ export class Projectiles {
     (p.body as Phaser.Physics.Arcade.Body).stop();
   }
 
-  releaseEnemyArrow(p: Proj): void {
+  releaseEnemyShot(p: Proj): void {
     this.release(p);
   }
 
@@ -272,7 +398,7 @@ export class Projectiles {
    */
   get size(): number {
     return this.arrowPool.length + this.spearPool.length
-      + this.knifePool.length + this.enemyArrowPool.length;
+      + this.knifePool.length + this.enemyShotPool.length + this.friendlyArrowPool.length;
   }
 
   /** Есть ли свободный слот в общем пуле снарядов. */
@@ -281,7 +407,7 @@ export class Projectiles {
   }
 
   clear(): void {
-    const pools = [this.arrowPool, this.spearPool, this.knifePool, this.enemyArrowPool];
+    const pools: Array<Array<Proj>> = [this.arrowPool, this.spearPool, this.knifePool, this.enemyShotPool as unknown as Proj[], this.friendlyArrowPool];
     const done = new Set<Phaser.GameObjects.GameObject>();
     for (const pool of pools) {
       for (const p of pool) {

@@ -88,6 +88,15 @@ export class Effects {
       .once('animationcomplete', () => this.releaseFx(s));
   }
 
+  /** Взрыв магического шара шамана при попадании (кадры из пака enemies/) */
+  hexBlast(x: number, y: number): void {
+    const s = this.acquireFx('fx-hex');
+    if (!s) return;
+    s.setPosition(x, y).setScale(1).setAlpha(1).setDepth(DEPTH.FX)
+      .play('fx-hex', true)
+      .once('animationcomplete', () => this.releaseFx(s));
+  }
+
   /** Текст, который дольше всех занят: его можно переиспользовать. */
   private oldestDmg(): DmgText | undefined {
     let best: DmgText | undefined;

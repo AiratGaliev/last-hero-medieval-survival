@@ -54,3 +54,9 @@ prompt
 /skills/
 tool-results/
 /.playwright-cli/
+
+# окружение песочницы (не часть проекта)
+/.zscripts/
+/Caddyfile
+/upload/
+/bun.lock

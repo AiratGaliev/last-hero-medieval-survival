@@ -44,6 +44,9 @@ export interface YandexSdk {
   adv: {
     showFullscreenAdv(options?: Record<string, unknown>): Promise<boolean | undefined>;
     showRewardedVideo(options?: Record<string, unknown>): Promise<{ rewarded: boolean } | undefined>;
+    /** Стики-баннер (TZ §J.5); может отсутствовать в старых версиях SDK. */
+    showBanner?(options?: Record<string, unknown>): void;
+    hideBanner?(): void;
   };
   auth: { openAuthDialog(): Promise<void> };
   leaderboards: {
@@ -57,8 +60,21 @@ export interface YandexSdk {
   };
   isAvailableMethod(name: string): Promise<boolean>;
   getPlayer(): Promise<YandexPlayer>;
+  /** Серверное время Яндекса (мс эпохи или Date) — для дат ежедневок. */
+  getServerTime?(): Promise<number | Date>;
+  /** Платёжный слой (фаза S §J.6.1); может отсутствовать в старых версиях SDK. */
+  getPayments?(options?: { signed?: boolean }): Promise<YandexPayments>;
   on(event: string, handler: () => void): void;
   off(event: string, handler: () => void): void;
+}
+
+/** Покупки Яндекс Игр (TZ §J.6.1) — срез, используемый игрой. */
+export interface YandexPayments {
+  purchase(options: { id: string }): Promise<{ productID: string; purchaseToken?: string }>;
+  consumePurchase(token: string): Promise<void>;
+  getPurchases(): Promise<{ productID: string; purchaseToken?: string }[]>;
+  /** Каталог SKU с названиями/иконками портальной валюты (требование 1.13.2). */
+  getCatalog?(): Promise<Array<{ id: string; title?: string; description?: string; imageURI?: string; price?: string; priceValue?: string; priceCurrencyImage?: string; priceCurrencyCode?: string }>>;
 }
 
 /** Скрипт SDK лежит в архиве игры (public/vendor → dist/vendor). */
@@ -71,6 +87,13 @@ let sdk: YandexSdk | null = null;
 let initPromise: Promise<YandexSdk | null> | null = null;
 /** Локальный QA-режим: ветка «мы на Яндексе» без загрузки их SDK. */
 let mockMode = false;
+
+/**
+ * Смещение серверного времени Яндекса относительно локальных часов.
+ * Даты ежедневок/заданий обязаны браться с сервера площадки (гейт Q),
+ * а не с локальных часов, которые игрок может перевести.
+ */
+let timeOffsetMs = 0;
 
 declare global {
   interface Window {
@@ -148,6 +171,7 @@ export function initSdk(): Promise<YandexSdk | null> {
       if (!instance) throw new Error('[sdk] init() не ответил вовремя');
 
       sdk = instance;
+      void syncServerTime();
       return sdk;
     } catch (err) {
       console.warn('[sdk] недоступен, играем без него:', err);
@@ -163,7 +187,39 @@ export function getSdk(): YandexSdk | null {
   return sdk;
 }
 
+/** Подтягивает серверное время площадки (не блокирует запуск при ошибке). */
+export async function syncServerTime(): Promise<void> {
+  const s = sdk;
+  if (!s || typeof s.getServerTime !== 'function') return;
+  try {
+    const raw = await withTimeout(s.getServerTime(), 4000);
+    if (raw === null || raw === undefined) return;
+    const ms = raw instanceof Date ? raw.getTime() : Number(raw);
+    if (Number.isFinite(ms) && ms > 1_000_000_000_000) {
+      timeOffsetMs = ms - Date.now();
+    } else if (Number.isFinite(ms) && ms > 1_000_000_000) {
+      // Секунды → миллисекунды
+      timeOffsetMs = ms * 1000 - Date.now();
+    }
+  } catch {
+    // Нет доступа к методу — молча играем по локальным часам
+  }
+}
+
+/**
+ * «Серверное сейчас» для дат ежедневок/заданий/сезонов. Вне Яндекса и в
+ * QA-режиме — локальные часы (смещение нулевое).
+ */
+export function serverNow(): number {
+  return Date.now() + timeOffsetMs;
+}
+
 /** Работаем ли мы в окружении Yandex Games (включая QA-режим). */
 export function isOnYandex(): boolean {
   return sdk !== null || mockMode;
+}
+
+/** QA-режим (?ysdk=mock): платформа «есть», реального SDK нет. */
+export function isMockMode(): boolean {
+  return mockMode;
 }

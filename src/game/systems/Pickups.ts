@@ -32,6 +32,9 @@ export class Pickups {
   private onHeal: (v: number) => void;
   private onChest: (x: number, y: number) => void;
   private onGold: (v: number, x: number, y: number) => void;
+  /** Контракт «Пацифист-герой» (§H.9): чистое золото не липнет к магниту —
+   *  ценность уходит в отдельный счётчик через onGold при касании. */
+  heroCollectsGold = true;
 
   constructor(
     scene: Phaser.Scene,
@@ -190,6 +193,14 @@ export class Pickups {
 
       if (g.kind === 'chest') {
         if (dist < 58) this.collectChest(i);
+        continue;
+      }
+
+      // «Пацифист-герой» (§H.9): чисто золотые кристаллы не притягиваются
+      // магнитом; герой наступил — ценность уходит через onGold (в отдельный
+      // счётчик GameScene, не в золото матча)
+      if (!this.heroCollectsGold && g.gold > 0 && g.xp === 0 && g.heal === 0) {
+        if (dist < 34) this.collect(i);
         continue;
       }
 

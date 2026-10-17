@@ -6,6 +6,61 @@ import { t } from '../../i18n';
 
 // ============ Загрузчик ассетов + анимации ============
 
+/**
+ * Таблица спрайт-листов существ (TZ §C.2). Порядок кадров проверен по
+ * размерам листов; rate подобран под характер движения.
+ * anim: idle/run — циклы, atk/shoot/windup/dead — однократные,
+ * guard/recover — циклы на время состояния.
+ */
+interface CreatureSheet {
+  kind: string;   // = EnemyKind, префикс анимаций
+  dir: string;    // папка внутри enemies/
+  base: string;   // базовое имя файла
+  frameW: number;
+  sheets: Array<[anim: string, file: string, frames: number, rate: number]>;
+}
+
+export const CREATURE_SHEETS: CreatureSheet[] = [
+  { kind: 'goblin', dir: 'goblin-raiders/torch-goblin', base: 'torch-goblin', frameW: 192, sheets: [
+    ['idle', 'idle', 8, 8], ['run', 'run', 6, 10], ['atk', 'attack', 8, 12],
+  ] },
+  { kind: 'thief', dir: 'thief', base: 'thief', frameW: 192, sheets: [
+    ['idle', 'idle', 6, 7], ['run', 'run', 6, 13], ['atk', 'attack', 6, 14],
+  ] },
+  { kind: 'gnoll', dir: 'gnoll', base: 'gnoll', frameW: 192, sheets: [
+    ['idle', 'idle', 6, 7], ['run', 'walk', 8, 10], ['shoot', 'throw', 8, 12],
+  ] },
+  { kind: 'skull', dir: 'skull', base: 'skull', frameW: 192, sheets: [
+    ['idle', 'idle', 8, 7], ['run', 'run', 6, 11], ['atk', 'attack', 7, 12], ['guard', 'guard', 7, 10],
+  ] },
+  { kind: 'shaman', dir: 'goblin-raiders/hex-shaman', base: 'hex-shaman', frameW: 192, sheets: [
+    ['idle', 'idle', 8, 7], ['run', 'run', 4, 10], ['shoot', 'attack', 10, 12],
+  ] },
+  { kind: 'pig-rider', dir: 'goblin-raiders/pig-rider-spear-goblin', base: 'pig-rider', frameW: 256, sheets: [
+    ['idle', 'idle', 8, 7], ['run', 'run', 4, 12], ['atk', 'attack', 7, 12],
+  ] },
+  { kind: 'bomb-fish', dir: 'pirate-fish/bomb-fish', base: 'bomb-fish', frameW: 192, sheets: [
+    ['idle', 'idle', 8, 7], ['run', 'run', 6, 12],
+  ] },
+  { kind: 'bear', dir: 'caveborn/bear', base: 'bear', frameW: 256, sheets: [
+    ['idle', 'idle', 8, 6], ['run', 'run', 5, 10], ['atk', 'attack', 9, 12],
+  ] },
+  { kind: 'minotaur', dir: 'minotaur', base: 'minotaur', frameW: 320, sheets: [
+    ['idle', 'idle', 16, 8], ['run', 'walk', 8, 10], ['atk', 'attack', 12, 12], ['guard', 'guard', 11, 10],
+  ] },
+  { kind: 'boss', dir: 'ogre-boss', base: 'ogre-boss', frameW: 384, sheets: [
+    ['idle', 'idle', 12, 7], ['run', 'walk', 10, 9], ['atk', 'attack', 6, 10],
+    ['windup', 'windup', 5, 10], ['recover', 'recovery', 10, 10], ['dead', 'dead', 10, 8],
+  ] },
+];
+
+/** Аватары существ (enemies/avatars) для заставок элит и босса. */
+const CREATURE_FACES: Array<[kind: string, file: string]> = [
+  ['goblin', 'torch-goblin'], ['thief', 'thief'], ['gnoll', 'gnoll'],
+  ['skull', 'skull'], ['shaman', 'hex-shaman'], ['bomb-fish', 'bomb-fish'],
+  ['bear', 'bear'], ['minotaur', 'minotaur'], ['boss', 'ogre-boss'],
+];
+
 export class BootScene extends Phaser.Scene {
   constructor() {
     super('Boot');
@@ -48,31 +103,30 @@ export class BootScene extends Phaser.Scene {
     this.load.spritesheet('hero-monk-run', asset('tiny-swords', 'units/blue/monk/run.png'), { frameWidth: 192, frameHeight: 192 });
     this.load.spritesheet('hero-monk-atk', asset('tiny-swords', 'units/blue/monk/heal.png'), { frameWidth: 192, frameHeight: 192 });
 
-    // ---- Враги ----
-    this.load.spritesheet('grunt-idle', asset('tiny-swords', 'units/red/pawn/pawn-idle.png'), { frameWidth: 192, frameHeight: 192 });
-    this.load.spritesheet('grunt-run', asset('tiny-swords', 'units/red/pawn/pawn-run.png'), { frameWidth: 192, frameHeight: 192 });
-    this.load.spritesheet('swarm-idle', asset('tiny-swords', 'units/purple/pawn/pawn-idle.png'), { frameWidth: 192, frameHeight: 192 });
-    this.load.spritesheet('swarm-run', asset('tiny-swords', 'units/purple/pawn/pawn-run.png'), { frameWidth: 192, frameHeight: 192 });
-    this.load.spritesheet('brute-idle', asset('tiny-swords', 'units/yellow/warrior/warrior-idle.png'), { frameWidth: 192, frameHeight: 192 });
-    this.load.spritesheet('brute-run', asset('tiny-swords', 'units/yellow/warrior/warrior-run.png'), { frameWidth: 192, frameHeight: 192 });
-    this.load.spritesheet('archer-idle', asset('tiny-swords', 'units/red/archer/archer-idle.png'), { frameWidth: 192, frameHeight: 192 });
-    this.load.spritesheet('archer-run', asset('tiny-swords', 'units/red/archer/archer-run.png'), { frameWidth: 192, frameHeight: 192 });
-    this.load.spritesheet('archer-shoot', asset('tiny-swords', 'units/red/archer/archer-shoot.png'), { frameWidth: 192, frameHeight: 192 });
-    this.load.spritesheet('lancer-idle', asset('tiny-swords', 'units/purple/lancer/lancer-idle.png'), { frameWidth: 320, frameHeight: 320 });
-    this.load.spritesheet('lancer-run', asset('tiny-swords', 'units/purple/lancer/lancer-run.png'), { frameWidth: 320, frameHeight: 320 });
-    // --- Новые враги v1.8 ---
-    this.load.spritesheet('guard-idle', asset('tiny-swords', 'units/red/warrior/warrior-guard.png'), { frameWidth: 192, frameHeight: 192 });
-    this.load.spritesheet('guard-run', asset('tiny-swords', 'units/red/warrior/warrior-run.png'), { frameWidth: 192, frameHeight: 192 });
-    this.load.spritesheet('taskmaster-idle', asset('tiny-swords', 'units/red/pawn/pawn-idle-hammer.png'), { frameWidth: 192, frameHeight: 192 });
-    this.load.spritesheet('taskmaster-run', asset('tiny-swords', 'units/red/pawn/pawn-run-hammer.png'), { frameWidth: 192, frameHeight: 192 });
-    this.load.spritesheet('merc-idle', asset('tiny-swords', 'units/red/lancer/lancer-idle.png'), { frameWidth: 320, frameHeight: 320 });
-    this.load.spritesheet('merc-run', asset('tiny-swords', 'units/red/lancer/lancer-run.png'), { frameWidth: 320, frameHeight: 320 });
-    this.load.spritesheet('monk-idle', asset('tiny-swords', 'units/black/monk/idle.png'), { frameWidth: 192, frameHeight: 192 });
-    this.load.spritesheet('monk-run', asset('tiny-swords', 'units/black/monk/run.png'), { frameWidth: 192, frameHeight: 192 });
-    this.load.spritesheet('monk-heal', asset('tiny-swords', 'units/black/monk/heal.png'), { frameWidth: 192, frameHeight: 192 });
+    // ---- Враги — существа из пака enemies/ (TZ §A.2, §C.2) ----
+    // Листы грузятся циклом по CREATURE_SHEETS; анимации создаются в
+    // createAnims() по тем же таблицам. Ключи: `${kind}-${anim}`.
+    for (const c of CREATURE_SHEETS) {
+      for (const [anim, file] of c.sheets) {
+        this.load.spritesheet(
+          `${c.kind}-${anim}`,
+          asset('tiny-swords', `enemies/${c.dir}/${c.base}-${file}.png`),
+          { frameWidth: c.frameW, frameHeight: c.frameW },
+        );
+      }
+    }
+    // FX лечения остаётся: используется Effects.heal (сейчас — герой-монак
+    // и будущие механики монастыря, TZ §G). hero-monk-* не трогаем.
     this.load.spritesheet('fx-heal', asset('tiny-swords', 'units/black/monk/heal-effect.png'), { frameWidth: 192, frameHeight: 192 });
-    this.load.spritesheet('boss-idle', asset('tiny-swords', 'units/black/lancer/lancer-idle.png'), { frameWidth: 320, frameHeight: 320 });
-    this.load.spritesheet('boss-run', asset('tiny-swords', 'units/black/lancer/lancer-run.png'), { frameWidth: 320, frameHeight: 320 });
+    // Снаряды врагов: вращающаяся кость гнолла и магический шар шамана,
+    // плюс FX взрыва шара (все — из того же пака enemies/)
+    this.load.spritesheet('proj-bone', asset('tiny-swords', 'enemies/gnoll/gnoll-bone.png'), { frameWidth: 64, frameHeight: 64 });
+    this.load.spritesheet('proj-hex', asset('tiny-swords', 'enemies/goblin-raiders/hex-shaman/hex-shaman-projectile.png'), { frameWidth: 128, frameHeight: 128 });
+    this.load.spritesheet('fx-hex', asset('tiny-swords', 'enemies/goblin-raiders/hex-shaman/hex-shaman-explosion.png'), { frameWidth: 128, frameHeight: 128 });
+    // Аватары существ для кино-заставок элит и босса (HUD.bossIntro)
+    for (const [kind, file] of CREATURE_FACES) {
+      this.load.image(`face-${kind}`, asset('tiny-swords', `enemies/avatars/${file}.png`));
+    }
 
     // ---- Эффекты ----
     this.load.spritesheet('fx-explosion1', asset('tiny-swords', 'particle-fx/explosion-01.png'), { frameWidth: 192, frameHeight: 192 });
@@ -148,35 +202,80 @@ export class BootScene extends Phaser.Scene {
     this.load.image('ribbon-purple', asset('game', 'ribbon-purple.png'));
     this.load.image('ribbon-red', asset('game', 'ribbon-red.png'));
 
-    // ---- Жители: синяя и жёлтая фракции, чтобы толпа не была одного цвета ----
+    // ---- Жители: синяя и жёлтая фракции ----
+    // Синий collector использует axe/pickaxe/knife (молот — только у жёлтых
+    // builder/repairer, TZ §B.10): ключ pawn-work-hammer не регистрируется.
     for (const [prefix, faction] of [['pawn', 'blue'], ['pawny', 'yellow']] as const) {
       this.load.spritesheet(
         prefix + '-idle', asset('tiny-swords', `units/${faction}/pawn/pawn-idle.png`),
         { frameWidth: 192, frameHeight: 192 },
       );
+      // Ходьба без груза: раньше лист не грузился, и Pawn.playMove падал
+      // в фолбэк «Missing animation: pawn-run» — пешки шли статичной картинкой
       this.load.spritesheet(
-        prefix + '-work-axe', asset('tiny-swords', `units/${faction}/pawn/pawn-interact-axe.png`),
+        prefix + '-run', asset('tiny-swords', `units/${faction}/pawn/pawn-run.png`),
         { frameWidth: 192, frameHeight: 192 },
       );
+      for (const tool of ['axe', 'knife', 'pickaxe'] as const) {
+        this.load.spritesheet(
+          prefix + '-work-' + tool, asset('tiny-swords', `units/${faction}/pawn/pawn-interact-${tool}.png`),
+          { frameWidth: 192, frameHeight: 192 },
+        );
+      }
+    }
+    // Молот нужен только жёлтой фракции (стройка/ремонт, §B.2)
+    this.load.spritesheet('pawny-work-hammer', asset('tiny-swords', 'units/yellow/pawn/pawn-interact-hammer.png'), { frameWidth: 192, frameHeight: 192 });
+    // Carry-анимации пешек: ресурс виден на руках (§B.2)
+    for (const [prefix, faction] of [['pawn', 'blue'], ['pawny', 'yellow']] as const) {
+      for (const res of ['wood', 'meat', 'gold'] as const) {
+        this.load.spritesheet(
+          `${prefix}-carry-${res}`, asset('tiny-swords', `units/${faction}/pawn/pawn-run-${res}.png`),
+          { frameWidth: 192, frameHeight: 192 },
+        );
+        this.load.spritesheet(
+          `${prefix}-carry-idle-${res}`, asset('tiny-swords', `units/${faction}/pawn/pawn-idle-${res}.png`),
+          { frameWidth: 192, frameHeight: 192 },
+        );
+      }
+    }
+    // ---- Гарнизон (§B.2): воины казарм/тирa/обители — префикс pawn-*
+    // обязателен, иначе столкнётся с hero-* (§A.6)
+    this.load.spritesheet('pawn-warrior-idle', asset('tiny-swords', 'units/blue/warrior/warrior-idle.png'), { frameWidth: 192, frameHeight: 192 });
+    this.load.spritesheet('pawn-warrior-run', asset('tiny-swords', 'units/blue/warrior/warrior-run.png'), { frameWidth: 192, frameHeight: 192 });
+    this.load.spritesheet('pawn-warrior-attack1', asset('tiny-swords', 'units/blue/warrior/warrior-attack1.png'), { frameWidth: 192, frameHeight: 192 });
+    this.load.spritesheet('pawn-warrior-attack2', asset('tiny-swords', 'units/blue/warrior/warrior-attack2.png'), { frameWidth: 192, frameHeight: 192 });
+    this.load.spritesheet('pawn-lancer-idle', asset('tiny-swords', 'units/blue/lancer/lancer-idle.png'), { frameWidth: 320, frameHeight: 320 });
+    this.load.spritesheet('pawn-lancer-run', asset('tiny-swords', 'units/blue/lancer/lancer-run.png'), { frameWidth: 320, frameHeight: 320 });
+    this.load.spritesheet('pawn-lancer-atk', asset('tiny-swords', 'units/blue/lancer/lancer-right-attack.png'), { frameWidth: 320, frameHeight: 320 });
+    this.load.spritesheet('pawn-archer-idle', asset('tiny-swords', 'units/blue/archer/archer-idle.png'), { frameWidth: 192, frameHeight: 192 });
+    this.load.spritesheet('pawn-archer-run', asset('tiny-swords', 'units/blue/archer/archer-run.png'), { frameWidth: 192, frameHeight: 192 });
+    this.load.spritesheet('pawn-archer-atk', asset('tiny-swords', 'units/blue/archer/archer-shoot.png'), { frameWidth: 192, frameHeight: 192 });
+    this.load.spritesheet('pawn-monk-idle', asset('tiny-swords', 'units/blue/monk/idle.png'), { frameWidth: 192, frameHeight: 192 });
+    this.load.spritesheet('pawn-monk-run', asset('tiny-swords', 'units/blue/monk/run.png'), { frameWidth: 192, frameHeight: 192 });
+    this.load.spritesheet('pawn-monk-atk', asset('tiny-swords', 'units/blue/monk/heal.png'), { frameWidth: 192, frameHeight: 192 });
+
+    // ---- Золотые жилы (§B.3): 5 вариантов + пульс (6 кадров 128×128)
+    for (let i = 1; i <= 5; i++) {
+      this.load.image(`gold-vein-${i}`, asset('tiny-swords', `terrain/resources/gold-stones/gold-stone-${i}.png`));
       this.load.spritesheet(
-        prefix + '-work-hammer', asset('tiny-swords', `units/${faction}/pawn/pawn-interact-hammer.png`),
-        { frameWidth: 192, frameHeight: 192 },
-      );
-      this.load.spritesheet(
-        prefix + '-work-knife', asset('tiny-swords', `units/${faction}/pawn/pawn-interact-knife.png`),
-        { frameWidth: 192, frameHeight: 192 },
-      );
-      this.load.spritesheet(
-        prefix + '-work-pickaxe', asset('tiny-swords', `units/${faction}/pawn/pawn-interact-pickaxe.png`),
-        { frameWidth: 192, frameHeight: 192 },
+        `gold-vein-pulse-${i}`, asset('tiny-swords', `terrain/resources/gold-stones/gold-stone-${i}-highlight.png`),
+        { frameWidth: 128, frameHeight: 128 },
       );
     }
+    // ---- Иконки ресурсов для HUD (§B.8): дерево/мясо/руда
+    this.load.image('res-wood', asset('tiny-swords', 'terrain/resources/wood-resource/wood-resource.png'));
+    this.load.image('res-meat', asset('tiny-swords', 'terrain/resources/meat-resource/meat-resource.png'));
+    this.load.image('res-ore', asset('tiny-swords', 'terrain/resources/gold-resource/gold-resource.png'));
+
     this.load.image('castle', asset('tiny-swords', 'buildings/blue/castle.png'));
     this.load.image('house1', asset('tiny-swords', 'buildings/blue/house1.png'));
     this.load.image('house2', asset('tiny-swords', 'buildings/blue/house2.png'));
     this.load.image('house3', asset('tiny-swords', 'buildings/blue/house3.png'));
     this.load.image('tower', asset('tiny-swords', 'buildings/blue/tower.png'));
     this.load.image('monastery', asset('tiny-swords', 'buildings/blue/monastery.png'));
+    // Казармы вошли в первый раунд ради преемственности (§F.3), тир — фаза M
+    this.load.image('barracks', asset('tiny-swords', 'buildings/blue/barracks.png'));
+    this.load.image('archery', asset('tiny-swords', 'buildings/blue/archery.png'));
 
     // ---- Игровые объекты ----
     this.load.image('gem-blue', asset('game', 'gem-blue.png'));
@@ -333,30 +432,21 @@ export class BootScene extends Phaser.Scene {
     this.sheet('player-run', 'player-run', 6, 10);
     this.once('player-atk1', 'player-atk1', 4, 16);
     this.once('player-atk2', 'player-atk2', 4, 16);
-    // Враги
-    this.sheet('grunt-idle', 'grunt-idle', 8, 7);
-    this.sheet('grunt-run', 'grunt-run', 6, 10);
-    this.sheet('swarm-idle', 'swarm-idle', 8, 8);
-    this.sheet('swarm-run', 'swarm-run', 6, 13);
-    this.sheet('brute-idle', 'brute-idle', 8, 6);
-    this.sheet('brute-run', 'brute-run', 6, 8);
-    this.sheet('archer-idle', 'archer-idle', 6, 7);
-    this.sheet('archer-run', 'archer-run', 4, 10);
-    this.once('archer-shoot', 'archer-shoot', 8, 14);
-    this.sheet('lancer-idle', 'lancer-idle', 12, 8);
-    this.sheet('lancer-run', 'lancer-run', 6, 10);
-    // Новые враги v1.8
-    this.sheet('guard-idle', 'guard-idle', 6, 7);
-    this.sheet('guard-run', 'guard-run', 6, 11);
-    this.sheet('taskmaster-idle', 'taskmaster-idle', 8, 7);
-    this.sheet('taskmaster-run', 'taskmaster-run', 6, 10);
-    this.sheet('merc-idle', 'merc-idle', 12, 8);
-    this.sheet('merc-run', 'merc-run', 6, 10);
-    this.sheet('monk-idle', 'monk-idle', 6, 7);
-    this.sheet('monk-run', 'monk-run', 4, 10);
-    this.once('monk-heal', 'monk-heal', 11, 12);
-    this.sheet('boss-idle', 'boss-idle', 12, 8);
-    this.sheet('boss-run', 'boss-run', 6, 10);
+    // Враги — существа: циклы и однократные анимации по таблице CREATURE_SHEETS
+    for (const c of CREATURE_SHEETS) {
+      for (const [anim, , frames, rate] of c.sheets) {
+        const key = `${c.kind}-${anim}`;
+        if (anim === 'atk' || anim === 'shoot' || anim === 'windup' || anim === 'dead') {
+          this.once(key, key, frames, rate);
+        } else {
+          this.sheet(key, key, frames, rate);
+        }
+      }
+    }
+    // Снаряды врагов и FX взрыва шара
+    this.sheet('proj-bone-spin', 'proj-bone', 4, 10);
+    this.sheet('proj-hex-orb', 'proj-hex', 3, 8);
+    this.once('fx-hex', 'fx-hex', 9, 14);
     // Эффекты
     this.once('fx-explosion1', 'fx-explosion1', 8, 16);
     this.once('fx-explosion2', 'fx-explosion2', 10, 16);
@@ -391,22 +481,47 @@ export class BootScene extends Phaser.Scene {
     this.sheet('waterrock4-sway', 'waterrock4', 8, 6);
 
     // ---- Жители: пешки базово-рабочего вида ----
-    // Раньше арена была пустой: никого, кроме овец. Крестьяне работают
-    // у ресурсов, поэтому карта выглядит обжитой, а не пустошей.
-    // Число кадров у листов разное: топор и кирка — по 6, нож — 4,
-    // молот — 3. Задавать всем одно значение нельзя: Phaser начинает
-    // писать «Frame not found» на каждом кадре анимации.
+    // Число кадров у листов разное: топор и кирка — по 6, нож — 4.
+    // Задавать всем одно значение нельзя: Phaser начинает писать
+    // «Frame not found» на каждом кадре анимации.
     const WORK_FRAMES: Array<[string, number, number]> = [
       ['axe', 6, 8],
-      ['hammer', 3, 9],
       ['knife', 4, 8],
       ['pickaxe', 6, 8],
     ];
     for (const p of ['pawn', 'pawny']) {
       this.sheet(p + '-idle', p + '-idle', 8, 7);
+      this.sheet(p + '-run', p + '-run', 6, 10);
       for (const [tool, n, rate] of WORK_FRAMES) {
         this.sheet(p + '-work-' + tool, p + '-work-' + tool, n, rate);
       }
+      // Carry: ресурс в руках — run 6 кадров / idle 8 кадров (§B.2)
+      for (const res of ['wood', 'meat', 'gold'] as const) {
+        this.sheet(`${p}-carry-${res}`, `${p}-carry-${res}`, 6, 10);
+        this.sheet(`${p}-carry-idle-${res}`, `${p}-carry-idle-${res}`, 8, 7);
+      }
+    }
+    // Молот — только жёлтая фракция (стройка/ремонт, 3 кадра)
+    this.sheet('pawny-work-hammer', 'pawny-work-hammer', 3, 9);
+
+    // ---- Гарнизон: анимации воинов (§B.2). Кадры проверены по ширине листов.
+    this.sheet('pawn-warrior-idle', 'pawn-warrior-idle', 8, 7);
+    this.sheet('pawn-warrior-run', 'pawn-warrior-run', 6, 10);
+    this.once('pawn-warrior-attack1', 'pawn-warrior-attack1', 4, 14);
+    this.once('pawn-warrior-attack2', 'pawn-warrior-attack2', 4, 14);
+    this.sheet('pawn-lancer-idle', 'pawn-lancer-idle', 12, 8);
+    this.sheet('pawn-lancer-run', 'pawn-lancer-run', 6, 10);
+    this.once('pawn-lancer-atk', 'pawn-lancer-atk', 3, 12);
+    this.sheet('pawn-archer-idle', 'pawn-archer-idle', 6, 7);
+    this.sheet('pawn-archer-run', 'pawn-archer-run', 4, 10);
+    this.once('pawn-archer-atk', 'pawn-archer-atk', 8, 14);
+    this.sheet('pawn-monk-idle', 'pawn-monk-idle', 6, 7);
+    this.sheet('pawn-monk-run', 'pawn-monk-run', 4, 10);
+    this.once('pawn-monk-atk', 'pawn-monk-atk', 11, 12);
+
+    // ---- Золотые жилы: пульс (6 кадров 128×128 на вариант)
+    for (let i = 1; i <= 5; i++) {
+      this.sheet(`gold-vein-pulse-${i}`, `gold-vein-pulse-${i}`, 6, 6);
     }
     this.sheet('sheep-idle', 'sheep', 6, 4);
   }
