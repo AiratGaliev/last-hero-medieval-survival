@@ -132,6 +132,8 @@ export class ShopScene extends Phaser.Scene {
   private busy = false;
   /** Separate guard for the once-per-day rewarded shop refresh. */
   private refreshBusy = false;
+  /** Today's featured IDs are marked in the full catalogue as well. */
+  private dailyOfferIds = new Set<string>();
   /** Идентификатор апгрейда для «встряски» строки после покупки (как в MenuScene). */
   private flashUpgradeId: string | null = null;
 
@@ -477,11 +479,13 @@ export class ShopScene extends Phaser.Scene {
   private renderSkinsTab(box: Phaser.GameObjects.Container): void {
     const st = rollMetaDay();
     let catalogTop = this.contentTop();
+    const rotation = showcaseVisible() ? getDailyShopRotation() : null;
+    this.dailyOfferIds = new Set(rotation?.ids ?? []);
 
     // R8: daily cosmetic selection. It is opt-in, persistent, and independent
     // of the full catalogue, which remains available below the featured offers.
-    if (showcaseVisible()) {
-      catalogTop = this.renderDailyOffers(box, st, catalogTop);
+    if (rotation) {
+      catalogTop = this.renderDailyOffers(box, st, catalogTop, rotation);
     }
 
     const items: ShopTabItem[] = [];
@@ -516,9 +520,9 @@ export class ShopScene extends Phaser.Scene {
     box: Phaser.GameObjects.Container,
     st: MetaState,
     top: number,
+    rotation: ReturnType<typeof getDailyShopRotation>,
   ): number {
     const cw = this.contentWidth();
-    const rotation = getDailyShopRotation();
     const isCompact = this.ph < 480;
     const titleY = top + 9;
     box.add(this.add.text(this.px - cw / 2 + 4, titleY, t('store.dailyOffers'), {
@@ -607,7 +611,8 @@ export class ShopScene extends Phaser.Scene {
     pv.lineStyle(2, 0x3b2410, 1).strokeRoundedRect(-w / 2 + 12, -14, 28, 28, 6);
     row.add(pv);
 
-    const name = this.label(-w / 2 + 48, 0, skinLabel(def), 12, '#3b2410', 0);
+    const displayName = this.dailyOfferIds.has(def.id) ? `★ ${skinLabel(def)}` : skinLabel(def);
+    const name = this.label(-w / 2 + 48, 0, displayName, 12, '#3b2410', 0);
     fitTextWidth(name, w - 180, 12);
     row.add(name);
 
