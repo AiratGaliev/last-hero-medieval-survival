@@ -896,6 +896,10 @@ export const ru = {
 
   // ---------- Витрина крон (§J.6) ----------
   'store.title': 'КРОНЫ',
+  'store.dailyOffers': 'ПРЕДЛОЖЕНИЯ ДНЯ',
+  'store.refreshAd': 'ОБНОВИТЬ ЗА РОЛИК',
+  'store.refreshUnavailable': 'РОЛИК НЕДОСТУПЕН',
+  'store.refreshDone': 'ОБНОВЛЕНО СЕГОДНЯ',
   'store.locked': 'Витрина откроется после 5-го матча',
   'store.crowns_s': '90 крон',
   'store.crowns_m': '500 крон (+11%)',

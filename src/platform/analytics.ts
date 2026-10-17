@@ -25,7 +25,7 @@ export type AnalyticsEvent =
   // Раунд 2 (фазы Q/S, TZ §K.2)
   | 'glory_earned' | 'tree_node_bought' | 'quest_complete' | 'quest_reroll'
   | 'daily_bonus_claim' | 'daily_chest_claim' | 'challenge_start' | 'contract_signed' | 'ukaz_active'
-  | 'endless_start' | 'pass_level' | 'sku_view' | 'skin_applied'
+  | 'endless_start' | 'pass_level' | 'sku_view' | 'skin_applied' | 'shop_refreshed'
   | 'iap_purchase' | 'iap_consume_fail';
 
 const MAX_BUFFER = 400;   // события последнего рана (сжатый буфер §K.1)

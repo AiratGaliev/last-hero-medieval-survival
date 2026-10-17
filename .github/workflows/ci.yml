@@ -15,9 +15,9 @@ concurrency:
 
 jobs:
   verify:
-    name: Typecheck, lint, build and browser tests
+    name: Typecheck, lint, builds and browser tests
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
 
     steps:
       - name: Checkout repository
@@ -29,7 +29,7 @@ jobs:
           node-version: 22
           cache: npm
 
-      # npm install also reconciles the existing lockfile with package.json.
+      # npm install reconciles package.json with the lockfile, including Playwright.
       - name: Install dependencies
         run: npm install --no-audit --no-fund
 
@@ -41,6 +41,9 @@ jobs:
 
       - name: Production build
         run: npm run build
+
+      - name: Build and validate Yandex Games archive
+        run: npm run build:yg
 
       - name: Browser smoke tests
         run: npm run test:e2e
