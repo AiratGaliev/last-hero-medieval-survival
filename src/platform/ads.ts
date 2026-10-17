@@ -217,6 +217,10 @@ export async function showRewarded(hooks: AdPause = NO_PAUSE): Promise<RewardedR
   // проверяется end-to-end без Консоли (покупки в mock и так выдаются локально)
   if (isMockMode()) {
     track('ad_impression', { kind: 'rewarded', mock: true });
+    // QA-only failure switch lets Playwright verify that an incomplete view
+    // neither grants the refresh nor consumes the placement's daily limit.
+    const mockFailed = new URLSearchParams(window.location.search).get('mockAd') === 'fail';
+    if (mockFailed) return { rewarded: false, available: true };
     track('ad_rewarded_complete', { mock: true });
     return { rewarded: true, available: true };
   }
