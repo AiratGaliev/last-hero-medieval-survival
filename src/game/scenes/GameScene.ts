@@ -2553,8 +2553,11 @@ export class GameScene extends Phaser.Scene {
    *  логика (resume при открытом оверлее) навсегда оставляла сцену на паузе
    *  после alt-tab: overlayOpen=false → resume не вызывался никогда. */
   platformResume(): void {
-    if (this.overlayOpen || this.gameEnded || this.victoryPending) return;
-    if (this.started && this.scene.isPaused()) this.scene.resume();
+    if (!this.started || this.overlayOpen || this.gameEnded || this.victoryPending) return;
+    if (this.scene.isPaused()) this.scene.resume();
+    // A fullscreen ad can close while the player is on the menu. Never report
+    // gameplay as running unless this scene has actually started and resumed.
+    if (!this.scene.isActive()) return;
     gameplayStart();
   }
 
