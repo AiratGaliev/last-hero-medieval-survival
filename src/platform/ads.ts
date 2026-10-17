@@ -197,6 +197,9 @@ export const PLACEMENT_LIMITS: Record<AdPlacement, { limit: number; period: 'run
 };
 
 const usedPlacements = new Map<AdPlacement, number>();
+/** True while any rewarded video is being requested or shown. */
+let rewardedInFlight = false;
+
 const LS_AD_DAY = 'tss-ads-day';
 
 interface AdDayState { date: string; used: Record<string, number> }
@@ -324,11 +327,9 @@ async function requestRewarded(hooks: AdPause = NO_PAUSE): Promise<RewardedResul
 }
 
 /** Prevent overlapping rewarded videos across all placements and direct callers. */
-let rewardedInFlight = false;
-
 export async function showRewarded(hooks: AdPause = NO_PAUSE): Promise<RewardedResult> {
   if (rewardedInFlight) {
-    return { rewarded: false, available: isMockMode() || rewardedAvailable() };
+    return { rewarded: false, available: false };
   }
 
   rewardedInFlight = true;
