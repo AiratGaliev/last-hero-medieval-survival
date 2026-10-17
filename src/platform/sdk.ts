@@ -42,8 +42,17 @@ export interface YandexSdk {
     GameplayAPI: { start(): void; stop(): void };
   };
   adv: {
-    showFullscreenAdv(options?: Record<string, unknown>): Promise<boolean | undefined>;
-    showRewardedVideo(options?: Record<string, unknown>): Promise<{ rewarded: boolean } | undefined>;
+    showFullscreenAdv(options?: { callbacks?: {
+      onOpen?: () => void;
+      onClose?: (wasShown: boolean) => void;
+      onError?: (error: object) => void;
+    } }): void;
+    showRewardedVideo(options?: { callbacks?: {
+      onOpen?: () => void;
+      onRewarded?: () => void;
+      onClose?: (wasShown: boolean) => void;
+      onError?: (error: object) => void;
+    } }): void;
     /** Стики-баннер (TZ §J.5); может отсутствовать в старых версиях SDK. */
     showBanner?(options?: Record<string, unknown>): void;
     hideBanner?(): void;

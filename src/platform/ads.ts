@@ -7,7 +7,7 @@
 // Плюс частотность: между межстраничными держим собственную паузу, чтобы
 // не вызывать показ на каждом втором проигрыше.
 
-import { getSdk, isOnYandex, isMockMode, serverNow } from './sdk';
+import { getSdk, isOnYandex, isMockMode, serverNow, type YandexSdk } from './sdk';
 import { loadJson, saveJson } from '../game/storage';
 import { hasNoInterstitial, matchesPlayed } from '../game/meta';
 import { track } from './analytics';
@@ -43,6 +43,80 @@ async function withPaused<T>(hooks: AdPause, fn: () => Promise<T>): Promise<T> {
   }
 }
 
+
+/** Yandex Games invokes callbacks; these APIs do not return ad results as Promises. */
+const AD_CALLBACK_TIMEOUT_MS = 90_000;
+
+function requestFullscreenAd(sdk: YandexSdk): Promise<boolean> {
+  return new Promise((resolve) => {
+    let settled = false;
+    let timer = 0;
+    const finish = (shown: boolean): void => {
+      if (settled) return;
+      settled = true;
+      window.clearTimeout(timer);
+      resolve(shown);
+    };
+    const fail = (error: unknown): void => {
+      if (settled) return;
+      lastError = String(error);
+      track('ad_error', { kind: 'interstitial', message: lastError });
+      console.warn('[ads] межстраничная не показана:', error);
+      finish(false);
+    };
+
+    timer = window.setTimeout(() => fail('Interstitial ad callback timed out'), AD_CALLBACK_TIMEOUT_MS);
+    try {
+      sdk.adv.showFullscreenAdv({
+        callbacks: {
+          onClose: (wasShown) => finish(wasShown === true),
+          onError: fail,
+        },
+      });
+    } catch (error) {
+      fail(error);
+    }
+  });
+}
+
+function requestRewardedAd(sdk: YandexSdk): Promise<boolean> {
+  return new Promise((resolve) => {
+    let settled = false;
+    let rewarded = false;
+    let timer = 0;
+    const finish = (): void => {
+      if (settled) return;
+      settled = true;
+      window.clearTimeout(timer);
+      resolve(rewarded);
+    };
+    const fail = (error: unknown): void => {
+      if (settled) return;
+      lastError = String(error);
+      track('ad_error', { kind: 'rewarded', message: lastError });
+      console.warn('[ads] rewarded не показан:', error);
+      finish();
+    };
+
+    timer = window.setTimeout(() => fail('Rewarded ad callback timed out'), AD_CALLBACK_TIMEOUT_MS);
+    try {
+      sdk.adv.showRewardedVideo({
+        callbacks: {
+          onRewarded: () => {
+            if (rewarded) return;
+            rewarded = true;
+            track('ad_rewarded_complete', {});
+          },
+          onClose: () => finish(),
+          onError: fail,
+        },
+      });
+    } catch (error) {
+      fail(error);
+    }
+  });
+}
+
 /**
  * Межстраничная реклама по политике §J.4: не раньше 3-го матча, ≥ 120 сек,
  * ≤ 6 за сессию, не после 2 поражений подряд, отключается SKU no_interstitial.
@@ -58,11 +132,15 @@ export async function showInterstitial(hooks: AdPause = NO_PAUSE): Promise<boole
   if (!sdk) return false;
 
   try {
-    const shown = await withPaused(hooks, () => sdk.adv.showFullscreenAdv());
-    lastInterstitialAt = Date.now();
     lastError = null;
-    if (shown === true) interstitialSessionCount += 1;
-    return shown === true;
+    const shown = await withPaused(hooks, () => requestFullscreenAd(sdk));
+    // The cooldown and session quota track actual impressions, not attempts.
+    // A skipped ad must not prevent the next eligible trigger from trying again.
+    if (!shown) return false;
+
+    lastInterstitialAt = Date.now();
+    interstitialSessionCount += 1;
+    return true;
   } catch (err) {
     lastError = String(err);
     track('ad_error', { kind: 'interstitial', message: lastError });
@@ -231,9 +309,9 @@ export async function showRewarded(hooks: AdPause = NO_PAUSE): Promise<RewardedR
 
   try {
     track('ad_impression', { kind: 'rewarded' });
-    const res = await withPaused(hooks, () => sdk.adv.showRewardedVideo());
-    const rewarded = res?.rewarded === true;
-    if (rewarded) track('ad_rewarded_complete', {});
+    // The reward callback is authoritative; resolve only when the ad closes
+    // (or fails), so the game remains paused for the full ad lifecycle.
+    const rewarded = await withPaused(hooks, () => requestRewardedAd(sdk));
     return { rewarded, available: true };
   } catch (err) {
     lastError = String(err);
