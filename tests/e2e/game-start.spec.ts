@@ -20,8 +20,9 @@ for (const language of ['ru', 'en'] as const) {
     const canvas = page.locator('#game canvas');
     const bounds = await canvas.boundingBox();
     expect(bounds).not.toBeNull();
-    expect(bounds!.width).toBeGreaterThan(0);
-    expect(bounds!.height).toBeGreaterThan(0);
+    if (!bounds) throw new Error('Phaser canvas has no layout bounds');
+    expect(bounds.width).toBeGreaterThan(0);
+    expect(bounds.height).toBeGreaterThan(0);
 
     await expect.poll(() => pageErrors, {
       timeout: 2_000,
