@@ -330,7 +330,7 @@ async function requestRewarded(hooks: AdPause = NO_PAUSE): Promise<RewardedResul
   }
 }
 
-/** Prevent overlapping rewarded videos across all placements and direct callers. */
+/** Prevent overlapping fullscreen ads across placements and direct callers. */
 export async function showRewarded(hooks: AdPause = NO_PAUSE): Promise<RewardedResult> {
   if (fullscreenAdInFlight) {
     return { rewarded: false, available: false };
