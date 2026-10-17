@@ -35,8 +35,10 @@ const NO_PAUSE: AdPause = { pause: () => {}, resume: () => {} };
  * паузу после — в том числе если игрок закрыл ролик до конца.
  */
 async function withPaused<T>(hooks: AdPause, fn: () => Promise<T>): Promise<T> {
-  hooks.pause();
+  // A pause hook can partially change game state before throwing. Put it inside
+  // the try so resume is always attempted, even when pause itself fails.
   try {
+    hooks.pause();
     return await fn();
   } finally {
     hooks.resume();
