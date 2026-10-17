@@ -432,6 +432,12 @@ test('daily shop rotation uses UTC even when the browser is in a different timez
     expect(rotation).not.toBeNull();
     expect(rotation?.date).toBe('2026-10-18');
     expect(await page.evaluate(() => new Date(Date.now()).getDate())).toBe(19);
+
+    await clickSceneText(page, 'REFRESH FOR AD');
+    await expect.poll(async () => (await readRotation(page))?.refreshed ?? false).toBe(true);
+    const adDay = await readAdDay(page);
+    expect(adDay?.date).toBe(rotation?.date);
+    expect(adDay?.used['shop-refresh']).toBe(1);
   } finally {
     await context.close();
   }
