@@ -470,3 +470,33 @@ test('daily offers render correctly in the compact landscape layout', async ({ p
   const labels = await labelsForOffers(page, rotation?.ids ?? []);
   expect(texts.some((text) => labels.every((label) => text.includes(label.replace(/^★ /, ''))))).toBe(true);
 });
+
+test('concurrent calls cannot claim the same single-use rewarded placement twice', async ({ page }) => {
+  await openShop(page);
+
+  const result = await page.evaluate(async () => {
+    const moduleUrl = new URL('/src/platform/ads.ts', window.location.origin).href;
+    const ads = await import(/* @vite-ignore */ moduleUrl) as {
+      showPlacementRewarded: (placement: 'shop-refresh') => Promise<{ rewarded: boolean; available: boolean }>;
+      placementAvailable: (placement: 'shop-refresh') => boolean;
+    };
+
+    // Model two rapid activations before the first rewarded callback resolves.
+    const outcomes = await Promise.all([
+      ads.showPlacementRewarded('shop-refresh'),
+      ads.showPlacementRewarded('shop-refresh'),
+    ]);
+    const rawDay = localStorage.getItem('tss-ads-day');
+    const day = rawDay ? JSON.parse(rawDay) as { used?: Record<string, number> } : null;
+    return {
+      outcomes,
+      availableAfter: ads.placementAvailable('shop-refresh'),
+      consumed: day?.used?.['shop-refresh'] ?? 0,
+    };
+  });
+
+  expect(result.outcomes.filter((outcome) => outcome.rewarded)).toHaveLength(1);
+  expect(result.outcomes.filter((outcome) => !outcome.available)).toHaveLength(1);
+  expect(result.consumed).toBe(1);
+  expect(result.availableAfter).toBe(false);
+});

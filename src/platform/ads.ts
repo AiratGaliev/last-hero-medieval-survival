@@ -197,6 +197,9 @@ export const PLACEMENT_LIMITS: Record<AdPlacement, { limit: number; period: 'run
 };
 
 const usedPlacements = new Map<AdPlacement, number>();
+/** True while any rewarded video is being requested or shown. */
+let rewardedInFlight = false;
+
 const LS_AD_DAY = 'tss-ads-day';
 
 interface AdDayState { date: string; used: Record<string, number> }
@@ -225,7 +228,9 @@ function usedCount(p: AdPlacement): number {
 
 /** Доступен ли показ: лимит не исчерпан и платформа умеет показывать. */
 export function placementAvailable(p: AdPlacement): boolean {
-  if (!rewardedAvailable()) return false;
+  // Yandex permits one rewarded video at a time. Hide/disable every rewarded
+  // placement while another one is in flight, not just after it is rewarded.
+  if (rewardedInFlight || !rewardedAvailable()) return false;
   return usedCount(p) < PLACEMENT_LIMITS[p].limit;
 }
 
@@ -290,7 +295,7 @@ export function interstitialAllowed(): boolean {
  * показа; награду начисляет вызывающий код — только здесь она не выдаётся,
  * чтобы её нельзя было получить дважды на одном показе.
  */
-export async function showRewarded(hooks: AdPause = NO_PAUSE): Promise<RewardedResult> {
+async function requestRewarded(hooks: AdPause = NO_PAUSE): Promise<RewardedResult> {
   // QA-режим (?ysdk=mock): ролик «досмотрен» мгновенно — вся реестр R1–R11
   // проверяется end-to-end без Консоли (покупки в mock и так выдаются локально)
   if (isMockMode()) {
@@ -318,6 +323,22 @@ export async function showRewarded(hooks: AdPause = NO_PAUSE): Promise<RewardedR
     track('ad_error', { kind: 'rewarded', message: lastError });
     console.warn('[ads] rewarded не показан:', err);
     return { rewarded: false, available: true };
+  }
+}
+
+/** Prevent overlapping rewarded videos across all placements and direct callers. */
+export async function showRewarded(hooks: AdPause = NO_PAUSE): Promise<RewardedResult> {
+  if (rewardedInFlight) {
+    return { rewarded: false, available: false };
+  }
+
+  rewardedInFlight = true;
+  try {
+    // Keep the lock through callback completion/error and at least one
+    // microtask in mock mode, so rapid repeated activations cannot race.
+    return await requestRewarded(hooks);
+  } finally {
+    rewardedInFlight = false;
   }
 }
 
