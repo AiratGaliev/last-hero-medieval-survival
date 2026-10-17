@@ -26,6 +26,7 @@ import {
   type MetaState,
 } from '../meta';
 import { loadShop, buyUpgrade, SHOP_UPGRADES, type ShopState, type ShopUpgradeDef } from '../shop';
+import { getDailyShopRotation, refreshDailyShopRotation } from '../shopRotation';
 
 // ============ Витрина фазы S (TZ §J.6): лавка / скины / пропуск / кроны ============
 //
@@ -129,6 +130,10 @@ export class ShopScene extends Phaser.Scene {
   private pageIdx = 0;
   /** Защита от двойного клика по платёжным кнопкам на время await. */
   private busy = false;
+  /** Separate guard for the once-per-day rewarded shop refresh. */
+  private refreshBusy = false;
+  /** Today's featured IDs are marked in the full catalogue as well. */
+  private dailyOfferIds = new Set<string>();
   /** Идентификатор апгрейда для «встряски» строки после покупки (как в MenuScene). */
   private flashUpgradeId: string | null = null;
 
@@ -156,6 +161,7 @@ export class ShopScene extends Phaser.Scene {
     this.tab = this.payload.tab ?? 'shop';
     this.pageIdx = 0;
     this.busy = false;
+    this.refreshBusy = false;
     this.flashUpgradeId = null;
     this.titleText = null;
     this.crownText = null;
@@ -472,8 +478,17 @@ export class ShopScene extends Phaser.Scene {
 
   private renderSkinsTab(box: Phaser.GameObjects.Container): void {
     const st = rollMetaDay();
-    const items: ShopTabItem[] = [];
+    let catalogTop = this.contentTop();
+    const rotation = showcaseVisible() ? getDailyShopRotation() : null;
+    this.dailyOfferIds = new Set(rotation?.ids ?? []);
 
+    // R8: daily cosmetic selection. It is opt-in, persistent, and independent
+    // of the full catalogue, which remains available below the featured offers.
+    if (rotation) {
+      catalogTop = this.renderDailyOffers(box, st, catalogTop, rotation);
+    }
+
+    const items: ShopTabItem[] = [];
     const section = (key: TranslationKey): void => {
       items.push({ h: 24, hdr: true, draw: (cy) => this.sectionTitle(box, cy, t(key)) });
     };
@@ -497,7 +512,87 @@ export class ShopScene extends Phaser.Scene {
     // Сброс активного знамени
     items.push({ h: 46, draw: (cy) => box.add(this.bannerResetRow(cy, st)) });
 
-    this.renderPaged(box, items);
+    this.renderPaged(box, items, catalogTop);
+  }
+
+  /** Fixed R8 header keeps the daily offer and refresh action visible on every catalogue page. */
+  private renderDailyOffers(
+    box: Phaser.GameObjects.Container,
+    st: MetaState,
+    top: number,
+    rotation: ReturnType<typeof getDailyShopRotation>,
+  ): number {
+    const cw = this.contentWidth();
+    const isCompact = this.ph < 480;
+    const titleY = top + 9;
+    box.add(this.add.text(this.px - cw / 2 + 4, titleY, t('store.dailyOffers'), {
+      fontFamily: FONT, fontSize: isCompact ? '9px' : '11px', color: '#9a6a08',
+      stroke: '#f7e7c3', strokeThickness: 2,
+    }).setOrigin(0, 0.5));
+
+    const refreshLabel = rotation.refreshed
+      ? t('store.refreshDone')
+      : placementAvailable('shop-refresh') ? t('store.refreshAd') : t('store.refreshUnavailable');
+    const canRefresh = !rotation.refreshed && placementAvailable('shop-refresh') && !this.refreshBusy;
+    const refreshButton = makeButton(
+      this, this.px + cw / 2 - (isCompact ? 55 : 66), titleY,
+      isCompact ? 94 : 116, 34, refreshLabel,
+      () => { void this.refreshDailyOffers(); },
+      'blue', isCompact ? 8 : 10,
+      { disabled: !canRefresh, hitW: isCompact ? 104 : 124, hitH: 44, stopPropagation: true },
+    );
+    box.add([refreshButton.img, refreshButton.txt, refreshButton.hit]);
+    this.contentButtons.push(refreshButton);
+
+    // On short landscape viewports, keep the offer names and action compact so
+    // the paged catalogue can still be reached without scrolling or clipping.
+    if (isCompact) {
+      const labels = rotation.ids.map((id) => {
+        const def = SKINS.find((skin) => skin.id === id);
+        return def ? skinLabel(def) : id;
+      });
+      box.add(this.add.text(this.px, top + 31, labels.join(' · '), {
+        fontFamily: FONT, fontSize: '8px', color: '#6b4a1e',
+        align: 'center', wordWrap: { width: cw - 12 },
+      }).setOrigin(0.5, 0.5));
+      return top + 50;
+    }
+
+    let y = top + 38;
+    for (const id of rotation.ids) {
+      const def = SKINS.find((skin) => skin.id === id);
+      if (!def) continue;
+      box.add(this.skinRow(def, y + 23, st));
+      y += 48;
+    }
+
+    // Small separator between featured offers and the full catalogue.
+    const separator = this.add.graphics();
+    separator.lineStyle(1, 0xc9a25e, 0.65)
+      .lineBetween(this.px - cw / 2, y + 1, this.px + cw / 2, y + 1);
+    box.add(separator);
+    return y + 12;
+  }
+
+  private async refreshDailyOffers(): Promise<void> {
+    if (this.refreshBusy || !placementAvailable('shop-refresh')) return;
+    this.refreshBusy = true;
+    this.renderTab();
+
+    try {
+      const result = await showPlacementRewarded('shop-refresh');
+      if (result.rewarded) {
+        refreshDailyShopRotation();
+        audio.play('levelup');
+        this.pageIdx = 0;
+        track('shop_refreshed', { date: getDailyShopRotation().date });
+      } else if (!result.available) {
+        this.toast(t('store.refreshUnavailable'));
+      }
+    } finally {
+      this.refreshBusy = false;
+      if (this.scene.isActive()) this.renderTab();
+    }
   }
 
   /** Карточка скина: превью-квадрат (fill tint) + имя + состояние справа. */
@@ -516,7 +611,8 @@ export class ShopScene extends Phaser.Scene {
     pv.lineStyle(2, 0x3b2410, 1).strokeRoundedRect(-w / 2 + 12, -14, 28, 28, 6);
     row.add(pv);
 
-    const name = this.label(-w / 2 + 48, 0, skinLabel(def), 12, '#3b2410', 0);
+    const displayName = this.dailyOfferIds.has(def.id) ? `★ ${skinLabel(def)}` : skinLabel(def);
+    const name = this.label(-w / 2 + 48, 0, displayName, 12, '#3b2410', 0);
     fitTextWidth(name, w - 180, 12);
     row.add(name);
 
