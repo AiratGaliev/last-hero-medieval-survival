@@ -2278,3 +2278,14 @@ Stage Summary:
 - Локальный запуск `npm run check`, production build и Playwright не выполнен: среда не смогла разрешить `github.com` для клонирования репозитория. Не выдавать это за успешный локальный прогон.
 - **До приёмки инкремента:** CI последнего commit текущего PR должен пройти typecheck/lint, Vite production build, сборку Yandex Games archive и все Playwright проекты.
 - **Остаются внешние/ручные гейты:** 15-минутный runtime (pathfinding, приоритеты целей и экономика), калибровка DPS на dummy в реальном матче, межустройственная персистентность на опубликованной Yandex Games, реальные SKU/ЕЛС, IAP transaction и доставка Yandex Metrica.
+
+---
+
+## 2026-10-18 — root cause CI fix: FTUE intro ordering
+
+- Initial CI for PR #14 failed only in the `chromium-desktop` end-to-end scenario. The symptom was that `hintOverlayPaused` remained false while the match timer continued running. The mobile project passed, so this was not a compile or build problem.
+- The root cause was an ordering race in onboarding: the `move` overlay was deferred until the in-game timer reached 2 seconds. The `house` banner could be enqueued and shown first as soon as starting wood reached its threshold. Since an active banner occupies the hint slot and normal hints respect the 20-second cooldown, the blocking introduction could be delayed; the test then observed gameplay without the expected pause.
+- Fix in `src/game/scenes/GameScene.ts`: show `move` immediately after creating the `Hints` instance, before the first `update()` can enqueue any banners. The intro remains gated by the persisted `Hints.shown` / `enabled` policy, so returning players and users who disable tutorials keep their chosen behavior. The house/pawns milestones remain threshold-based and can only progress after the overlay is dismissed and game updates resume.
+- Validation: PR HEAD `db702fb5f2c37a71649f9f6e85db9af19a3d86bc` passed [GitHub Actions run #39137784813](https://github.com/AiratGaliev/last-hero-medieval-survival/actions/runs/39137784813). All gates were green: typecheck/lint, production build, Yandex Games archive validation and all **62 Playwright tests** across Chromium desktop and mobile. The previously failing intro/monastery/garrison scenario passed on both projects.
+- PR #14 was merged to `main` as `1e5c66286d89c790945c95a84181d24e71c93210`. The separate post-merge main workflow is recorded at [run #39138236992](https://github.com/AiratGaliev/last-hero-medieval-survival/actions/runs/39138236992); its status must be evaluated independently from PR CI.
+- Remaining manual gates are unchanged: real Yandex Games Sandbox IAP/SKU/ELS, Metrica delivery, persistence in the published environment, and a full 15-minute runtime/balance run. This CI success does not claim those platform/gameplay acceptance checks are complete.
