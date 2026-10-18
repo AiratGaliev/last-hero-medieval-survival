@@ -235,8 +235,11 @@ export class GameScene extends Phaser.Scene {
   private questCheckAcc = 0;
   /** FTUE (§I.2): тепличный первый матч — плотность волн −20% первые 3 минуты. */
   private ftueSoftStart = false;
+  /** FTUE milestones use threshold latches, not narrow frame windows. */
+  private moveHintArmed = true;
   /** Подсказка «построй дом» — один раз при 30 дерева (§I.2). */
   private houseHintArmed = true;
+  private pawnsHintArmed = true;
   /** perf_fps (§K.2): накопитель среднего FPS за 30-секундное окно. */
   private perfAcc = 0;
   private perfFrames = 0;
@@ -327,6 +330,9 @@ export class GameScene extends Phaser.Scene {
     this.heroDpsAtTenMinutes = null;
     this.garrisonDpsBudget.reset();
     this.hintOverlayPaused = false;
+    this.moveHintArmed = true;
+    this.houseHintArmed = true;
+    this.pawnsHintArmed = true;
     this.elapsed = 0; this.kills = 0; this.level = 1;
     this.xp = 0; this.xpNext = XP_CURVE(1); this.gold = 0; this.score = 0;
     this.pendingLevelUps = 0; this.overlayOpen = false; this.gameEnded = false;
@@ -1547,13 +1553,20 @@ private ordersUnlocked(): boolean {
       this.updateIndicators();
     }
 
-    // Подсказки FTUE (§I.2): движение в начале, стройка при 30 дерева
-    if (this.elapsed > 2 && this.elapsed < 2.05) this.hints.show('move');
+    // Подсказки FTUE (§I.2): latch на пороге вместо временного окна в 50 мс.
+    // При delta около 50 мс старое условие могло пропустить подсказку целиком.
+    if (this.moveHintArmed && this.elapsed >= 2) {
+      this.moveHintArmed = false;
+      this.hints.show('move');
+    }
     if (this.houseHintArmed && this.economy.resources.wood >= 30) {
       this.houseHintArmed = false;
       this.hints.show('house');
     }
-    if (this.elapsed > 20 && this.elapsed < 20.05) this.hints.show('pawns');
+    if (this.pawnsHintArmed && this.elapsed >= 20) {
+      this.pawnsHintArmed = false;
+      this.hints.show('pawns');
+    }
 
     // Тосты заданий дня (§H.17): проверка раз в 5 сек, бой не прерывается
     this.questCheckAcc += dt;
