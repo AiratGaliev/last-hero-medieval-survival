@@ -186,7 +186,7 @@ export class Hints {
       : null;
 
     const displayText = def.ui === 'overlay'
-      ? `${text}\\n\\n${t('hint.tapToContinue')}`
+      ? `${text}\n\n${t('hint.tapToContinue')}`
       : text;
     const bg = this.scene.add.rectangle(layout.x, layout.y, layout.width, layout.panelHeight, 0x1a0f08, 0.92)
       .setStrokeStyle(1, 0x8a6d3b)
