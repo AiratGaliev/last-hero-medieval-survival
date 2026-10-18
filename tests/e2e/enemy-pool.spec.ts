@@ -37,6 +37,22 @@ async function openApp(page: Page): Promise<void> {
   await page.goto('/?lang=en&ysdk=mock');
   await expect(page.locator('#game canvas')).toBeVisible({ timeout: startupTimeout });
   await expect(page.locator('#boot')).toHaveCount(0, { timeout: startupTimeout });
+  // #boot убирается по Core.READY и это раньше конца preload. Дожидаемся Menu,
+  // чтобы BootScene успела зарегистрировать текстуры и глобальные анимации.
+  await expect.poll(
+    () => page.evaluate(() => {
+      const game = (window as unknown as { __tss?: RuntimeGame }).__tss;
+      return game?.scene.getScene('Menu').scene.isActive() ?? false;
+    }),
+    { timeout: startupTimeout, message: 'Menu should become active after BootScene preload and animation registration' },
+  ).toBe(true);
+  await expect.poll(
+    () => page.evaluate(() => {
+      const game = (window as unknown as { __tss?: RuntimeGame }).__tss;
+      return game?.anims.exists('goblin-idle') ?? false;
+    }),
+    { timeout: startupTimeout, message: 'Creature animations should be registered after BootScene create' },
+  ).toBe(true);
 }
 
 async function startGameplay(page: Page): Promise<void> {
