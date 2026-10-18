@@ -71,7 +71,7 @@ type GameSceneRuntime = {
   elapsed: number;
   hintOverlayPaused: boolean;
   time: { now: number };
-  registry: { get(key: string): unknown };
+  registry: { get(key: string): unknown; set(key: string, value: unknown): void };
 };
 
 type MenuRuntime = {
@@ -141,6 +141,7 @@ test('phase B: four workers, correct faction animations and live Economy tick', 
     let tickCalls = 0;
     economy.tick = (dtMs, now) => {
       tickCalls++;
+      scene.registry.set('test-economy-tick-calls', tickCalls);
       originalTick(dtMs, now);
     };
     const animationKeys = [
@@ -155,7 +156,7 @@ test('phase B: four workers, correct faction animations and live Economy tick', 
       pawns: economy.pawns.map(p => ({ kind: p.kind, prefix: p.prefix })),
       animations: Object.fromEntries(animationKeys.map(key => [key, boot.anims.exists(key)])),
       blueHammerExists: boot.anims.exists('pawn-work-hammer'),
-      tickCalls: () => tickCalls,
+      tickCalls,
     };
   });
 
@@ -171,17 +172,15 @@ test('phase B: four workers, correct faction animations and live Economy tick', 
   const tickCalls = await page.evaluate(() => {
     const game = (window as RuntimeWindow).__tss!;
     const scene = game.scene.getScene('Game') as GameSceneRuntime;
-    // Instrumented tick count is kept by the wrapped method on the runtime.
-    return (scene.economy as unknown as { __unused?: number }).__unused ?? 0;
+    return Number(scene.registry.get('test-economy-tick-calls') ?? 0);
   });
-  // The wrapped method is also verified by the economy advancing through the run.
   const economyLive = await page.evaluate(() => {
     const game = (window as RuntimeWindow).__tss!;
     const scene = game.scene.getScene('Game') as GameSceneRuntime;
     return scene.elapsed > 0 && scene.economy.pawns.length >= 4;
   });
   expect(economyLive).toBe(true);
-  expect(tickCalls).toBe(0);
+  expect(tickCalls).toBeGreaterThan(0);
   expect(pageErrors).toEqual([]);
   expect(consoleErrors.filter(message => /Frame not found|Missing animation/i.test(message))).toEqual([]);
 });
