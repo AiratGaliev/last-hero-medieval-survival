@@ -11,11 +11,11 @@
 //   • названия/иконки портальной валюты в UI — только из данных SDK
 //     (требование 1.13.2, см. getCatalog).
 //
-// Вне Яндекса и в QA-режиме (?ysdk=mock) работает локальная заглушка:
-// покупка «проходит» мгновенно, начисление идёт через grantSku — витрину
-// и всю цепочку UI можно проверять без Консоли.
+// В DEV-сборке вне Яндекса и в QA-режиме (?ysdk=mock) работает локальная
+// заглушка. В production локальная выдача запрещена: отсутствие платежей
+// на платформе не должно превращать покупку в бесплатное начисление.
 
-import { getSdk, isOnYandex, type YandexPayments } from './sdk';
+import { getSdk, isMockMode, isOnYandex, type YandexPayments } from './sdk';
 import { grantSku, showcaseUnlocked } from '../game/meta';
 import { track } from './analytics';
 
@@ -112,11 +112,19 @@ export async function purchaseSku(sku: string): Promise<PurchaseResult> {
     return { ok: false, reason: 'duplicate' };
   }
 
-  // Заглушка вне Яндекса/QA: начисляем локально — витрина проверяется без Консоли
-  if (!isOnYandex() || !payments) {
+  // Локальная симуляция разрешена только в dev-сборке. В частности,
+  // ?ysdk=mock не должен позволять бесплатно получать SKU в production.
+  if (import.meta.env.DEV && (isMockMode() || !isOnYandex())) {
     const granted = grantSku(sku);
     markPurchasedOnce(sku);
     return { ok: true, granted };
+  }
+
+  // Fail-closed: в Yandex Games/production отсутствие платёжного слоя —
+  // это отказ покупки, никогда не локальная выдача награды.
+  if (!isOnYandex() || !payments) {
+    console.warn('[payments] покупка отклонена: платёжный слой недоступен', sku);
+    return { ok: false, reason: 'fail' };
   }
 
   try {
