@@ -338,7 +338,11 @@ export class ShopScene extends Phaser.Scene {
     if (ordered.length === 0) {
       this.catalogState = 'unavailable';
     } else {
-      await this.preloadCatalogImages(ordered);
+      try {
+        await this.preloadCatalogImages(ordered);
+      } catch {
+        // Product text and price remain usable even if an image host fails.
+      }
       if (requestId !== this.catalogRequestId || !this.scene.isActive()) return;
       this.catalogState = 'sdk';
     }
