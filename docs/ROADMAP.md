@@ -38,6 +38,41 @@ VLM + пиксельный анализ + dev.log). Балансировка и 
 
 
 
+### Сводка сверки кода с TZ (2026-10-18)
+
+**Как трактовать чекбоксы.** Отметка [x] в задачах фаз означает, что соответствующий элемент
+реализации найден в исходниках. Она сама по себе не означает, что выполнены визуальные,
+балансовые и runtime-гейты ниже. Эти гейты остаются [ ] без свежего воспроизводимого
+теста. Выводы основаны на проверке кода и текущего CI; игровые сценарии вне существующих
+Playwright spec не объявляются протестированными.
+
+| Фаза | Текущий вывод по исходникам | Приёмка |
+|---|---|---|
+| A — существа и волны | Реализованы 10 типов, таблицы спрайтов, регулярные и событийные волны, элиты/босс | Расписание и визуальные атаки не покрыты E2E |
+| B–D — пешки и ресурсы | Реализованы Pawn/Economy/PawnAI, сборщики, деревья/овцы/руда, перенос и сдача ресурсов | Нет E2E на полный экономический цикл и геометрию спавна |
+| E–H — здания, ремонт, приказы, HUD | Строительство, ремонт, приказы, ресурсный HUD и обработчик `change` есть в коде | Тайминги первого дома, touch layout и дефицит ресурсов не приняты браузерным тестом |
+| I — дополнительные существа | Дополнительные cave/reserve типы не обнаружены в `EnemyKind` и загрузчике `CREATURE_SHEETS` | Опциональная работа остаётся незакрытой |
+| J–L — гарнизон, осады, восстановление и очки | Основные системы присутствуют; `Settlement`, `PawnAI`, siege profiles, respawn и settlement score подключены | DPS-лимит 25% не доказан замером; gameplay не входит в текущие E2E |
+| M — тир, монастырь, башня | Башня, лучник, монах, лечение, 10 слотов и bleedout присутствуют | **Нет предупреждения о падении монастыря:** callback `onMonasteryFalling` передан как no-op из `Economy.tryStartBuild`; пороги 30%/10% фактически не дают HUD-анонс |
+| K — геометрия осад | Профили и составы осад есть | **«Клещи» в 12:00 не обходят базу с двух сторон:** `startSiege` использует один `baseA` для членов отряда |
+| N — преемственность | Есть источник преемства, фильтр живого воина, сцена выбора и lifetime-бесплатный флаг | Несколько смен, часы матча и платформа не покрыты текущими E2E |
+| O — ускорения | Реализованы ремонт/лечение за жетон, кошелёк и rewarded; лечение снимает `bleeding` | E2E проверяют hooks рекламы, но не полный эффект Speedup |
+| T — аналитика | Есть `track`, `sessionIdx`, локальный буфер и события; `main.ts` вызывает `initAnalytics` | **Нет `?debug` live overlay**; `initAnalytics` вызывается без `ymId`, поэтому `ym(...)` не направлен в счётчик |
+| P — FTUE и полировка | Есть первые подсказки, `ftueSoftStart`, локальные флаги и хроника | Подсказки только banner; нет очереди по приоритету, anchor/overlay, облачных флагов и теста полного FTUE |
+| Q — мета-прогресс | MetaState/MetaScene содержат славу, дерево, задания, указы, сезоны, контракты, вызовы и endless | Большинство механик без соответствующих E2E; ротация/сохранение требуют отдельной приёмки |
+| S — IAP/магазин | Есть `payments.ts`, SKU-полка, пропуск/скины/знамёна/расходники, `consumePurchase` и `getCatalog` API | **Критичный риск:** `purchaseSku()` выдаёт SKU локально при `!payments`, даже если `isOnYandex()` true. Также `ShopScene` не вызывает `fetchCatalog()` и использует локальные подписи/`note` вместо каталога SDK; SKU/ЕЛС в консоли кодом подтвердить нельзя |
+| Автотесты | 18 Playwright tests в 3 spec: запуск RU/EN, ads concurrency/lifecycle, ежедневная витрина | Нет полноценных E2E на экономику, осады, монастырь, преемственность и IAP |
+
+### Найденные расхождения, которые не закрывать чекбоксами
+
+1. **P1 — IAP fallback на платформе:** `src/platform/payments.ts`, `purchaseSku()`: условие `if (!isOnYandex() || !payments)` ведёт к local grant. При недоступных платежах на реальной платформе покупка должна отказывать, а не выдавать SKU. Нужны отдельное исправление и тест.
+2. **P1 — каталог покупок:** `fetchCatalog()` реализован, но `ShopScene` не использует его. Проверить §J.6.1/1.13.2: цены и изображения из SDK.
+3. **P1 — падение монастыря:** `Building.damage()` обнаруживает пороги 30% и 10%, но `Economy.tryStartBuild()` передаёт `onMonasteryFalling: () => {}`. Предупреждение §G.5.1/§G.11 не подключено к HUD.
+4. **P2 — осада «Клещи»:** 12:00 использует общий сектор появления (`baseA`), хотя TZ требует две стороны. Состав есть, позиционирование по двум направлениям — нет.
+5. **P2 — DPS cap гарнизона:** `GARRISON_DPS_CAP = 0.25` существует, но код не демонстрирует debug-замер/автоматическую коррекцию DPS. Критерий 25% не закрывать.
+6. **P2 — FTUE и аналитика:** hints реализованы в урезанном формате; нет `?debug` overlay, а идентификатор Yandex Metrica не задаётся при `initAnalytics()`.
+7. **Вне репозитория:** SKU в консоли Яндекс Игр, ЕЛС и внешний Metrica ID нельзя подтвердить только анализом исходников.
+
 Текущий стек по конфигурации проекта: **Phaser 4.2.1 + TypeScript 5.9 + Vite 8**,
 ассеты Tiny Swords (Pixel Frog). Наличие экранов, героев, оружия, мета-систем,
 HUD, аудио и интеграций платформы само по себе не считается подтверждением
@@ -118,33 +153,33 @@ mercenary/boss) и ввести **10 существ** из `src/assets/tiny-swor
 `pawn-{idle,run}-{wood,meat,gold}` (8/6 кадров) — грузить в BootScene в этой фазе,
 чтобы они были готовы к Фазе D.
 
-- [ ] `src/game/entities/Pawn.ts` — класс сущности: состояния `idle`, `walk`,
+- [x] `src/game/entities/Pawn.ts` — класс сущности: состояния `idle`, `walk`,
       `work`, `carry`, `cooldown`; префикс `pawn-` (синяя фракция: `collector`)
       / `pawny-` (жёлтая: `builder`, `repairer`) по `kind`
-- [ ] `src/game/entities/Pawn.ts` — поля: `kind: PawnKind`, `state: PawnState`,
+- [x] `src/game/entities/Pawn.ts` — поля: `kind: PawnKind`, `state: PawnState`,
       `target: {x,y} | null`, `carrying: ResourceKind | null`,
       `taskProgress: number`, `bodyRadius: 18`, глубина через
       `DEPTH.ENTITY_BASE + y`
-- [ ] `src/game/systems/Economy.ts` — конструктор `(scene, player)`; методы
+- [x] `src/game/systems/Economy.ts` — конструктор `(scene, player)`; методы
       `spawnInitial()`, `tick(dt)`, поля `resources`, события `change`, `built`
-- [ ] `src/game/systems/PawnAI.ts` — скелет выбора задачи без движения
+- [x] `src/game/systems/PawnAI.ts` — скелет выбора задачи без движения
       (движение — Фаза D): каркас под состояния §B.2 TZ. Ветви поведения
       разведены: `civilianAI()` и `combatAI()`, выбор по `PawnKind`
-- [ ] `src/game/data.ts` — `PawnKind` (`collector`/`builder`/`repairer`/`fighter`/
+- [x] `src/game/data.ts` — `PawnKind` (`collector`/`builder`/`repairer`/`fighter`/
       `healer`), `PawnState` (`idle`/`walk`/`work`/`carry`/`flee`/`fight`/`heal`/
       `wounded`/`cooldown`), `PawnWeapon` (`sword`/`lance`/`bow`/`staff`),
       `ResourceKind` (`wood`/`meat`/`gold`), `BuildingKind`,
       справочники `PAWNS` (с полем `class: 'civilian' | 'garrison'`),
       `FIGHTERS[weapon]`, `RESOURCES`, `BUILDINGS`, `BUILDING_PLANS`
-- [ ] `src/game/scenes/BootScene.ts` — добавить carry-анимации пешек:
+- [x] `src/game/scenes/BootScene.ts` — добавить carry-анимации пешек:
       `pawn-{prefix}-carry-{wood,meat,gold}` (из `pawn-run-*`, 6 кадров) и
       `pawn-{prefix}-carry-idle-{…}` (из `pawn-idle-*`, 8 кадров) для префиксов
       `pawn` и `pawny`
-- [ ] `src/game/scenes/BootScene.ts` — **спрайты гарнизона** с префиксом `pawn-`
+- [x] `src/game/scenes/BootScene.ts` — **спрайты гарнизона** с префиксом `pawn-`
       (иначе столкнутся с `hero-*`): `pawn-warrior-{idle,run,attack1,attack2,
       guard}`, `pawn-lancer-{idle,run,attack}`, `pawn-archer-{idle,run,shoot}`,
       `pawn-monk-{idle,run,heal}` — из `units/blue/*`
-- [ ] `GameScene.buildWorld()` — удалить декоративных 16 «Жителей»
+- [x] `GameScene.buildWorld()` — удалить декоративных 16 «Жителей»
       (строки 394–427 с `time.delayedCall`-циклом) и заменить на
       `economy = new Economy(this, player)` + `economy.spawnInitial()`;
       пешки появляются вокруг замка
@@ -174,12 +209,12 @@ mercenary/boss) и ввести **10 существ** из `src/assets/tiny-swor
 Ключ `gold-stone-6` **занят** как пикап сокровищ (`treasure`/`fx-treasure`) —
 не переиспользовать для жил.
 
-- [ ] `src/game/systems/Economy.ts` — `RESOURCES` (§B.3 TZ) + список `RESOURCE_NODES`:
+- [x] `src/game/systems/Economy.ts` — `RESOURCES` (§B.3 TZ) + список `RESOURCE_NODES`:
       **10** золотых жил (диапазон 8–12 остаётся настройкой ежедневного вызова
       §H.8); деревья/овцы читаются из существующих спавнов `buildWorld()`
 - [ ] `src/game/scenes/BootScene.ts` — загрузить `gold-vein-{1..5}` и
       анимации `gold-vein-pulse-{1..5}` (по 8 кадров каждая)
-- [ ] `src/game/entities/ResourceNode.ts` (новый) — объект узла: `kind`,
+- [x] `src/game/entities/ResourceNode.ts` (новый) — объект узла: `kind`,
       `remaining`, `claim()` / `release()`, `extract(n)`; по нулю — `destroy()`
       (скрывает спрайт, освобождает место). Общий класс и для жил, и для
       деревьев/овец (Фаза D)
@@ -213,28 +248,28 @@ mercenary/boss) и ввести **10 существ** из `src/assets/tiny-swor
 `pawn-run-{wood,meat,gold}`) → сдача (`pawn-idle-{res}`, +ресурс в склад,
 emit `change`) → `cooldown` (0.5 сек) → `walk`.
 
-- [ ] `src/game/systems/PawnAI.ts` — состояния `walk`, `work`, `carry`,
+- [x] `src/game/systems/PawnAI.ts` — состояния `walk`, `work`, `carry`,
       `cooldown`; `findNearestResource()` с учётом `node.claimedBy`
-- [ ] `src/game/entities/Pawn.ts` — `walkTo(x, y)` (180 px/s), `playWork(tool)`,
+- [x] `src/game/entities/Pawn.ts` — `walkTo(x, y)` (180 px/s), `playWork(tool)`,
       `playCarry(res)`, `playIdleWith(res)`; поле `carrying: ResourceKind | null`
-- [ ] `src/game/entities/ResourceNode.ts` — `claim(pawn)` / `release(pawn)`;
+- [x] `src/game/entities/ResourceNode.ts` — `claim(pawn)` / `release(pawn)`;
       `extract(1)` за тик работы; на `remaining == 0` → `destroy()`
-- [ ] `src/game/systems/Economy.ts` — `deposit(kind, amount)` (вызывается
+- [x] `src/game/systems/Economy.ts` — `deposit(kind, amount)` (вызывается
       **на складе**, не у узла): `resources[kind] += amount`, emit `change`,
       звук `pickupGold` (переиспользовать)
-- [ ] Деревья (`tree1..4`) — цикл спавна в `buildWorld()` (~315) создаёт
+- [x] Деревья (`tree1..4`) — цикл спавна в `buildWorld()` (~315) создаёт
       `ResourceNode` вместо декоративного спрайта; 5 дерева за узел, узел
       исчезает без пня
-- [ ] Овцы (~430) — `ResourceNode` с 3 единицами; спрайт исчезает
-- [ ] Золотые жилы — **20 руды за цикл, 4 цикла = 80 руды на жилу**
+- [x] Овцы (~430) — `ResourceNode` с 3 единицами; спрайт исчезает
+- [x] Золотые жилы — **20 руды за цикл, 4 цикла = 80 руды на жилу**
       (`VEIN_CHARGES = 4`, `VEIN_YIELD = 20`), анимация `gold-vein-pulse-{N}`.
       ⚠️ Лимит обязателен: без него руда обесценивается (10 жил × бесконечность
       даёт больше, чем суммарная цена всех построек матча, §B.3)
 - [ ] **Индикатор истощения без цифр:** после 2-го цикла пульс гаснет (спрайт без
       `-highlight`) — игрок видит, что жила кончается, не читая HUD
-- [ ] `claim()` освобождается при `destroy()` узла и при смене задачи пешки
+- [x] `claim()` освобождается при `destroy()` узла и при смене задачи пешки
       (чтобы пешка не «залипала» на исчезнувшем ресурсе)
-- [ ] 2 сборщика в стартовом наборе; третий пешек-сборщик (после домов)
+- [x] 2 сборщика в стартовом наборе; третий пешек-сборщик (после домов)
       ждёт `idle`, если все ближайшие узлы заняты
 
 **Гейт D:**
@@ -287,21 +322,21 @@ emit `change`) → `cooldown` (0.5 сек) → `walk`.
       вокруг замка: 6 под `house`, 4 под крупные здания — по одному
       `barracks`/`tower`/`monastery`/`archery`), `canPlace` по типу здания
       на 192×208, `tryStartBuild(pawn, spot)`, `spend(cost)` в момент старта
-- [ ] `src/game/systems/Economy.ts` — **первый дом дарит 1 жителя бесплатно**
+- [x] `src/game/systems/Economy.ts` — **первый дом дарит 1 жителя бесплатно**
       (§E.5): после завершения стройки самого первого `house` в матче спавн
       пешки с именем и анимацией выхода, 2 сек. Метрика `first_house` (§K.2)
-- [ ] `src/game/systems/PawnAI.ts` — приоритет: есть свободное место стройки
+- [x] `src/game/systems/PawnAI.ts` — приоритет: есть свободное место стройки
       и хватает ресурсов → `builder` идёт строить; крупные здания (казармы)
       имеют приоритет над домиками, чтобы страховка от смерти строилась раньше
-- [ ] `src/game/entities/Building.ts` (новый) — спрайт + `hp`, `builtAt`,
+- [x] `src/game/entities/Building.ts` (новый) — спрайт + `hp`, `builtAt`,
       `kind`, метод `damage(amount)` (заглушка; рабочий — в фазе K)
 - [ ] Анимация постройки: `pawny-work-hammer` (3 кадра, 9 fps) циклом
       `buildTime` секунд; по завершении — `Building` появляется с твином
       `scaleY 0→1` за 200 мс
-- [ ] `Economy.pawnLimit` += 1 при постройке дома (базовый 4 → 5);
+- [x] `Economy.pawnLimit` += 1 при постройке дома (базовый 4 → 5);
       казармы рабочий лимит не увеличивают, но поднимают `garrisonLimit` до 2
       (§B.2 — лимит гарнизона задаётся зданиями, а не домами)
-- [ ] `house1/2/3` — рандомный выбор при постройке
+- [x] `house1/2/3` — рандомный выбор при постройке
 - [ ] **Потолок:** 10 пятен = максимум 10 зданий за матч (6 домов + 4 крупных);
       после заполнения `builder` возвращается к сбору дерева
 
@@ -327,13 +362,13 @@ emit `change`) → `cooldown` (0.5 сек) → `walk`.
 и автоматического ремонта ещё нечего запускать. Полная активация ремонта —
 фаза L.
 
-- [ ] `src/game/entities/Pawn.ts` — `kind: 'repairer'` с инструментом `hammer`,
+- [x] `src/game/entities/Pawn.ts` — `kind: 'repairer'` с инструментом `hammer`,
       анимация `pawny-work-hammer` (уже зарегистрирована)
-- [ ] `src/game/systems/Economy.ts` — `repair(building): boolean` — работающая
+- [x] `src/game/systems/Economy.ts` — `repair(building): boolean` — работающая
       механика (30 дерева / 5 сек за повреждённый дом, 60 / 10 за разрушенный),
       но **пока не вызывается из AI**: пешка ремонтирует только по приказу
       «ЧИНИТЬ» или из dev-консоли
-- [ ] `src/game/data.ts` — `BUILDING_PLANS[*].hp > 0` (house 150, castle 500),
+- [x] `src/game/data.ts` — `BUILDING_PLANS[*].hp > 0` (house 150, castle 500),
       флаг `noRepair: true` у замка, чтобы его нельзя было починить
 
 **Гейт F:**
@@ -368,7 +403,7 @@ emit `change`) → `cooldown` (0.5 сек) → `walk`.
 - [ ] `src/game/systems/Economy.ts` — `orderPawn(pawn, order)`: меняет
       `pawn.currentOrder`; приказ **не перебивает carry-фазу** (вступает в силу
       после сдачи добычи на склад)
-- [ ] `src/game/systems/OrderMenu.ts` (новый, или в существующий `Ui.ts`) —
+- [x] `src/game/systems/OrderMenu.ts` (новый, или в существующий `Ui.ts`) —
       радиальное меню: 2 активные кнопки по кругу + 2 серые заготовки,
       центральный крестик «закрыть»
 - [ ] Приказ сбрасывается после выполнения задачи (автоповедение возвращается);
@@ -410,8 +445,8 @@ UI, а ресурсные пикапы того же ассета Tiny Swords ч
       (`wood`, `meat`, `ore`), скрыт пока все три нулевые; **отдельно** от
       существующего счётчика золота матча (левый столбец). ⚠️ Два «золота» в одном
       HUD — источник главной путаницы, поэтому подпись «руда» обязательна
-- [ ] Подписка на `economy.on('change', ...)`, **не** в `update()` каждый кадр
-- [ ] `src/i18n/ru.ts`, `src/i18n/en.ts` — `hud.resources` + `resource.ore`
+- [x] Подписка на `economy.on('change', ...)`, **не** в `update()` каждый кадр
+- [x] `src/i18n/ru.ts`, `src/i18n/en.ts` — `hud.resources` + `resource.ore`
       («руда»/«ore»); подписи дерево/мясо/руда, если HUD подписывает иконки текстом
 
 **Гейт H:**
@@ -492,41 +527,41 @@ UI, а ресурсные пикапы того же ассета Tiny Swords ч
       period: 1200, speed: 150 }, lance: { hp: 100, dmg: 18, range: 200,
       charge: 400, telegraph: 480, period: 8000, speed: 170 } }` —
       **вне** `TIER_MULT` и `hpScale` (TZ §C.3)
-- [ ] `src/game/entities/Enemy.ts` — поле `target: Hero | Pawn | null` и
+- [x] `src/game/entities/Enemy.ts` — поле `target: Hero | Pawn | null` и
       `pickTarget()` по таблице §A.5. Пересчёт раз в **400 мс**
       (`this.time.addEvent`), **не** в `update()` каждый кадр — иначе цель
       дёргается между двумя равноценными пешками и визуально «прыгает».
       Приоритет: герой в `AGGRO.HERO` → гарнизон в `AGGRO.NPC` → гражданский в
       `AGGRO.NPC`. Если цель вне `LEASH` — сброс на героя, иначе враг уведёт
       группу за карту.
-- [ ] `src/game/entities/Pawn.ts` — поля `class: 'civilian' | 'garrison'`,
+- [x] `src/game/entities/Pawn.ts` — поля `class: 'civilian' | 'garrison'`,
       `weapon: PawnWeapon`, `hp`, `maxHp`, `target`, `cd`, `order`;
       **снять неуязвимость** пешек (в фазе B они не получали урона вообще);
       состояние `retreat` при `hp < RETREAT_HP`
-- [ ] `src/game/systems/PawnAI.ts` — **раздельные тики**: `civilianAI()` каждый
+- [x] `src/game/systems/PawnAI.ts` — **раздельные тики**: `civilianAI()` каждый
       кадр (дёшево, приоритеты §B.6) и `combatAI()` раз в **`GARRISON.TICK_MS` = 150
       мс** с автоматическим фолбэком до 250 мс при просадке FPS. Пять юнитов на
       тик — пренебрежимая нагрузка, зато FSM читается и тестируется изолированно
-- [ ] `src/game/systems/PawnAI.ts` — `combatAI()`: приоритеты §B.6 (патруль →
+- [x] `src/game/systems/PawnAI.ts` — `combatAI()`: приоритеты §B.6 (патруль →
       `fight` в `RALLY`), `flee` у гражданских при враге в `PANIC`;
       `sword` — атака с 40 px; `lance` — рывок 400 px с телеграфом 480 мс;
       `retreat` при `hp < 0.35` — отход к монастырю, **слот не занимается**;
       `kite` для будущего `bow` (фаза M)
-- [ ] `src/game/systems/PawnAI.ts` — **таунт `sword`** (§B.7.1): если воин в
+- [x] `src/game/systems/PawnAI.ts` — **таунт `sword`** (§B.7.1): если воин в
       состоянии `fight` и в 150 px от здания, которое бьёт осада, — перехватывает
       50% урона по этому зданию. Визуал: щит-контур + индикатор «−50%». Против
       босса и вне приказа **ДЕРЖАТЬ** — выключен
 - [ ] `src/game/systems/Combat.ts` — **атрибуция убийств**: `Pawn` убил врага →
       счёт `KILL` растёт, но `playerCombo` **не** растёт, XP-кристалл выпадает
       как обычный. Событие `ally_kill` (§K.2)
-- [ ] `src/game/systems/Economy.ts` — `hireGarrison(building, weapon)`,
+- [x] `src/game/systems/Economy.ts` — `hireGarrison(building, weapon)`,
       `garrisonLimit` (§B.2), таймер найма 8–10 сек по таблице §B.9.1;
       **это расход `resources`, а не золота матча** — тот тратится только на
       преемственность (§F.7)
 - [ ] Кнопка **«НАНЯТЬ»** на здании (`Building`): видна, если лимит не исчерпан
       и хватает ресурсов; нажатие списывает ресурсы сразу и запускает таймер
       найма. Без казарм кнопки нет. Событие `garrison_hired` (§K.2)
-- [ ] `src/game/systems/PawnAI.ts` — **военные приказы держатся до отмены**
+- [x] `src/game/systems/PawnAI.ts` — **военные приказы держатся до отмены**
       (§B.6), в отличие от гражданских: `order: null | 'follow' | 'post' | 'hold'`.
       Радиальное меню `Shift+ЛКМ` / лонг-пресс (фаза G) получает три новых пункта
       только для юнитов с `class: 'garrison'`
@@ -586,18 +621,18 @@ UI, а ресурсные пикапы того же ассета Tiny Swords ч
 пешек и выбор цели врагом пришли в фазе J — здесь только доводится до конца:
 осада отличается от обычной волны тем, что бьёт **здания**, а не пешки.
 
-- [ ] `src/game/entities/Building.ts` — `hp`, `maxHp`, `buildingKind`, `alive`,
+- [x] `src/game/entities/Building.ts` — `hp`, `maxHp`, `buildingKind`, `alive`,
       `damage(amount)`; при `hp <= 0` → `destroy()` (спрайт убирается с карты)
-- [ ] `src/game/systems/Settlement.ts` (**новый**) — два трека: инфраструктура
+- [x] `src/game/systems/Settlement.ts` (**новый**) — два трека: инфраструктура
       (замок + постройки) и население (пешки + дома); `damageBuilding()`,
       `spawnPawn()`, `checkDefeat()`; хранит `aliveBuildings` / `alivePawns`;
       **`hasSuccessionSource()`** — проверка `barracks | archery | monastery`
       (заготовка для фазы N, §F.6; башня **не** входит — она не выпускает воина)
-- [ ] `src/game/entities/Enemy.ts` — флаг `siege: boolean`. Он **перебивает**
+- [x] `src/game/entities/Enemy.ts` — флаг `siege: boolean`. Он **перебивает**
       выбор цели §A.5: осадный враг идёт к ближайшему зданию, даже если герой
       рядом и гарнизон близко. Без этого осада превратится в обычную волну;
       **`buildingDmg` — отдельное поле** (§E.4.1), не производное от `damage`
-- [ ] `src/game/data.ts` — `EnemyDef.buildingDmg` (за удар), **вариант A — все
+- [x] `src/game/data.ts` — `EnemyDef.buildingDmg` (за удар), **вариант A — все
       значения ×0.65** (§E.4.1): `skull` 1.3 (темп 1.5 с → **0.8 HP/с**),
       `pig-rider` 2.6 (→ **1.6 HP/с**), рывок всадника 8 (раз в 8 с, +0.6 средн.),
       `gnoll` обычная кость 2 (→ **1.3 HP/с**), **огненный шар шамана 5 + 3 поджог**
@@ -607,20 +642,20 @@ UI, а ресурсные пикапы того же ассета Tiny Swords ч
 - [ ] `src/game/systems/Projectiles.ts` — `fireArrowPool`: `arrow.png` + частица
       `fire-01.png` (8 кадров 64×64) летят вместе. `setTint` **не применять** —
       `arrow.png` содержит 4 цвета, окрашивание даёт грязный результат
-- [ ] `src/game/entities/Building.ts` — состояние `burning`: `dynamite.png`
+- [x] `src/game/entities/Building.ts` — состояние `burning`: `dynamite.png`
       (6 кадров 64×64) на корпусе + частицы `fire-01`; **3 HP за 6 сек**; гаснет
       при обнулении или разрушении. ⚠️ Горение **входит в тот же потолок осады**
       и не суммируется сверх него
 - [ ] `src/game/scenes/BootScene.ts` — загрузить `dynamite`
       ← `terrain/resources/tools/dynamite.png`, анимации `fire-01` и `fire-arrow-trail`
-- [ ] `src/game/data.ts` / `constants.ts` — события `{ t, type: 'siege' }` в
+- [x] `src/game/data.ts` / `constants.ts` — события `{ t, type: 'siege' }` в
       `WAVE_EVENTS`; константы
       `SIEGE = { LIFETIME: 60000, ATTACK_WINDOW: 10000, MAX_INFRA_DMG: 0.12,
       MAX_INFRA_DMG_LOW: 0.06, INTERCEPT_R: 260, BURN_DMG: 3, BURN_MS: 6000 }`,
       **`SIEGE_WOUND_CAP = [1, 1, 2, 2, 3]`** (по профилям осад §E.4.3) —
       ⚠️ вместо прежнего `MAX_PAWN_WOUNDED: 1`, который делал переполнение
       обители недостижимым (§G.4)
-- [ ] `src/game/scenes/GameScene.ts` — `checkDefeat()` рядом с существующим
+- [x] `src/game/scenes/GameScene.ts` — `checkDefeat()` рядом с существующим
       `confirmDefeat()` (строка ~845); **триггеры** поражения: замок разрушен
       → `gameOver(false)` с `loseReason: 'castle'`; вымирание поселения →
       `loseReason: 'population'`. ⚠️ Условие вымирания **тройное и с задержкой**
@@ -628,7 +663,7 @@ UI, а ресурсные пикапы того же ассета Tiny Swords ч
       **раз в 60 сек** + экран 3 сек перед `GameOverScene`
 - [ ] `src/game/scenes/GameScene.ts` — анонс за 5 сек «⚠ ОСАДА ИДЁТ» +
       метка-стрелка от врагов к базе на 3 сек
-- [ ] `src/game/scenes/GameScene.ts` — фаза 2 босса при HP < 50%: целью
+- [x] `src/game/scenes/GameScene.ts` — фаза 2 босса при HP < 50%: целью
       становится замок, урон ×3; анонс «⚠ ЧЁРНЫЙ КОПЕЙЩИК ИДЁТ НА ЗАМОК»
 - [ ] `src/i18n/ru.ts`, `src/i18n/en.ts` — `over.lose.castle`,
       `over.lose.population`, `siege.warn`, `boss.siege`
@@ -761,7 +796,7 @@ UI, а ресурсные пикапы того же ассета Tiny Swords ч
 башня — обеим. Ставить башню первой — значит отлаживать её на NPC, которые ещё
 не стреляют.
 
-- [ ] `src/game/data.ts` — `BUILDING_PLANS` по таблице TZ §B.4:
+- [x] `src/game/data.ts` — `BUILDING_PLANS` по таблице TZ §B.4:
       `archery` = **45 дерева + 25 руды**, 20 сек, HP 180;
       `monastery` = **60 дерева + 40 руды**, 25 сек, HP **360**;
       `tower` = **50 дерева + 20 руды**, 15 сек, HP 200.
@@ -778,34 +813,34 @@ UI, а ресурсные пикапы того же ассета Tiny Swords ч
       SWITCH_MS: 500, FOLLOW_OFFSET: 200, FIELD_WOOD: 0, WOUNDED_FREE_AT: 0.5 }` —
       ⚠️ `FIELD_WOOD: 0` — полевое лечение **бесплатно** (§B.7.2), `WOUNDED_FREE_AT`
       снимает `wounded` при 50% HP и освобождает слот обители
-- [ ] `src/game/systems/PawnAI.ts` — `combatAI()` для `bow`: держать 300 px,
+- [x] `src/game/systems/PawnAI.ts` — `combatAI()` для `bow`: держать 300 px,
       стрелять каждые 1.5 сек, **приоритетная цель — осадный `shaman`** (тушит
       источник огня, §E.4.1); `healAI()` для `healer`: выбор самой низкой доли HP
       среди раненых союзников в радиусе, приоритет «гарнизон > гражданский > сам»,
       держаться в 200 px позади линии боя
-- [ ] `src/game/systems/Projectiles.ts` — пул `friendlyArrowPool` (стрела NPC,
+- [x] `src/game/systems/Projectiles.ts` — пул `friendlyArrowPool` (стрела NPC,
       ключ `arrow`, **без тинта** — тот же ассет, что у врага, §E.4.2);
       ⚠️ отличать от `enemyArrowPool` только флагом `friendly`, иначе
       вражеские и дружественные стрелы перемешаются в пуле
-- [ ] `src/game/systems/Economy.ts` — `hireGarrison` по таблице §B.9.1:
+- [x] `src/game/systems/Economy.ts` — `hireGarrison` по таблице §B.9.1:
       `archery` → `bow` за **15 дерева + 10 руды + 5 мяса**, 10 сек;
       `monastery` → `healer{staff}` за **25 дерева + 15 руды + 5 мяса**, 10 сек.
       Лимиты: `archery` 2, `monastery` **1** (§B.2). ⚠️ Прежние «30 дерева + 6
       золота» / «20 дерева + 5 золота» не содержали мяса и называли руду золотом
-- [ ] `src/game/systems/Settlement.ts` — `hasSuccessionSource()` учитывает
+- [x] `src/game/systems/Settlement.ts` — `hasSuccessionSource()` учитывает
       `barracks | archery | monastery` (§F.6). Башня **не** входит: она не
       выпускает воина, поэтому матч не продлевает
-- [ ] `tower` — стреляет по ближайшему врагу, включая осаду; приоритет: осада,
+- [x] `tower` — стреляет по ближайшему врагу, включая осаду; приоритет: осада,
       затем ближайший к базе. Это прямой ответ на фазу K. Матч после смерти
       героя башня **не** продлевает
-- [ ] `monastery` — **полная реализация §G**: **10 мест** лечения (любой тип
+- [x] `monastery` — **полная реализация §G**: **10 мест** лечения (любой тип
       юнита), раненые пешки сами приходят и занимают места, **очереди нет**,
       1 дерево / 15 HP, 12 HP/с; при отсутствии места раненый **истекает кровью
       45 сек** у ворот (`BLEEDOUT_SEC = 45`) и погибает, если место не
       освободилось — ⚠️ **не умирает мгновенно** (§G.3);
       **разрушение убивает всех раненых внутри** (вариант B, §G.5);
       плюс выпускает воина-монаха (§F.6)
-- [ ] **Разделение двух лечений** (§B.7.2): полевое — бесплатно, 8 HP/с, радиус
+- [x] **Разделение двух лечений** (§B.7.2): полевое — бесплатно, 8 HP/с, радиус
       320 px; обительное — 12 HP/с, 1 дерево / 15 HP. Монах в поле **не тратит
       дерево**. Полегчающая проверка: суммарный расход дерева не растёт, пока
       игрок не отправляет монаха в обитель
@@ -819,7 +854,7 @@ UI, а ресурсные пикапы того же ассета Tiny Swords ч
       на пути в обитель → герой < 40% HP) и к каждой цели — **ближайший свободный
       монах**. Иначе два монаха встают к одной пешке, а вторая истекает в 300 px
       от них
-- [ ] **Состояние `wounded` — общее для обеих половин поселения**: раненый
+- [x] **Состояние `wounded` — общее для обеих половин поселения**: раненый
       воин идёт в монастырь так же, как гражданский; вылеченный возвращается на
       патруль, а не к работе. ⚠️ Воин в `wounded`/`retreat` преемником **не**
       становится (§F.4) — это делает лечение в обители осмысленным
@@ -827,7 +862,7 @@ UI, а ресурсные пикапы того же ассета Tiny Swords ч
       сближении до 180 px, стрельба на ходу с темпом 1.6 с, возврат на пост при
       дистанции > 420 px. Без ограничения 420 px лучник «стягивает» агро от
       поселения
-- [ ] `src/game/data.ts` — `BUILDING_PLANS.monastery.hp` поднят **200 → 360**:
+- [x] `src/game/data.ts` — `BUILDING_PLANS.monastery.hp` поднят **200 → 360**:
       при варианте B обитель должна переживать 2–3 волны, иначе каскадная
       смерть станет рутиной
 - [ ] Предупреждение при HP монастыря < 30% и < 10%: анонс «⚠ МОНАСТЫРЬ ПАДАЕТ —
@@ -899,18 +934,18 @@ UI, а ресурсные пикапы того же ассета Tiny Swords ч
 `PawnKind = 'fighter'` / `'healer'` из фазы J с полем `canBecomeHero()`. Отдельный
 класс означал бы двух сущностей с одинаковыми спрайтами и двумя наборами HP.
 
-- [ ] `src/game/systems/Succession.ts` (**новый**) — `trySucceed()`: есть ли
+- [x] `src/game/systems/Succession.ts` (**новый**) — `trySucceed()`: есть ли
       здание-источник воина (`barracks | archery | monastery`); поиск живого
       воина; расчёт цены по `successionsDone`; эскалация (§F.7); счётчик смен
       в пределах матча
-- [ ] `src/game/entities/Pawn.ts` — `canBecomeHero()` на `fighter`/`healer`
+- [x] `src/game/entities/Pawn.ts` — `canBecomeHero()` на `fighter`/`healer`
       (фаза J), превращение в `Player`: спрайт, HP, статы — от `HEROES[id]`,
       а не от `FIGHTERS[weapon]`. Пешка выпадает из `Economy.garrison`, чтобы
       лимит казарм освободился
-- [ ] `src/game/scenes/SuccessionScene.ts` (**новый**) — экран выбора (макет
+- [x] `src/game/scenes/SuccessionScene.ts` (**новый**) — экран выбора (макет
       §F.5): автопреемник / новый воин / выбор из 4 типов / реклама / золото /
       «сдаться». Часы матча на паузе, пока открыт
-- [ ] `src/game/scenes/GameScene.ts` — `onHeroDeath()` вызывает
+- [x] `src/game/scenes/GameScene.ts` — `onHeroDeath()` вызывает
       `succession.trySucceed()`; при отказе или отсутствии здания-источника —
       `gameOver(false)` по старому пути
 - [ ] `src/game/scenes/GameScene.ts` — `applyHero(id)`: новый `Player` по
@@ -918,7 +953,7 @@ UI, а ресурсные пикапы того же ассета Tiny Swords ч
       неуязвимости; **поселение не трогаем**
 - [ ] `src/game/entities/Player.ts` — `resetForHero(id)` вместо единственного
       экземпляра
-- [ ] `src/game/data.ts` — `SUCCESSION_TYPES` (`PawnWeapon` → `HeroId`,
+- [x] `src/game/data.ts` — `SUCCESSION_TYPES` (`PawnWeapon` → `HeroId`,
       здание-источник: `barracks` → `sword`+`lance`, `archery` → `bow`,
       `monastery` → `staff`), `SUCCESSION_COST` (§F.7: 40д+15р / 80д+35р /
       140д+60р / золото матча ×1.5), `SUCCESSION_GOLD` (§F.8: 500 / 900 / 1500),
@@ -973,25 +1008,25 @@ UI, а ресурсные пикапы того же ассета Tiny Swords ч
 ⚠️ Правило, которое нельзя нарушать: **ускорение всегда необязательно.**
 Никаких принудительных модалок, никаких блокировок геймплея.
 
-- [ ] `src/game/systems/Speedup.ts` (**новый**) — `buyRepairSpeedup()` (30 золота
+- [x] `src/game/systems/Speedup.ts` (**новый**) — `buyRepairSpeedup()` (30 золота
       кошелька), `buyHealSpeedup()` (45 золота кошелька); лимит рекламы 1 каждого
       вида за матч. ⚠️ Ускорение лечения выписывает **и** раненых в обители, **и**
       всех `bleeding` у ворот — иначе «окно для реакции» §G.3 не работает
-- [ ] `src/game/shop.ts` — **добавить `spendGold(amount): BuyResult`**.
+- [x] `src/game/shop.ts` — **добавить `spendGold(amount): BuyResult`**.
       `depositGold()` (строка 98) вызывается только в конце матча, поэтому
       кошелёк **не растёт во время игры**. `buyUpgrade()` (строка 111) привязан
       к `SHOP_UPGRADES` и не переиспользуем. Списание атомарно:
       `loadShop()` → проверка баланса → `saveShop()`, иначе двойной клик
       спишет дважды
 - [ ] `src/game/entities/Monastery.ts` — `healAllInstantly()` для ускорения лечения
-- [ ] `src/game/systems/Economy.ts` — `finishRepairInstant()` для ускорения ремонта
-- [ ] `src/game/scenes/GameScene.ts` — показывать баланс кошелька в HUD матча
+- [x] `src/game/systems/Economy.ts` — `finishRepairInstant()` для ускорения ремонта
+- [x] `src/game/scenes/GameScene.ts` — показывать баланс кошелька в HUD матча
       (сейчас виден только в меню, `MenuScene.ts:284`)
-- [ ] `src/game/systems/HUD.ts` — две кнопки у монастыря и у стройки; серые,
+- [x] `src/game/systems/HUD.ts` — две кнопки у монастыря и у стройки; серые,
       когда ускорять нечего, с подсказкой причины
-- [ ] `src/platform/ads.ts` — переиспользовать `showRewardedVideo()`; при
+- [x] `src/platform/ads.ts` — переиспользовать `showRewardedVideo()`; при
       неудаче вернуть `false`, не ронять сцену
-- [ ] `src/i18n/ru.ts`, `src/i18n/en.ts` — `speedup.repair`, `speedup.heal`,
+- [x] `src/i18n/ru.ts`, `src/i18n/en.ts` — `speedup.repair`, `speedup.heal`,
       `speedup.adUnavailable`, `speedup.noTarget`, `speedup.poor`
 
 **Гейт O:**
@@ -1019,25 +1054,25 @@ UI, а ресурсные пикапы того же ассета Tiny Swords ч
 Причина в §D.3: инструментировать задним числом дороже, чем иметь шину с первого
 дня.
 
-- [ ] `src/game/systems/analytics.ts` (**новый**) — `track(event, params?)`;
+- [x] `src/game/systems/analytics.ts` (**новый**) — `track(event, params?)`;
       no-op вне YG (dev-сборка пишет в console-таблицу), debounce,
       очередь при офлайне; dev-оверлей `?debug` с живым логом
-- [ ] **T0** — `session_start` (с `sessionIdx`), `run_start` (с сидом матча §C.2)
-- [ ] **T0** — `first_house`, **`first_barracks`**, `first_order_used`
+- [x] **T0** — `session_start` (с `sessionIdx`), `run_start` (с сидом матча §C.2)
+- [x] **T0** — `first_house`, **`first_barracks`**, `first_order_used`
 - [ ] **T0** — A/B-флаги читаются из `MetaState.flags` (то же сохранение), чтобы
       разбиение переживало смену устройства (§K.4)
-- [ ] **K** — `run_end` (cause из 5 значений), `siege_start`/`siege_result`
+- [x] **K** — `run_end` (cause из 5 значений), `siege_start`/`siege_result`
       (профиль, outcome, `cap_applied`, раненые), `building_destroyed`,
       `pawn_wounded`/`pawn_bleeding_start`/`pawn_died`/`pawn_saved`
-- [ ] **J/M** — `garrison_hired`/`garrison_lost`; `monastery_falling`/
+- [x] **J/M** — `garrison_hired`/`garrison_lost`; `monastery_falling`/
       `monastery_collapsed` (victims_n)
 - [ ] **N** — `succession_shown`/`_taken`/`_refused` (ветка, цена, `first_lifetime`)
-- [ ] **O** — `ad_impression`/`ad_rewarded_complete`/`ad_error` (плейсмент
+- [x] **O** — `ad_impression`/`ad_rewarded_complete`/`ad_error` (плейсмент
       **R1–R11**, §J.3), `speedup_bought`
-- [ ] **L** — `combo_milestone`, `levelup_card_picked`, `end_screen_action`
+- [x] **L** — `combo_milestone`, `levelup_card_picked`, `end_screen_action`
 - [ ] **T** — `perf_fps` (p50/p10 за ран, device_class, enemies_peak)
-- [ ] **P** — `hint_shown`/`hint_dismissed`
-- [ ] **E** — `economy_stuck` (§B.9 debug-гейт)
+- [x] **P** — `hint_shown`/`hint_dismissed`
+- [x] **E** — `economy_stuck` (§B.9 debug-гейт)
 - [ ] **Q** — `glory_earned`, `tree_node_bought`, `quest_progress`, `quest_done`,
       `ukaz_taken`
 
@@ -1057,11 +1092,11 @@ UI, а ресурсные пикапы того же ассета Tiny Swords ч
 ощущаются «сочными» (§H.13, §I). Это не отдельная игра в конце — триггеры
 подсказок навешиваются вместе с механиками, а P собирает их в единый движок.
 
-- [ ] `src/game/systems/Hints.ts` (**новый**) — движок §I.1: очередь с
+- [x] `src/game/systems/Hints.ts` (**новый**) — движок §I.1: очередь с
       приоритетом (угроза > возможность > знакомство), одноразовые флаги
       `hint.{id}.shown` в облаке + локальный фолбэк, форматы `banner`/`anchor`/
       `overlay`, настройка «Обучение: вкл/выкл»
-- [ ] `src/game/data.ts` — `HINTS[]`, `FTUE_MATCH_GATE` (§I.3), `ftueSoftStart`
+- [x] `src/game/data.ts` — `HINTS[]`, `FTUE_MATCH_GATE` (§I.3), `ftueSoftStart`
       (плотность −20% первые 3 минуты первого матча)
 - [ ] ⚠️ **Ограничения подсказок** (§I.1): не чаще одной за **20 секунд**, скип
       кликом, полный набор первой сессии умещается в **первые 6 минут** матча.
@@ -1071,7 +1106,7 @@ UI, а ресурсные пикапы того же ассета Tiny Swords ч
 - [ ] `src/game/scenes/SuccessionScene.ts` — обучающий режим первого показа (§I.4)
 - [ ] `src/game/systems/HUD.ts` — лента событий поселения (§H.2): именные анонсы,
       3 последних, 6 сек каждая; якоря подсказок
-- [ ] `src/game/data.ts` — `PAWN_NAMES` (пулы §A1, RU/EN), титулы по роли,
+- [x] `src/game/data.ts` — `PAWN_NAMES` (пулы §A1, RU/EN), титулы по роли,
       эпитеты ветеранов
 - [ ] Награда за первый дом: житель с именем + баннер «**{имя}** присоединяется»
 - [ ] **Juice-чеклист §H.13** — 14 пунктов, каждый привязан к своей фазе;
@@ -1107,27 +1142,27 @@ UI, а ресурсные пикапы того же ассета Tiny Swords ч
 - [ ] `src/platform/ads.ts` — реестр плейсментов **R4–R11** (§J.3: благословение,
       ×2 славы, реролл задания, ×2 дар ежедневки), interstitial-политика
       §J.4 (3-й матч, ≥120 сек, ≤6 за сессию), стики-баннер §J.5 (только вне рана)
-- [ ] Ежедневный бонус §H.7 — 7-дневный цикл, сброс 26 ч, дата с сервера YG
+- [x] Ежедневный бонус §H.7 — 7-дневный цикл, сброс 26 ч, дата с сервера YG
       (`getEnvironment()`, не локальные часы)
-- [ ] Ежедневный вызов §H.8 — общий сид (§C.2) + 2 модификатора из A2, отдельная
+- [x] Ежедневный вызов §H.8 — общий сид (§C.2) + 2 модификатора из A2, отдельная
       таблица лидеров `daily`, реролл за rewarded (R6)
-- [ ] Контракты §H.9 — 8 штук, множитель к SCORE, основной лидерборд не трогаем
+- [x] Контракты §H.9 — 8 штук, множитель к SCORE, основной лидерборд не трогаем
 - [ ] Кодекс §H.10 — грид 12 комбинаций тип×тир + здания + карты поселения,
       награды 50/75/100%
 - [ ] Цепочки достижений §H.11 — 8 цепочек × 3 ступени; заменяет удалённое
       достижение `taskmasters` (§A.6) цепочкой «Осада»
-- [ ] Бесконечный режим §H.12 — таймер обнуляется, `rate` 250 мс, осады каждые
+- [x] Бесконечный режим §H.12 — таймер обнуляется, `rate` 250 мс, осады каждые
       90 сек, новый босс каждые 5 мин, пятна +4, жилы восстанавливаются раз в
       5 мин; отдельная таблица `endless`
 - [ ] `src/game/systems/Blessing.ts` (**новый**) — пул баффов R4, жетоны
-- [ ] ⚠️ `src/game/meta.ts` (**новый**) — **единый источник мета-состояния**
+- [x] ⚠️ `src/game/meta.ts` (**новый**) — **единый источник мета-состояния**
       (`MetaState`: `glory`, `nodes[]`, `codex`, `quests`, `weekly`, `season`,
       `streak`, `matchesPlayed`), `NODE_DEFS` (30 узлов §H.16), `QUEST_POOL` (18),
       `ORDERS` (указы §H.17), `apply`/`serialize`
 - [ ] `src/game/systems/Meta.ts` (**новый**) — **Слава** (§H.16):
       `floor(SCORE / 100)`, кап 300, +100 за идеальную победу. Начисление после
       `run_end`, **до** списания в `MetaState`; никаких покупок и конвертаций
-- [ ] **Дерево «Хроника Долины»** (§H.16) — 30 узлов, 3 ветви, открытие после
+- [x] **Дерево «Хроника Долины»** (§H.16) — 30 узлов, 3 ветви, открытие после
       3-го матча; цены 50→500 по шагу, полная стоимость 8 250
 - [ ] **Ежедневные задания** (§H.17) — 3 из пула 18, ротация по дате, прогресс
       параллельный, каждое закрывается за 1–2 матча, провал не наказывает;
@@ -1148,7 +1183,7 @@ UI, а ресурсные пикапы того же ассета Tiny Swords ч
 - [ ] **Progressive disclosure по состоянию поселения** (§I.3): приказы — после
       2-го дома, наём — после 1-й казармы, монах — после 1-го монастыря.
       Проверяется счётчиками построек, **не** `matchesPlayed`
-- [ ] `src/game/scenes/MetaScene.ts` (**новый**) — вкладка в существующем зале
+- [x] `src/game/scenes/MetaScene.ts` (**новый**) — вкладка в существующем зале
       меню (не отдельный экран): дерево, задания, кодекс, указы
 - [ ] Облачное сохранение: `dailyStreak`, `challengeToday`, `contract`, `ukaz`,
       `glory`, `nodes[]`, `quests`, `crowns`
@@ -1188,7 +1223,7 @@ UI, а ресурсные пикапы того же ассета Tiny Swords ч
 ⚠️ **Заявку на ЕЛС / `games-partners@yandex-team.ru` отправить в начале раунда 1**,
 не дожидаясь S: внешний процесс занимает недели (§J.6.1).
 
-- [ ] `src/platform/payments.ts` (**новый**) — `getPayments`, `purchase`,
+- [x] `src/platform/payments.ts` (**новый**) — `getPayments`, `purchase`,
       `consume`, `getPurchases` + консумирование необработанных при старте
       (требование 1.13.1)
 - [ ] `src/game/shop.ts` — кошелёк крон, конвертация крон → золото (100 крон = 600
@@ -1200,17 +1235,17 @@ UI, а ресурсные пикапы того же ассета Tiny Swords ч
 - [ ] `src/game/systems/Skins.ts` (**новый**) — витрина, владение, применение.
       ⚠️ Скины фракций — почти бесплатная разработка: все 5 фракций зданий и
       юнитов уже в ассете
-- [ ] **Скины героев — через `setTint` по палитрам тиров** (§J.6.2): 2
+- [x] **Скины героев — через `setTint` по палитрам тиров** (§J.6.2): 2
       дополнительных на каждого из 4 героев, итого 12, **без единого нового
       ассета**. Гейт-проверка: `BootScene.ts` не добавляет новых `.png`
-- [ ] **Знамёна поселения** (8 шт., §J.6.2) — визуализируются над замком и видны
+- [x] **Знамёна поселения** (8 шт., §J.6.2) — визуализируются над замком и видны
       в первую секунду матча; один спрайт-подмена, отдельной сцены не нужно.
       Источники: кодекс (4), задания (1), пропуск (1), инапы (2)
-- [ ] **Расходники** (§J.6.2): «Подкова удачи» +25% XP, «Военный горн» +25% HP
+- [x] **Расходники** (§J.6.2): «Подкова удачи» +25% XP, «Военный горн» +25% HP
       гарнизона, «Дар лесника» +25% скорости сбора. ⚠️ Лимит **2 активных на
       матч**, эффекты **не суммируются**, «Военный горн» **не расширяет слоты**
       гарнизона, «Дар лесника» даёт **время**, а не ресурс (§J.2)
-- [ ] `src/game/scenes/ShopScene.ts` — вкладки: лавка / скины / пропуск / кроны;
+- [x] `src/game/scenes/ShopScene.ts` — вкладки: лавка / скины / пропуск / кроны;
       ⚠️ **витрина крон скрыта до 5-го матча** (§J.6.4)
 - [ ] SKU заведены в консоли (≤500), иконки/описания RU+EN; название и иконка
       портальной валюты в UI — **только из данных SDK** (1.13.2)
