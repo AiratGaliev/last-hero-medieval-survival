@@ -30,10 +30,11 @@ VLM + пиксельный анализ + dev.log). Балансировка и 
 - [x] Экран «ЕЩЁ РАЗ» ожидает завершение/пропуск межстраничной рекламы до старта
   следующего рана; добавлена защита от повторного нажатия.
 - [x] Добавлены Playwright-регрессии на отказ pause-hook и default pause/resume.
-- [x] CI GitHub Actions run `39080444052` завершился успешно: typecheck/lint,
-  production build, Yandex archive validation и Playwright E2E — success на
-  кодовой ревизии `dc1923cc0f4b8a5480d4393fd120fbe9664b18ea`. После неё менялись
-  только документы; отдельные фазовые gameplay-гейты этим прогоном не закрываются.
+- [x] Последний полный успешный CI: [run `39111711002`](https://github.com/AiratGaliev/last-hero-medieval-survival/actions/runs/39111711002)
+  на ревизии `02d1b23e8540d4aca9731fc6949a670a0be71f5e`: typecheck/lint, production build,
+  Yandex archive validation и Playwright E2E — success. Следующие коммиты меняли
+  документацию; текущий commit CI run `39112361218` ожидает запуска/результата.
+  Даже успешный общий CI не закрывает отдельные phase gameplay-gates.
 
 Эти отметки описывают только узкий набор изменений в PR #9 и не закрывают
 целиком ни фазу O, ни платформенную приёмку по `docs/TZ.md`.
@@ -62,7 +63,7 @@ Playwright spec не объявляются протестированными.
 | T — аналитика | Есть `track`, `sessionIdx`, локальный буфер и события; `main.ts` вызывает `initAnalytics` | **Нет `?debug` live overlay**; `initAnalytics` вызывается без `ymId`, поэтому `ym(...)` не направлен в счётчик |
 | P — FTUE и полировка | Есть первые подсказки, `ftueSoftStart`, локальные флаги и хроника | Подсказки только banner; нет очереди по приоритету, anchor/overlay, облачных флагов и теста полного FTUE |
 | Q — мета-прогресс | MetaState/MetaScene содержат славу, дерево, задания, указы, сезоны, контракты, вызовы и endless | Большинство механик без соответствующих E2E; ротация/сохранение требуют отдельной приёмки |
-| S — IAP/магазин | Есть `payments.ts`, SKU-полка, пропуск/скины/знамёна/расходники, `consumePurchase` и `getCatalog` API | **Критичный риск:** `purchaseSku()` выдаёт SKU локально при `!payments`, даже если `isOnYandex()` true. Также `ShopScene` не читает каталог товаров SDK (`YandexPayments.getCatalog()` доступен только как типизированный SDK API) и использует локальные SKU/подписи вместо данных каталога; SKU/ЕЛС в консоли кодом подтвердить нельзя |
+| S — IAP/магазин | Есть `payments.ts`, SKU-полка, пропуск/скины/знамёна/расходники, `consumePurchase` и `getCatalog` API | **Критичный риск:** `purchaseSku()` выдаёт SKU локально при `!payments`, даже если `isOnYandex()` true. Также SDK-интерфейс описывает `YandexPayments.getCatalog()`, но `ShopScene` не читает каталог и использует локальные SKU/подписи вместо данных SDK; SKU/ЕЛС в консоли кодом подтвердить нельзя |
 | Автотесты | 18 Playwright tests в 3 spec: запуск RU/EN, ads concurrency/lifecycle, ежедневная витрина | Нет полноценных E2E на экономику, осады, монастырь, преемственность и IAP |
 
 ### Найденные расхождения, которые не закрывать чекбоксами
