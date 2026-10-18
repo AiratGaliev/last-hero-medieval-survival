@@ -5,7 +5,8 @@ import { Cursor } from '../systems/Cursor';
 import { makeButton, makePanel, makeRibbon, fitTextWidth, type Button } from '../systems/Ui';
 import { t, num, type TranslationKey } from '../../i18n';
 import { track } from '../../platform/analytics';
-import { purchaseSku, showcaseVisible, SKUS } from '../../platform/payments';
+import { fetchCatalog, purchaseSku, showcaseVisible, SKUS, type CatalogProduct } from '../../platform/payments';
+import { isMockMode, isOnYandex } from '../../platform/sdk';
 import { placementAvailable, showPlacementRewarded, showStickyBanner } from '../../platform/ads';
 import {
   rollMetaDay,
@@ -62,6 +63,15 @@ const CROWN_SKUS: string[] = [
   'starter_castellan', 'no_interstitial', 'pass_chronicle',
 ];
 const ONE_SHOT_SKUS: string[] = ['starter_castellan', 'no_interstitial', 'pass_chronicle'];
+
+function catalogTextureKey(uri: string): string {
+  let hash = 2166136261;
+  for (let i = 0; i < uri.length; i++) {
+    hash ^= uri.charCodeAt(i);
+    hash = Math.imul(hash, 16777619);
+  }
+  return 'catalog-' + (hash >>> 0).toString(36);
+}
 
 const SKU_LABELS: Record<string, TranslationKey> = {
   crowns_s: 'store.crowns_s',
@@ -136,6 +146,10 @@ export class ShopScene extends Phaser.Scene {
   private dailyOfferIds = new Set<string>();
   /** Идентификатор апгрейда для «встряски» строки после покупки (как в MenuScene). */
   private flashUpgradeId: string | null = null;
+  /** SDK catalog is the source of truth for platform prices and portal currency. */
+  private catalogState: 'idle' | 'loading' | 'sdk' | 'fallback' | 'unavailable' = 'idle';
+  private catalogProducts = new Map<string, CatalogProduct>();
+  private catalogRequestId = 0;
 
   // Геометрия панели
   private pw = 0;
@@ -163,6 +177,9 @@ export class ShopScene extends Phaser.Scene {
     this.busy = false;
     this.refreshBusy = false;
     this.flashUpgradeId = null;
+    this.catalogRequestId += 1;
+    this.catalogState = 'idle';
+    this.catalogProducts = new Map();
     this.titleText = null;
     this.crownText = null;
     this.backBtn = null;
@@ -212,6 +229,7 @@ export class ShopScene extends Phaser.Scene {
     if (this.tab === 'crowns') track('sku_view', {});
 
     this.renderTab();
+    if (this.tab === 'crowns') void this.loadCatalog();
 
     // ---------- Назад ----------
     this.backBtn = makeButton(this, this.px, this.py + this.ph / 2 - 30, 170, 46, t('common.back'),
@@ -288,6 +306,61 @@ export class ShopScene extends Phaser.Scene {
     if (id === 'crowns') track('sku_view', {});
     this.renderTabs();
     this.renderTab();
+    if (id === 'crowns') void this.loadCatalog();
+  }
+
+  /** Загружает каталог SDK один раз за открытие сцены. */
+  private async loadCatalog(): Promise<void> {
+    if (this.catalogState !== 'idle') return;
+    const requestId = ++this.catalogRequestId;
+    if (!isOnYandex() || (import.meta.env.DEV && isMockMode())) {
+      this.catalogState = 'fallback';
+      if (this.scene.isActive() && this.tab === 'crowns') this.renderTab();
+      return;
+    }
+    this.catalogState = 'loading';
+    if (this.scene.isActive() && this.tab === 'crowns') this.renderTab();
+
+    let fetched: CatalogProduct[] = [];
+    try { fetched = await fetchCatalog(); } catch { /* fail closed below */ }
+    if (requestId !== this.catalogRequestId || !this.scene.isActive()) return;
+
+    // Only show SKU IDs that this game knows how to grant; never expose an unknown console SKU.
+    const byId = new Map<string, CatalogProduct>();
+    for (const product of fetched) {
+      if (CROWN_SKUS.includes(product.id) && product.price?.trim()) byId.set(product.id, product);
+    }
+    const ordered = CROWN_SKUS
+      .map((sku) => byId.get(sku))
+      .filter((product): product is CatalogProduct => product !== undefined);
+    this.catalogProducts = new Map(ordered.map((product) => [product.id, product]));
+
+    if (ordered.length === 0) {
+      this.catalogState = 'unavailable';
+    } else {
+      await this.preloadCatalogImages(ordered);
+      if (requestId !== this.catalogRequestId || !this.scene.isActive()) return;
+      this.catalogState = 'sdk';
+    }
+    if (this.tab === 'crowns') this.renderTab();
+  }
+
+  /** Load SDK imagery on the scene loader. A bad image must not block text or purchases. */
+  private async preloadCatalogImages(products: CatalogProduct[]): Promise<void> {
+    const pending = new Map<string, string>();
+    for (const product of products) {
+      for (const uri of [product.imageURI, product.priceCurrencyImage]) {
+        if (!uri) continue;
+        const key = catalogTextureKey(uri);
+        if (!this.textures.exists(key)) pending.set(key, uri);
+      }
+    }
+    if (pending.size === 0) return;
+    await new Promise<void>((resolve) => {
+      this.load.once('complete', () => resolve());
+      for (const [key, uri] of pending) this.load.image(key, uri);
+      if (!this.load.isLoading()) this.load.start();
+    });
   }
 
   /** Перерисовка контента вкладки: заголовок, баланс в шапке, перестройка строк. */
@@ -844,8 +917,6 @@ export class ShopScene extends Phaser.Scene {
 
   private renderCrownsTab(box: Phaser.GameObjects.Container): void {
     const st = rollMetaDay();
-
-    // Витрина скрыта до 5-го матча (§J.6.4, гейт 45) — только подпись
     if (!showcaseVisible()) {
       box.add(this.add.text(this.px, (this.contentTop() + this.contentBottom()) / 2, t('store.locked'), {
         fontFamily: FONT, fontSize: '16px', color: '#6b4a1e', align: 'center',
@@ -856,60 +927,114 @@ export class ShopScene extends Phaser.Scene {
 
     const cw = this.contentWidth();
     const items: ShopTabItem[] = [];
-
-    // Плашка «Первая покупка ×2!» до первого таргетинга (§J.6.4)
-    if (!st.purchasedSkus.includes('first_topup')) {
-      items.push({
-        h: 26,
-        draw: (cy) => {
+    if (this.catalogState === 'idle' || this.catalogState === 'loading') {
+      items.push({ h: 34, draw: (cy) => {
+        const notice = this.label(this.px, cy, t('store.catalogLoading'), 10, '#8a5b12');
+        fitTextWidth(notice, cw - 20, 10, 8);
+        box.add(notice);
+      } });
+    } else if (this.catalogState === 'unavailable') {
+      items.push({ h: 40, draw: (cy) => {
+        const notice = this.label(this.px, cy, t('store.catalogUnavailable'), 10, '#9a4a2a');
+        fitTextWidth(notice, cw - 20, 10, 8);
+        box.add(notice);
+      } });
+    } else {
+      const fallback = this.catalogState === 'fallback';
+      const catalogSkus = fallback
+        ? CROWN_SKUS.map((sku) => ({ sku, product: undefined as CatalogProduct | undefined }))
+        : CROWN_SKUS.map((sku) => ({ sku, product: this.catalogProducts.get(sku) }))
+          .filter((item): item is { sku: string; product: CatalogProduct } => item.product !== undefined);
+      const hasTopUp = fallback || catalogSkus.some(({ sku }) => sku.startsWith('crowns_'));
+      if (hasTopUp && !st.purchasedSkus.includes('first_topup')) {
+        items.push({ h: 26, draw: (cy) => {
           const g = this.add.graphics();
           g.fillStyle(0xf7e7c3, 1).fillRoundedRect(this.px - 110, cy - 12, 220, 24, 8);
           g.lineStyle(2, 0xd9a520, 1).strokeRoundedRect(this.px - 110, cy - 12, 220, 24, 8);
           box.add(g);
           box.add(this.label(this.px, cy, t('store.firstBonus'), 11, '#7a4e0e'));
-        },
-      });
+        } });
+      }
+      for (const { sku, product } of catalogSkus) {
+        if (sku === 'starter_castellan' && !this.starterCastellanAvailable(st)) continue;
+        if (product) items.push({ h: 68, draw: (cy) => box.add(this.catalogSkuRow(product, cy, st, cw)) });
+        else items.push({ h: 46, draw: (cy) => box.add(this.skuRow(sku, cy, st, cw)) });
+      }
     }
 
-    for (const sku of CROWN_SKUS) {
-      // starter_castellan — one-shot с окном 48ч после первой победы (§J.6.2):
-      // после окна или покупки строка исчезает с полки
-      if (sku === 'starter_castellan' && !this.starterCastellanAvailable(st)) continue;
-      items.push({ h: 46, draw: (cy) => box.add(this.skuRow(sku, cy, st, cw)) });
-    }
+    // Currency conversion and consumables still work if the platform catalogue is unavailable.
+    items.push({ h: 46, draw: (cy) => {
+      const btn = makeButton(this, this.px, cy, cw - 8, 42,
+        t('store.convert', { v: st.crownConvert.count }), () => {
+          const res = convertCrownsToGold();
+          if (res.ok) {
+            audio.play('levelup');
+            this.renderTab();
+          } else {
+            this.toast(res.reason === 'limit' ? t('store.convertLimit') : t('store.fail'));
+          }
+        }, 'blue', 12, { stopPropagation: true });
+      box.add([btn.img, btn.txt, btn.hit]);
+      this.contentButtons.push(btn);
+    } });
 
-    // Конвертация крон в золото кошелька (лимит в подписи кнопки)
-    items.push({
-      h: 46,
-      draw: (cy) => {
-        const btn = makeButton(this, this.px, cy, cw - 8, 42,
-          t('store.convert', { v: st.crownConvert.count }), () => {
-            const res = convertCrownsToGold();
-            if (res.ok) {
-              audio.play('levelup');
-              this.renderTab();
-            } else {
-              this.toast(res.reason === 'limit' ? t('store.convertLimit') : t('store.fail'));
-            }
-          }, 'blue', 12, { stopPropagation: true });
-        box.add([btn.img, btn.txt, btn.hit]);
-        this.contentButtons.push(btn);
-      },
-    });
-
-    items.push({
-      h: 24, hdr: true,
-      draw: (cy) => this.sectionTitle(box, cy, t('consumable.title')),
-    });
+    items.push({ h: 24, hdr: true, draw: (cy) => this.sectionTitle(box, cy, t('consumable.title')) });
     for (const def of CONSUMABLES) {
       items.push({ h: 50, draw: (cy) => box.add(this.consumableRow(def, cy, st, cw)) });
     }
-    items.push({
-      h: 20,
-      draw: (cy) => box.add(this.label(this.px, cy, t('consumable.limit'), 9, '#8a5b12')),
-    });
-
+    items.push({ h: 20, draw: (cy) => box.add(this.label(this.px, cy, t('consumable.limit'), 9, '#8a5b12')) });
     this.renderPaged(box, items);
+  }
+
+  /** SDK product card: title, description, price and portal currency artwork. */
+  private catalogSkuRow(product: CatalogProduct, cy: number, st: MetaState, w: number): Phaser.GameObjects.Container {
+    const row = this.add.container(this.px, cy);
+    const rowH = 66;
+    const bg = this.add.graphics();
+    bg.fillStyle(0xfff6df, 0.96).fillRoundedRect(-w / 2, -rowH / 2 + 2, w, rowH - 4, 8);
+    bg.lineStyle(2, 0xc9a25e, 1).strokeRoundedRect(-w / 2, -rowH / 2 + 2, w, rowH - 4, 8);
+    row.add(bg);
+
+    const sku = product.id;
+    const titleText = product.title?.trim() || t(SKU_LABELS[sku] ?? 'store.title');
+    const imageKey = product.imageURI ? catalogTextureKey(product.imageURI) : null;
+    if (imageKey && this.textures.exists(imageKey)) {
+      row.add(this.add.image(-w / 2 + 20, -7, imageKey).setDisplaySize(30, 30));
+    } else {
+      const placeholder = this.add.graphics();
+      placeholder.fillStyle(0xe8d19c, 1).fillRoundedRect(-w / 2 + 5, -23, 30, 32, 6);
+      row.add(placeholder);
+      row.add(this.label(-w / 2 + 20, -7, titleText.slice(0, 1).toUpperCase(), 13, '#7a4e0e'));
+    }
+
+    const title = this.label(-w / 2 + 41, -16, titleText, 11, '#3b2410', 0);
+    fitTextWidth(title, Math.max(82, w - 150), 11, 7);
+    row.add(title);
+    if (product.description?.trim()) {
+      const description = this.label(-w / 2 + 41, 1, product.description.trim(), 8, '#8a5b12', 0);
+      fitTextWidth(description, Math.max(82, w - 150), 8, 6);
+      row.add(description);
+    }
+
+    const price = this.label(w / 2 - 14, -14, product.price ?? '—', 10, '#3b2410', 1);
+    fitTextWidth(price, 58, 10, 7);
+    row.add(price);
+    const currencyKey = product.priceCurrencyImage ? catalogTextureKey(product.priceCurrencyImage) : null;
+    if (currencyKey && this.textures.exists(currencyKey)) {
+      row.add(this.add.image(w / 2 - 80, -14, currencyKey).setDisplaySize(13, 13));
+    }
+
+    const sold = ONE_SHOT_SKUS.includes(sku) && st.purchasedSkus.includes(sku);
+    if (sold) {
+      row.add(this.appliedChip(w / 2 - 45, 13, t('store.sold')));
+    } else {
+      const buy = makeButton(this, w / 2 - 48, 13, 82, 26, t('store.buy'), () => {
+        void this.buySku(sku);
+      }, 'blue', 9, { hitW: 88, hitH: 34, stopPropagation: true });
+      row.add([buy.img, buy.txt, buy.hit]);
+      this.contentButtons.push(buy);
+    }
+    return row;
   }
 
   /** Витрина крон скрыта до 5-го матча (§J.6.4, гейт 45) — только подпись.

@@ -911,6 +911,9 @@ export const ru = {
   // ---------- Витрина крон (§J.6) ----------
   'store.title': 'КРОНЫ',
   'store.locked': 'Витрина откроется после 5-го матча',
+  'store.catalogLoading': 'Загружаем каталог покупок…',
+  'store.catalogUnavailable': 'Покупки временно недоступны. Попробуй позже.',
+  'store.buy': 'КУПИТЬ',
   'store.crowns_s': '90 крон',
   'store.crowns_m': '500 крон (+11%)',
   'store.crowns_l': '1 100 крон (+22%)',
