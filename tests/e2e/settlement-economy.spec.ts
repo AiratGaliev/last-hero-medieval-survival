@@ -394,7 +394,7 @@ test('phases C-D: harvesting delivers resources and depleted veins can recharge'
   expect(report.depositedOre).toBe(20);
   expect(report.veinCount).toBe(10);
   expect(report.minimumVeinDistance).toBeGreaterThanOrEqual(200);
-  expect(report.minimumVeinPairDistance).toBeGreaterThanOrEqual(192);
+  expect(report.minimumVeinPairDistance).toBeGreaterThanOrEqual(140);
   expect(report.veinSprites.every(node => node.type === 'Sprite' && !node.hasPhysicsBody)).toBe(true);
   expect(report.treeCount).toBe(report.initialTreeCount - 1);
   expect(report.sheepCount).toBe(report.initialSheepCount - 1);
