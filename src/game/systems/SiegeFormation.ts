@@ -1,3 +1,5 @@
+import type { SiegeProfile } from '../data';
+
 /**
  * Pure formation logic for siege squads.
  *
@@ -5,11 +7,12 @@
  * the squad count balanced. Other siege profiles retain their existing single
  * approach direction and spread.
  */
-const PINCER_PROFILE = 'siege.profile.pincer';
+export type SiegeFormationKind = NonNullable<SiegeProfile['formation']> | 'single';
+
 const ANGULAR_SPREAD_RADIANS = 0.28;
 
 export function calculateSiegeSpawnAngles(
-  profileName: string,
+  formation: SiegeFormationKind,
   unitCount: number,
   baseAngle: number,
 ): number[] {
@@ -21,7 +24,7 @@ export function calculateSiegeSpawnAngles(
   }
   if (unitCount === 0) return [];
 
-  if (profileName !== PINCER_PROFILE) {
+  if (formation !== 'pincer') {
     return Array.from(
       { length: unitCount },
       (_, index) => baseAngle + (index % 8) * ANGULAR_SPREAD_RADIANS,
