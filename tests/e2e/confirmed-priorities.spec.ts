@@ -54,6 +54,8 @@ async function openGame(page: Page): Promise<void> {
 
 async function startRun(page: Page): Promise<void> {
   await openGame(page);
+  // Each test begins as a first-run FTUE session regardless of persisted browser state.
+  await page.evaluate(() => window.localStorage.removeItem('tss-hints'));
   await page.evaluate(() => {
     const game = (window as RuntimeWindow).__tss;
     if (!game) throw new Error('Phaser game debug handle is unavailable');
