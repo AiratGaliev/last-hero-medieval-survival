@@ -81,6 +81,7 @@ type MenuRuntime = {
 };
 
 type PhaserRuntime = {
+  anims: { exists(key: string): boolean };
   scene: { getScene(key: string): unknown; isActive(key: string): boolean };
 };
 
@@ -135,7 +136,7 @@ test('phase B: four workers, correct faction animations and live Economy tick', 
   const report = await page.evaluate(() => {
     const game = (window as RuntimeWindow).__tss!;
     const scene = game.scene.getScene('Game') as GameSceneRuntime;
-    const boot = game.scene.getScene('Boot') as { anims: { exists(key: string): boolean } };
+    const animations = game.anims;
     const economy = scene.economy;
     const originalTick = economy.tick.bind(economy);
     let tickCalls = 0;
@@ -156,8 +157,8 @@ test('phase B: four workers, correct faction animations and live Economy tick', 
     ];
     return {
       pawns: economy.pawns.map(p => ({ kind: p.kind, prefix: p.prefix })),
-      animations: Object.fromEntries(animationKeys.map(key => [key, boot.anims.exists(key)])),
-      blueHammerExists: boot.anims.exists('pawn-work-hammer'),
+      animations: Object.fromEntries(animationKeys.map(key => [key, animations.exists(key)])),
+      blueHammerExists: animations.exists('pawn-work-hammer'),
       tickCalls,
     };
   });
@@ -166,7 +167,7 @@ test('phase B: four workers, correct faction animations and live Economy tick', 
   expect(report.pawns.filter(p => p.kind === 'collector').every(p => p.prefix === 'pawn')).toBe(true);
   expect(report.pawns.filter(p => p.kind === 'builder' || p.kind === 'repairer')
     .every(p => p.prefix === 'pawny')).toBe(true);
-  expect(Object.values(report.animations).every(Boolean)).toBe(true);
+  expect(Object.entries(report.animations).filter(([, exists]) => !exists).map(([key]) => key)).toEqual([]);
   expect(report.blueHammerExists).toBe(false);
 
   await continueInitialTutorial(page);
