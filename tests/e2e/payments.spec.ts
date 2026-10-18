@@ -121,7 +121,7 @@ async function attemptPurchase(page: Page, sku: string): Promise<{
     }).__paymentProbe ?? { purchaseCalls: 0, consumeCalls: 0 };
 
     return {
-      result: { ok: result.ok, reason: result.reason },
+      result: result.reason ? { ok: result.ok, reason: result.reason } : { ok: result.ok },
       beforeCrowns,
       afterCrowns: after.crowns,
       beforePurchased,
