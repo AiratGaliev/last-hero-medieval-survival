@@ -83,6 +83,24 @@ export class WeaponSystem {
     return [...this.levels.keys()];
   }
 
+  /**
+   * Теоретический single-target DPS игрока при текущем билде.
+   * Используется только как фиксированная база ограничения гарнизона в 10:00.
+   * Не учитывает критические удары и вторичные эффекты, поэтому не завышает
+   * разрешённый урон за счёт случайных проков.
+   */
+  estimateTheoreticalDps(): number {
+    const might = Math.max(0, this.ctx.mightMult());
+    const haste = Math.max(0.1, this.ctx.cdMult());
+    let total = 0;
+    for (const [id, level] of this.levels) {
+      const weapon = WEAPONS[id].levels[level - 1];
+      if (!weapon || weapon.cd <= 0) continue;
+      total += weapon.dmg * (weapon.count ?? 1) * might * 1000 / (weapon.cd * haste);
+    }
+    return Math.max(1, total);
+  }
+
   /** Кулдаун с учётом Ловкости */
   private effCd(id: WeaponId): number {
     const lvl = this.levels.get(id)!;
