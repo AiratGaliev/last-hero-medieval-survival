@@ -22,7 +22,7 @@ async function calculateAngles(
   unitCount: number,
   baseAngle: number,
 ): Promise<number[]> {
-  const moduleUrl = new URL('/src/game/systems/SiegeFormation.ts', window.location.origin).href;
+  const moduleUrl = new URL('/src/game/systems/SiegeFormation.ts', page.url()).href;
   return page.evaluate(async ({ url, name, count, angle }) => {
     const formation = await import(/* @vite-ignore */ url) as FormationModule;
     return formation.calculateSiegeSpawnAngles(name, count, angle);
