@@ -124,7 +124,7 @@ export class PawnAI {
       const spot = this.nearestFreeSpot(p);
       if (spot) {
         if (Phaser.Math.Distance.Between(p.x, p.y, spot.x, spot.y) < 70) {
-          if (eco.tryStartBuild(spot.kind, p)) {
+          if (eco.tryStartBuild(spot.kind, p, spot)) {
             p.state = 'work';
             p.taskProgress = 0;
             return;
@@ -195,7 +195,7 @@ export class PawnAI {
         const afford = eco.resources.wood >= (cost.wood ?? 0) && eco.resources.ore >= (cost.ore ?? 0);
         if (afford) {
           if (Phaser.Math.Distance.Between(p.x, p.y, target.x, target.y) < 70) {
-            if (eco.tryStartBuild(target.kind, p)) {
+            if (eco.tryStartBuild(target.kind, p, target)) {
               p.state = 'work';
               p.taskProgress = 0;
             }
@@ -247,7 +247,7 @@ export class PawnAI {
         if (afford && (!builderAlive || buildersBusy >= 1)
           && Phaser.Math.Distance.Between(p.x, p.y, freeSpot.x, freeSpot.y) < 400) {
           if (Phaser.Math.Distance.Between(p.x, p.y, freeSpot.x, freeSpot.y) < 70) {
-            if (this.eco.tryStartBuild(freeSpot.kind, p)) {
+            if (this.eco.tryStartBuild(freeSpot.kind, p, freeSpot)) {
               p.state = 'work';
               p.taskProgress = 0;
               return;
@@ -289,7 +289,7 @@ export class PawnAI {
 
   /** Идти к узлу → работать → нести (общая ветка сборки/приказа). */
   private gotoNode(p: Pawn, node: ResourceNode, dtMs: number): void {
-    if (!node.alive) { node.release(p); p.workNode = null; p.state = 'idle'; return; }
+    if (!node.available) { node.release(p); p.workNode = null; p.state = 'idle'; return; }
     const d = Phaser.Math.Distance.Between(p.x, p.y, node.x, node.y);
     if (d > (node.kind === 'tree' || node.kind === 'sheep' ? RANGE_WOOD : 52)) {
       p.state = 'walk';
@@ -355,7 +355,7 @@ export class PawnAI {
     let best: ResourceNode | null = null;
     let bestScore = 0;
     for (const n of eco.nodes) {
-      if (!n.alive || (n.claimedBy && n.claimedBy !== p)) continue;
+      if (!n.available || (n.claimedBy && n.claimedBy !== p)) continue;
       if (Math.hypot(n.x - eco.castleX, n.y - eco.castleY) > 1000) continue;
       if (n.claimedBy === p) return n;
       if (eco.tune.meatDisabled && n.res === 'meat') continue;
