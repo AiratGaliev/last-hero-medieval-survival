@@ -5,9 +5,9 @@ import type { ResourceKind } from '../data';
 // ============ Ресурсный узел: дерево / овца / золотая жила (TZ §B.3) ============
 //
 // Общий класс для всех трёх источников. Узел блокируется за одной пешкой
-// (claim/release), добывается тиками (extract), на нуле исчезает. Жила —
-// единственный многоразовый источник (4 цикла × 20 руды), пульс гаснет
-// после 2-го цикла — индикатор истощения без цифр.
+// (claim/release) и добывается тиками. Деревья и овцы исчезают на нуле;
+// жила остаётся на карте истощённой и становится доступна после recharge()
+// в бесконечном режиме. Пульс гаснет после 2-го цикла (§B.3, §H.12).
 
 export type NodeKind = 'tree' | 'sheep' | 'vein';
 
@@ -49,8 +49,13 @@ export class ResourceNode {
     this.pulse = pulse ?? null;
   }
 
+  /** Можно ли начать новый цикл добычи прямо сейчас. */
+  get available(): boolean {
+    return this.alive && this.remaining > 0;
+  }
+
   claim(pawn: Phaser.GameObjects.Sprite): boolean {
-    if (!this.alive || (this.claimedBy && this.claimedBy !== pawn)) return false;
+    if (!this.available || (this.claimedBy && this.claimedBy !== pawn)) return false;
     this.claimedBy = pawn;
     return true;
   }
@@ -59,31 +64,40 @@ export class ResourceNode {
     if (this.claimedBy === pawn) this.claimedBy = null;
   }
 
-  /** Тик добычи (один цикл работы). false — узел исчерпан и исчез. */
+  /** Тик добычи одного цикла. false означает, что источник исчерпан. */
   extract(): boolean {
-    if (!this.alive) return false;
-    this.remaining--;
-    // Пульс гаснет после 2-го цикла жилы — индикатор истощения без цифр (§B.3)
+    if (!this.available) return false;
+    this.remaining = Math.max(0, this.remaining - 1);
+
     if (this.kind === 'vein') {
       this.cyclesUsed++;
+      // Сохраняем объект пульса скрытым, чтобы вернуть его при восстановлении.
       if (this.pulse && this.cyclesUsed >= 2 && this.pulse.active) {
-        this.pulse.destroy();
-        this.pulse = null;
+        this.pulse.setVisible(false);
       }
     }
+
     if (this.remaining <= 0) {
-      this.destroy();
+      if (this.kind === 'vein') {
+        // Жила остаётся на карте, но не может быть собрана до восстановления.
+        this.claimedBy = null;
+        this.sprite.setAlpha(0.48);
+        this.pulse?.setVisible(false);
+      } else {
+        this.destroy();
+      }
       return false;
     }
     return true;
   }
 
-  /** Восстановление жилы — бесконечный режим §H.12 (раз в 5 минут).
-   *  Пульс не возвращает: истощение остаётся видимым, заряды — рабочие. */
+  /** Восстановление жилы — бесконечный режим §H.12 (раз в 5 минут). */
   recharge(): void {
     if (!this.alive || this.kind !== 'vein') return;
     this.remaining = this.maxRemaining;
     this.cyclesUsed = 0;
+    this.sprite.setAlpha(1);
+    this.pulse?.setVisible(true);
   }
 
   destroy(): void {
