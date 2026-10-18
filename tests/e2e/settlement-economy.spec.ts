@@ -285,7 +285,8 @@ test('phases C-D: harvesting delivers resources and depleted veins can recharge'
     const depositedOre = economy.resources.ore - oreBefore;
 
     const maxRemaining = vein.maxRemaining;
-    for (let i = 0; i < vein.remaining; i++) vein.extract();
+    const remainingCharges = vein.remaining;
+    for (let i = 0; i < remainingCharges; i++) vein.extract();
     const veinAfterDepletion = {
       alive: vein.alive,
       remaining: vein.remaining,
@@ -392,10 +393,16 @@ test('phases E-F: construction uses the approached spot and repair costs are gua
     if (!house) throw new Error('Started house was not registered');
 
     const houseCost = woodBeforeHouse - economy.resources.wood;
+    // Не даём тестовому рану запускать дополнительные стройки во время
+    // ускоренного завершения проверяемого дома.
+    economy.resources.wood = 0;
+    economy.resources.ore = 0;
+    builder.order = null;
     builder.x = targetHouseSpot.x;
     builder.y = targetHouseSpot.y;
     builder.state = 'work';
     economy.tick(10_001, scene.time.now + 10_001);
+    builder.order = null;
     const houseFinished = house.alive && !house.underConstruction;
     const limitAfterHouse = economy.pawnLimit;
 
