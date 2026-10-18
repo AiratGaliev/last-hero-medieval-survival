@@ -16,11 +16,13 @@ async function bootWithYandexPayments(
 ): Promise<void> {
   await page.addInitScript(({ paymentMode, failConsume, catalogMode: configuredCatalogMode, pendingPurchases: configuredPendingPurchases, purchaseResponse: configuredPurchaseResponse }) => {
     const pendingReceipts = [...configuredPendingPurchases];
-    localStorage.setItem('tss-meta2', JSON.stringify({
-      matchesPlayed: 5,
-      crowns: 42,
-      purchasedSkus: [],
-    }));
+    if (!localStorage.getItem('tss-meta2')) {
+      localStorage.setItem('tss-meta2', JSON.stringify({
+        matchesPlayed: 5,
+        crowns: 42,
+        purchasedSkus: [],
+      }));
+    }
 
     const probe = window as unknown as {
       __paymentProbe: { purchaseCalls: number; consumeCalls: number };
