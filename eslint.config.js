@@ -44,6 +44,23 @@ export default tseslint.config(
     },
   },
 
+  // ---------- Playwright-диагностика с кодом в двух контекстах ----------
+  {
+    // shop-probe.mjs исполняется в Node, но колбэки page.evaluate/addInitScript
+    // сериализуются и выполняются браузером. Объявляем оба набора globals
+    // только для этого диагностического скрипта, не ослабляя lint приложения.
+    files: ['shop-probe.mjs'],
+    languageOptions: {
+      globals: {
+        ...globals.node,
+        ...globals.browser,
+      },
+    },
+    rules: {
+      'no-console': 'off',
+    },
+  },
+
   // ---------- Скрипты сборки и упаковки: Node ----------
   {
     files: ['scripts/**/*.mjs', 'scripts/**/*.js', 'playwright.config.ts', 'tests/e2e/**/*.ts'],
