@@ -32,7 +32,7 @@ async function calculateAngles(
 test('pincer siege distributes a balanced squad across opposite flanks', async ({ page }) => {
   await openGame(page);
   const baseAngle = 0.73;
-  const angles = await calculateAngles(page, 'siege.profile.pincer', 10, baseAngle);
+  const angles = await calculateAngles(page, 'pincer', 10, baseAngle);
 
   expect(angles).toHaveLength(10);
   for (let index = 0; index < angles.length; index += 2) {
@@ -47,7 +47,7 @@ test('pincer siege distributes a balanced squad across opposite flanks', async (
 test('non-pincer siege profiles preserve the existing single-flank formation', async ({ page }) => {
   await openGame(page);
   const baseAngle = 1.17;
-  const angles = await calculateAngles(page, 'siege.profile.scout', 3, baseAngle);
+  const angles = await calculateAngles(page, 'single', 3, baseAngle);
 
   expect(angles).toEqual([
     baseAngle,
