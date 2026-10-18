@@ -482,7 +482,11 @@ test('phases E-F: construction uses the approached spot and repair costs are gua
     builder.workNode = null;
     economy.pawnAI.updateCivilian(builder, 16, scene.time.now);
     const houseStarted = economy.buildings.some(b => b.kind === 'house' && !existing.has(b));
-    economy.pawnAI.updateCivilian(builder, 16, scene.time.now + 16);
+    // Тики симулируются синхронно, а Phaser AnimationState продвигается
+    // отдельным игровым циклом. Повторяем AI-тик, пока анимация не активируется.
+    for (let i = 1; i <= 8; i++) {
+      economy.pawnAI.updateCivilian(builder, 16, scene.time.now + i * 16);
+    }
     const houseBuildAnimation = builder.anims.currentAnim?.key ?? null;
     const house = economy.buildings.find(b => !existing.has(b) && b.kind === 'house');
     if (!house) throw new Error('Started house was not registered');
