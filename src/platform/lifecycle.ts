@@ -26,11 +26,36 @@ const noop = (): void => {};
 
 let handlers: LifecycleHandlers = { silence: noop, unsilence: noop, pause: noop, resume: noop };
 
-/** Счётчик пауз площадки: события могут приходить чаще, чем их обрабатывают. */
+/** Источники паузы считаются раздельно, чтобы события SDK и рекламы не снимали чужую паузу. */
 let platformPaused = 0;
+let adPaused = 0;
+
+function activePauseSources(): number {
+  return platformPaused + adPaused;
+}
 
 export function setLifecycleHandlers(next: Partial<LifecycleHandlers>): void {
   handlers = { ...handlers, ...next };
+}
+
+/** Пауза звука и активной игровой сцены на время fullscreen-рекламы. */
+export function pauseForAd(): void {
+  const alreadyPaused = activePauseSources() > 0;
+  adPaused++;
+  handlers.silence();
+  if (!alreadyPaused) handlers.pause();
+}
+
+/** Снимает только рекламную паузу; пауза площадки или вкладки сохраняется. */
+export function resumeAfterAd(): void {
+  if (adPaused === 0) return;
+  adPaused--;
+  try {
+    if (activePauseSources() === 0) handlers.resume();
+  } finally {
+    // У рекламной паузы собственный источник приглушения, даже если вкладка скрыта.
+    handlers.unsilence();
+  }
 }
 
 let readySent = false;
@@ -113,15 +138,17 @@ function bindSdkEvents(): void {
   // П. 1.19.4: на это время геймплей обязан быть на паузе, а не просто
   // заглушенным — иначе игрок теряет здоровье, пока смотрит каталог.
   sdk.on('game_api_pause', () => {
+    const alreadyPaused = activePauseSources() > 0;
     platformPaused++;
     handlers.silence();
-    if (platformPaused === 1) handlers.pause();
+    if (!alreadyPaused) handlers.pause();
   });
   sdk.on('game_api_resume', () => {
     if (platformPaused === 0) return;
     platformPaused--;
-    if (platformPaused === 0) handlers.resume();
-    if (!hidden) handlers.unsilence();
+    if (activePauseSources() === 0) handlers.resume();
+    // This event owns one silence source; focus/visibility owns another.
+    handlers.unsilence();
   });
 }
 

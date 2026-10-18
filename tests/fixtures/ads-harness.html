@@ -54,13 +54,22 @@
     </script>
     <script type="module">
       import { initSdk } from '/src/platform/sdk.ts';
+      import { setLifecycleHandlers } from '/src/platform/lifecycle.ts';
       import { showInterstitial, showRewarded } from '/src/platform/ads.ts';
 
+      const lifecycle = { pauses: 0, resumes: 0, silences: 0, unsilences: 0 };
+      setLifecycleHandlers({
+        pause: () => { lifecycle.pauses += 1; },
+        resume: () => { lifecycle.resumes += 1; },
+        silence: () => { lifecycle.silences += 1; },
+        unsilence: () => { lifecycle.unsilences += 1; },
+      });
       await initSdk();
       window.__adsHarness = {
         showInterstitial,
         showRewarded,
         state: window.__adsHarnessState,
+        lifecycle,
       };
       document.getElementById('status').textContent = 'Ready';
       document.documentElement.dataset.adsReady = 'true';

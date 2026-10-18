@@ -132,6 +132,8 @@ export class GameOverScene extends Phaser.Scene {
   private gloryDoubled = false;
   /** Разовые за матч действия: исход для рекламы, вызов дня, вторичные борды. */
   private matchHandled: GameOverStats | null = null;
+  /** Не допускаем повторные запросы рекламы/рестарта при быстрых тапах. */
+  private restartPending = false;
 
   constructor() {
     super('GameOver');
@@ -154,6 +156,7 @@ export class GameOverScene extends Phaser.Scene {
       this.goldDoubled = false;
       this.gloryDoubled = false;
       this.matchHandled = null;
+      this.restartPending = false;
     }
     this.nameInput = null;
     this.saveBtn = null;
@@ -1041,12 +1044,17 @@ export class GameOverScene extends Phaser.Scene {
     this.scene.start('Game');
   };
 
-  private restart = (): void => {
+  private restart = async (): Promise<void> => {
+    if (this.restartPending) return;
+    this.restartPending = true;
     track('end_screen_action', { block: 'chronicle', action: 'rerun' });
-    // Межстраничная по §J.4: триггер — тап «ЕЩЁ РАЗ» (поражение И победа).
-    // Ошибки показа глотаются внутри ads.ts; политика частотности там же.
-    void showInterstitial({ pause: () => audio.silence(), resume: () => audio.unsilence() });
-    // Гасим возможные зависшие оверлеи (левел-ап/пауза/преемственность)
+
+    // По §J.4 межстраничная реклама должна завершиться ДО старта следующего рана.
+    // showInterstitial разрешает пропуск при недоступности рекламы/ошибке.
+    await showInterstitial({ pause: () => audio.silence(), resume: () => audio.unsilence() });
+    if (!this.scene.isActive()) return;
+
+    // Гасим возможные зависшие оверлеи только после закрытия/пропуска рекламы.
     this.scene.stop('LevelUp');
     this.scene.stop('Pause');
     this.scene.stop('Succession');

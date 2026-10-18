@@ -11,6 +11,7 @@ import { getSdk, isOnYandex, isMockMode, serverNow, type YandexSdk } from './sdk
 import { loadJson, saveJson } from '../game/storage';
 import { hasNoInterstitial, matchesPlayed } from '../game/meta';
 import { track } from './analytics';
+import { pauseForAd, resumeAfterAd } from './lifecycle';
 
 /**
  * Пауза между межстраничными показами (TZ §J.4): ≥ 120 сек свой таймер
@@ -27,16 +28,18 @@ export interface AdPause {
   resume: () => void;
 }
 
-/** Заглушка для окружений без рекламы: ни во что не вмешиваемся. */
-const NO_PAUSE: AdPause = { pause: () => {}, resume: () => {} };
+/** Default fullscreen-ad lifecycle: pause active gameplay and silence audio centrally. */
+const DEFAULT_PAUSE: AdPause = { pause: pauseForAd, resume: resumeAfterAd };
 
 /**
  * Ставит игру на паузу на время показа (п. 4.7) и гарантированно снимает
  * паузу после — в том числе если игрок закрыл ролик до конца.
  */
 async function withPaused<T>(hooks: AdPause, fn: () => Promise<T>): Promise<T> {
-  hooks.pause();
+  // A pause hook can partially change game state before throwing. Put it inside
+  // the try so resume is always attempted, even when pause itself fails.
   try {
+    hooks.pause();
     return await fn();
   } finally {
     hooks.resume();
@@ -122,7 +125,7 @@ function requestRewardedAd(sdk: YandexSdk): Promise<boolean> {
  * ≤ 6 за сессию, не после 2 поражений подряд, отключается SKU no_interstitial.
  * При отсутствии SDK, гостевом режиме или ошибке молча возвращает false.
  */
-export async function showInterstitial(hooks: AdPause = NO_PAUSE): Promise<boolean> {
+export async function showInterstitial(hooks: AdPause = DEFAULT_PAUSE): Promise<boolean> {
   if (!interstitialAllowed() || fullscreenAdInFlight) return false;
 
   const now = Date.now();
@@ -241,7 +244,7 @@ export function placementAvailable(p: AdPlacement): boolean {
 /** Показ rewarded-ролика под плейсмент с учётом лимита. */
 export async function showPlacementRewarded(
   placement: AdPlacement,
-  hooks: AdPause = NO_PAUSE,
+  hooks: AdPause = DEFAULT_PAUSE,
 ): Promise<RewardedResult> {
   if (!placementAvailable(placement)) {
     return { rewarded: false, available: false };
@@ -299,7 +302,7 @@ export function interstitialAllowed(): boolean {
  * показа; награду начисляет вызывающий код — только здесь она не выдаётся,
  * чтобы её нельзя было получить дважды на одном показе.
  */
-async function requestRewarded(hooks: AdPause = NO_PAUSE): Promise<RewardedResult> {
+async function requestRewarded(hooks: AdPause = DEFAULT_PAUSE): Promise<RewardedResult> {
   // QA-режим (?ysdk=mock): ролик «досмотрен» мгновенно — вся реестр R1–R11
   // проверяется end-to-end без Консоли (покупки в mock и так выдаются локально)
   if (isMockMode()) {
@@ -331,7 +334,7 @@ async function requestRewarded(hooks: AdPause = NO_PAUSE): Promise<RewardedResul
 }
 
 /** Prevent overlapping fullscreen ads across placements and direct callers. */
-export async function showRewarded(hooks: AdPause = NO_PAUSE): Promise<RewardedResult> {
+export async function showRewarded(hooks: AdPause = DEFAULT_PAUSE): Promise<RewardedResult> {
   if (fullscreenAdInFlight) {
     return { rewarded: false, available: false };
   }

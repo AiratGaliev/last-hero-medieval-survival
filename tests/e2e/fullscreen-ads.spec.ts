@@ -5,10 +5,12 @@ type AdCallbacks = {
   onRewarded?: () => void;
   onError?: (error: object) => void;
 };
+type AdPauseHooks = { pause: () => void; resume: () => void };
 type AdsHarness = {
-  showInterstitial: () => Promise<boolean>;
-  showRewarded: () => Promise<{ rewarded: boolean; available: boolean }>;
+  showInterstitial: (hooks?: AdPauseHooks) => Promise<boolean>;
+  showRewarded: (hooks?: AdPauseHooks) => Promise<{ rewarded: boolean; available: boolean }>;
   state: { calls: string[]; callbacks: AdCallbacks[] };
+  lifecycle: { pauses: number; resumes: number; silences: number; unsilences: number };
 };
 type HarnessWindow = Window & { __adsHarness: AdsHarness };
 
@@ -101,4 +103,63 @@ test('failed interstitial releases the fullscreen lock without consuming cooldow
   expect(result.callsBeforeClose).toEqual(['interstitial', 'interstitial']);
   expect(result.firstResult).toBe(false);
   expect(result.secondResult).toBe(true);
+});
+
+
+test('pause hooks are resumed even when a pause hook throws', async ({ page }) => {
+  await openHarness(page);
+
+  const result = await page.evaluate(async () => {
+    const harness = (window as HarnessWindow).__adsHarness;
+    let interstitialResumes = 0;
+    let rewardedResumes = 0;
+    const failingPause = (resume: () => void) => ({
+      pause: () => { throw new Error('simulated pause failure'); },
+      resume,
+    });
+
+    const interstitial = await harness.showInterstitial(failingPause(() => { interstitialResumes += 1; }));
+    const rewarded = await harness.showRewarded(failingPause(() => { rewardedResumes += 1; }));
+
+    return {
+      calls: [...harness.state.calls],
+      interstitial,
+      rewarded,
+      interstitialResumes,
+      rewardedResumes,
+    };
+  });
+
+  expect(result.calls).toEqual([]);
+  expect(result.interstitial).toBe(false);
+  expect(result.rewarded).toEqual({ rewarded: false, available: true });
+  expect(result.interstitialResumes).toBe(1);
+  expect(result.rewardedResumes).toBe(1);
+});
+
+
+test('fullscreen ads pause and resume through the lifecycle hooks by default', async ({ page }) => {
+  await openHarness(page);
+
+  const result = await page.evaluate(async () => {
+    const harness = (window as HarnessWindow).__adsHarness;
+    const rewardedPromise = harness.showRewarded();
+    const duringAd = { ...harness.lifecycle };
+
+    harness.state.callbacks[0]?.onRewarded?.();
+    harness.state.callbacks[0]?.onClose?.(true);
+    const rewarded = await rewardedPromise;
+
+    return {
+      duringAd,
+      afterAd: { ...harness.lifecycle },
+      rewarded,
+      calls: [...harness.state.calls],
+    };
+  });
+
+  expect(result.duringAd).toEqual({ pauses: 1, resumes: 0, silences: 1, unsilences: 0 });
+  expect(result.afterAd).toEqual({ pauses: 1, resumes: 1, silences: 1, unsilences: 1 });
+  expect(result.rewarded).toEqual({ rewarded: true, available: true });
+  expect(result.calls).toEqual(['rewarded']);
 });
