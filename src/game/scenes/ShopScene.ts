@@ -313,8 +313,13 @@ export class ShopScene extends Phaser.Scene {
   private async loadCatalog(): Promise<void> {
     if (this.catalogState !== 'idle') return;
     const requestId = ++this.catalogRequestId;
-    if (!isOnYandex() || (import.meta.env.DEV && isMockMode())) {
+    if (import.meta.env.DEV && (!isOnYandex() || isMockMode())) {
       this.catalogState = 'fallback';
+      if (this.scene.isActive() && this.tab === 'crowns') this.renderTab();
+      return;
+    }
+    if (!isOnYandex()) {
+      this.catalogState = 'unavailable';
       if (this.scene.isActive() && this.tab === 'crowns') this.renderTab();
       return;
     }
