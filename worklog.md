@@ -2326,3 +2326,27 @@ Stage Summary:
 - Eleven new Playwright regression scenarios were added to `tests/e2e/payments.spec.ts`; the branch CI result is pending and must be recorded before merge.
 - Local `npm run check`/Playwright has not been run for this branch. Do not treat the presence of tests as a successful test run; use GitHub Actions as the validation gate.
 - External gate remains open: confirm ELS is active; create all supported SKUs with exact IDs and product types in Yandex Games Console; verify actual catalog prices and currency artwork; run Sandbox success/cancel/interrupted-network/relaunch flows against the deployed build; verify that each consumable receipt is consumed after a durable grant while persistent entitlements remain restorable.
+
+
+---
+
+## 2026-10-18 — Фаза A: runtime-регрессии существ из `enemies/`
+
+### Аудит и исправления
+
+- Повторно сверены §A.2/§A.3 `docs/TZ.md`, `ENEMIES`, `WAVE_EVENTS`, `pickRegularKind()`, таблица `CREATURE_SHEETS`, загрузчик ресурсов, AI существ и код победы над Огром. Поиск десяти legacy enemy IDs выполнен по всем 59 исходным TypeScript/JavaScript-файлам под `src/`: совпадений нет.
+- Исправлена регистрация одноразовых анимаций: `boss-recover` больше не зациклен, а `boss-windup` циклический и не возвращается к idle посреди 900-мс телеграфа.
+- В AI включены ранее не использовавшиеся `pig-rider-atk`, `minotaur-guard`/`minotaur-atk` и `bomb-fish-atk`; частота анимации рыбы согласована с телеграфом 620 мс.
+- HP-полосы элит/босса теперь перерисовываются после перемещения, включая осадную ветку.
+- Исправлена смерть Огра: ранее `boss-dead` запускалась, но в том же вызове спрайт удалялся из сцены. Теперь тело отключается, объект временно удаляется из группы, а анимация может доиграть 10 кадров; в обычном режиме сценарий победы ждёт её завершения. Для мёртвого босса добавлен ранний выход из AI, чтобы спрайт не двигался после отключения тела.
+- Исправлен призыв свиты Огра при заполненном лимите толпы: после удаления дальнего обычного врага спавн гоблина выполняется повторно, а не теряется освободившийся слот.
+- Добавлен `tests/e2e/enemy-pool.spec.ts`: runtime-проверка всех 10 texture/animation keys, проектилей/FX/аватаров, сохранности ассетов монаха, repeat-mode фазовых анимаций, геометрии enemy defs, расписания волн и первого spawn в `GameScene`; отдельный сценарий проверяет жизненный цикл анимации смерти босса.
+
+### Проверка и статус
+
+- Поиск legacy идентификаторов выполнен по 59 исходным `.ts/.tsx/.js` файлам под `src/`; совпадений нет.
+- Актуальная ревизия для сверки: [`24b81ad8af6a45cee749a8fa030724cd5294947b`](https://github.com/AiratGaliev/last-hero-medieval-survival/commit/24b81ad8af6a45cee749a8fa030724cd5294947b).
+- GitHub Actions [run #39150126362](https://github.com/AiratGaliev/last-hero-medieval-survival/actions/runs/39150126362) завершился с итогом `success`. Все этапы пройдены: `typecheck/lint`, production build, сборка/валидация архива Yandex Games и browser smoke tests.
+- Важное ограничение результата E2E: Playwright запустил 90 тестов; итоговый отчёт — `89 passed`, `1 flaky`. Проверка первого спавна и смерти Огра на Chromium desktop упала на первой попытке и retry #1, прошла только на retry #2; мобильный вариант прошёл с первой попытки. Поэтому CI имеет итоговый статус `success`, но lifecycle-сценарий нельзя считать детерминированным или окончательно принятым. Runtime-тест ассетов и тест расписания волн прошли на desktop/mobile с первой попытки.
+- Три ручных гейта всё ещё открыты: визуальная приёмка стоп/коллизий/ориентации/телеграфов на mobile; полноценный 15-минутный матч на desktop и mobile с измерением бюджета кадра; полный игровой цикл лечения героя-монаха. Эти пункты не покрываются текущим CI.
+- Следующее действие по Phase A: устранить причину flaky в `tests/e2e/enemy-pool.spec.ts`, добиться прохождения сценария смерти Огра с первой попытки, затем повторить полный CI и только после этого закрывать E2E-гейт.

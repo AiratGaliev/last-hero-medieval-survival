@@ -62,6 +62,9 @@ export interface WeaponStat {
 
 // ============ Основная игровая сцена ============
 
+/** Длина ogre-boss/dead: 10 кадров при 8 FPS (CREATURE_SHEETS в BootScene). */
+const BOSS_DEATH_ANIMATION_MS = 1_250;
+
 export class GameScene extends Phaser.Scene {
   private player!: Player;
   private keys!: Keys;
@@ -1912,7 +1915,7 @@ private ordersUnlocked(): boolean {
 
   /** Фаза 2 босса: HP < 50% → идёт на замок (§E.6). */
   private bossPhaseCheck(): void {
-    if (!this.boss?.active) return;
+    if (!this.boss?.active || this.boss.dead) return;
     if (this.boss.aiState !== 'bossPhase2' && this.boss.hp < this.boss.maxHp * 0.5 && !this.boss.siege) {
       this.boss.siege = true;
       this.boss.buildingTarget = this.settlement.castle;
@@ -1928,13 +1931,32 @@ private ordersUnlocked(): boolean {
 
   private onEnemyDeath(e: Enemy, src?: WeaponId, byPawn = false): void {
     if (!e.active) return;
-    // Огр перед удалением проигрывает анимацию смерти (§A.2: `dead` 10 кадров).
-    // Раньше лист грузился, но не игрался ни разу — финальный босс исчезал
-    // мгновенно, и самый весомый момент матча не читался как победа.
-    if (e.def.isBoss) this.bossDeathSequence(e);
-    // Убираем из мира СРАЗУ: цепные взрывы не должны повторно бить погибающего
+    // Смерть босса визуально доигрывается вне группы/физики; обычные враги
+    // по-прежнему уничтожаются немедленно, в том числе при цепных взрывах.
+    const bossDeathDelay = e.def.isBoss && this.bossDeathSequence(e)
+      ? BOSS_DEATH_ANIMATION_MS
+      : 0;
     const x = e.x, y = e.y;
-    this.enemyGroup.remove(e, true, true);
+    if (bossDeathDelay > 0) {
+      this.enemyGroup.remove(e, false, false);
+      // Завершение связано с фактической одноразовой анимацией, а не только
+      // wall-clock таймером. Watchdog оставляет защиту на случай потерянного
+      // animationcomplete в throttled/background вкладке.
+      let deathFinished = false;
+      const finishBossDeath = (): void => {
+        if (deathFinished) return;
+        deathFinished = true;
+        if (e.active) e.destroy();
+        if (e === this.boss && !this.mods.endless && !this.gameEnded) {
+          this.victoryPending = false;
+          this.victory();
+        }
+      };
+      e.once('animationcomplete-boss-dead', finishBossDeath);
+      this.time.delayedCall(BOSS_DEATH_ANIMATION_MS + 500, finishBossDeath);
+    } else {
+      this.enemyGroup.remove(e, true, true);
+    }
 
     this.kills++;
     // Кодекс (§H.10): счётчик встречи по видам — уходит в applyRunToMeta
@@ -2039,6 +2061,13 @@ private ordersUnlocked(): boolean {
             );
           });
         }
+      } else if (bossDeathDelay > 0) {
+        // Боевая логика останавливается до фактического animationcomplete;
+        // finishBossDeath() запустит штатный сценарий победы один раз.
+        this.victoryPending = true;
+        this.spawner.stopped = true;
+        this.player.setVelocity(0, 0);
+        this.projectiles.clear();
       } else {
         this.victory();
       }
@@ -2098,12 +2127,13 @@ private ordersUnlocked(): boolean {
  * Спрайт-тень остаётся на месте и доигрывает цикл; логика босса при этом
  * уже отключена (`deactivateBossBody`), поэтому на анимацию это не влияет.
  */
-private bossDeathSequence(e: Enemy): void {
+private bossDeathSequence(e: Enemy): boolean {
     e.deactivateBossBody();
-    if (!this.anims.exists('boss-dead')) return;
+    if (!this.anims.exists('boss-dead')) return false;
     e.play('boss-dead', true);
     e.setFlipX(false);
     this.hitstop(140);
+    return true;
   }
 
   /** Убийство врага гарнизоном: KILL растёт, комбо игрока — нет (§B.7.1). */
@@ -3227,8 +3257,11 @@ private bossDeathSequence(e: Enemy): void {
         let summoned = 0;
         for (let i = 0; i < 6; i++) {
           const a = (i / 6) * Math.PI * 2 + Math.random();
-          const ok = this.spawnEnemy('goblin', x + Math.cos(a) * 170, y + Math.sin(a) * 170);
-          if (!ok && !this.makeRoomForSummon()) continue;
+          const gx = x + Math.cos(a) * 170;
+          const gy = y + Math.sin(a) * 170;
+          let ok = this.spawnEnemy('goblin', gx, gy);
+          // Освободить слот недостаточно: после eviction нужно повторить сам spawn.
+          if (!ok && this.makeRoomForSummon()) ok = this.spawnEnemy('goblin', gx, gy);
           if (ok) summoned++;
         }
         if (summoned > 0) this.hud.announce(t('game.bossSummon'), '#ff8866');

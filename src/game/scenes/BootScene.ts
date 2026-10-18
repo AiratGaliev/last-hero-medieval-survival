@@ -9,8 +9,8 @@ import { t } from '../../i18n';
 /**
  * Таблица спрайт-листов существ (TZ §C.2). Порядок кадров проверен по
  * размерам листов; rate подобран под характер движения.
- * anim: idle/run — циклы, atk/shoot/windup/dead — однократные,
- * guard/recover — циклы на время состояния.
+ * anim: idle/run/guard/windup — циклы состояния, atk/shoot/dead/recover —
+ * однократные анимации действия.
  */
 interface CreatureSheet {
   kind: string;   // = EnemyKind, префикс анимаций
@@ -49,7 +49,7 @@ export const CREATURE_SHEETS: CreatureSheet[] = [
     ['idle', 'idle', 8, 7], ['run', 'run', 6, 12],
     // Подрыв «в упор» (§A.5): рыба подрывается рядом с пешкой. Штатных
     // idle/run мало — используем собственный bomb-fish-shoot (7 кадров).
-    ['atk', 'shoot', 7, 12],
+    ['atk', 'shoot', 7, 10],
   ] },
   { kind: 'bear', dir: 'caveborn/bear', base: 'bear', frameW: 256, sheets: [
     ['idle', 'idle', 8, 6], ['run', 'run', 5, 10], ['atk', 'attack', 9, 12],
@@ -445,7 +445,7 @@ export class BootScene extends Phaser.Scene {
     for (const c of CREATURE_SHEETS) {
       for (const [anim, , frames, rate] of c.sheets) {
         const key = `${c.kind}-${anim}`;
-        if (anim === 'atk' || anim === 'shoot' || anim === 'windup' || anim === 'dead') {
+        if (anim === 'atk' || anim === 'shoot' || anim === 'dead' || anim === 'recover') {
           this.once(key, key, frames, rate);
         } else {
           this.sheet(key, key, frames, rate);
