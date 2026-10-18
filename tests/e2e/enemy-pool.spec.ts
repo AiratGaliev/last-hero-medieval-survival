@@ -213,7 +213,7 @@ test('gameplay spawns the opening goblin and keeps Ogre death animation alive to
     // to assert the real spawn callback without waiting for a player interaction.
     scene.hintOverlayPaused = false;
     scene.spawner.stopped = false;
-    scene.spawner.update(1.21);
+    scene.spawner.update(2.1);
     return scene.enemyGroup.getChildren().filter((enemy) => enemy.active).map((enemy) => enemy.kind);
   });
   expect(opening).toContain('goblin');
