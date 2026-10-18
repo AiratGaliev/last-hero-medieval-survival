@@ -116,6 +116,11 @@ mercenary/boss) и ввести **10 существ** из `src/assets/tiny-swor
 `taskmasters`, поле `midboss` в `GameScene`. Прогрессия сложности —
 состав волн + минутное масштабирование (TZ §C), цветовых тиров у существ нет.
 
+- [x] Инвентаризация исходников: `EnemyKind` содержит 10 текущих типов;
+      `CREATURE_SHEETS` зарегистрирован в `BootScene`, `WAVE_EVENTS` и
+      `pickRegularKind()` находятся в `data.ts`. Это подтверждает структуру
+      кода, но не приёмку 15-минутного расписания, анимаций, баланса или FPS.
+
 **Гейт A:**
 - [ ] `EnemyKind` содержит только `goblin`, `thief`, `gnoll`, `skull`,
       `shaman`, `pig-rider`, `bomb-fish`, `bear`, `minotaur`, `boss`
@@ -160,11 +165,12 @@ mercenary/boss) и ввести **10 существ** из `src/assets/tiny-swor
       `target: {x,y} | null`, `carrying: ResourceKind | null`,
       `taskProgress: number`, `bodyRadius: 18`, глубина через
       `DEPTH.ENTITY_BASE + y`
-- [x] `src/game/systems/Economy.ts` — конструктор `(scene, player)`; методы
-      `spawnInitial()`, `tick(dt)`, поля `resources`, события `change`, `built`
-- [x] `src/game/systems/PawnAI.ts` — скелет выбора задачи без движения
-      (движение — Фаза D): каркас под состояния §B.2 TZ. Ветви поведения
-      разведены: `civilianAI()` и `combatAI()`, выбор по `PawnKind`
+- [x] `src/game/systems/Economy.ts` — конструктор `(scene, opts: EconomyOpts)`,
+      ресурсный склад, список пешек/узлов, методы работы с ресурсами,
+      стройками, ремонтом, наймом и событиями изменения состояния.
+- [x] `src/game/systems/PawnAI.ts` — реализована отдельная система AI пешек
+      с выбором задач/состояний, carry/work и боевыми ветвями; полнота всех
+      приоритетов §B.6 и таймингов остаётся предметом runtime-гейтов.
 - [x] `src/game/data.ts` — `PawnKind` (`collector`/`builder`/`repairer`/`fighter`/
       `healer`), `PawnState` (`idle`/`walk`/`work`/`carry`/`flee`/`fight`/`heal`/
       `wounded`/`cooldown`), `PawnWeapon` (`sword`/`lance`/`bow`/`staff`),
@@ -209,21 +215,21 @@ mercenary/boss) и ввести **10 существ** из `src/assets/tiny-swor
 Ключ `gold-stone-6` **занят** как пикап сокровищ (`treasure`/`fx-treasure`) —
 не переиспользовать для жил.
 
-- [x] `src/game/systems/Economy.ts` — `RESOURCES` (§B.3 TZ) + список `RESOURCE_NODES`:
-      **10** золотых жил (диапазон 8–12 остаётся настройкой ежедневного вызова
-      §H.8); деревья/овцы читаются из существующих спавнов `buildWorld()`
+- [x] `src/game/systems/Economy.ts` — ресурсный склад и реестр `ResourceNode`
+      через `registerNode()` / `freeNode()`; узлы дерева, овец и руды связаны
+      с экономикой. Отдельного списка `RESOURCE_NODES` в коде нет.
 - [ ] `src/game/scenes/BootScene.ts` — загрузить `gold-vein-{1..5}` и
       анимации `gold-vein-pulse-{1..5}` (по 8 кадров каждая)
 - [x] `src/game/entities/ResourceNode.ts` (новый) — объект узла: `kind`,
       `remaining`, `claim()` / `release()`, `extract(n)`; по нулю — `destroy()`
       (скрывает спрайт, освобождает место). Общий класс и для жил, и для
       деревьев/овец (Фаза D)
-- [ ] `src/game/systems/Economy.ts` — `spawnResources()`: 10 жил в случайных
-      местах через существующие `randPos()` / `canPlace()` (не ближе 200 px
-      к замку), рандомный выбор варианта `{1..5}`
-- [ ] `src/game/scenes/GameScene.ts` — `economy.spawnResources()` в `buildWorld()`;
-      подготовить перехват существующих циклов спавна деревьев (строка ~315)
-      и овец (~430), чтобы в Фазе D они создавали `ResourceNode`
+- [x] `src/game/scenes/GameScene.ts` — `buildWorld()` создаёт/регистрирует
+      ресурсные узлы через API `Economy`; отдельного метода
+      `Economy.spawnResources()` из старого плана в коде нет.
+- [x] `src/game/scenes/GameScene.ts` — создание узлов включено в
+      `buildWorld()`; узлы передаются в `Economy.registerNode()`. Количество,
+      позиции, наложения и полный игровой цикл остаются незакрытыми в gate C.
 - [ ] Жилы — `Phaser.GameObjects.Sprite`, **не** Arcade-спрайты: не двигаются,
       не участвуют в физике/коллизиях
 
@@ -312,13 +318,14 @@ emit `change`) → `cooldown` (0.5 сек) → `walk`.
 Пятно стройки — 192×208 px (по ширине под казармы, по высоте под монастырь,
 чтобы здания не стояли внахлёст).
 
-- [ ] `src/game/scenes/BootScene.ts` — загрузить `barracks` ←
-      `buildings/blue/barracks.png`
-- [ ] `src/game/data.ts` — `BUILDING_PLANS.house = { cost: { wood: 30 },
+- [x] `src/game/scenes/BootScene.ts` — ключи `barracks` и `archery` загружаются
+      из `buildings/blue/`; спрайт-листы лучника и монаха также зарегистрированы.
+      Размеры и фактическую отрисовку ассетов всё ещё нужно принять в runtime.
+- [x] `src/game/data.ts` — `BUILDING_PLANS.house = { cost: { wood: 30 },
       time: 10, hp: 150, sprites: ['house1','house2','house3'] }`
-- [ ] `src/game/data.ts` — `BUILDING_PLANS.barracks = { cost: { wood: 40,
+- [x] `src/game/data.ts` — `BUILDING_PLANS.barracks = { cost: { wood: 40,
       ore: 15 }, time: 20, hp: 250 }` — цена снижена с 40+30 руды (TZ §F.3)
-- [ ] `src/game/systems/Economy.ts` — `BUILD_SPOTS: [{kind, x, y}, …]` (10 пятен
+- [x] `src/game/systems/Economy.ts` — `BUILD_SPOTS: [{kind, x, y}, …]` (10 пятен
       вокруг замка: 6 под `house`, 4 под крупные здания — по одному
       `barracks`/`tower`/`monastery`/`archery`), `canPlace` по типу здания
       на 192×208, `tryStartBuild(pawn, spot)`, `spend(cost)` в момент старта
@@ -396,13 +403,14 @@ emit `change`) → `cooldown` (0.5 сек) → `walk`.
 ⚠️ Yandex Games — **основной** канал с мобильным трафиком. Без лонг-пресса
 приказная система на тач была бы мертва: там нет `Shift`.
 
-- [ ] `src/game/scenes/GameScene.ts` — `pointerdown` с модификатором `Shift` **или**
-      удержание 500 мс без смещения → `economy.orderPawn(pawn, order)`
+- [x] `src/game/scenes/GameScene.ts` — обработчик Shift и удержания pointer
+      открывает радиальное меню приказов; выбор записывает `Pawn.order` и
+      `orderTarget`. Touch-геометрию, смещения и регрессии нужно проверить в gate G.
 - [ ] `src/game/scenes/GameScene.ts` — визуал лонг-пресса: кольцо заполнения под
       пальцем/курсором; таймер отменяется при смещении > 12 px или отпускании
-- [ ] `src/game/systems/Economy.ts` — `orderPawn(pawn, order)`: меняет
-      `pawn.currentOrder`; приказ **не перебивает carry-фазу** (вступает в силу
-      после сдачи добычи на склад)
+- [x] `src/game/scenes/GameScene.ts` / `PawnAI.ts` — приказы хранятся в
+      `Pawn.order`; carry-фаза имеет приоритет и AI применяет приказ после сдачи
+      добычи. `Economy.orderPawn()` — устаревшее имя, такого метода нет.
 - [x] `src/game/systems/OrderMenu.ts` (новый, или в существующий `Ui.ts`) —
       радиальное меню: 2 активные кнопки по кругу + 2 серые заготовки,
       центральный крестик «закрыть»
@@ -518,7 +526,7 @@ UI, а ресурсные пикапы того же ассета Tiny Swords ч
 (8/6/4 кадра). Оба уже лежат в ассете; в BootScene ключи с префиксом `pawn-`
 не заведены — добавить.
 
-- [ ] `src/game/constants.ts` — `AGGRO = { HERO: 600, NPC: 900, PANIC: 220 }`,
+- [x] `src/game/constants.ts` — `AGGRO = { HERO: 600, NPC: 900, PANIC: 220 }`,
       `GARRISON = { RALLY: 700, LEASH: 900, INTERCEPT: 260, TICK_MS: 150,
       PATROL_SWAP: [6000, 10000] }`, `TAUNT = { RADIUS: 150, SHARE: 0.5 }`,
       `RETREAT_HP = 0.35`, `KITE = { NEAR: 180, STEP: 80, MAX_LEASH: 420 }`,
@@ -551,13 +559,13 @@ UI, а ресурсные пикапы того же ассета Tiny Swords ч
       состоянии `fight` и в 150 px от здания, которое бьёт осада, — перехватывает
       50% урона по этому зданию. Визуал: щит-контур + индикатор «−50%». Против
       босса и вне приказа **ДЕРЖАТЬ** — выключен
-- [ ] `src/game/systems/Combat.ts` — **атрибуция убийств**: `Pawn` убил врага →
-      счёт `KILL` растёт, но `playerCombo` **не** растёт, XP-кристалл выпадает
-      как обычный. Событие `ally_kill` (§K.2)
-- [x] `src/game/systems/Economy.ts` — `hireGarrison(building, weapon)`,
-      `garrisonLimit` (§B.2), таймер найма 8–10 сек по таблице §B.9.1;
-      **это расход `resources`, а не золота матча** — тот тратится только на
-      преемственность (§F.7)
+- [x] `src/game/scenes/GameScene.ts` / `Settlement.ts` — боевые действия
+      гарнизона встроены в существующие боевые callbacks; отдельного
+      `src/game/systems/Combat.ts` в проекте нет. Атрибуцию KILL/комбо/XP
+      следует подтвердить runtime-гейтом J.
+- [x] `src/game/systems/Economy.ts` — метод `hire(weapon, building)`, лимиты
+      гарнизона и таймер найма; это расход экономических ресурсов, а не золота
+      матча. Полнота цен/доступности проверяется в gate J/M.
 - [ ] Кнопка **«НАНЯТЬ»** на здании (`Building`): видна, если лимит не исчерпан
       и хватает ресурсов; нажатие списывает ресурсы сразу и запускает таймер
       найма. Без казарм кнопки нет. Событие `garrison_hired` (§K.2)
@@ -642,10 +650,10 @@ UI, а ресурсные пикапы того же ассета Tiny Swords ч
 - [ ] `src/game/systems/Projectiles.ts` — `fireArrowPool`: `arrow.png` + частица
       `fire-01.png` (8 кадров 64×64) летят вместе. `setTint` **не применять** —
       `arrow.png` содержит 4 цвета, окрашивание даёт грязный результат
-- [x] `src/game/entities/Building.ts` — состояние `burning`: `dynamite.png`
-      (6 кадров 64×64) на корпусе + частицы `fire-01`; **3 HP за 6 сек**; гаснет
-      при обнулении или разрушении. ⚠️ Горение **входит в тот же потолок осады**
-      и не суммируется сверх него
+- [x] `src/game/entities/Building.ts` — реализованы состояние горения/DoT:
+      ключ `barrel` (`barrel-burn`) на корпусе, `fx-fire` для FX, 3 HP за 6 сек;
+      урон проходит через `Settlement` и потолок осады. Runtime-видимость/баланс
+      всё ещё открыты в gate K.
 - [ ] `src/game/scenes/BootScene.ts` — загрузить `dynamite`
       ← `terrain/resources/tools/dynamite.png`, анимации `fire-01` и `fire-arrow-trail`
 - [x] `src/game/data.ts` / `constants.ts` — события `{ t, type: 'siege' }` в
@@ -655,12 +663,10 @@ UI, а ресурсные пикапы того же ассета Tiny Swords ч
       **`SIEGE_WOUND_CAP = [1, 1, 2, 2, 3]`** (по профилям осад §E.4.3) —
       ⚠️ вместо прежнего `MAX_PAWN_WOUNDED: 1`, который делал переполнение
       обители недостижимым (§G.4)
-- [x] `src/game/scenes/GameScene.ts` — `checkDefeat()` рядом с существующим
-      `confirmDefeat()` (строка ~845); **триггеры** поражения: замок разрушен
-      → `gameOver(false)` с `loseReason: 'castle'`; вымирание поселения →
-      `loseReason: 'population'`. ⚠️ Условие вымирания **тройное и с задержкой**
-      (§E.3): 0 пешек **И** 0 домов **И** `resources.wood < 30`, проверка
-      **раз в 60 сек** + экран 3 сек перед `GameOverScene`
+- [x] `src/game/scenes/GameScene.ts` / `Settlement.ts` — `confirmDefeat()`
+      обрабатывает смертельный удар героя, а `Settlement` считает разрушение
+      замка и истощение населения. Метода `GameScene.checkDefeat()` нет; точное
+      тройное условие/60-секундный тик/3-секундное окно остаются runtime-гейтами.
 - [ ] `src/game/scenes/GameScene.ts` — анонс за 5 сек «⚠ ОСАДА ИДЁТ» +
       метка-стрелка от врагов к базе на 3 сек
 - [x] `src/game/scenes/GameScene.ts` — фаза 2 босса при HP < 50%: целью
@@ -934,10 +940,10 @@ UI, а ресурсные пикапы того же ассета Tiny Swords ч
 `PawnKind = 'fighter'` / `'healer'` из фазы J с полем `canBecomeHero()`. Отдельный
 класс означал бы двух сущностей с одинаковыми спрайтами и двумя наборами HP.
 
-- [x] `src/game/systems/Succession.ts` (**новый**) — `trySucceed()`: есть ли
-      здание-источник воина (`barracks | archery | monastery`); поиск живого
-      воина; расчёт цены по `successionsDone`; эскалация (§F.7); счётчик смен
-      в пределах матча
+- [x] `src/game/systems/Succession.ts` — система проверяет здания-источники,
+      живого воина, варианты преемника и цену/эскалацию. Название `trySucceed()`
+      в старом плане не соответствует текущему API; автоматическое и платное
+      переключение, сохранение времени и возврат из рекламы остаются gate N.
 - [x] `src/game/entities/Pawn.ts` — `canBecomeHero()` на `fighter`/`healer`
       (фаза J), превращение в `Player`: спрайт, HP, статы — от `HEROES[id]`,
       а не от `FIGHTERS[weapon]`. Пешка выпадает из `Economy.garrison`, чтобы
@@ -1008,17 +1014,20 @@ UI, а ресурсные пикапы того же ассета Tiny Swords ч
 ⚠️ Правило, которое нельзя нарушать: **ускорение всегда необязательно.**
 Никаких принудительных модалок, никаких блокировок геймплея.
 
-- [x] `src/game/systems/Speedup.ts` (**новый**) — `buyRepairSpeedup()` (30 золота
-      кошелька), `buyHealSpeedup()` (45 золота кошелька); лимит рекламы 1 каждого
-      вида за матч. ⚠️ Ускорение лечения выписывает **и** раненых в обители, **и**
-      всех `bleeding` у ворот — иначе «окно для реакции» §G.3 не работает
+- [x] `src/game/systems/Speedup.ts` — ускорения доступны через
+      `buyWithToken(kind)`, `buyWithGold(kind)` и `buyWithAd(kind)`; лечение
+      проходит по слотам монастырей и спасает `bleeding` у ворот. Имена
+      `buyRepairSpeedup()` / `buyHealSpeedup()` из старого плана не используются.
 - [x] `src/game/shop.ts` — **добавить `spendGold(amount): BuyResult`**.
       `depositGold()` (строка 98) вызывается только в конце матча, поэтому
       кошелёк **не растёт во время игры**. `buyUpgrade()` (строка 111) привязан
       к `SHOP_UPGRADES` и не переиспользуем. Списание атомарно:
       `loadShop()` → проверка баланса → `saveShop()`, иначе двойной клик
       спишет дважды
-- [ ] `src/game/entities/Monastery.ts` — `healAllInstantly()` для ускорения лечения
+- [x] `src/game/systems/Speedup.ts` — мгновенное лечение реализовано в
+      `apply('heal')`: занятые слоты лечатся/освобождаются и истекающие кровью
+      пешки спасаются. Отдельных `src/game/entities/Monastery.ts` и
+      `healAllInstantly()` в коде нет.
 - [x] `src/game/systems/Economy.ts` — `finishRepairInstant()` для ускорения ремонта
 - [x] `src/game/scenes/GameScene.ts` — показывать баланс кошелька в HUD матча
       (сейчас виден только в меню, `MenuScene.ts:284`)
@@ -1054,10 +1063,13 @@ UI, а ресурсные пикапы того же ассета Tiny Swords ч
 Причина в §D.3: инструментировать задним числом дороже, чем иметь шину с первого
 дня.
 
-- [x] `src/game/systems/analytics.ts` (**новый**) — `track(event, params?)`;
-      no-op вне YG (dev-сборка пишет в console-таблицу), debounce,
-      очередь при офлайне; dev-оверлей `?debug` с живым логом
-- [x] **T0** — `session_start` (с `sessionIdx`), `run_start` (с сидом матча §C.2)
+- [x] `src/platform/analytics.ts` — шина `track(event, params?)`, `sessionIdx`,
+      in-memory буфер и сохранение последних 50 ранов локально. `main.ts` вызывает
+      `initAnalytics({ dev })` без `ymId`, поэтому доставку в Metrica по коду
+      подтвердить нельзя; отдельного live overlay `?debug` в UI не найдено.
+- [x] **T0** — `session_start` создаётся с `sessionIdx`; `run_start` отправляется
+      при старте рана. Параметры `hero` и `difficulty` передаются явно; сид
+      матча в параметрах события не найден и остаётся незакрытым требованием.
 - [x] **T0** — `first_house`, **`first_barracks`**, `first_order_used`
 - [ ] **T0** — A/B-флаги читаются из `MetaState.flags` (то же сохранение), чтобы
       разбиение переживало смену устройства (§K.4)
@@ -1092,12 +1104,13 @@ UI, а ресурсные пикапы того же ассета Tiny Swords ч
 ощущаются «сочными» (§H.13, §I). Это не отдельная игра в конце — триггеры
 подсказок навешиваются вместе с механиками, а P собирает их в единый движок.
 
-- [x] `src/game/systems/Hints.ts` (**новый**) — движок §I.1: очередь с
-      приоритетом (угроза > возможность > знакомство), одноразовые флаги
-      `hint.{id}.shown` в облаке + локальный фолбэк, форматы `banner`/`anchor`/
-      `overlay`, настройка «Обучение: вкл/выкл»
-- [x] `src/game/data.ts` — `HINTS[]`, `FTUE_MATCH_GATE` (§I.3), `ftueSoftStart`
-      (плотность −20% первые 3 минуты первого матча)
+- [x] `src/game/systems/Hints.ts` — реализованы 8 ID подсказок, одноразовые
+      локальные флаги, cooldown 20 секунд и верхний banner с закрытием кликом.
+      Приоритетная очередь, `anchor`/`overlay`, облачные флаги и связанная
+      настройка обучения из §I.1 отсутствуют; см. открытые задачи ниже.
+- [ ] `src/game/data.ts` — полный каталог `HINTS[]` и `FTUE_MATCH_GATE` не найден.
+      `ftueSoftStart` реализован отдельно и подключён к Spawner: первые 3 минуты
+      первого матча плотность волн снижена на 20%.
 - [ ] ⚠️ **Ограничения подсказок** (§I.1): не чаще одной за **20 секунд**, скип
       кликом, полный набор первой сессии умещается в **первые 6 минут** матча.
       Отдельный tutorial-уровень **не** создаётся — подсказки поверх обычного матча
@@ -1114,6 +1127,9 @@ UI, а ресурсные пикапы того же ассета Tiny Swords ч
       тряску и time-freeze (кроме п. 9/10)
 - [ ] End-экран: хроника (3–6 строк) + near-miss + ≤2 крючка возврата; кнопка
       «ЕЩЁ РАЗ» крупнее всех остальных
+
+- [x] `ftueSoftStart` действует на первый матч: GameScene передаёт флаг в
+      Spawner, где он снижает плотность волн в первые 3 минуты.
 
 **Гейт P:**
 - [ ] Сценарий §I.2 воспроизводится по шагам в первом матче
@@ -1247,8 +1263,10 @@ UI, а ресурсные пикапы того же ассета Tiny Swords ч
       гарнизона, «Дар лесника» даёт **время**, а не ресурс (§J.2)
 - [x] `src/game/scenes/ShopScene.ts` — вкладки: лавка / скины / пропуск / кроны;
       ⚠️ **витрина крон скрыта до 5-го матча** (§J.6.4)
-- [ ] SKU заведены в консоли (≤500), иконки/описания RU+EN; название и иконка
-      портальной валюты в UI — **только из данных SDK** (1.13.2)
+- [ ] SKU/описания/иконки в консоли Яндекс Игр и ЕЛС требуют внешней проверки.
+      SDK-тип поддерживает `getCatalog()`, но `ShopScene` не запрашивает/не
+      отображает данные каталога; UI использует локальные SKU. Цены и иконки
+      портальной валюты из SDK по §J.6.1/1.13.2 не подтверждены.
 - [ ] Событие `iap_consume_fail` → алерт; ненулевое значение блокирует модерацию
 - [ ] Анти-паттерн §J.9: витрина не чаще 1 раза за сессию, никогда — на
       `SuccessionScene`
