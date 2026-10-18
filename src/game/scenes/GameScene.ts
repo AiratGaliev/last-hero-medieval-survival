@@ -1939,9 +1939,21 @@ private ordersUnlocked(): boolean {
     const x = e.x, y = e.y;
     if (bossDeathDelay > 0) {
       this.enemyGroup.remove(e, false, false);
-      this.time.delayedCall(bossDeathDelay, () => {
+      // Завершение связано с фактической одноразовой анимацией, а не только
+      // wall-clock таймером. Watchdog оставляет защиту на случай потерянного
+      // animationcomplete в throttled/background вкладке.
+      let deathFinished = false;
+      const finishBossDeath = (): void => {
+        if (deathFinished) return;
+        deathFinished = true;
         if (e.active) e.destroy();
-      });
+        if (e === this.boss && !this.mods.endless && !this.gameEnded) {
+          this.victoryPending = false;
+          this.victory();
+        }
+      };
+      e.once('animationcomplete-boss-dead', finishBossDeath);
+      this.time.delayedCall(BOSS_DEATH_ANIMATION_MS + 500, finishBossDeath);
     } else {
       this.enemyGroup.remove(e, true, true);
     }
@@ -2050,18 +2062,12 @@ private ordersUnlocked(): boolean {
           });
         }
       } else if (bossDeathDelay > 0) {
-        // Останавливаем боевую логику во время решающей анимации, затем запускаем
-        // штатный сценарий победы. Флаг снимается перед victory(), поскольку
-        // сам метод использует его как защиту от повторного старта.
+        // Боевая логика останавливается до фактического animationcomplete;
+        // finishBossDeath() запустит штатный сценарий победы один раз.
         this.victoryPending = true;
         this.spawner.stopped = true;
         this.player.setVelocity(0, 0);
         this.projectiles.clear();
-        this.time.delayedCall(bossDeathDelay, () => {
-          if (this.gameEnded) return;
-          this.victoryPending = false;
-          this.victory();
-        });
       } else {
         this.victory();
       }
