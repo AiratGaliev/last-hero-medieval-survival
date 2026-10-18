@@ -1954,7 +1954,10 @@ private ordersUnlocked(): boolean {
           this.victory();
         }
       };
-      e.once('animationcomplete-boss-dead', finishBossDeath);
+      // Use the generic animation completion event, then filter the exact one-shot clip.
+      e.once('animationcomplete', (anim: Phaser.Animations.Animation) => {
+        if (anim.key === 'boss-dead') finishBossDeath();
+      });
       this.time.delayedCall(BOSS_DEATH_ANIMATION_MS + 500, finishBossDeath);
     } else {
       this.enemyGroup.remove(e, true, true);

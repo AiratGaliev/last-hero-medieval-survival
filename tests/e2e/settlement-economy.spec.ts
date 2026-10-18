@@ -220,7 +220,7 @@ test('phases C-D: harvesting delivers resources and depleted veins can recharge'
       veins.slice(i + 1).map(other => Math.hypot(node.x - other.x, node.y - other.y))));
     const veinSprites = veins.map(node => ({
       type: node.sprite.type,
-      hasPhysicsBody: node.sprite.body !== undefined,
+      hasPhysicsBody: node.sprite.body != null,
     }));
     if (!collector || !blocker || !tree || !sheep || !vein) throw new Error('Initial settlement nodes or collectors are missing');
 
@@ -316,14 +316,6 @@ test('phases C-D: harvesting delivers resources and depleted veins can recharge'
     economy.pawnAI.updateCivilian(collector, 1, scene.time.now + 20_047);
     const carriedOre = collector.carrying;
     const oreAmount = collector.carriedAmount;
-    const oreDebug = {
-      nodeRes: vein.res, nodeKind: vein.kind, nodeRemaining: vein.remaining, nodeAvailable: vein.available,
-      claimedByCollector: vein.claimedBy === collector,
-      claimedByOther: vein.claimedBy !== null && vein.claimedBy !== collector,
-      progressAfterThreshold: collector.taskProgress,
-      workNodeKindAfterThreshold: collector.workNode && 'kind' in collector.workNode ? collector.workNode.kind : null,
-      stateAfterThreshold: collector.state, oreStored: economy.resources.ore,
-    };
     collector.x = economy.castleX;
     collector.y = economy.castleY;
     collector.cooldown = 0;
@@ -377,7 +369,6 @@ test('phases C-D: harvesting delivers resources and depleted veins can recharge'
       depositedMeat,
       carriedOre,
       oreAmount,
-      oreDebug,
       depositedOre,
       veinCount: veins.length,
       minimumVeinDistance,
@@ -398,7 +389,6 @@ test('phases C-D: harvesting delivers resources and depleted veins can recharge'
   expect(report.woodBeforeThreshold).toBeNull();
   expect(report.meatBeforeThreshold).toBeNull();
   expect(report.oreBeforeThreshold).toBeNull();
-  console.log('[settlement ore diagnostics]', JSON.stringify(report.oreDebug));
   expect(report.carrying).toBe('wood');
   expect(report.carriedAmount).toBe(5);
   expect(report.carryIdleAnimation).toBe('pawn-carry-idle-wood');
@@ -491,8 +481,6 @@ test('phases E-F: construction uses the approached spot and repair costs are gua
     if (houseSpots.length < 2) throw new Error('House build spots are not configured');
     const targetHouseSpot = houseSpots[houseSpots.length - 1];
     const limitBeforeHouse = economy.pawnLimit;
-    const firstHouseBuiltBefore = (economy as unknown as { firstHouseBuilt: boolean }).firstHouseBuilt;
-    const populationBeforeHouse = economy.civilians.map(p => ({ kind: p.kind, dead: p.dead, state: p.state }));
     const woodBeforeHouse = economy.resources.wood;
     const existing = new Set(economy.buildings);
     const pawnContext = scene.registry.get('tss-pawnai-ctx') as { enemies: () => unknown[] };
@@ -528,8 +516,8 @@ test('phases E-F: construction uses the approached spot and repair costs are gua
     builder.order = null;
     const houseFinished = house.alive && !house.underConstruction;
     const limitAfterHouse = economy.pawnLimit;
-    const firstHouseBuiltAfter = (economy as unknown as { firstHouseBuilt: boolean }).firstHouseBuilt;
-    const populationAfterHouse = economy.civilians.map(p => ({ kind: p.kind, dead: p.dead, state: p.state }));
+    // Measure the first-house bonus before this test intentionally destroys the house.
+    const residentCountAfterHouse = economy.pawns.filter(p => !p.dead && p.kind === 'collector').length;
 
     const barracksSpot = economy.freeSpots().find(s => s.kind === 'barracks');
     if (!barracksSpot) throw new Error('Barracks build spot is missing');
@@ -612,9 +600,16 @@ test('phases E-F: construction uses the approached spot and repair costs are gua
     builder.cooldown = 0;
     builder.workNode = null;
     for (const spot of economy.freeSpots()) economy.markSpot(spot.x, spot.y);
-    fallbackTree.claimedBy = null;
-    builder.x = fallbackTree.x;
-    builder.y = fallbackTree.y;
+    // The first tree was depleted by the preceding fallback check; use a fresh reachable tree.
+    const fullCapacityTree = economy.nodes.find(n => n.kind === 'tree' && n.available
+      && Math.hypot(n.x - economy.castleX, n.y - economy.castleY) <= 1_000);
+    if (!fullCapacityTree) throw new Error('Full-capacity fallback needs another reachable tree');
+    for (const node of economy.nodes) {
+      if (node.available && node !== fullCapacityTree) node.claimedBy = blocker;
+    }
+    fullCapacityTree.claimedBy = null;
+    builder.x = fullCapacityTree.x;
+    builder.y = fullCapacityTree.y;
     builder.state = 'idle';
     economy.resources.wood = 0;
     economy.resources.ore = 0;
@@ -641,11 +636,7 @@ test('phases E-F: construction uses the approached spot and repair costs are gua
       houseFinished,
       limitBeforeHouse,
       limitAfterHouse,
-      firstHouseBuiltBefore,
-      firstHouseBuiltAfter,
-      populationBeforeHouse,
-      populationAfterHouse,
-      residentCount: economy.pawns.filter(p => !p.dead && p.kind === 'collector').length,
+      residentCountAfterHouse,
       startedBarracks,
       barracksWoodCost,
       barracksOreCost,
@@ -683,7 +674,6 @@ test('phases E-F: construction uses the approached spot and repair costs are gua
     };
   });
 
-  console.log('[settlement first-house diagnostics]', JSON.stringify({ before: report.firstHouseBuiltBefore, after: report.firstHouseBuiltAfter, populationBefore: report.populationBeforeHouse, populationAfter: report.populationAfterHouse }));
   expect(report.initialBuildSpotCount).toBe(10);
   expect(report.buildSpotOverlaps).toEqual([]);
   expect(report.expandedBuildSpotCount).toBe(15);
@@ -724,5 +714,5 @@ test('phases E-F: construction uses the approached spot and repair costs are gua
   expect(report.freeSpotsWhenFull).toBe(0);
   expect(report.builderFullCapacityCarry).toBe('wood');
   expect(report.builderFullCapacityAmount).toBe(5);
-  expect(report.residentCount).toBeGreaterThanOrEqual(3);
+  expect(report.residentCountAfterHouse).toBeGreaterThanOrEqual(3);
 });
