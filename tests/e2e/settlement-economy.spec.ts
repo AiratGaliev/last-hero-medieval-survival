@@ -14,6 +14,7 @@ type PawnRuntime = {
   carriedAmount: number;
   taskProgress: number;
   anims: { currentAnim?: { key: string } | null };
+  playMove(moving: boolean): void;
   cooldown: number;
   order: string | null;
   workNode: ResourceNodeRuntime | BuildingRuntime | null;
@@ -96,6 +97,11 @@ async function startRun(page: Page): Promise<void> {
   await page.goto('/?lang=en&ysdk=mock');
   await expect(page.locator('#game canvas')).toBeVisible({ timeout: startupTimeout });
   await expect(page.locator('#boot')).toHaveCount(0, { timeout: startupTimeout });
+  // Wait until BootScene has registered global animations before bypassing the menu UI.
+  await expect.poll(
+    () => page.evaluate(() => (window as RuntimeWindow).__tss?.scene.isActive('Menu') ?? false),
+    { timeout: startupTimeout },
+  ).toBe(true);
   await page.evaluate(() => {
     localStorage.removeItem('tss-meta2');
     localStorage.removeItem('tss-hints');
@@ -244,7 +250,8 @@ test('phases C-D: harvesting delivers resources and depleted veins can recharge'
     const resourceCountBeforeDeposit = economy.resources.wood - woodBefore;
 
     // Перевозимый ресурс отображается и в неподвижном, и в ходовом цикле.
-    economy.pawnAI.updateCivilian(collector, 16, scene.time.now + 4_000);
+    // Test the idle-with-load animation directly; an AI tick would start walking home.
+    collector.playMove(false);
     const carryIdleAnimation = collector.anims.currentAnim?.key ?? null;
     collector.x = economy.castleX + 300;
     collector.y = economy.castleY;
