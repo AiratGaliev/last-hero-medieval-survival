@@ -266,11 +266,15 @@ test('gameplay spawns the opening goblin and keeps Ogre death animation alive to
   expect(deathProgressed.anim).toBe('boss-dead');
   expect(deathProgressed.frame).not.toBeNull();
 
-  await page.waitForTimeout(900);
-  const deathFinished = await page.evaluate(() => {
-    const boss = (window as unknown as { __phaseABoss?: RuntimeEnemy }).__phaseABoss;
-    return boss?.active ?? false;
-  });
-  expect(deathFinished).toBe(false);
+  // Таймер сцены и game loop могут слегка расходиться с wall-clock на CI,
+  // особенно в WebGL mobile/desktop профилях. Проверяем ожидаемое состояние
+  // polling-ом с конечным timeout, а не фиксированным sleep ровно на границе.
+  await expect.poll(
+    () => page.evaluate(() => {
+      const boss = (window as unknown as { __phaseABoss?: RuntimeEnemy }).__phaseABoss;
+      return boss?.active ?? false;
+    }),
+    { timeout: 5_000, message: 'Ogre should be destroyed after the one-shot boss-dead animation' },
+  ).toBe(false);
   expect(pageErrors).toEqual([]);
 });
