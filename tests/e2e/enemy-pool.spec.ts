@@ -296,31 +296,33 @@ test('gameplay spawns the opening goblin and keeps Ogre death animation alive to
       active: boss.active,
       anim: boss.anims.currentAnim?.key ?? null,
       remainsInGroup: scene.enemyGroup.contains(boss),
+      sceneTime: scene.time.now,
     };
   });
-  expect(deathStart).toEqual({ active: true, anim: 'boss-dead', remainsInGroup: false });
+  expect(deathStart).toMatchObject({ active: true, anim: 'boss-dead', remainsInGroup: false });
 
   await page.waitForTimeout(500);
   const deathProgressed = await page.evaluate(() => {
+    const game = (window as unknown as { __tss?: RuntimeGame }).__tss;
+    const scene = game?.scene.getScene('Game');
     const boss = (window as unknown as { __phaseABoss?: RuntimeEnemy }).__phaseABoss;
     return {
       active: boss?.active ?? false,
       anim: boss?.anims.currentAnim?.key ?? null,
       frame: boss?.anims.currentFrame?.index ?? null,
-      sceneTime: game?.scene.getScene('Game').time.now ?? null,
-      scenePaused: game?.scene.getScene('Game').time.paused ?? null,
+      sceneTime: scene?.time.now ?? null,
+      scenePaused: scene?.time.paused ?? null,
     };
   });
   expect(deathProgressed.active).toBe(true);
   expect(deathProgressed.anim).toBe('boss-dead');
   expect(deathProgressed.frame).toBeGreaterThan(0);
-  expect(deathProgressed.sceneTime).not.toBeNull();
+  expect(deathProgressed.sceneTime).toBeGreaterThan(deathStart.sceneTime);
   expect(deathProgressed.scenePaused).toBe(false);
 
   // Таймер сцены и game loop могут слегка расходиться с wall-clock на CI,
   // особенно в WebGL mobile/desktop профилях. Проверяем ожидаемое состояние
   // polling-ом с конечным timeout, а не фиксированным sleep ровно на границе.
-  console.log('[ogre lifecycle after 500ms]', JSON.stringify(deathProgressed));
   await expect.poll(
     () => page.evaluate(() => {
       const boss = (window as unknown as { __phaseABoss?: RuntimeEnemy }).__phaseABoss;

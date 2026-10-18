@@ -13,6 +13,8 @@ type PawnRuntime = {
   carrying: string | null;
   carriedAmount: number;
   taskProgress: number;
+  alpha: number;
+  arrivalMs: number;
   anims: { currentAnim?: { key: string } | null };
   playMove(moving: boolean): void;
   cooldown: number;
@@ -71,8 +73,15 @@ type EconomyRuntime = {
   tick(dtMs: number, now: number): void;
 };
 
+type HUDRuntime = {
+  resGroup: { visible: boolean };
+  resTexts: { wood: { text: string }; meat: { text: string }; ore: { text: string } };
+  garrisonText: { text: string };
+};
+
 type GameSceneRuntime = {
   economy: EconomyRuntime;
+  hud: HUDRuntime;
   elapsed: number;
   hintOverlayPaused: boolean;
   time: { now: number };
@@ -90,7 +99,11 @@ type PhaserRuntime = {
   scene: { getScene(key: string): unknown; isActive(key: string): boolean };
 };
 
-type RuntimeWindow = Window & { __tss?: PhaserRuntime };
+type RuntimeWindow = Window & {
+  __tss?: PhaserRuntime;
+  __phaseEFirstResident?: PawnRuntime;
+  __phaseEHouseSpot?: BuildSpotRuntime;
+};
 
 const startupTimeout = 30_000;
 
@@ -166,7 +179,13 @@ test('phase B: four workers, correct faction animations and live Economy tick', 
       'gold-vein-pulse-4', 'gold-vein-pulse-5',
     ];
     return {
-      pawns: economy.pawns.map(p => ({ kind: p.kind, prefix: p.prefix })),
+      pawns: economy.pawns.map(p => ({
+        kind: p.kind,
+        prefix: p.prefix,
+        state: p.state,
+        distanceToCastle: Math.hypot(p.x - economy.castleX, p.y - economy.castleY),
+      })),
+      resourcesHiddenAtStart: !scene.hud.resGroup.visible,
       animations: Object.fromEntries(animationKeys.map(key => [key, animations.exists(key)])),
       blueHammerExists: animations.exists('pawn-work-hammer'),
       tickCalls,
@@ -177,6 +196,9 @@ test('phase B: four workers, correct faction animations and live Economy tick', 
   expect(report.pawns.filter(p => p.kind === 'collector').every(p => p.prefix === 'pawn')).toBe(true);
   expect(report.pawns.filter(p => p.kind === 'builder' || p.kind === 'repairer')
     .every(p => p.prefix === 'pawny')).toBe(true);
+  expect(report.pawns.every(p => p.state === 'idle')).toBe(true);
+  expect(report.pawns.every(p => p.distanceToCastle >= 80 && p.distanceToCastle <= 160)).toBe(true);
+  expect(report.resourcesHiddenAtStart).toBe(true);
   expect(Object.entries(report.animations).filter(([, exists]) => !exists).map(([key]) => key)).toEqual([]);
   expect(report.blueHammerExists).toBe(false);
 
@@ -204,6 +226,13 @@ test('phases C-D: harvesting delivers resources and depleted veins can recharge'
     const game = (window as RuntimeWindow).__tss!;
     const scene = game.scene.getScene('Game') as GameSceneRuntime;
     const economy = scene.economy;
+    const readHudResources = () => ({
+      visible: scene.hud.resGroup.visible,
+      wood: scene.hud.resTexts.wood.text,
+      meat: scene.hud.resTexts.meat.text,
+      ore: scene.hud.resTexts.ore.text,
+    });
+    const initialHudResources = readHudResources();
     const collector = economy.pawns.find(p => p.kind === 'collector');
     const blocker = economy.pawns.find(p => p.kind === 'collector' && p !== collector);
     const initialResources = { ...economy.resources };
@@ -267,6 +296,25 @@ test('phases C-D: harvesting delivers resources and depleted veins can recharge'
     collector.cooldown = 0;
     economy.pawnAI.updateCivilian(collector, 16, scene.time.now + 4_032);
     const depositedWood = economy.resources.wood - woodBefore;
+    const hudAfterWood = readHudResources();
+
+    // Carry имеет абсолютный приоритет: пока ресурс на руках, сборщик не начинает
+    // новый узел, даже если другая пешка освободила его между AI-тиками.
+    const carryTarget = economy.nodes.find(n => n !== tree && n.available && n.claimedBy === blocker);
+    if (!carryTarget) throw new Error('Carry-priority regression needs another available node');
+    carryTarget.claimedBy = null;
+    const carryTargetRemaining = carryTarget.remaining;
+    collector.x = carryTarget.x;
+    collector.y = carryTarget.y;
+    collector.cooldown = 0;
+    economy.pawnAI.updateCivilian(collector, 16, scene.time.now + 4_008);
+    const carryingPriorityRespected = collector.carrying === 'wood'
+      && collector.workNode === null
+      && carryTarget.remaining === carryTargetRemaining
+      && carryTarget.claimedBy === null;
+    carryTarget.claimedBy = blocker;
+    collector.x = tree.x;
+    collector.y = tree.y;
 
     // Повторяем тот же поток для овцы: мясо не появляется на земле, а уходит
     // в склад только после возвращения пешки к замку.
@@ -295,6 +343,7 @@ test('phases C-D: harvesting delivers resources and depleted veins can recharge'
     collector.cooldown = 0;
     economy.pawnAI.updateCivilian(collector, 16, scene.time.now + 15_032);
     const depositedMeat = economy.resources.meat - meatBefore;
+    const hudAfterMeat = readHudResources();
 
     // И руда добывается настоящим циклом AI, до проверки полного истощения.
     for (const node of economy.nodes) {
@@ -321,6 +370,7 @@ test('phases C-D: harvesting delivers resources and depleted veins can recharge'
     collector.cooldown = 0;
     economy.pawnAI.updateCivilian(collector, 16, scene.time.now + 25_048);
     const depositedOre = economy.resources.ore - oreBefore;
+    const hudAfterOre = readHudResources();
 
     const pulseAfterFirstCycle = vein.sprite.type === 'Sprite'
       ? (vein as unknown as { pulse: { visible: boolean } | null }).pulse?.visible ?? null
@@ -349,6 +399,11 @@ test('phases C-D: harvesting delivers resources and depleted veins can recharge'
 
     return {
       initialResources,
+      initialHudResources,
+      hudAfterWood,
+      hudAfterMeat,
+      hudAfterOre,
+      carryingPriorityRespected,
       initialTreeCount,
       initialSheepCount,
       carrying,
@@ -386,6 +441,11 @@ test('phases C-D: harvesting delivers resources and depleted veins can recharge'
   });
 
   expect(report.initialResources).toEqual({ wood: 0, ore: 0, meat: 0 });
+  expect(report.initialHudResources).toEqual({ visible: false, wood: '0', meat: '0', ore: '0' });
+  expect(report.hudAfterWood).toEqual({ visible: true, wood: '5', meat: '0', ore: '0' });
+  expect(report.hudAfterMeat).toEqual({ visible: true, wood: '5', meat: '3', ore: '0' });
+  expect(report.hudAfterOre).toEqual({ visible: true, wood: '5', meat: '3', ore: '20' });
+  expect(report.carryingPriorityRespected).toBe(true);
   expect(report.woodBeforeThreshold).toBeNull();
   expect(report.meatBeforeThreshold).toBeNull();
   expect(report.oreBeforeThreshold).toBeNull();
@@ -427,6 +487,82 @@ test('phases C-D: harvesting delivers resources and depleted veins can recharge'
     pulseVisible: true,
     canClaim: true,
   });
+});
+
+test('phase E: the first-house bonus resident enters over two seconds', async ({ page }) => {
+  await startRun(page);
+  const start = await page.evaluate(() => {
+    const game = (window as RuntimeWindow).__tss!;
+    const scene = game.scene.getScene('Game') as GameSceneRuntime;
+    const economy = scene.economy;
+    const builder = economy.pawns.find(p => p.kind === 'builder');
+    const spot = economy.freeSpots().find(s => s.kind === 'house');
+    if (!builder || !spot) throw new Error('First-house arrival test needs a builder and a free house spot');
+    const existingBuildings = new Set(economy.buildings);
+    const existingPawns = new Set(economy.pawns);
+    const context = scene.registry.get('tss-pawnai-ctx') as { enemies: () => unknown[] };
+    context.enemies = () => [];
+    economy.resources.wood = 100;
+    economy.resources.ore = 0;
+    economy.resources.meat = 0;
+    builder.x = spot.x;
+    builder.y = spot.y;
+    builder.state = 'work';
+    builder.order = null;
+    builder.cooldown = 0;
+    builder.carrying = null;
+    builder.carriedAmount = 0;
+    builder.taskProgress = 0;
+    builder.workNode = null;
+    const started = economy.tryStartBuild('house', builder, spot);
+    if (!started) throw new Error('Could not start the first house');
+    for (let i = 1; i <= 50; i++) economy.tick(200, scene.time.now + i * 200);
+    const house = economy.buildings.find(b => b.kind === 'house' && !existingBuildings.has(b));
+    const resident = economy.pawns.find(p => p.kind === 'collector' && !existingPawns.has(p));
+    if (!house || !resident) throw new Error('First house did not produce its bonus resident');
+    const targetDistance = Math.hypot(resident.x - spot.x, resident.y - spot.y);
+    const runtimeWindow = window as RuntimeWindow;
+    runtimeWindow.__phaseEFirstResident = resident;
+    runtimeWindow.__phaseEHouseSpot = spot;
+    return {
+      houseFinished: house.alive && !house.underConstruction,
+      arrivalMs: resident.arrivalMs,
+      alpha: resident.alpha,
+      state: resident.state,
+      anim: resident.anims.currentAnim?.key ?? null,
+      targetDistance,
+    };
+  });
+  expect(start.houseFinished).toBe(true);
+  expect(start.arrivalMs).toBeGreaterThan(0);
+  expect(start.arrivalMs).toBeLessThanOrEqual(2_000);
+  expect(start.alpha).toBeLessThan(1);
+  expect(start.state).toBe('walk');
+  expect(start.anim).toBe('pawn-run');
+  expect(start.targetDistance).toBeGreaterThan(250);
+
+  await expect.poll(
+    () => page.evaluate(() => (window as RuntimeWindow).__phaseEFirstResident?.arrivalMs ?? null),
+    { timeout: 5_000, message: 'First-house resident entrance should finish within two seconds' },
+  ).toBe(0);
+  const finish = await page.evaluate(() => {
+    const w = window as RuntimeWindow;
+    const resident = w.__phaseEFirstResident;
+    const spot = w.__phaseEHouseSpot;
+    if (!resident || !spot) throw new Error('First-house resident state was lost');
+    return {
+      active: resident.active,
+      arrivalMs: resident.arrivalMs,
+      alpha: resident.alpha,
+      distanceToHouse: Math.hypot(resident.x - spot.x, resident.y - spot.y),
+      anim: resident.anims.currentAnim?.key ?? null,
+    };
+  });
+  expect(finish.active).toBe(true);
+  expect(finish.arrivalMs).toBe(0);
+  expect(finish.alpha).toBe(1);
+  expect(finish.distanceToHouse).toBeLessThan(220);
+  expect(finish.anim).toBe('pawn-idle');
 });
 
 test('phases E-F: construction uses the approached spot and repair costs are guarded', async ({ page }) => {
@@ -535,6 +671,7 @@ test('phases E-F: construction uses the approached spot and repair costs are gua
     builder.y = barracksSpot.y;
     builder.state = 'work';
     economy.tick(20_001, scene.time.now + 30_002);
+    const garrisonHudText = scene.hud.garrisonText.text;
 
     economy.resources.wood = 100;
     house.hp = house.maxHp;
@@ -561,6 +698,29 @@ test('phases E-F: construction uses the approached spot and repair costs are gua
     const rebuildAccepted = economy.repair(house, builder);
     const woodAfterRebuild = economy.resources.wood;
     const rebuildFinished = economy.finishRepairInstant();
+
+    // Автоматический ремонтник (поведение позднейшей фазы L) чинит повреждённый дом.
+    const repairer = economy.pawns.find(p => p.kind === 'repairer');
+    if (!repairer) throw new Error('Automatic repair needs the initial repairer');
+    house.damage(10, -1);
+    economy.resources.wood = 100;
+    const woodBeforeAutoRepair = economy.resources.wood;
+    repairer.x = house.x;
+    repairer.y = house.y;
+    repairer.state = 'idle';
+    repairer.order = null;
+    repairer.cooldown = 0;
+    repairer.carrying = null;
+    repairer.carriedAmount = 0;
+    repairer.workNode = null;
+    repairer.taskProgress = 0;
+    // Prevent an unrelated builder job from starting during the accelerated repair tick.
+    builder.order = 'collect';
+    economy.pawnAI.updateCivilian(repairer, 16, scene.time.now + 35_000);
+    const automaticRepairStarted = house.underConstruction && economy.resources.wood === woodBeforeAutoRepair - 30;
+    economy.tick(5_001, scene.time.now + 35_016);
+    const automaticRepairFinished = !house.underConstruction && house.hp === house.maxHp;
+    builder.order = null;
 
     // Phase E fallback: gather inputs when the next structure is unaffordable,
     // then keep gathering even after every build spot is occupied.
@@ -641,6 +801,7 @@ test('phases E-F: construction uses the approached spot and repair costs are gua
       barracksWoodCost,
       barracksOreCost,
       barracksFinished: barracks.alive && !barracks.underConstruction,
+      garrisonHudText,
       garrisonLimit: economy.garrisonLimit('barracks'),
       limitBeforeBarracks,
       limitAfterBarracks: economy.pawnLimit,
@@ -664,6 +825,8 @@ test('phases E-F: construction uses the approached spot and repair costs are gua
       rebuildFinished,
       rebuiltAlpha: house.alpha,
       rebuiltUnderConstruction: house.underConstruction,
+      automaticRepairStarted,
+      automaticRepairFinished,
       builderFallbackBeforeThreshold,
       builderFallbackCarry,
       builderFallbackAmount,
@@ -690,6 +853,7 @@ test('phases E-F: construction uses the approached spot and repair costs are gua
   expect(report.barracksOreCost).toBe(15);
   expect(report.barracksFinished).toBe(true);
   expect(report.garrisonLimit).toBe(2);
+  expect(report.garrisonHudText).toMatch(/0\s*\/\s*2/);
   expect(report.limitAfterBarracks).toBe(report.limitBeforeBarracks);
   expect(report.fullRepairAccepted).toBe(false);
   expect(report.woodAfterFullRepair).toBe(report.woodBeforeFullRepair);
@@ -707,6 +871,8 @@ test('phases E-F: construction uses the approached spot and repair costs are gua
   expect(report.rebuildFinished).toBe(true);
   expect(report.rebuiltAlpha).toBe(1);
   expect(report.rebuiltUnderConstruction).toBe(false);
+  expect(report.automaticRepairStarted).toBe(true);
+  expect(report.automaticRepairFinished).toBe(true);
   expect(report.builderFallbackBeforeThreshold).toBeNull();
   expect(report.builderFallbackCarry).toBe('wood');
   expect(report.builderFallbackAmount).toBe(5);

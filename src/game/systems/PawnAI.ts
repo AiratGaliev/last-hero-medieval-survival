@@ -71,6 +71,15 @@ export class PawnAI {
 
   updateCivilian(p: Pawn, dtMs: number, _now: number): void {
     const eco = this.eco;
+
+    // Не прерываем двухсекундное появление первого бесплатного жителя (§E.5).
+    if (p.arrivalMs > 0) {
+      p.arrivalMs = Math.max(0, p.arrivalMs - dtMs);
+      p.state = 'walk';
+      p.playMove(true);
+      p.setVelocity(0, 0);
+      return;
+    }
     p.cooldown = Math.max(0, p.cooldown - dtMs / 1000);
 
     // --- Раненая / истекающая кровью — важнее любой работы (§G.3) ---
