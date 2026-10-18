@@ -16,6 +16,7 @@ export type HintId =
 
 /** Формат показа (§I.1): banner — строка сверху, overlay — пауза с объяснением. */
 export type HintUi = 'banner' | 'overlay';
+export type HintAnchor = 'top' | 'center' | 'bottom';
 
 export interface HintDef {
   id: HintId;
@@ -25,7 +26,9 @@ export interface HintDef {
    */
   priority: number;
   ui: HintUi;
-  /** Время жизни в мс (§I.1: banner — 4 сек). */
+  /** Экранная привязка: позиция пересчитывается при resize. */
+  anchor?: HintAnchor;
+  /** Время жизни в мс (§I.1: banner — 4 сек). Overlay требует явного подтверждения. */
   ttl: number;
   /** Подсказка-исключение: показывается, минуя кулдаун очереди. */
   urgent?: boolean;
@@ -36,7 +39,7 @@ export interface HintDef {
  * Значения `priority` кодируют порядок раскрытия из сценария §I.2.
  */
 export const HINTS: readonly HintDef[] = [
-  { id: 'move', priority: 5, ui: 'overlay', ttl: 4000 },
+  { id: 'move', priority: 5, ui: 'overlay', anchor: 'center', ttl: 0 },
   { id: 'pawns', priority: 4, ui: 'banner', ttl: 4000 },
   { id: 'house', priority: 3, ui: 'banner', ttl: 4000 },
   { id: 'barracks', priority: 2, ui: 'banner', ttl: 4000 },
@@ -52,13 +55,50 @@ const HINT_BY_ID = new Map<HintId, HintDef>(HINTS.map((h) => [h.id, h]));
 /** §I.1: «не чаще одной подсказки за 20 секунд». */
 const COOLDOWN_MS = 20000;
 
+export interface HintLayout {
+  x: number;
+  y: number;
+  width: number;
+  textWidth: number;
+  panelHeight: number;
+}
+
+/** Queue policy is exported to make urgency/cooldown behaviour regression-testable. */
+export function canPresentHintAt(now: number, lastShownAt: number, urgent = false, cooldownMs = COOLDOWN_MS): boolean {
+  return urgent || now - lastShownAt >= cooldownMs;
+}
+
+/** Safe, responsive screen-space coordinates shared by desktop and mobile. */
+export function getHintLayout(width: number, height: number, ui: HintUi, anchor?: HintAnchor): HintLayout {
+  const viewportWidth = Math.max(1, width);
+  const viewportHeight = Math.max(1, height);
+  const panelWidth = Math.max(160, Math.min(560, viewportWidth - 32));
+  const panelHeight = ui === 'overlay' ? 120 : 44;
+  const resolvedAnchor = anchor ?? (ui === 'overlay' ? 'center' : 'top');
+  const y = resolvedAnchor === 'center'
+    ? viewportHeight / 2
+    : resolvedAnchor === 'bottom'
+      ? Math.max(panelHeight / 2 + 8, viewportHeight - panelHeight / 2 - 24)
+      : Math.min(92, Math.max(panelHeight / 2 + 8, viewportHeight / 2 - panelHeight / 2));
+  return {
+    x: viewportWidth / 2,
+    y,
+    width: panelWidth,
+    textWidth: Math.max(120, panelWidth - 24),
+    panelHeight,
+  };
+}
+
 interface HintState { shown: HintId[]; enabled?: boolean }
 
 export class Hints {
   private scene: Phaser.Scene;
   private shown = new Set<HintId>();
-  private lastShownAt = 0;
-  private current: { id: HintId; text: Phaser.GameObjects.Text; bg: Phaser.GameObjects.Rectangle } | null = null;
+  // A new run's first hint must not inherit an artificial 20-second startup wait.
+  private lastShownAt = -COOLDOWN_MS;
+  private current: { id: HintId; ui: HintUi; text: Phaser.GameObjects.Text; bg: Phaser.GameObjects.Rectangle } | null = null;
+  private readonly onOverlayChange?: (paused: boolean) => void;
+  private readonly resizeHandler = (): void => this.relayoutCurrent();
   /**
    * Очередь отложенных подсказок (§I.1: «Новая подсказка откладывает
    * непрочитанную»). Раньше новая подсказка просто УНИЧТОЖАЛА текущую —
@@ -68,12 +108,23 @@ export class Hints {
   private queue: HintId[] = [];
   private enabled: boolean;
 
-  constructor(scene: Phaser.Scene) {
+  constructor(scene: Phaser.Scene, onOverlayChange?: (paused: boolean) => void) {
     this.scene = scene;
+    this.onOverlayChange = onOverlayChange;
     const st = loadJson<HintState>('hints') ?? { shown: [] };
     for (const id of st.shown) if (HINT_BY_ID.has(id)) this.shown.add(id);
     this.enabled = st.enabled !== false;
-    scene.events.once('shutdown', () => this.save());
+    scene.scale.on('resize', this.resizeHandler);
+    scene.events.once('shutdown', () => {
+      if (this.current?.ui === 'overlay') this.onOverlayChange?.(false);
+      this.current?.text.destroy();
+      this.current?.bg.destroy();
+      for (const extra of this.extra) extra?.destroy();
+      this.current = null;
+      this.extra = [];
+      scene.scale.off('resize', this.resizeHandler);
+      this.save();
+    });
   }
 
   /** §I.1 п.4: «Все подсказки отключаемы» — переключатель «Обучение: вкл/выкл». */
@@ -106,10 +157,12 @@ export class Hints {
   /** Отдаёт следующую подсказку из очереди, если это уместно. */
   private pump(): void {
     if (!this.enabled || this.current || this.queue.length === 0) return;
-    const now = this.scene.time.now;
-    if (now - this.lastShownAt < COOLDOWN_MS) return;
-    const id = this.queue.shift();
+    const id = this.queue[0];
     if (!id) return;
+    const def = HINT_BY_ID.get(id);
+    if (!def) { this.queue.shift(); this.pump(); return; }
+    if (!canPresentHintAt(this.scene.time.now, this.lastShownAt, def.urgent)) return;
+    this.queue.shift();
     this.present(id);
   }
 
@@ -125,48 +178,74 @@ export class Hints {
     const text = t(`hint.${id}` as `hint.${typeof id}`);
     track('hint_shown', { hint_id: id, ui: def.ui });
 
-    // overlay: тонировка мира + объяснение (только 3 раза за игру, §I.1)
+    // Overlay must pause the actual world and stay until the player explicitly continues.
+    const layout = getHintLayout(w, h, def.ui, def.anchor);
     const dim = def.ui === 'overlay'
-      ? this.scene.add.rectangle(w / 2, h / 2, w + 8, h + 8, 0x07070d, 0.55)
+      ? this.scene.add.rectangle(w / 2, h / 2, w + 8, h + 8, 0x07070d, 0.62)
         .setScrollFactor(0).setDepth(9590)
       : null;
 
-    const bw = Math.min(560, w - 40);
-    const bg = this.scene.add.rectangle(w / 2, 92, bw, 40, 0x1a0f08, 0.88)
+    const displayText = def.ui === 'overlay'
+      ? `${text}\\n\\n${t('hint.tapToContinue')}`
+      : text;
+    const bg = this.scene.add.rectangle(layout.x, layout.y, layout.width, layout.panelHeight, 0x1a0f08, 0.92)
       .setStrokeStyle(1, 0x8a6d3b)
       .setScrollFactor(0)
       .setDepth(9600)
       .setInteractive({ useHandCursor: true });
-    const label = this.scene.add.text(w / 2, 92, text, {
-      fontFamily: 'monospace', fontSize: '13px', color: '#ffe9b0', align: 'center',
-      wordWrap: { width: Math.min(540, w - 60) },
+    const label = this.scene.add.text(layout.x, layout.y, displayText, {
+      fontFamily: 'monospace',
+      fontSize: def.ui === 'overlay' ? '15px' : '13px',
+      color: '#ffe9b0',
+      align: 'center',
+      wordWrap: { width: layout.textWidth },
     }).setOrigin(0.5).setScrollFactor(0).setDepth(9601);
     bg.on('pointerdown', () => this.hide(true));
-    this.current = { id, text: label, bg };
+    this.current = { id, ui: def.ui, text: label, bg };
     if (dim) dim.on('pointerdown', () => this.hide(true));
     this.extra.push(dim);
-
-    this.scene.time.delayedCall(def.ttl, () => this.hide());
+    if (def.ui === 'overlay') this.onOverlayChange?.(true);
+    else this.scene.time.delayedCall(def.ttl, () => this.hide());
   }
 
   private extra: Array<Phaser.GameObjects.Rectangle | null> = [];
 
+  private relayoutCurrent(): void {
+    const current = this.current;
+    if (!current) return;
+    const w = this.scene.scale.width;
+    const h = this.scene.scale.height;
+    const def = HINT_BY_ID.get(current.id);
+    const layout = getHintLayout(w, h, current.ui, def?.anchor);
+    const dim = this.extra[0];
+    if (dim && current.ui === 'overlay') {
+      dim.setPosition(w / 2, h / 2).setSize(w + 8, h + 8);
+    }
+    current.bg.setPosition(layout.x, layout.y).setSize(layout.width, layout.panelHeight);
+    current.text.setPosition(layout.x, layout.y);
+    current.text.setStyle({ wordWrap: { width: layout.textWidth } });
+  }
+
   private hide(byUser = false): void {
-    if (!this.current) return;
-    track('hint_dismissed', { hint_id: this.current.id, source: byUser ? 'user' : 'ttl' });
-    this.current.text.destroy();
-    this.current.bg.destroy();
+    const current = this.current;
+    if (!current) return;
+    track('hint_dismissed', { hint_id: current.id, source: byUser ? 'user' : 'ttl' });
+    current.text.destroy();
+    current.bg.destroy();
     this.current = null;
     for (const e of this.extra) e?.destroy();
     this.extra = [];
+    if (current.ui === 'overlay') this.onOverlayChange?.(false);
     this.save();
-    // Показать следующую отложенную, когда кулдаун истёк
-    this.scene.time.delayedCall(COOLDOWN_MS - 500, () => this.pump());
+    const next = this.queue[0];
+    const nextIsUrgent = next ? HINT_BY_ID.get(next)?.urgent === true : false;
+    const remainingCooldown = Math.max(0, COOLDOWN_MS - (this.scene.time.now - this.lastShownAt));
+    this.scene.time.delayedCall(nextIsUrgent ? 0 : remainingCooldown, () => this.pump());
   }
 
-  /** Сброс при старте нового матча: очередь пуста, но показанные флаги живут. */
+  /** Сброс очереди без утечки overlay и без остановленного мира. */
   reset(): void {
     this.queue = [];
-    this.current = null;
+    this.hide(false);
   }
 }
