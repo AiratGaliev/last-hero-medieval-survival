@@ -151,6 +151,8 @@ test('phase B: four workers, correct faction animations and live Economy tick', 
       'pawn-carry-gold', 'pawn-carry-idle-gold', 'pawny-carry-wood',
       'pawny-carry-idle-wood', 'pawny-carry-meat', 'pawny-carry-idle-meat',
       'pawny-carry-gold', 'pawny-carry-idle-gold',
+      'gold-vein-pulse-1', 'gold-vein-pulse-2', 'gold-vein-pulse-3',
+      'gold-vein-pulse-4', 'gold-vein-pulse-5',
     ];
     return {
       pawns: economy.pawns.map(p => ({ kind: p.kind, prefix: p.prefix })),
@@ -194,8 +196,11 @@ test('phases C-D: harvesting delivers resources and depleted veins can recharge'
     const collector = economy.pawns.find(p => p.kind === 'collector');
     const blocker = economy.pawns.find(p => p.kind === 'collector' && p !== collector);
     const tree = economy.nodes.find(n => n.kind === 'tree' && n.available);
+    const sheep = economy.nodes.find(n => n.kind === 'sheep' && n.available);
     const vein = economy.nodes.find(n => n.kind === 'vein' && n.available);
-    if (!collector || !blocker || !tree || !vein) throw new Error('Initial settlement nodes or collectors are missing');
+    const veins = economy.nodes.filter(n => n.kind === 'vein');
+    const minimumVeinDistance = Math.min(...veins.map(n => Math.hypot(n.x - economy.castleX, n.y - economy.castleY)));
+    if (!collector || !blocker || !tree || !sheep || !vein) throw new Error('Initial settlement nodes or collectors are missing');
 
     const context = scene.registry.get('tss-pawnai-ctx') as { enemies: () => unknown[] };
     context.enemies = () => [];
@@ -229,14 +234,58 @@ test('phases C-D: harvesting delivers resources and depleted veins can recharge'
     economy.pawnAI.updateCivilian(collector, 16, scene.time.now + 5_016);
     const depositedWood = economy.resources.wood - woodBefore;
 
-    for (let i = 0; i < previousClaims.length; i++) {
-      const node = economy.nodes[i];
-      if (node && node.alive && node !== vein) node.claimedBy = previousClaims[i];
+    // Повторяем тот же поток для овцы: мясо не появляется на земле, а уходит
+    // в склад только после возвращения пешки к замку.
+    for (const node of economy.nodes) {
+      if (node.available && node !== sheep) node.claimedBy = blocker;
     }
+    sheep.claimedBy = null;
+    collector.x = sheep.x;
+    collector.y = sheep.y;
+    collector.state = 'idle';
+    collector.carrying = null;
+    collector.carriedAmount = 0;
+    collector.taskProgress = 0;
+    collector.cooldown = 0;
+    collector.order = null;
+    collector.workNode = null;
+    const meatBefore = economy.resources.meat;
+    economy.pawnAI.updateCivilian(collector, 10_000, scene.time.now + 5_032);
+    const carriedMeat = collector.carrying;
+    const meatAmount = collector.carriedAmount;
+    const sheepDestroyed = !sheep.alive;
+    collector.x = economy.castleX;
+    collector.y = economy.castleY;
+    collector.cooldown = 0;
+    economy.pawnAI.updateCivilian(collector, 16, scene.time.now + 15_032);
+    const depositedMeat = economy.resources.meat - meatBefore;
 
+    // И руда добывается настоящим циклом AI, до проверки полного истощения.
+    for (const node of economy.nodes) {
+      if (node.available && node !== vein) node.claimedBy = blocker;
+    }
     vein.claimedBy = null;
+    collector.x = vein.x;
+    collector.y = vein.y;
+    collector.state = 'idle';
+    collector.carrying = null;
+    collector.carriedAmount = 0;
+    collector.taskProgress = 0;
+    collector.cooldown = 0;
+    collector.order = null;
+    collector.workNode = null;
+    const oreBefore = economy.resources.ore;
+    economy.pawnAI.updateCivilian(collector, 10_000, scene.time.now + 15_048);
+    const carriedOre = collector.carrying;
+    const oreAmount = collector.carriedAmount;
+    collector.x = economy.castleX;
+    collector.y = economy.castleY;
+    collector.cooldown = 0;
+    economy.pawnAI.updateCivilian(collector, 16, scene.time.now + 25_048);
+    const depositedOre = economy.resources.ore - oreBefore;
+
     const maxRemaining = vein.maxRemaining;
-    for (let i = 0; i < maxRemaining; i++) vein.extract();
+    for (let i = 0; i < vein.remaining; i++) vein.extract();
     const veinAfterDepletion = {
       alive: vein.alive,
       remaining: vein.remaining,
@@ -262,6 +311,16 @@ test('phases C-D: harvesting delivers resources and depleted veins can recharge'
       depositedWood,
       woodBefore,
       woodAfter: economy.resources.wood,
+      carriedMeat,
+      meatAmount,
+      sheepDestroyed,
+      depositedMeat,
+      carriedOre,
+      oreAmount,
+      depositedOre,
+      veinCount: veins.length,
+      minimumVeinDistance,
+      sheepCount: economy.nodes.filter(n => n.kind === 'sheep' && n.alive).length,
       maxRemaining,
       veinAfterDepletion,
       veinAfterRecharge,
@@ -274,6 +333,16 @@ test('phases C-D: harvesting delivers resources and depleted veins can recharge'
   expect(report.resourceCountBeforeDeposit).toBe(0);
   expect(report.depositedWood).toBe(report.carriedAmount);
   expect(report.woodAfter).toBe(report.woodBefore + report.carriedAmount);
+  expect(report.carriedMeat).toBe('meat');
+  expect(report.meatAmount).toBe(3);
+  expect(report.sheepDestroyed).toBe(true);
+  expect(report.depositedMeat).toBe(3);
+  expect(report.carriedOre).toBe('ore');
+  expect(report.oreAmount).toBe(20);
+  expect(report.depositedOre).toBe(20);
+  expect(report.veinCount).toBe(10);
+  expect(report.minimumVeinDistance).toBeGreaterThanOrEqual(200);
+  expect(report.sheepCount).toBeGreaterThan(0);
   expect(report.veinAfterDepletion).toMatchObject({
     alive: true,
     remaining: 0,
@@ -308,7 +377,17 @@ test('phases E-F: construction uses the approached spot and repair costs are gua
     const limitBeforeHouse = economy.pawnLimit;
     const woodBeforeHouse = economy.resources.wood;
     const existing = new Set(economy.buildings);
-    const houseStarted = economy.tryStartBuild('house', builder, targetHouseSpot);
+    const pawnContext = scene.registry.get('tss-pawnai-ctx') as { enemies: () => unknown[] };
+    pawnContext.enemies = () => [];
+    builder.x = targetHouseSpot.x;
+    builder.y = targetHouseSpot.y;
+    builder.order = 'build';
+    builder.state = 'idle';
+    builder.cooldown = 0;
+    builder.carrying = null;
+    builder.workNode = null;
+    economy.pawnAI.updateCivilian(builder, 16, scene.time.now);
+    const houseStarted = economy.buildings.some(b => b.kind === 'house' && !existing.has(b));
     const house = economy.buildings.find(b => !existing.has(b) && b.kind === 'house');
     if (!house) throw new Error('Started house was not registered');
 
