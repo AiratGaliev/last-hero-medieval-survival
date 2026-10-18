@@ -426,6 +426,32 @@ test('phases E-F: construction uses the approached spot and repair costs are gua
     const castle = economy.buildings.find(b => b.kind === 'castle');
     if (!builder || !castle) throw new Error('Builder or castle is missing');
 
+    const initialBuildSpots = economy.freeSpots();
+    const footprint: Record<string, { w: number; h: number }> = {
+      castle: { w: 288, h: 230 },
+      house: { w: 102, h: 154 },
+      barracks: { w: 163, h: 218 },
+      tower: { w: 163, h: 163 },
+      monastery: { w: 205, h: 205 },
+      archery: { w: 163, h: 218 },
+    };
+    const placedFootprints = [
+      { kind: 'castle', x: economy.castleX, y: economy.castleY },
+      ...initialBuildSpots,
+    ];
+    const buildSpotOverlaps: string[] = [];
+    for (let i = 0; i < placedFootprints.length; i++) {
+      for (let j = i + 1; j < placedFootprints.length; j++) {
+        const a = placedFootprints[i];
+        const b = placedFootprints[j];
+        const fa = footprint[a.kind];
+        const fb = footprint[b.kind];
+        if (Math.abs(a.x - b.x) < (fa.w + fb.w) / 2
+          && Math.abs(a.y - b.y) < (fa.h + fb.h) / 2) {
+          buildSpotOverlaps.push(`${a.kind}@${a.x},${a.y} × ${b.kind}@${b.x},${b.y}`);
+        }
+      }
+    }
     economy.resources.wood = 1_000;
     economy.resources.ore = 1_000;
     const houseSpots = economy.freeSpots().filter(s => s.kind === 'house');
@@ -494,7 +520,21 @@ test('phases E-F: construction uses the approached spot and repair costs are gua
     const damagedRepairAccepted = economy.repair(house, builder);
     const woodAfterDamagedRepair = economy.resources.wood;
     const repairFinished = economy.finishRepairInstant();
+    const partiallyRepairedHp = house.hp;
+
+    // Мгновенный ремонт должен восстанавливать не только HP, но и внешний вид
+    // разрушенных руин — этот путь используется ускорением ремонта.
+    house.damage(house.maxHp + 10, -1);
+    const ruinsAlpha = house.alpha;
+    economy.resources.wood = 100;
+    const woodBeforeRebuild = economy.resources.wood;
+    const rebuildAccepted = economy.repair(house, builder);
+    const woodAfterRebuild = economy.resources.wood;
+    const rebuildFinished = economy.finishRepairInstant();
+
     return {
+      initialBuildSpotCount: initialBuildSpots.length,
+      buildSpotOverlaps,
       houseStarted,
       houseBuildAnimation,
       houseCost,
@@ -522,11 +562,21 @@ test('phases E-F: construction uses the approached spot and repair costs are gua
       damagedRepairAccepted,
       woodAfterDamagedRepair,
       repairFinished,
+      partiallyRepairedHp,
       houseHpAfterRepair: house.hp,
       houseMaxHp: house.maxHp,
+      ruinsAlpha,
+      rebuildAccepted,
+      woodBeforeRebuild,
+      woodAfterRebuild,
+      rebuildFinished,
+      rebuiltAlpha: house.alpha,
+      rebuiltUnderConstruction: house.underConstruction,
     };
   });
 
+  expect(report.initialBuildSpotCount).toBe(10);
+  expect(report.buildSpotOverlaps).toEqual([]);
   expect(report.houseStarted).toBe(true);
   expect(report.houseBuildAnimation).toBe('pawny-work-hammer');
   expect(report.houseCost).toBe(30);
@@ -548,5 +598,12 @@ test('phases E-F: construction uses the approached spot and repair costs are gua
   expect(report.damagedRepairAccepted).toBe(true);
   expect(report.woodAfterDamagedRepair).toBe(report.woodBeforeCastleRepair - 30);
   expect(report.repairFinished).toBe(true);
-  expect(report.houseHpAfterRepair).toBe(report.houseMaxHp);
+  expect(report.partiallyRepairedHp).toBe(report.houseMaxHp);
+  expect(report.houseHpAfterRepair).toBe(0);
+  expect(report.ruinsAlpha).toBeCloseTo(0.35, 2);
+  expect(report.rebuildAccepted).toBe(true);
+  expect(report.woodAfterRebuild).toBe(report.woodBeforeRebuild - 60);
+  expect(report.rebuildFinished).toBe(true);
+  expect(report.rebuiltAlpha).toBe(1);
+  expect(report.rebuiltUnderConstruction).toBe(false);
 });
