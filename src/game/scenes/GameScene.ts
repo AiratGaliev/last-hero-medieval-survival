@@ -832,7 +832,7 @@ export class GameScene extends Phaser.Scene {
       if (Math.hypot(x - this.castleX, y - this.castleY) < 200) continue;
       if (!canPlace(x, y, 70)) continue;
       const variant = rng.between(1, 5);
-      const img = this.add.image(x, y, `gold-vein-${variant}`).setScale(0.9)
+      const img = this.add.sprite(x, y, `gold-vein-${variant}`).setScale(0.9)
         .setDepth(DEPTH.ENTITY_BASE + y);
       const pulse = this.add.sprite(x, y, `gold-vein-pulse-${variant}`)
         .setScale(0.9).setDepth(DEPTH.GEM + 1).setBlendMode(Phaser.BlendModes.ADD);
