@@ -163,7 +163,10 @@ export async function purchaseSku(sku: string): Promise<PurchaseResult> {
     return { ok: false, reason: 'fail' };
   }
   const meta = rollMetaDay();
-  if ((ONE_SHOT_SKUS.has(sku)
+  const alreadyOwnedCosmetic = sku.startsWith('skin_')
+    && meta.skins.owned.includes(sku);
+  if (alreadyOwnedCosmetic
+    || (ONE_SHOT_SKUS.has(sku)
       && (purchasedOnce().includes(sku) || hasIapEntitlement(meta, sku)))
     || (sku === 'pass_chronicle' && meta.pass.premium)) {
     return { ok: false, reason: 'duplicate' };
