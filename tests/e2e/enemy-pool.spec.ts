@@ -12,8 +12,10 @@ type RuntimeEnemy = {
   };
 };
 type RuntimeScene = {
-  scene: { isActive: () => boolean };
+  scene: { isActive: () => boolean; resume: () => void };
   hints: { current: { id: string; ui: string } | null };
+  time: { paused: boolean; now: number };
+  physics: { world: { resume: () => void } };
   player: { x: number; y: number };
   enemyGroup: {
     getChildren: () => RuntimeEnemy[];
@@ -24,6 +26,10 @@ type RuntimeScene = {
   spawnEnemy: (kind: string, x: number, y: number) => boolean;
   onEnemyDeath: (enemy: RuntimeEnemy) => void;
   hintOverlayPaused: boolean;
+  overlayOpen: boolean;
+  pendingLevelUps: number;
+  xp: number;
+  xpNext: number;
 };
 type RuntimeGame = {
   anims: { exists: (key: string) => boolean; get: (key: string) => AnimationProbe | null };
@@ -262,9 +268,19 @@ test('gameplay spawns the opening goblin and keeps Ogre death animation alive to
     const game = (window as unknown as { __tss?: RuntimeGame }).__tss;
     if (!game) throw new Error('Phaser game instance is unavailable');
     const scene = game.scene.getScene('Game');
-    // Изолируем lifecycle-сценарий: не оставляем обычные волны и не даём
-    // собрать 200 XP/дроп босса во время замера, иначе LevelUp overlay может
-    // штатно приостановить GameScene и её clock до выбора игрока.
+    // Изолируем lifecycle-сценарий от сторонних overlay-сцен. В штатной игре
+    // GameScene корректно приостанавливается при LevelUp/Pause; тест смерти
+    // должен проверять анимацию в активной сцене, а не продолжительность паузы.
+    for (const overlay of ['LevelUp', 'Pause', 'Succession']) game.scene.stop(overlay);
+    scene.scene.resume();
+    scene.time.paused = false;
+    scene.physics.world.resume();
+    scene.hintOverlayPaused = false;
+    scene.overlayOpen = false;
+    scene.pendingLevelUps = 0;
+    scene.xp = 0;
+    scene.xpNext = Number.MAX_SAFE_INTEGER;
+    // Не оставляем обычные волны, чтобы бой не генерировал сторонние события.
     scene.spawner.stopped = true;
     for (const enemy of scene.enemyGroup.getChildren()) {
       scene.enemyGroup.remove(enemy, true, true);
