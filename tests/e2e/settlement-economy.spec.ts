@@ -22,6 +22,7 @@ type PawnRuntime = {
 
 type ResourceNodeRuntime = {
   kind: 'tree' | 'sheep' | 'vein';
+  sprite: { type: string; body?: unknown };
   res: 'wood' | 'ore' | 'meat';
   x: number;
   y: number;
@@ -197,11 +198,20 @@ test('phases C-D: harvesting delivers resources and depleted veins can recharge'
     const economy = scene.economy;
     const collector = economy.pawns.find(p => p.kind === 'collector');
     const blocker = economy.pawns.find(p => p.kind === 'collector' && p !== collector);
+    const initialResources = { ...economy.resources };
+    const initialTreeCount = economy.nodes.filter(n => n.kind === 'tree' && n.alive).length;
+    const initialSheepCount = economy.nodes.filter(n => n.kind === 'sheep' && n.alive).length;
     const tree = economy.nodes.find(n => n.kind === 'tree' && n.available);
     const sheep = economy.nodes.find(n => n.kind === 'sheep' && n.available);
     const vein = economy.nodes.find(n => n.kind === 'vein' && n.available);
     const veins = economy.nodes.filter(n => n.kind === 'vein');
     const minimumVeinDistance = Math.min(...veins.map(n => Math.hypot(n.x - economy.castleX, n.y - economy.castleY)));
+    const minimumVeinPairDistance = Math.min(...veins.flatMap((node, i) =>
+      veins.slice(i + 1).map(other => Math.hypot(node.x - other.x, node.y - other.y))));
+    const veinSprites = veins.map(node => ({
+      type: node.sprite.type,
+      hasPhysicsBody: node.sprite.body !== undefined,
+    }));
     if (!collector || !blocker || !tree || !sheep || !vein) throw new Error('Initial settlement nodes or collectors are missing');
 
     const context = scene.registry.get('tss-pawnai-ctx') as { enemies: () => unknown[] };
@@ -224,16 +234,27 @@ test('phases C-D: harvesting delivers resources and depleted veins can recharge'
     collector.workNode = null;
 
     const woodBefore = economy.resources.wood;
-    economy.pawnAI.updateCivilian(collector, 5_000, scene.time.now);
+    economy.pawnAI.updateCivilian(collector, 3_999, scene.time.now);
+    const woodBeforeThreshold = collector.carrying;
+    economy.pawnAI.updateCivilian(collector, 1, scene.time.now + 3_999);
     const carrying = collector.carrying;
     const carriedAmount = collector.carriedAmount;
     const treeDestroyed = !tree.alive;
     const resourceCountBeforeDeposit = economy.resources.wood - woodBefore;
 
+    // Перевозимый ресурс отображается и в неподвижном, и в ходовом цикле.
+    economy.pawnAI.updateCivilian(collector, 16, scene.time.now + 4_000);
+    const carryIdleAnimation = collector.anims.currentAnim?.key ?? null;
+    collector.x = economy.castleX + 300;
+    collector.y = economy.castleY;
+    collector.cooldown = 0;
+    economy.pawnAI.updateCivilian(collector, 16, scene.time.now + 4_016);
+    const carryRunAnimation = collector.anims.currentAnim?.key ?? null;
+
     collector.x = economy.castleX;
     collector.y = economy.castleY;
     collector.cooldown = 0;
-    economy.pawnAI.updateCivilian(collector, 16, scene.time.now + 5_016);
+    economy.pawnAI.updateCivilian(collector, 16, scene.time.now + 4_032);
     const depositedWood = economy.resources.wood - woodBefore;
 
     // Повторяем тот же поток для овцы: мясо не появляется на земле, а уходит
@@ -252,7 +273,9 @@ test('phases C-D: harvesting delivers resources and depleted veins can recharge'
     collector.order = null;
     collector.workNode = null;
     const meatBefore = economy.resources.meat;
-    economy.pawnAI.updateCivilian(collector, 10_000, scene.time.now + 5_032);
+    economy.pawnAI.updateCivilian(collector, 2_999, scene.time.now + 5_032);
+    const meatBeforeThreshold = collector.carrying;
+    economy.pawnAI.updateCivilian(collector, 1, scene.time.now + 8_031);
     const carriedMeat = collector.carrying;
     const meatAmount = collector.carriedAmount;
     const sheepDestroyed = !sheep.alive;
@@ -277,7 +300,9 @@ test('phases C-D: harvesting delivers resources and depleted veins can recharge'
     collector.order = null;
     collector.workNode = null;
     const oreBefore = economy.resources.ore;
-    economy.pawnAI.updateCivilian(collector, 10_000, scene.time.now + 15_048);
+    economy.pawnAI.updateCivilian(collector, 4_999, scene.time.now + 15_048);
+    const oreBeforeThreshold = collector.carrying;
+    economy.pawnAI.updateCivilian(collector, 1, scene.time.now + 20_047);
     const carriedOre = collector.carrying;
     const oreAmount = collector.carriedAmount;
     collector.x = economy.castleX;
@@ -286,6 +311,11 @@ test('phases C-D: harvesting delivers resources and depleted veins can recharge'
     economy.pawnAI.updateCivilian(collector, 16, scene.time.now + 25_048);
     const depositedOre = economy.resources.ore - oreBefore;
 
+    const pulseAfterFirstCycle = vein.sprite.type === 'Sprite'
+      ? (vein as unknown as { pulse: { visible: boolean } | null }).pulse?.visible ?? null
+      : null;
+    vein.extract();
+    const pulseAfterSecondCycle = (vein as unknown as { pulse: { visible: boolean } | null }).pulse?.visible ?? null;
     const maxRemaining = vein.maxRemaining;
     const remainingCharges = vein.remaining;
     for (let i = 0; i < remainingCharges; i++) vein.extract();
@@ -307,13 +337,21 @@ test('phases C-D: harvesting delivers resources and depleted veins can recharge'
     vein.release(collector);
 
     return {
+      initialResources,
+      initialTreeCount,
+      initialSheepCount,
       carrying,
       carriedAmount,
+      woodBeforeThreshold,
+      carryIdleAnimation,
+      carryRunAnimation,
       treeDestroyed,
       resourceCountBeforeDeposit,
       depositedWood,
       woodBefore,
       woodAfter: economy.resources.wood,
+      meatBeforeThreshold,
+      oreBeforeThreshold,
       carriedMeat,
       meatAmount,
       sheepDestroyed,
@@ -323,15 +361,26 @@ test('phases C-D: harvesting delivers resources and depleted veins can recharge'
       depositedOre,
       veinCount: veins.length,
       minimumVeinDistance,
+      minimumVeinPairDistance,
+      veinSprites,
+      treeCount: economy.nodes.filter(n => n.kind === 'tree' && n.alive).length,
       sheepCount: economy.nodes.filter(n => n.kind === 'sheep' && n.alive).length,
+      pulseAfterFirstCycle,
+      pulseAfterSecondCycle,
       maxRemaining,
       veinAfterDepletion,
       veinAfterRecharge,
     };
   });
 
+  expect(report.initialResources).toEqual({ wood: 0, ore: 0, meat: 0 });
+  expect(report.woodBeforeThreshold).toBeNull();
+  expect(report.meatBeforeThreshold).toBeNull();
+  expect(report.oreBeforeThreshold).toBeNull();
   expect(report.carrying).toBe('wood');
-  expect(report.carriedAmount).toBeGreaterThan(0);
+  expect(report.carriedAmount).toBe(5);
+  expect(report.carryIdleAnimation).toBe('pawn-carry-idle-wood');
+  expect(report.carryRunAnimation).toBe('pawn-carry-wood');
   expect(report.treeDestroyed).toBe(true);
   expect(report.resourceCountBeforeDeposit).toBe(0);
   expect(report.depositedWood).toBe(report.carriedAmount);
@@ -345,7 +394,12 @@ test('phases C-D: harvesting delivers resources and depleted veins can recharge'
   expect(report.depositedOre).toBe(20);
   expect(report.veinCount).toBe(10);
   expect(report.minimumVeinDistance).toBeGreaterThanOrEqual(200);
-  expect(report.sheepCount).toBeGreaterThan(0);
+  expect(report.minimumVeinPairDistance).toBeGreaterThanOrEqual(192);
+  expect(report.veinSprites.every(node => node.type === 'Sprite' && !node.hasPhysicsBody)).toBe(true);
+  expect(report.treeCount).toBe(report.initialTreeCount - 1);
+  expect(report.sheepCount).toBe(report.initialSheepCount - 1);
+  expect(report.pulseAfterFirstCycle).toBe(true);
+  expect(report.pulseAfterSecondCycle).toBe(false);
   expect(report.veinAfterDepletion).toMatchObject({
     alive: true,
     remaining: 0,
