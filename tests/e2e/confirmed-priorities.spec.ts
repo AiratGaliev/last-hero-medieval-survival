@@ -188,16 +188,30 @@ test('intro overlay really pauses gameplay; monastery warnings and garrison dama
   expect(monastery.warned10).toBe(true);
   expect(monastery.warnings).toHaveLength(2);
 
-  const setup = await page.evaluate(() => {
+  const expectedDpsAtTenMinutes = await page.evaluate(() => {
     const game = (window as RuntimeWindow).__tss!;
     const scene = game.scene.getScene('Game') as GameSceneRuntime;
-    const heroDps = scene.weapons.estimateTheoreticalDps();
+    // Advance only the in-game elapsed marker to just before the 10:00 boundary.
+    scene.elapsed = 599.99;
+    return scene.weapons.estimateTheoreticalDps();
+  });
+  await expect.poll(
+    () => page.evaluate(() => {
+      const game = (window as RuntimeWindow).__tss!;
+      return (game.scene.getScene('Game') as GameSceneRuntime).heroDpsAtTenMinutes;
+    }),
+  ).toBe(expectedDpsAtTenMinutes);
+
+  const heroDps = await page.evaluate(() => {
+    const game = (window as RuntimeWindow).__tss!;
+    const scene = game.scene.getScene('Game') as GameSceneRuntime;
+    const currentHeroDps = scene.weapons.estimateTheoreticalDps();
     scene.heroDpsAtTenMinutes = 100; // deterministic fixture for the shared limiter
     scene.garrisonDpsBudget.reset(scene.time.now);
-    return { heroDps, now: scene.time.now };
+    return currentHeroDps;
   });
-  expect(Number.isFinite(setup.heroDps)).toBe(true);
-  expect(setup.heroDps).toBeGreaterThan(0);
+  expect(Number.isFinite(heroDps)).toBe(true);
+  expect(heroDps).toBeGreaterThan(0);
   await page.waitForTimeout(1_100);
 
   const damage = await page.evaluate(() => {
