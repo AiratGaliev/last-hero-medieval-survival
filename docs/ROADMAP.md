@@ -82,7 +82,7 @@ VLM + пиксельный анализ + dev.log). Балансировка и 
 - [x] Локальная выдача SKU ограничена `import.meta.env.DEV`; в production параметр `?ysdk=mock` сам по себе не разрешает бесплатное начисление.
 - [x] Если Yandex Games распознаны, но Payment SDK/объект платежей недоступен, `purchaseSku()` возвращает `{ ok: false, reason: 'fail' }` и не вызывает `grantSku()`.
 - [x] Добавлены Playwright-регрессии для отсутствующего SDK, отказа `purchase()`, подтверждённой покупки с неудачным `consumePurchase()`, повторной one-shot покупки и dev/mock-заглушки.
-- [ ] CI PR и smoke-тесты на текущем head должны завершиться успешно; реальная IAP-транзакция в Yandex Games Sandbox остаётся отдельным внешним гейтом.
+- [x] GitHub Actions CI run [#62](https://github.com/AiratGaliev/last-hero-medieval-survival/actions/runs/39120121871) для ревизии `036378c9a7be590d8e75148447c754082b6bc04b` завершился `success`: typecheck/lint, production build, сборка архива и Playwright пройдены. Реальная IAP-транзакция в Yandex Games Sandbox остаётся отдельным внешним гейтом.
 - [ ] Следующий пункт P1 — подключение SDK-каталога (`fetchCatalog()`) к `ShopScene`; в этом инкременте витрина не переделывалась.
 
 ---

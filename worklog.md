@@ -2171,8 +2171,15 @@ Stage Summary:
 ### Проверки и ограничения
 
 - Проверка через GitHub connector: код, тесты и конфигурация CI просмотрены; локальный `npm run check`, production build и Playwright в этой рабочей среде не запускались.
-- На момент внесения записи результат CI новой ревизии ещё не подтверждён. После push/PR проверяется workflow CI; до зелёного результата пункт не считается прошедшим CI-гейт.
+- GitHub Actions CI run [#62](https://github.com/AiratGaliev/last-hero-medieval-survival/actions/runs/39120121871) для ревизии `036378c9a7be590d8e75148447c754082b6bc04b` завершился `success`: `npm run check`, production build, `npm run build:yg` и весь Playwright workflow завершились успешно. Более ранний run #61 был отменён после обновления ветки и в итоговую оценку не включается.
 - Эти тесты проверяют платформенный API на управляемом mock SDK, а не реальную покупку в Yandex Games Sandbox. Валидность SKU, ЕЛС, цену/каталог и live-транзакцию нужно подтверждать отдельно.
 - Не закрыты: SDK-каталог в `ShopScene`, callback монастыря, двусторонняя осада «Клещи», измерение DPS гарнизона, FTUE и полное E2E экономики/преемственности.
 
 **Результат:** главная ошибка fail-open устранена в коде ветки; полноту всей фазы S и полное соответствие `docs/TZ.md` не объявляем подтверждёнными.
+
+
+### Итог CI для IAP-инкремента
+
+- [x] Успешный workflow: [CI run #62](https://github.com/AiratGaliev/last-hero-medieval-survival/actions/runs/39120121871), commit `036378c9a7be590d8e75148447c754082b6bc04b`.
+- [x] Шаги `Typecheck and lint`, `Production build`, `Build and validate Yandex Games archive`, `Browser smoke tests` имеют conclusion `success`.
+- [ ] Реальный платёж в Yandex Games Sandbox / верификация SKU и ЕЛС не входит в CI и остаётся незакрытым внешним гейтом.
