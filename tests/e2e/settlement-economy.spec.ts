@@ -432,8 +432,8 @@ test('phases E-F: construction uses the approached spot and repair costs are gua
       castle: { w: 288, h: 230 },
       house: { w: 102, h: 154 },
       barracks: { w: 163, h: 218 },
-      tower: { w: 163, h: 163 },
-      monastery: { w: 205, h: 205 },
+      tower: { w: 109, h: 218 },
+      monastery: { w: 163, h: 272 },
       archery: { w: 163, h: 218 },
     };
     const findFootprintOverlaps = (spots: BuildSpotRuntime[]): string[] => {
