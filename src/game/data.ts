@@ -484,6 +484,8 @@ export interface SiegeProfile {
   name: string;         // ключ i18n
   squad: Array<{ kind: EnemyKind; n: number; firer?: boolean }>;
   target: 'houses' | 'barracks' | 'monastery' | 'castle';
+  /** Explicit spawn geometry; omitted profiles keep the standard one-flank layout. */
+  formation?: 'pincer';
   woundCap: number;
 }
 
@@ -491,7 +493,7 @@ export const SIEGE_SCHEDULE: SiegeProfile[] = [
   { t: 360,  name: 'siege.profile.scout',  squad: [{ kind: 'skull', n: 3 }],                          target: 'houses',    woundCap: 1 },
   { t: 480,  name: 'siege.profile.raid',   squad: [{ kind: 'skull', n: 5 }],                          target: 'houses',    woundCap: 1 },
   { t: 600,  name: 'siege.profile.burn',   squad: [{ kind: 'skull', n: 4 }, { kind: 'shaman', n: 2, firer: true }], target: 'monastery', woundCap: 2 },
-  { t: 720,  name: 'siege.profile.pincer', squad: [{ kind: 'skull', n: 6 }, { kind: 'pig-rider', n: 4 }],           target: 'houses',    woundCap: 2 },
+  { t: 720,  name: 'siege.profile.pincer', squad: [{ kind: 'skull', n: 6 }, { kind: 'pig-rider', n: 4 }],           target: 'houses',    formation: 'pincer', woundCap: 2 },
   { t: 810,  name: 'siege.profile.assault',squad: [{ kind: 'skull', n: 6 }, { kind: 'shaman', n: 2, firer: true }, { kind: 'pig-rider', n: 3 }], target: 'castle', woundCap: 3 },
 ];
 
