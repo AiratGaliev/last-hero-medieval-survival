@@ -530,7 +530,7 @@ export class MetaScene extends Phaser.Scene {
           removeKey('tss-ukaz-pick');
         } else {
           saveText('tss-ukaz-pick', o.id);
-          track('ukaz_active', { id: o.id });
+          track('ukaz_taken', { id: o.id });
         }
         this.renderTab();
       });
@@ -998,7 +998,7 @@ export class MetaScene extends Phaser.Scene {
   private finishBonusClaim(doubled: boolean): void {
     const res = claimDailyBonus(doubled);
     if (res.ok) {
-      track('daily_bonus_claim', { day: res.day, doubled });
+      track('daily_claim', { day: res.day, doubled });
       audio.play('levelup');
     }
     this.closeBonusOverlay();

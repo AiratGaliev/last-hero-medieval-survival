@@ -9,7 +9,7 @@ import {
   WEAPONS, PASSIVES, HEROES, ENEMIES, DIFFICULTIES, EVOLUTIONS,
   SETTLEMENT_CARDS, BUILD_SPOTS,
   type WeaponId, type PassiveId, type EnemyKind, type UpgradeCard, type HeroId, type HeroDef, type DifficultyId, type DifficultyDef,
-  type SiegeProfile, type BuildingKind,
+  type SiegeProfile, type BuildingKind, type PawnWeapon,
 } from '../data';
 import { Player } from '../entities/Player';
 import { Enemy, type EnemyContext } from '../entities/Enemy';
@@ -86,6 +86,9 @@ export class GameScene extends Phaser.Scene {
   /** Активная осада: состав, цель, окно (§E.4). */
   private siegeAlive = false;
   private siegeDestroyed = 0;
+  /** Сколько юнитов в текущей осаде и сколько из них убито — для исхода (§E.8). */
+  private siegeTotal = 0;
+  private siegeKills = 0;
   /** Причина поражения для экрана и телеметрии (§E.3). */
   private loseCause: LoseCause = 'hero';
   /** Сдача на экране преемственности — для cause='surrender' в run_end (§K.2). */
@@ -98,6 +101,27 @@ export class GameScene extends Phaser.Scene {
   // Состояние матча
   private elapsed = 0;
   private kills = 0;
+  /**
+   * Временный магнит XP от комбо-вехи 200 (§H.4: «большое лечение + магнит
+   * XP 10 сек»). Множитель радиуса, а не сам радиус: базовый считается в
+   * recomputeStats(), иначе веха затирала бы уровень пассивки «Магнит».
+   */
+  private xpMagnetUntil = 0;
+  /**
+   * ГПСЧ рана (mulberry32). Нужен для ВОСПРОИЗВОДИМОСТИ: §K.4 и гейт §H.15
+   * п.7 требуют «фиксированный сид-прогон — расхождение счёта ≤ 5%».
+   * Math.random() в механиках, влияющих на награду (комбо-вехи 25/50 с
+   * разбросом «ресурсы или лечение»), делал такой прогон невозможным.
+   */
+  private rngState = 0;
+  /** [0, 1) из rng рана. */
+  private runRng(): number {
+    this.rngState = (this.rngState + 0x6d2b79f5) | 0;
+    let t = this.rngState;
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  }
   private level = 1;
   private xp = 0;
   private xpNext = XP_CURVE(1);
@@ -228,7 +252,18 @@ export class GameScene extends Phaser.Scene {
     // Т0 аналитики: реестр плейсментов и метка рана — до любых механик (§K.1)
     resetPlacementLimits();
     beginRun();
-    track('run_start', { hero: this.heroDef.id, difficulty: this.diffDef.id });
+    // §K.2: seed/contract/ukaz/blessing обязательны — без них не построить
+// воронку A/B по контрактам (§K.4) и не отличить вызов дня от обычного рана.
+    track('run_start', {
+      hero: this.heroDef.id,
+      difficulty: this.diffDef.id,
+      seed: this.mods.challenge ? 'daily' : 'default',
+      contract: this.contractId,
+      ukaz: this.mods.ukaz ?? null,
+      blessing: this.mods.blessing ?? null,
+      endless: this.mods.endless,
+      challenge: this.mods.challenge ? [...this.mods.challenge.mods] : null,
+    });
     // Стики-баннер (§J.5) показывается только вне рана — в бою гасим
     hideStickyBanner();
     this.buildWorld();
@@ -289,6 +324,8 @@ export class GameScene extends Phaser.Scene {
     this.boss = null;
     this.siegeAlive = false;
     this.siegeDestroyed = 0;
+    this.siegeTotal = 0;
+    this.siegeKills = 0;
     this.loseCause = 'hero';
     this.surrendered = false;
     this.towerNextShot = 0;
@@ -309,9 +346,23 @@ export class GameScene extends Phaser.Scene {
     this.ambientRect?.destroy();
     this.ambientRect = null;
     this.lastAmbientUpdate = -1;
+    // Счётчики коммита мета-статистики живут на экземпляре сцены, а Phaser
+    // переиспользует один и тот же экземпляр для всех ранов. Без сброса
+    // второй ран в сессии считался бы «продолжением» первого: matches не
+    // росли бы никогда, а дельта убийств/золота считалась бы от чужого
+    // итога — в кошелёк лавки падало бы 0 вместо заработанного (§J.8).
+    this.metaCommitted = false;
+    this.metaVictory = false;
+    this.metaKills = 0;
+    this.metaGold = 0;
+    this.metaTime = 0;
+    this.defeatPending = false;
     this.combo = 0;
     this.comboTimer = 0;
     this.bestCombo = 0;
+    this.xpMagnetUntil = 0;
+    // Сид рана фиксирован на запуск сцены: одинаковый сид → одинаковые рулетки
+    this.rngState = (Date.now() ^ (Math.random() * 0xffffffff)) | 0;
     this.registry.set('tss-freeze', 0);
     this.lastMove = { x: 1, y: 0 };
     this.sepGrid.clear();
@@ -513,6 +564,9 @@ export class GameScene extends Phaser.Scene {
         this.score += 100;
         this.addXp(25);
         this.effects.popup(pawn.x, pawn.y - 60, '+100', '#ffd76e', 14);
+        // §I.2 требует подсказку о ветеранах; ключ `hint.veteran` был
+        // заведён в обоих словарях, но ни разу не показывался.
+        this.hints?.show('veteran');
       },
       onMonasteryFalling: (victims) => {
         this.hud?.announce(t('siege.monasteryFalling', { v: victims }), '#ff5544');
@@ -807,6 +861,10 @@ export class GameScene extends Phaser.Scene {
       besiegedBuilding: () => this.settlement.siegeIdx >= 0
         ? this.economy.buildings.find((b) => b.lastSiegeIdx === this.settlement.siegeIdx) ?? null
         : null,
+      // Герой — цель полевого лечения монаха (§B.7.2, §B.6 «СЛЕДОВАТЬ»)
+      hero: () => this.player
+        ? { hp: this.player.hp, maxHp: this.player.maxHp, x: this.player.x, y: this.player.y }
+        : null,
     });
     // Выбор цели врагом §A.5: гарнизон приоритетнее гражданских.
     // Гражданские в ядре поселения (≤360 px от замка) — вне досягаемости:
@@ -932,7 +990,7 @@ export class GameScene extends Phaser.Scene {
       this.hud.updateSettlement(
         this.settlement.infrastructureHp / this.settlement.infrastructureMax,
         this.economy.pawns.length / Math.max(1, this.economy.pawnLimit),
-        t('hud.garrison', { a: this.economy.garrison.length, b: Math.max(this.economy.garrisonLimit('sword'), this.economy.garrisonLimit('bow')) }),
+        t('hud.garrison', { a: this.economy.garrison.length, b: this.economy.totalGarrisonSlots() }),
       );
     });
     this.economy.on('built', ({ kind, first }) => {
@@ -1226,7 +1284,24 @@ export class GameScene extends Phaser.Scene {
     return best;
   }
 
+  /**
+ * Прогрессивное раскрытие приказов (§I.3): «Приказы рабочим → ПОСЛЕ 2-го
+ * дома в матче. После одного дома ещё не ясно, что это не декорация».
+ *
+ * ⚠️ Условие по СОСТОЯНИЮ поселения сильнее условия по номеру матча (§I.3) —
+ * проверяется счётчиком построенных домов, а не matchesPlayed.
+ */
+private ordersUnlocked(): boolean {
+    return this.economy.houses >= 2;
+  }
+
   private openOrderMenu(pawn: Pawn, wx: number, wy: number): void {
+    if (!this.ordersUnlocked()) {
+      // Не заблокируем интерфейс молча (§I.1 — учим действием): короткое
+      // объяснение в ленту поселения.
+      this.hud?.feed(t('orders.locked'), '#ffd76e');
+      return;
+    }
     this.orderMenu.open(pawn, wx, wy, (key) => {
       if (!this.orderMenu.openPawn) return;
       // Приказ не перебивает carry-фазу — PawnAI применит после сдачи (§B.6)
@@ -1338,6 +1413,19 @@ export class GameScene extends Phaser.Scene {
 
     // Лонг-пресс приказа: кольцо заполнения → меню (§B.6)
     if (this.pressState && !this.orderMenu.isOpen) {
+      // §B.6: «свайп от пальца = отмена». Палец, который уехал с пешки при
+      // удержании, не хотел открывать меню — он двигал героя. Без проверки
+      // приказная система на тач-свайпе срабатывала бы постоянно.
+      const ptr = this.input.activePointer;
+      if (ptr.isDown) {
+        const drift = Math.hypot(ptr.worldX - this.pressState.x, ptr.worldY - this.pressState.y);
+        if (drift > 48) {
+          this.orderMenu.hideRing();
+          this.pressState = null;
+        }
+      }
+    }
+    if (this.pressState && !this.orderMenu.isOpen) {
       const held = time - this.pressState.t;
       if (held >= LONGPRESS_MS) {
         this.orderMenu.hideRing();
@@ -1364,7 +1452,13 @@ export class GameScene extends Phaser.Scene {
         this.spawnChest();
       }
     }
-    this.pickups.update(delta, this.player.x, this.player.y, this.magnetRadius, time);
+    // Магнит комбо-вехи 200 живёт 10 секунд (§H.4) — радиус пересчитываем
+    // каждый кадр, потому что он не входит в recomputeStats (там он был бы
+    // перетёрт снятием пассивки).
+    const magnetNow = this.time.now < this.xpMagnetUntil
+      ? this.magnetRadius * 6
+      : this.magnetRadius;
+    this.pickups.update(delta, this.player.x, this.player.y, magnetNow, time);
 
     // Регенерация
     if (this.regen > 0 && this.player.hp < this.player.maxHp) {
@@ -1405,7 +1499,7 @@ export class GameScene extends Phaser.Scene {
       this.hud.updateSettlement(
         this.settlement.infrastructureHp / this.settlement.infrastructureMax,
         this.economy.pawns.length / Math.max(1, this.economy.pawnLimit),
-        t('hud.garrison', { a: this.economy.garrison.length, b: Math.max(this.economy.garrisonLimit('sword'), this.economy.garrisonLimit('bow')) }),
+        t('hud.garrison', { a: this.economy.garrison.length, b: this.economy.totalGarrisonSlots() }),
       );
       this.hud.updateSpeedups(
         this.speedup.hasTarget('repair'),
@@ -1538,6 +1632,11 @@ export class GameScene extends Phaser.Scene {
     this.cameras.main.shake(120, 0.0035);
     this.cameras.main.flash(110, 190, 40, 30, false);
     this.hitstop(80);
+    // §H.4: «Серия сбрасывается пропущенным ударом по герою (как сейчас) —
+    // вехи достижимы только скиллом». Без этого сундучки вех сыпались за
+    // безнаказанное стояние на месте.
+    this.combo = 0;
+    this.comboTimer = 0;
     // Не завершаем матч сразу: событие урона приходит из физики, а убийство
     // босса может произойти тем же тиком позже по порядку обработки.
     // Решение принимается в update() — там уже известен исход боя с боссом.
@@ -1583,6 +1682,8 @@ export class GameScene extends Phaser.Scene {
     this.settlement.beginSiege(index, profile.woundCap, enemies);
     this.siegeAlive = true;
     this.siegeDestroyed = 0;
+    this.siegeTotal = enemies.length;
+    this.siegeKills = 0;
     // Бесконечный (§H.12): волна = счётчик осад; HUD-таймер не трогаем —
     // минимальный маркер волны через анонс (index с нуля → волна с 1)
     if (this.mods.endless) {
@@ -1623,7 +1724,16 @@ export class GameScene extends Phaser.Scene {
         const d = Math.hypot(b.x - this.castleX, b.y - this.castleY);
         if (d > bestD) { bestD = d; target = b; }
       }
-      if (!target) target = pick('barracks') ?? pick('monastery') ?? pick('castle');
+      // ⚠️ Фолбэк для «домашних» профилей идёт по §G.7, но БЕЗ замка:
+      // §E.4.3 прямо говорит, что «Разведка» в 6:00 замок НЕ трогает —
+      // игрок учится правилам на малой ставке. Раньше падая в общий порядок
+      // она могла ударить по замку и обесценить саму идею профилей.
+      if (!target) {
+        for (const k of ['monastery', 'barracks', 'house', 'tower', 'archery'] as BuildingKind[]) {
+          target = pick(k);
+          if (target) break;
+        }
+      }
     } else {
       target = pick(profile.target);
       if (!target) {
@@ -1639,20 +1749,37 @@ export class GameScene extends Phaser.Scene {
     }
   }
 
-  /** Тик осады: отступление по таймеру 60 сек и исход. */
+  /** Тик осады: окно атаки 10 сек у стены, отступление и исход (§E.4.2). */
   private siegeTick(now: number): void {
     if (!this.siegeAlive || this.settlement.siegeIdx < 0) return;
     const members = this.settlement.siegeMembers();
-    // Отступление: каждый осадный враг живёт 60 сек с момента появления
     for (const e of members) {
-      if (e.siege && now - e.spawnedAt > SIEGE.LIFETIME * 1000) {
+      if (!e.siege) continue;
+      // Окно атаки открывается, когда осада дошла до цели (§E.4.2: путь
+      // 8–15 сек без урона, затем РОВНО 10 секунд боя у стены). Все числа
+      // §E.4.1/§E.4.3 выведены именно из этого окна, поэтому без него
+      // фактический урон по базе в разы выше расчётного.
+      if (e.attackWindowEnds === 0) {
+        const b = e.buildingTarget as { x: number; y: number } | null;
+        if (b && Math.hypot(e.x - b.x, e.y - b.y) < 220) {
+          e.attackWindowEnds = now + SIEGE.ATTACK_WINDOW * 1000;
+        }
+      }
+      // Отступление: каждый осадный враг живёт 60 сек с момента появления
+      if (now - e.spawnedAt > SIEGE.LIFETIME * 1000) {
         this.enemyGroup.remove(e, true, true);
       }
     }
     const left = this.settlement.siegeMembers();
     if (left.length === 0) {
-      // Все убиты/ушли: исход — здание не разрушено → отбита (§E.8)
-      const outcome = this.siegeDestroyed === 0 ? 'defended' : 'partial';
+      // §E.8: «Осада отбита (все враги осады убиты до истечения окна)».
+      // Раньше outcome считался по факту «отряд закончился», а это верно и
+      // для осады, которую просто переждали: она получала +150 очков и
+      // статус «отбита», а телеметрия не могла отличить «defended» от
+      // «ignored» — гейт §E.4.2 (доля defended ≥ 50%) становился бессмысленным.
+      const outcome = this.siegeDestroyed > 0 ? 'partial'
+        : this.siegeKills >= this.siegeTotal ? 'defended'
+          : 'ignored';
       this.settlement.endSiege(outcome);
       track('siege_result', { outcome, cap_applied: this.settlement.capApplied });
       this.siegeAlive = false;
@@ -1746,7 +1873,8 @@ export class GameScene extends Phaser.Scene {
   }
 
   private pawnTitle(pawn: Pawn): string {
-    return t(`pawn.titled.${pawn.kind}` as Parameters<typeof t>[0]);
+    // Титул с родом: «каменщица Агата» (Приложение A1)
+    return t(`pawn.titled.${pawn.kind}${pawn.female ? 'F' : ''}` as Parameters<typeof t>[0]);
   }
 
   /** Фаза 2 босса: HP < 50% → идёт на замок (§E.6). */
@@ -1767,6 +1895,10 @@ export class GameScene extends Phaser.Scene {
 
   private onEnemyDeath(e: Enemy, src?: WeaponId, byPawn = false): void {
     if (!e.active) return;
+    // Огр перед удалением проигрывает анимацию смерти (§A.2: `dead` 10 кадров).
+    // Раньше лист грузился, но не игрался ни разу — финальный босс исчезал
+    // мгновенно, и самый весомый момент матча не читался как победа.
+    if (e.def.isBoss) this.bossDeathSequence(e);
     // Убираем из мира СРАЗУ: цепные взрывы не должны повторно бить погибающего
     const x = e.x, y = e.y;
     this.enemyGroup.remove(e, true, true);
@@ -1802,6 +1934,9 @@ export class GameScene extends Phaser.Scene {
     }
     const big = e.def.isElite || e.def.isBoss;
 
+    // Убийство в рамках текущей осады: нужно для исхода «defended» (§E.8).
+    if (e.siege) this.siegeKills++;
+
     // Рыба-бомба, убитая оружием: взрыв бьёт врагов (цепная реакция!)
     if (e.def.kind === 'bomb-fish') {
       this.fishBombExplode(x, y, false, src);
@@ -1813,13 +1948,20 @@ export class GameScene extends Phaser.Scene {
       this.lastDieSound = this.time.now;
       audio.play('die');
     }
-    // Дроп
+    // Дроп. Крупные роняют несколько кристаллов вместо одного (крупный дроп
+    // читается на земле), но суммарный опыт обязан совпасть с таблицей §A.4:
+    // `Math.ceil(xp / 3)` давал медведю 27 вместо 25 и боссу 201 вместо 200.
+    // Поэтому делим нацело, а остаток кладём в первые кристаллы.
     if (e.def.gem && e.xpValue > 0) {
       const n = big ? 3 : 1;
+      const per = Math.floor(e.xpValue / n);
+      let rest = e.xpValue - per * n;
       for (let i = 0; i < n; i++) {
         const ox = big ? Phaser.Math.Between(-40, 40) : 0;
         const oy = big ? Phaser.Math.Between(-40, 40) : 0;
-        this.pickups.spawnGem(x + ox, y + oy, e.def.gem, Math.ceil(e.xpValue / n));
+        const amount = per + (rest > 0 ? 1 : 0);
+        rest -= amount - per;
+        if (amount > 0) this.pickups.spawnGem(x + ox, y + oy, e.def.gem, amount);
       }
     }
     if (e.def.isElite) {
@@ -1880,6 +2022,9 @@ export class GameScene extends Phaser.Scene {
     track('combo_milestone', { tier: combo });
     // Сундук летит к замку — carry-визуал (§H.4)
     const chest = this.add.image(x, y, 'treasure').setScale(0.5).setDepth(DEPTH.FX);
+    // 50/50 по rng сида (§H.4): Math.random() ломал воспроизводимость
+    // фиксированного сида, на которой держатся все A/B-гейты (§K.4).
+    const coin = this.runRng() < 0.5;
     this.tweens.add({
       targets: chest,
       x: this.castleX, y: this.castleY,
@@ -1889,10 +2034,10 @@ export class GameScene extends Phaser.Scene {
       onComplete: () => {
         chest.destroy();
         if (tier === 0) {
-          if (Math.random() < 0.5) this.economy.deposit('wood', 10);
+          if (coin) this.economy.deposit('wood', 10);
           else this.player.heal(25);
         } else if (tier === 1) {
-          if (Math.random() < 0.5) {
+          if (coin) {
             this.economy.deposit('wood', 10);
             this.economy.deposit('ore', 10);
           } else this.player.heal(999);
@@ -1901,13 +2046,31 @@ export class GameScene extends Phaser.Scene {
           this.economy.deposit('ore', 15);
           this.economy.deposit('meat', 15);
         } else {
+          // §H.4, веха 200: «большое лечение + магнит XP 10 сек + ресурсы».
+          // Магнит даём временным расширением радиуса — иначе игрок,
+          // доведший серию до 200, должен был вручную собирать кристаллы.
           this.player.heal(999);
+          this.xpMagnetUntil = this.time.now + 10_000;
           this.economy.deposit('wood', 25);
           this.economy.deposit('ore', 15);
           this.economy.deposit('meat', 15);
         }
       },
     });
+  }
+
+  /**
+ * Анимация смерти босса (§A.2, `ogre-boss/dead`, 10 кадров).
+ *
+ * Спрайт-тень остаётся на месте и доигрывает цикл; логика босса при этом
+ * уже отключена (`deactivateBossBody`), поэтому на анимацию это не влияет.
+ */
+private bossDeathSequence(e: Enemy): void {
+    e.deactivateBossBody();
+    if (!this.anims.exists('boss-dead')) return;
+    e.play('boss-dead', true);
+    e.setFlipX(false);
+    this.hitstop(140);
   }
 
   /** Убийство врага гарнизоном: KILL растёт, комбо игрока — нет (§B.7.1). */
@@ -1959,7 +2122,11 @@ export class GameScene extends Phaser.Scene {
         const w = this.succession.findLivingWarrior();
         if (!w) return false;
         this.succession.promoteWarrior(w);
-        this.applyHero(w.weapon === 'lance' ? 'lancer' : 'warrior', 'warrior');
+        // ⚠️ Герой определяется ПОДТИПОМ воина (§F.6, гейт §F.13 п.12):
+        // лучник из тира становится «арчером», монах из обители — «монахом».
+        // Раньше всё сводилось к `lance ? lancer : warrior`, и гарнизонный
+        // лучник получал мечника.
+        this.applyHero(this.succession.heroFor(w.weapon ?? 'sword'), w.weapon ?? 'sword');
         this.afterSuccession('warrior');
         return true;
       },
@@ -1967,24 +2134,27 @@ export class GameScene extends Phaser.Scene {
       // Первая преемственность аккаунта бесплатна (§F.4/§I.4): ничего не
       // списываем, только гасим lifetime-флаг.
       onTakeResources: (weapon: string) => {
+        // Серый тип выбрать нельзя (§F.13 п.6) — проверяем ещё раз на
+        // приёмочной стороне: UI не единственный вход в эти колбэки.
+        if (!this.succession.typeAvailable(weapon as PawnWeapon)) return false;
         if (this.succession.isFirstLifetimeFree()) {
           this.succession.payFree();
         } else if (!this.succession.payResources()) return false;
-        const hero = weapon === 'lance' ? 'lancer' : weapon === 'bow' ? 'archer' : weapon === 'staff' ? 'monk' : 'warrior';
-        this.applyHero(hero, weapon);
+        this.applyHero(this.succession.heroFor(weapon as PawnWeapon), weapon);
         this.afterSuccession('resources');
         return true;
       },
       // Ветка 3: реклама
       onTakeAd: (weapon: string) => {
-        const hero = weapon === 'lance' ? 'lancer' : weapon === 'bow' ? 'archer' : weapon === 'staff' ? 'monk' : 'warrior';
+        if (!this.succession.typeAvailable(weapon as PawnWeapon)) return false;
         this.succession.payAd();
-        this.applyHero(hero, weapon);
+        this.applyHero(this.succession.heroFor(weapon as PawnWeapon), weapon);
         this.afterSuccession('ad');
         return true;
       },
       // Ветка 3: золото матча (тоже бесплатно при первом показе, §F.4)
       onTakeGold: (weapon: string) => {
+        if (!this.succession.typeAvailable(weapon as PawnWeapon)) return false;
         if (this.succession.isFirstLifetimeFree()) {
           this.succession.payFree();
         } else {
@@ -1992,8 +2162,7 @@ export class GameScene extends Phaser.Scene {
           this.gold -= this.succession.goldCost();
           this.succession.payGold();
         }
-        const hero = weapon === 'lance' ? 'lancer' : weapon === 'bow' ? 'archer' : weapon === 'staff' ? 'monk' : 'warrior';
-        this.applyHero(hero, weapon);
+        this.applyHero(this.succession.heroFor(weapon as PawnWeapon), weapon);
         this.afterSuccession('gold');
         return true;
       },
@@ -2173,8 +2342,16 @@ export class GameScene extends Phaser.Scene {
     const r = Math.hypot(cam.width, cam.height) / (2 * cam.zoom) + 160;
     const x = Phaser.Math.Clamp(this.player.x + Math.cos(a) * r, 400, WORLD.SIZE - 400);
     const y = Phaser.Math.Clamp(this.player.y + Math.sin(a) * r, 400, WORLD.SIZE - 400);
-    // hpMult — эскалация боссов бесконечного режима (§H.12): ×1.5 за каждого
-    this.boss = new Enemy(this, x, y, 'boss', hpMult, 1, this.enemyCtxStore!);
+    // hpMult — эскалация боссов бесконечного режима (§H.12): ×1.5 за каждого.
+    // dmgMult — масштаб минуты и сложности (§C.3): контактный урон Огра на
+    // 15-й минуте 40 → 112, на «Кошмаре» → 140. Раньше сюда передавался 1,
+    // и финальный бойс был одинаковым на любой сложности.
+    this.boss = new Enemy(
+      this, x, y, 'boss',
+      hpMult * this.spawner.hpMult,
+      this.spawner.dmgMult,
+      this.enemyCtxStore!,
+    );
     this.boss.speed = Math.round(this.boss.speed * this.diffDef.speedMult * this.enemySpeedMult);
     this.enemyGroup.add(this.boss);
     this.hud.showBossBar(ENEMIES.boss.name);
@@ -2594,13 +2771,26 @@ export class GameScene extends Phaser.Scene {
     });
   }
 
-  private currentScore(): number {
-    // §E.8: KILL×комбо + MIN×100 + LVL×50 (золото матча в очки не входит —
-    // оно конвертируется в кошелёк лавки на end-экране, §J.2 валюты не мешаются)
-    const base = this.score
+  /**
+   * Счёт без множителя сложности: KILL×комбо + MIN×100 + LVL×50.
+   *
+   * Золото матча в очки не входит — оно конвертируется в кошелёк лавки на
+   * end-экране (§J.2 валюты не мешаются).
+   *
+   * `scoreMult` применяется ровно один раз, ко всей сумме (§E.8), поэтому
+   * итоговый счёт строится из этого «сырого» значения, а не из
+   * `currentScore()`, который уже умножен — иначе на «Кошмаре» получалось бы
+   * 1.6 × 1.6 = 2.56.
+   */
+  private rawScore(): number {
+    return this.score
       + Math.floor(this.elapsed / 60) * SCORE.MINUTE
       + this.level * SCORE.LEVEL;
-    return Math.round(base * this.diffDef.scoreMult);
+  }
+
+  /** Счёт для HUD: множитель сложности уже применён. */
+  private currentScore(): number {
+    return Math.round(this.rawScore() * this.diffDef.scoreMult);
   }
 
   private victory(): void {
@@ -2680,14 +2870,23 @@ export class GameScene extends Phaser.Scene {
     // и полосы с тостами светились поверх затемнения экрана результата.
     this.hud.setVisible(false);
 
-    const finalScore = Math.round((this.currentScore()
-      + this.settlement.settlementScore().defence
-      + this.settlement.settlementScore().population) * this.diffDef.scoreMult);
+    const settlementScore = this.settlement.settlementScore();
     const ideal = this.settlement.isIdealVictory(victory);
-    if (ideal) {
-      // РЕЙТИНГ только за идеальную победу (§E.8)
-      this.score += SCORE.RATING;
-    }
+    // §H.6: идеальная победа (слой 3) даёт +150 XP. Строка таблицы §H.6 была
+    // единственной нереализованной — остальные пять начислялись.
+    if (ideal) this.addXp(150);
+    // §E.8: scoreMult применяется ко всей сумме ровно один раз, а РЕЙТИНГ
+    // входит в неё наравне с ЗАЩИТОЙ и НАСЕЛЕНИЕМ (раньше он прибавлялся к
+    // this.score ПОСЛЕ расчёта finalScore и в итоговый счёт не попадал).
+    // ЗАЩИТА/НАСЕЛЕНИЕ платятся и при поражении — §F.13 п.10 запрещает их
+    // обнулять при смене героя, но не при поражении, а §E.8 не делает
+    // победного условия: «забросил — получил минимум», не «ноль».
+    const score = Math.round((
+      this.rawScore()
+      + settlementScore.defence
+      + settlementScore.population
+      + (ideal ? SCORE.RATING : 0)
+    ) * this.diffDef.scoreMult);
     // Статистика оружия: сортировка по суммарному урону; эволюционные формы — с ★
     const weapons: WeaponStat[] = [...this.weaponStats.entries()]
       .map(([id, st]) => {
@@ -2699,7 +2898,6 @@ export class GameScene extends Phaser.Scene {
         };
       })
       .sort((a, b) => b.dmg - a.dmg);
-    const score = victory ? finalScore : Math.round(this.currentScore() * this.diffDef.scoreMult);
     // meta (итоги applyRunToMeta) дописывается ниже — тип из GameOverStats
     const stats: import('./GameOverScene').GameOverStats = {
       victory,
@@ -2718,9 +2916,11 @@ export class GameScene extends Phaser.Scene {
       loseCause: this.loseCause,
       ideal,
       settlement: {
-        ...this.settlement.settlementScore(),
-        defence: Math.round(this.settlement.settlementScore().defence * this.diffDef.scoreMult),
-        population: Math.round(this.settlement.settlementScore().population * this.diffDef.scoreMult),
+        ...settlementScore,
+        // Показываем те же величины, что входят в итоговый счёт, — иначе
+        // экран сообщает «ЗАЩИТА: 1800», которой в счёте нет (§E.8).
+        defence: Math.round(settlementScore.defence * this.diffDef.scoreMult),
+        population: Math.round(settlementScore.population * this.diffDef.scoreMult),
         castleHp: Math.max(0, Math.round(this.settlement.castle.hp)),
         siegesTotal: this.settlement.facts.siegesTotal,
         siegesDefended: this.settlement.facts.siegesDefended,
@@ -2737,18 +2937,31 @@ export class GameScene extends Phaser.Scene {
       score,
       kills: this.kills,
       level: this.level,
-      buildings: this.settlement.settlementScore().buildings,
+      buildings: settlementScore.buildings,
       population: this.economy.pawns.length,
       sieges_defended: this.settlement.facts.siegesDefended,
       ideal,
+      // Отдельные события по §K.2: без них таблица «Бесконечный» (§H.12)
+      // и «Вызов дня» (§H.8) остаются без результата — в буфере лежит только
+      // факт старта.
+      ...(this.mods.endless ? { endless_wave: this.wave } : {}),
+      ...(this.mods.challenge ? { challenge_mods: [...this.mods.challenge.mods] } : {}),
     });
-    // Персистентный буфер телеметрии (§K.1): ран уходит в хранилище
-    flushRunTelemetry();
+    if (this.mods.endless && !victory) {
+      track('endless_death', { wave: this.wave, score });
+    }
+    if (this.mods.challenge) {
+      track('challenge_result', { victory, ideal, score, wave: this.wave });
+    }
     this.commitMatchMeta(victory, score);
     // Мета фаз Q/S (§K.2): сводка рана → applyRunToMeta ровно один раз,
     // результат прикрепляется к payload stats.meta
     const meta = this.applyRunMeta(victory, score, ideal);
     if (meta) stats.meta = meta;
+    // Персистентный буфер телеметрии (§K.1). ВАЖНО: сброс идёт ПОСЛЕ
+    // applyRunMeta — иначе glory_earned/quest_done/pass_level попадали
+    // в буфер СЛЕДУЮЩЕГО рана, и группировка событий по ранам сдвигалась.
+    flushRunTelemetry();
     this.scene.launch('GameOver', { stats });
     this.scene.pause();
   }
@@ -2994,7 +3207,12 @@ export class GameScene extends Phaser.Scene {
         if (pawn.dead) return;
         if (siege) this.settlement.siegeWoundPawn(pawn, dmg, this.time.now);
         else {
-          const wounded = this.economy.woundPawn(pawn, dmg, this.time.now);
+          // Таунт мечника перетягивает и урон по гражданскому (§B.7.1).
+          // Раньше он работал только по зданиям — половина правила молчала.
+          const dmgToPawn = this.settlement.siegeIdx >= 0
+            ? this.settlement.tauntCivilian(pawn, dmg, this.settlement.siegeIdx)
+            : dmg;
+          const wounded = this.economy.woundPawn(pawn, dmgToPawn, this.time.now);
           if (wounded) track('pawn_wounded', { name_role: `${pawn.kind}:${pawn.name}`, cause: 'regular' });
         }
         this.effects.hitSound(this.time.now);
@@ -3007,19 +3225,39 @@ export class GameScene extends Phaser.Scene {
         this.settlement.damageBuilding(building, dmg, isBoss ? -1 : this.settlement.siegeIdx, isBoss);
         this.effects.hitSpark(building.x, building.y - 20);
       },
-      // Бросок снаряда по зданию: урон придёт по прибытии (§E.4.1)
+      // Бросок снаряда по зданию: урон придёт по прибытии (§E.4.1).
+      // Номер осады ЗАХВАТЫВАЕТСЯ В МОМЕНТ ВЫСТРЕЛА: снаряд летит дольше
+      // окна атаки, и к попаданию `settlement.siegeIdx` уже мог сброситься —
+      // тогда урон пришёл бы в обход потолка 12% (§E.4.4).
       siegeShoot: (kind, x, y, tx, ty, fire, building) => {
         const dmg = kind === 'hex' ? (ENEMIES.shaman.buildingDmg ?? 5) : (ENEMIES.gnoll.buildingDmg ?? 2);
+        const firedAt = this.settlement.siegeIdx;
         this.projectiles.shootAtBuilding(kind, x, y, tx, ty, dmg, fire, (shot) => {
           const b = building as Building;
           if (b && b.alive) {
             if (fire) {
-              b.ignite(this.settlement.siegeIdx);
+              b.ignite(firedAt);
               this.effects.hexBlast(shot.x, shot.y);
             }
-            this.settlement.damageBuilding(b, dmg, this.settlement.siegeIdx, false);
+            this.settlement.damageBuilding(b, dmg, firedAt, false);
           }
         });
+      },
+      // Осада, дошедшая внутрь, ранит пешек рядом (§E.4) — по лимиту профиля.
+      nearPawn: (x, y, r) => {
+        let best: Pawn | null = null;
+        let bestD = r;
+        for (const p of this.economy.pawns) {
+          if (p.dead || !p.active) continue;
+          // Герой — не пешка, его ранение идёт обычным путём (§A.5)
+          const d = Math.hypot(p.x - x, p.y - y);
+          if (d < bestD) { bestD = d; best = p; }
+        }
+        return best;
+      },
+      onSiegeWindowEnd: (e) => {
+        // Окно атаки истекло — осада уходит за край карты (§E.4.2).
+        this.enemyGroup.remove(e, true, true);
       },
     };
   }

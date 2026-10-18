@@ -343,14 +343,21 @@ export const en: Record<TranslationKey, string> = {
 
   // ---------- Settlement feed (TZ §H.2) ----------
   'pawn.titled.collector': 'collector',
+  'pawn.titled.collectorF': 'collector',
   'pawn.titled.builder': 'mason',
+  'pawn.titled.builderF': 'mason',
   'pawn.titled.repairer': 'carpenter',
+  'pawn.titled.repairerF': 'carpenter',
   'pawn.titled.fighter': 'warrior',
   'pawn.titled.healer': 'monk',
+  'pawn.titled.healerF': 'monk',
   'pawn.arrived': 'A newcomer! {v} joins the settlement',
   'pawn.wounded': '{v} is wounded and seeks healing',
+  'pawn.woundedF': '{v} is wounded and seeks healing',
   'pawn.bleeding': '{v} is bleeding out — 0:{s}',
+  'pawn.bleedingF': '{v} is bleeding out — 0:{s}',
   'pawn.died': '{v} has died',
+  'pawn.diedF': '{v} has died',
   'pawn.saved': '{v} was saved!',
   'pawn.left': '{v} leaves — no home to return to',
   'pawn.veteran': '{v} survived the third siege — a veteran!',
@@ -365,8 +372,10 @@ export const en: Record<TranslationKey, string> = {
   'order.post': 'TO POST',
   'order.hold': 'HOLD',
   'order.monastery': 'TO ABBEY',
+  'order.reset': 'CLEAR ORDER',
   'order.disabled': 'unavailable',
   'order.hint': 'Shift+click or long-press to order',
+  'orders.locked': 'Orders unlock after your second house',
 
   // ---------- Building & hiring ----------
   'building.house.name': 'House',
@@ -902,6 +911,10 @@ export const en: Record<TranslationKey, string> = {
   'over.gloryX2': 'Watch ad: glory ×2',
   'over.goldX2': 'Watch ad: gold ×2',
   'over.x2Done': 'Already doubled',
+  // §J.3: button unavailable → grey out WITH a reason
+  'ad.reasonLimit': 'Ad already used',
+  'ad.reasonUnavailable': 'Ad unavailable',
+  'over.gloryX2Cap': 'Glory already at cap',
   'over.questsDone': 'Daily quests: {v}',
   'over.passUp': 'Pass +{v} lv.',
   'over.chainsUp': 'Chains: {v}',

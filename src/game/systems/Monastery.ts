@@ -66,6 +66,12 @@ export class Monastery {
    */
   healTick(dtMs: number): void {
     const hpPerSec = HEAL_HP_PER_SEC + this.eco.tune.healHps;
+    const seconds = dtMs / 1000;
+    // ⚠️ Списание идёт через Economy.spend() (§G.10), а не прямой записью в
+    // resources. Прямая запись не поднимала `emit('change')`, и единственная
+    // подписка HUD (economy.on('change'), §B.8) обновляла дерево только по
+    // случайному совпадению — на экране расходились числа.
+    let spentWood = 0;
     for (const b of this.eco.buildings) {
       if (!b.alive || b.kind !== 'monastery' || b.underConstruction) continue;
       for (let s = 0; s < b.healSlots.length; s++) {
@@ -74,9 +80,9 @@ export class Monastery {
         const woodPerSec = hpPerSec / 15
           * (this.eco.card('fieldmedic') > 0 ? 0.75 : 1)
           * this.eco.tune.healWood;
-        if (this.eco.resources.wood < woodPerSec * (dtMs / 1000)) continue; // склад пуст — HP не растёт
-        this.eco.resources.wood -= woodPerSec * (dtMs / 1000);
-        const amount = hpPerSec * (dtMs / 1000);
+        if (this.eco.resources.wood < woodPerSec * seconds) continue; // склад пуст — HP не растёт
+        spentWood += woodPerSec * seconds;
+        const amount = hpPerSec * seconds;
         unit.healBy(amount);
         this.eco.healHpTotal += amount;
         if (unit.hp >= unit.maxHp) {
@@ -86,9 +92,11 @@ export class Monastery {
           unit.cooldown = 0.5;
           this.eco.monasteryHealed += 1;
           this.eco.emit('pawnSaved', { pawn: unit, inMonastery: true });
-          this.eco.emit('change');
         }
       }
+    }
+    if (spentWood > 0) {
+      this.eco.spendWoodPartial(spentWood);
     }
   }
 }

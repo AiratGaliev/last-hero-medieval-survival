@@ -654,6 +654,19 @@ export const SUCCESSION_TYPES: Array<{ weapon: PawnWeapon; hero: HeroId; source:
   { weapon: 'staff', hero: 'monk', source: 'monastery' },
 ];
 
+/**
+ * Здание-источник воина по его подтипу (TZ §B.2, §F.6).
+ *
+ * Живёт здесь, а не в Economy: PawnAI ↔ Economy импортируют друг друга
+ * (цикл), и статический метод класса пришлось бы импортировать как значение,
+ * что ломает цикл. Здесь модуль данных — Phaser-зависимостей нет.
+ */
+export function garrisonSourceOf(weapon: PawnWeapon): BuildingKind {
+  return weapon === 'bow' ? 'archery'
+    : weapon === 'staff' ? 'monastery'
+      : 'barracks';
+}
+
 /** Эскалация цены преемственности за ресурсы (TZ §F.7). */
 export const SUCCESSION_COST: ResourceCost[] = [
   { wood: 40, ore: 15 },

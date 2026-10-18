@@ -22,6 +22,11 @@ const INTERSTITIAL_MIN_INTERVAL_MS = 120_000;
 let lastInterstitialAt = 0;
 let lastError: string | null = null;
 
+/** Последняя ошибка показа рекламы — для dev-оверлея `?debug` (§K.1). */
+export function lastAdError(): string | null {
+  return lastError;
+}
+
 /** Приостановка и возобновление на время показа рекламы. */
 export interface AdPause {
   pause: () => void;
@@ -82,7 +87,7 @@ function requestFullscreenAd(sdk: YandexSdk): Promise<boolean> {
   });
 }
 
-function requestRewardedAd(sdk: YandexSdk): Promise<boolean> {
+function requestRewardedAd(sdk: YandexSdk, placement: AdPlacement | 'generic'): Promise<boolean> {
   return new Promise((resolve) => {
     let settled = false;
     let rewarded = false;
@@ -96,7 +101,7 @@ function requestRewardedAd(sdk: YandexSdk): Promise<boolean> {
     const fail = (error: unknown): void => {
       if (settled) return;
       lastError = String(error);
-      track('ad_error', { kind: 'rewarded', message: lastError });
+      track('ad_error', { kind: 'rewarded', placement, message: lastError });
       console.warn('[ads] rewarded не показан:', error);
       finish();
     };
@@ -108,7 +113,7 @@ function requestRewardedAd(sdk: YandexSdk): Promise<boolean> {
           onRewarded: () => {
             if (rewarded) return;
             rewarded = true;
-            track('ad_rewarded_complete', {});
+            track('ad_rewarded_complete', { placement });
           },
           onClose: () => finish(),
           onError: fail,
@@ -142,10 +147,17 @@ export async function showInterstitial(hooks: AdPause = DEFAULT_PAUSE): Promise<
     const shown = await withPaused(hooks, () => requestFullscreenAd(sdk));
     // The cooldown and session quota track actual impressions, not attempts.
     // A skipped ad must not prevent the next eligible trigger from trying again.
-    if (!shown) return false;
+    // §J.4: «ошибка/таймаут загрузки — молча пропускаем, показ не засчитывается».
+    // Сдвигать lastInterstitialAt по неудаче нельзя: игрок иначе теряет
+    // 2-минутное рекламное окно из-за одной сетевой ошибки.
+    if (!shown) {
+      track('ad_error', { kind: 'interstitial', message: 'not_shown' });
+      return false;
+    }
 
     lastInterstitialAt = Date.now();
     interstitialSessionCount += 1;
+    track('ad_impression', { kind: 'interstitial' });
     return true;
   } catch (err) {
     lastError = String(err);
@@ -234,14 +246,33 @@ function usedCount(p: AdPlacement): number {
   return usedPlacements.get(p) ?? 0;
 }
 
-/** Доступен ли показ: лимит не исчерпан и платформа умеет показывать. */
+/**
+ * Доступен ли показ: лимит не исчерпан и платформа умеет показывать.
+ *
+ * ⚠️ Различает две разные причины отказа (§J.3: «кнопка недоступна → гаснет
+ * с подписью причины»): лимит исчерпан и реклама недоступна платформе.
+ * Для UI есть `placementBlockReason()`.
+ */
 export function placementAvailable(p: AdPlacement): boolean {
   // A fullscreen ad already in progress blocks every rewarded placement.
   if (fullscreenAdInFlight || !rewardedAvailable()) return false;
   return usedCount(p) < PLACEMENT_LIMITS[p].limit;
 }
 
-/** Показ rewarded-ролика под плейсмент с учётом лимита. */
+/** Причина отказа в показе: `'platform'` | `'limit'` | `null` (можно показать). */
+export function placementBlockReason(p: AdPlacement): 'platform' | 'limit' | null {
+  if (!rewardedAvailable()) return 'platform';
+  if (usedCount(p) >= PLACEMENT_LIMITS[p].limit) return 'limit';
+  return null;
+}
+
+/**
+ * Показать rewarded-ролик под плейсмент с учётом лимита.
+ *
+ * `placement` обязателен и попадает в события `ad_*` (§K.2): без него ни один
+ * показ невозможно отнести к R1–R12, а значит не строится ни одна воронка
+ * монетизации (§K.3 «доля DAU с ≥1 показом»).
+ */
 export async function showPlacementRewarded(
   placement: AdPlacement,
   hooks: AdPause = DEFAULT_PAUSE,
@@ -249,7 +280,7 @@ export async function showPlacementRewarded(
   if (!placementAvailable(placement)) {
     return { rewarded: false, available: false };
   }
-  const res = await showRewarded(hooks);
+  const res = await showRewarded(hooks, placement);
   if (res.rewarded) {
     if (PLACEMENT_LIMITS[placement].period === 'day') {
       const day = loadDay();
@@ -302,16 +333,19 @@ export function interstitialAllowed(): boolean {
  * показа; награду начисляет вызывающий код — только здесь она не выдаётся,
  * чтобы её нельзя было получить дважды на одном показе.
  */
-async function requestRewarded(hooks: AdPause = DEFAULT_PAUSE): Promise<RewardedResult> {
+async function requestRewarded(
+  hooks: AdPause = DEFAULT_PAUSE,
+  placement: AdPlacement | 'generic' = 'generic',
+): Promise<RewardedResult> {
   // QA-режим (?ysdk=mock): ролик «досмотрен» мгновенно — вся реестр R1–R11
   // проверяется end-to-end без Консоли (покупки в mock и так выдаются локально)
   if (isMockMode()) {
-    track('ad_impression', { kind: 'rewarded', mock: true });
+    track('ad_impression', { kind: 'rewarded', placement, mock: true });
     // QA-only failure switch lets Playwright verify that an incomplete view
     // neither grants the refresh nor consumes the placement's daily limit.
     const mockFailed = new URLSearchParams(window.location.search).get('mockAd') === 'fail';
     if (mockFailed) return { rewarded: false, available: true };
-    track('ad_rewarded_complete', { mock: true });
+    track('ad_rewarded_complete', { placement, mock: true });
     return { rewarded: true, available: true };
   }
   if (!isOnYandex()) return { rewarded: false, available: false };
@@ -320,21 +354,24 @@ async function requestRewarded(hooks: AdPause = DEFAULT_PAUSE): Promise<Rewarded
   if (!sdk) return { rewarded: false, available: false };
 
   try {
-    track('ad_impression', { kind: 'rewarded' });
+    track('ad_impression', { kind: 'rewarded', placement });
     // The reward callback is authoritative; resolve only when the ad closes
     // (or fails), so the game remains paused for the full ad lifecycle.
-    const rewarded = await withPaused(hooks, () => requestRewardedAd(sdk));
+    const rewarded = await withPaused(hooks, () => requestRewardedAd(sdk, placement));
     return { rewarded, available: true };
   } catch (err) {
     lastError = String(err);
-    track('ad_error', { kind: 'rewarded', message: lastError });
+    track('ad_error', { kind: 'rewarded', placement, message: lastError });
     console.warn('[ads] rewarded не показан:', err);
     return { rewarded: false, available: true };
   }
 }
 
 /** Prevent overlapping fullscreen ads across placements and direct callers. */
-export async function showRewarded(hooks: AdPause = DEFAULT_PAUSE): Promise<RewardedResult> {
+export async function showRewarded(
+  hooks: AdPause = DEFAULT_PAUSE,
+  placement: AdPlacement | 'generic' = 'generic',
+): Promise<RewardedResult> {
   if (fullscreenAdInFlight) {
     return { rewarded: false, available: false };
   }
@@ -343,7 +380,7 @@ export async function showRewarded(hooks: AdPause = DEFAULT_PAUSE): Promise<Rewa
   try {
     // Keep the lock through callback completion/error and at least one
     // microtask in mock mode, so rapid repeated activations cannot race.
-    return await requestRewarded(hooks);
+    return await requestRewarded(hooks, placement);
   } finally {
     fullscreenAdInFlight = false;
   }
@@ -354,7 +391,6 @@ export function rewardedAvailable(): boolean {
   return isOnYandex();
 }
 
-/** Последняя ошибка показа — для отладочной панели. */
 // ============ Стики-баннер (TZ §J.5) ============
 // Только вне рана: меню / мета-сцены / экран конца. В бою и оверлеях рана
 // баннер скрыт — иначе перекрывает HUD и злит игрока (антиспам §J.9).
@@ -369,7 +405,10 @@ export function showStickyBanner(): void {
   try {
     sdk.adv.showBanner({});
     bannerVisible = true;
+    track('ad_impression', { kind: 'banner' });
   } catch (err) {
+    lastError = String(err);
+    track('ad_error', { kind: 'banner', message: lastError });
     console.warn('[ads] showBanner не удался:', err);
   }
 }
@@ -383,6 +422,7 @@ export function hideStickyBanner(): void {
     sdk.adv.hideBanner();
     bannerVisible = false;
   } catch (err) {
+    lastError = String(err);
     console.warn('[ads] hideBanner не удался:', err);
   }
 }

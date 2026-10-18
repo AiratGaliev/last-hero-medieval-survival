@@ -1618,7 +1618,7 @@ export class MenuScene extends Phaser.Scene {
         endless: false,
         weeklyChallenge: false,
       });
-      track('challenge_start');
+      track('challenge_start', { mods: ch.mods, rerolled: salt !== '' });
       this.scene.start('Game', { hero: this.selectedHero, diff: this.selectedDiff });
     }, 'blue', 12);
     this.overlayExtras.push(start.img, start.txt, start.hit);
@@ -1704,7 +1704,7 @@ export class MenuScene extends Phaser.Scene {
   private claimBonus(doubled: boolean): void {
     const res = claimDailyBonus(doubled);
     if (res.ok) {
-      track('daily_bonus_claim', { day: res.day, doubled });
+      track('daily_claim', { day: res.day, doubled });
       audio.play('levelup');
     }
     this.closeOverlay();

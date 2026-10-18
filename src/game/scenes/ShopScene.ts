@@ -627,7 +627,7 @@ export class ShopScene extends Phaser.Scene {
       const btn = makeButton(this, w / 2 - 54, 0, 88, 34, t('skins.apply'), () => {
         if (setActiveSkin(def.kind, def.id)) {
           audio.play('levelup');
-          track('skin_applied', { id: def.id });
+          track('skin_equipped', { id: def.id });
           this.renderTab();
         }
       }, 'blue', 11, { hitW: 94, hitH: 42, stopPropagation: true });
@@ -685,7 +685,7 @@ export class ShopScene extends Phaser.Scene {
       const btn = makeButton(this, w / 2 - 54, 0, 88, 34, t('skins.apply'), () => {
         if (setActiveSkin('banner', def.id)) {
           audio.play('levelup');
-          track('skin_applied', { id: def.id });
+          track('skin_equipped', { id: def.id });
           this.renderTab();
         }
       }, 'blue', 11, { hitW: 94, hitH: 42, stopPropagation: true });
@@ -743,7 +743,7 @@ export class ShopScene extends Phaser.Scene {
       // Купил — сразу надел: витрина не оставляет шаг «а теперь найди НАДЕТЬ»
       setActiveSkin(def.kind, def.id);
       audio.play('levelup');
-      track('skin_applied', { id: def.id });
+      track('skin_equipped', { id: def.id });
       this.renderTab();
     } else {
       this.toast(t('store.fail'));

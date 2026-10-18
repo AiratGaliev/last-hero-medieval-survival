@@ -46,15 +46,26 @@ export class Pawn extends Phaser.Physics.Arcade.Sprite {
   chargeWindup = 0;
   /** Слот монастыря: индекс места, пока лечится в обители. */
   monasterySlot: number | null = null;
-  /** Лечение монахом на поле: цель. */
+  /** Лечение монахом на поле: цель-пешка. */
   healTarget: Pawn | null = null;
+  /** Лечение монахом на поле: цель-герой (герой не `Pawn`, §B.7.2). */
+  healHeroPoint: { x: number; y: number } | null = null;
   /** Работает над узлом ресурса / зданием. */
   workNode: unknown = null;
+  /** Множитель скорости работы: ветеран 3★ (§H.2), «Умелые топоры» (§H.16). */
+  workSpeedMult = 1;
+  /** Момент последней вспышки таунта (§B.7.1) — щит-контур + «−50%». */
+  tauntFlashUntil = 0;
   dead = false;
 
   private shadow: Phaser.GameObjects.Image;
   private hpBar: Phaser.GameObjects.Graphics;
   private starBadge: Phaser.GameObjects.Text | null = null;
+  /** Таймер истечения кровью над пешкой (§G.3) — видимый дедлайн. */
+  private bleedBadge: Phaser.GameObjects.Text | null = null;
+  /** Контур щита таунта (§B.7.1). */
+  private tauntBadge: Phaser.GameObjects.Graphics | null = null;
+  private tauntText: Phaser.GameObjects.Text | null = null;
   private lastAnim = '';
   readonly def: PawnDef;
 
@@ -230,14 +241,78 @@ export class Pawn extends Phaser.Physics.Arcade.Sprite {
     if (this.veteranStars <= 0) {
       this.starBadge?.destroy();
       this.starBadge = null;
+    } else {
+      if (!this.starBadge || !this.starBadge.active) {
+        this.starBadge = this.scene.add.text(this.x, this.y - 46, '★', {
+          fontFamily: 'sans-serif', fontSize: '11px', color: '#ffd76e',
+        }).setOrigin(0.5).setDepth(DEPTH.HPBAR);
+      }
+      this.starBadge.setText('★'.repeat(this.veteranStars));
+    }
+    this.updateBleedBadge();
+  }
+
+  /**
+   * Видимый дедлайн истечения кровью (§G.3, гейт §G.11 п.23).
+   *
+   * Спецификация требует «таймер над пешкой, именная плашка „{имя} истекает
+   * кровью — 0:31“» — игрок видит цену бездействия в реальном времени и может
+   * её отменить». Раньше таймер уменьшался, но ничего не рисовался: игрок не
+   * видел ни оставшегося времени, ни кого именно он теряет.
+   */
+  updateBleedBadge(): void {
+    const bleeding = this.state === 'bleeding';
+    if (!bleeding) {
+      this.bleedBadge?.destroy();
+      this.bleedBadge = null;
       return;
     }
-    if (!this.starBadge || !this.starBadge.active) {
-      this.starBadge = this.scene.add.text(this.x, this.y - 46, '★', {
-        fontFamily: 'sans-serif', fontSize: '11px', color: '#ffd76e',
+    if (!this.bleedBadge || !this.bleedBadge.active) {
+      this.bleedBadge = this.scene.add.text(this.x, this.y - 34, '', {
+        fontFamily: 'sans-serif', fontSize: '10px', color: '#ff6655',
+        stroke: '#1a0f08', strokeThickness: 3,
       }).setOrigin(0.5).setDepth(DEPTH.HPBAR);
     }
-    this.starBadge.setText('★'.repeat(this.veteranStars));
+    const secs = Math.max(0, Math.ceil(this.bleedTimer));
+    // Мигание в последние 10 секунд — дедлайн должен бросаться в глаза
+    this.bleedBadge.setAlpha(secs <= 10 && Math.floor(this.bleedTimer * 4) % 2 === 0 ? 0.35 : 1);
+    this.bleedBadge.setText(`${secs}`);
+  }
+
+  /**
+ * Вспышка таунта: щит-контур вокруг мечника и подпись «−50%» над ним
+ * (§B.7.1). Снимается сама по истечении `tauntFlashUntil`.
+ */
+  showTauntBadge(): void {
+    if (!this.tauntBadge || !this.tauntBadge.active) {
+      this.tauntBadge = this.scene.add.graphics().setDepth(DEPTH.FX);
+      this.tauntText = this.scene.add.text(this.x, this.y - 58, '−50%', {
+        fontFamily: 'sans-serif', fontSize: '11px', color: '#8fd0ff',
+        stroke: '#1a0f08', strokeThickness: 3,
+      }).setOrigin(0.5).setDepth(DEPTH.FX);
+    }
+    this.tauntBadge.clear();
+    this.tauntBadge.lineStyle(2, 0x8fd0ff, 0.95).strokeCircle(0, 0, 22);
+    this.tauntBadge.lineStyle(1, 0x8fd0ff, 0.5).strokeCircle(0, 0, 26);
+    if (this.tauntText) this.tauntText.setPosition(this.x, this.y - 58).setVisible(true);
+  }
+
+  /** Держит контур и подпись поверх воина и гасит их по таймауту. */
+  private tickTauntBadge(now: number): void {
+    const g = this.tauntBadge;
+    if (!g || !g.active) return;
+    if (this.tauntFlashUntil <= 0 || now >= this.tauntFlashUntil) {
+      g.setVisible(false);
+      this.tauntText?.setVisible(false);
+      return;
+    }
+    g.setVisible(true).setPosition(this.x, this.y);
+    // Пульсация контура — «щит» должен читаться как активный, а не как статика
+    const k = 1 + Math.sin(now / 90) * 0.06;
+    g.setScale(k);
+    if (this.tauntText) {
+      this.tauntText.setPosition(this.x, this.y - 58).setVisible(true);
+    }
   }
 
   canBecomeHero(): boolean {
@@ -253,6 +328,11 @@ export class Pawn extends Phaser.Physics.Arcade.Sprite {
     this.setDepth(DEPTH.ENTITY_BASE + this.y);
     if (this.hpBar.visible) this.drawHpBar();
     if (this.starBadge?.active) this.starBadge.setPosition(this.x, this.y - 46);
+    if (this.bleedBadge?.active) {
+      this.bleedBadge.setPosition(this.x, this.y - 34);
+      this.updateBleedBadge();
+    }
+    this.tickTauntBadge(time);
     void time;
     void delta;
   }

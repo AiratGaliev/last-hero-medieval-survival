@@ -5,7 +5,7 @@ import {
 import {
   RESOURCES, BUILDING_PLANS, BUILD_SPOTS, TOOL_BY_RESOURCE,
   type PawnKind, type PawnWeapon, type ResourceKind, type ResourceCost, type BuildingKind,
-  PAWN_NAMES, PAWN_NAMES_RU,
+  PAWN_NAMES, PAWN_NAMES_RU, garrisonSourceOf,
 } from '../data';
 import { Pawn } from '../entities/Pawn';
 import { Building } from '../entities/Building';
@@ -251,26 +251,54 @@ export class Economy extends Phaser.Events.EventEmitter {
     return this.pawns.filter((p) => p.cls === 'garrison' && !p.dead);
   }
 
-  /** Лимит гарнизона по зданиям (§B.2): казармы 2, тир 2, обитель 1.
-   *  «Ополчение» — +1 слот военным глобально, «Знамя дружины» — +1 мечнику
-   *  на казармы (§H.16). */
-  garrisonLimit(weapon: PawnWeapon): number {
+  /**
+ * Слоты гарнизона от ОДНОГО источника (§B.2).
+ *
+ * ⚠️ Лимит считается по ЗДАНИЮ-ИСТОЧНИКУ, а не по типу оружия. У казарм
+ * общий пул на мечника и копейщика (`fighter{sword}` **или**
+ * `fighter{lance}`, максимум 2) — иначе одна казарма давала 2 + 2 = 4 воина
+ * и правило «потолок гарнизона» переставало работать.
+ */
+  garrisonLimit(source: Building['kind'], weapon?: PawnWeapon): number {
     let n = 0;
     for (const b of this.buildings) {
-      if (!b.alive || b.underConstruction) continue;
-      if (weapon === 'sword' || weapon === 'lance') {
-        if (b.kind === 'barracks') n += 2 + this.tune.barracksBonus;
-      } else if (weapon === 'bow') {
-        if (b.kind === 'archery') n += 2;
-      } else if (b.kind === 'monastery') n += 1;
+      if (!b.alive || b.underConstruction || b.kind !== source) continue;
+      if (source === 'barracks') n += 2 + this.tune.barracksBonus;
+      else if (source === 'archery') n += 2;
+      else if (source === 'monastery') n += 1;
     }
     if (n > 0) n += this.tune.garrisonBonus;
+    void weapon;
     return n;
   }
 
-  /** Сколько воинов данного типа нанято (живых + лечащихся). */
-  hiredCount(weapon: PawnWeapon): number {
-    return this.garrison.filter((p) => p.weapon === weapon).length;
+  /** Здание, выпускающее воина данного типа (§F.6). */
+  static sourceOf(weapon: PawnWeapon): Building['kind'] {
+    return garrisonSourceOf(weapon);
+  }
+
+  /** Воины, занимающие слоты источника: живые + уже оплаченные и идущие. */
+  private occupiedSlots(source: Building['kind'], weapon: PawnWeapon): number {
+    const live = this.garrison.filter((p) => {
+      if (source === 'barracks') return p.weapon === 'sword' || p.weapon === 'lance';
+      return p.weapon === weapon;
+    }).length;
+    // ⚠️ Незавершённый найм тоже занимает слот. Без этого игрок успевал
+    // оплатить N воинов подряд, пока первый ещё вербовался, и получал отряд
+    // сверх лимита, заплатив за каждого.
+    const pending = this.hireJobs.filter((j) => j.building.kind === source).length;
+    return live + pending;
+  }
+
+  /** Всего слотов гарнизона во всех источниках — для HUD (§B.2). */
+  totalGarrisonSlots(): number {
+    return this.garrisonLimit('barracks') + this.garrisonLimit('archery') + this.garrisonLimit('monastery');
+  }
+
+  /** Занято слотов по источнику (живые + вербуются). Для плана расхода. */
+  hireSlotUse(weapon: PawnWeapon): number {
+    const source = Economy.sourceOf(weapon);
+    return this.occupiedSlots(source, weapon);
   }
 
   // ---------- Старт ----------
@@ -302,8 +330,9 @@ export class Economy extends Phaser.Events.EventEmitter {
     const book = lang() === 'ru' ? PAWN_NAMES_RU : PAWN_NAMES;
     const pool = book[female ? 'female' : 'male'];
     const name = pool[Math.floor(Math.random() * pool.length)];
-    const weapon = kind === 'fighter'
-      ? (this.garrisonLimit('sword') > this.garrisonLimit('lance') ? 'sword' : 'lance')
+    // Слоты мечника и копейщика общие (одни казармы), сравнивать их лимиты
+    // бессмысленно — берём мечника как базовый подтип гарнизона (§B.2).
+    const weapon = kind === 'fighter' ? 'sword'
       : kind === 'healer' ? 'staff' : undefined;
     const a = Math.random() * Math.PI * 2;
     const r = 90 + Math.random() * 60;
@@ -348,6 +377,21 @@ export class Economy extends Phaser.Events.EventEmitter {
     return true;
   }
 
+  /**
+   * Списание частичного объёма дерева (обительное лечение, §G.3/§G.10).
+   *
+   * `spend()` требует полного покрытия остатка, а лечение берёт дробное
+   * дерево каждый кадр: при 0.013 дерева на кадр и запасе 0.01 обычный
+   * `spend()` отказал бы в списании. Возвращает фактически списанное.
+   */
+  spendWoodPartial(amount: number): number {
+    const take = Math.min(this.resources.wood, Math.max(0, amount));
+    if (take <= 0) return 0;
+    this.resources.wood -= take;
+    this.emit('change');
+    return take;
+  }
+
   /** Сдача добычи на склад — единственная точка роста ресурсов (§B.5). */
   deposit(kind: ResourceKind, amount: number): void {
     this.resources[kind] += amount;
@@ -378,7 +422,15 @@ export class Economy extends Phaser.Events.EventEmitter {
     return best;
   }
 
-  /** Узел по потребности: score = дефицит/дистанция (§B.6). */
+  /**
+ * Узел по потребности: `score = max(0, план − склад) / max(1, dist)` (§B.6).
+ *
+ * ⚠️ Раньше план строился ТОЛЬКО из активных строек и ремонта. Когда таких не
+ * было (а в начале матча их нет), дефицит у всех узлов оказывался 0, все
+ * оценки равнялись 0, а `bestScore` стартовал с −1 — выигрывал первый узел в
+ * массиве, то есть сборщик шёл «куда попало». §B.6 требует: при отсутствии
+ * плана расхода СОБИРАТЬ идёт к БЛИЖАЙШЕМУ доступному узлу.
+ */
   bestNodeByDemand(from: Pawn): ResourceNode | null {
     const target: Record<ResourceKind, number> = { wood: 0, ore: 0, meat: 0 };
     // План расхода: активные стройки + ремонт + лечение
@@ -388,18 +440,40 @@ export class Economy extends Phaser.Events.EventEmitter {
       }
     }
     for (const j of this.repairJobs) target.wood += j.rebuild ? REPAIR.REBUILD_WOOD : REPAIR.WOOD;
+    const planned = target.wood + target.ore + target.meat;
+    if (planned <= 0) return this.nearestFreeNode(from);
+
     let best: ResourceNode | null = null;
     let bestScore = -1;
     for (const n of this.nodes) {
       if (!n.alive || (n.claimedBy && n.claimedBy !== from)) continue;
-      if (Math.hypot(n.x - this.castleX, n.y - this.castleY) > 1000) continue;
       if (n.claimedBy === from) return n; // уже наш узел
-      const deficit = Math.max(0, target[n.res] - this.resources[n.res] * 0.5);
+      if (Math.hypot(n.x - this.castleX, n.y - this.castleY) > 1000) continue;
+      // Контракт «Голодный год» (§H.9): мясо не добывается
+      if (this.tune.meatDisabled && n.res === 'meat') continue;
+      const deficit = Math.max(0, target[n.res] - this.resources[n.res]);
       const dist = Math.max(60, Math.hypot(n.x - from.x, n.y - from.y));
       const score = deficit / dist;
       if (score > bestScore) { bestScore = score; best = n; }
     }
-    return best ?? this.freeNode('wood', from);
+    // Ничего не нужно и ни один узел не выгоден — идём за ближайшим, как
+    // требует приказ СОБИРАТЬ, а не стоим столбом.
+    return bestScore > 0 ? best : this.nearestFreeNode(from);
+  }
+
+  /** Ближайший доступный узел любого типа (§B.6, приказ СОБИРАТЬ). */
+  nearestFreeNode(from: Pawn): ResourceNode | null {
+    let best: ResourceNode | null = null;
+    let bestD = Infinity;
+    for (const n of this.nodes) {
+      if (!n.alive) continue;
+      if (n.claimedBy && n.claimedBy !== from) continue;
+      if (this.tune.meatDisabled && n.res === 'meat') continue;
+      if (Math.hypot(n.x - this.castleX, n.y - this.castleY) > 1000) continue;
+      const d = (n.x - from.x) ** 2 + (n.y - from.y) ** 2;
+      if (d < bestD) { bestD = d; best = n; }
+    }
+    return best;
   }
 
   // ---------- Стройка ----------
@@ -557,11 +631,14 @@ export class Economy extends Phaser.Events.EventEmitter {
   canHire(weapon: PawnWeapon): boolean {
     // Указ «Одиночка» (§H.17): военные юниты недоступны
     if (this.tune.hireDisabled) return false;
-    return this.hiredCount(weapon) < this.garrisonLimit(weapon) && this.canAfford(this.hireCost(weapon));
+    const source = Economy.sourceOf(weapon);
+    return this.occupiedSlots(source, weapon) < this.garrisonLimit(source, weapon)
+      && this.canAfford(this.hireCost(weapon));
   }
 
   hire(weapon: PawnWeapon, building: Building): boolean {
-    if (!building.alive || !this.canHire(weapon)) return false;
+    if (!building.alive || building.kind !== Economy.sourceOf(weapon)) return false;
+    if (!this.canHire(weapon)) return false;
     if (!this.spend(this.hireCost(weapon))) return false;
     this.hireJobs.push({ building, weapon, progress: 0 });
     return true;
@@ -599,14 +676,19 @@ export class Economy extends Phaser.Events.EventEmitter {
 
   /** Окончательная гибель пешки (bleedout/обрушение/бой — см. Settlement).
    *  Погибший житель запускает восстановление §E.5: новый через 25 сек,
-   *  10 дерева + 3 мяса, при свободном доме. */
-  removePawn(pawn: Pawn): void {
+   *  10 дерева + 3 мяса, при свободном доме.
+   *
+   *  ⚠️ `paid` = false для УХОДА из-за потери жилья (§B.4): избыток населения
+   *  «уходит», это не смерть. Раньше эмигрант попадал в очередь respawn и
+   *  игрок платил 10 дерева + 3 мяса за замену ушедшему добровольно.
+   *  Сообщество при такой трактовке теряло смысл: сжигал дома — платил. */
+  removePawn(pawn: Pawn, paid = true): void {
     pawn.killFinal();
     pawn.monasterySlot = null;
     const i = this.pawns.indexOf(pawn);
     if (i >= 0) this.pawns.splice(i, 1);
     pawn.destroy();
-    if (pawn.cls === 'civilian') this.queueRespawn();
+    if (paid && pawn.cls === 'civilian') this.queueRespawn();
     this.emit('pawnDied', { pawn });
   }
 

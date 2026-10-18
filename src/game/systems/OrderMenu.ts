@@ -142,6 +142,23 @@ export class OrderMenu {
       }
       container.add(c);
     });
+    // §B.6: приказ гарнизону ДЕРЖИТСЯ ДО ОТМЕНЫ («пост ставится один раз:
+    // стой здесь и держи — и забыл»), поэтому у приказа обязателен явный
+    // «сброс» в радиальном меню. Без него перевести воина обратно на
+    // автоповедение было невозможно в принципе.
+    const reset = this.scene.add.container(wx, wy - 54);
+    const rbg = this.scene.add.rectangle(0, 0, 96, 26, 0x5a4327, 0.95)
+      .setStrokeStyle(2, 0xd8c9a8).setInteractive({ useHandCursor: true });
+    const rtxt = this.scene.add.text(0, 0, t('order.reset'), {
+      fontFamily: FONT, fontSize: '10px', color: '#ffe9b0',
+    }).setOrigin(0.5);
+    rbg.on('pointerdown', () => {
+      if (this.pawn) { this.pawn.order = null; this.pawn.orderTarget = null; }
+      this.close();
+    });
+    reset.add([rbg, rtxt]);
+    container.add(reset);
+
     const close = this.scene.add.circle(wx, wy, 18, 0x1a0f08, 0.9).setStrokeStyle(2, 0x8a6d3b).setInteractive({ useHandCursor: true });
     const cross = this.scene.add.text(wx, wy, '✕', { fontFamily: FONT, fontSize: '14px', color: '#ffe9b0' }).setOrigin(0.5);
     close.on('pointerdown', () => this.close());

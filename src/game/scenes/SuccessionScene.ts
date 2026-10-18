@@ -49,6 +49,11 @@ export class SuccessionScene extends Phaser.Scene {
   create(data: SuccessionData): void {
     this.data_ = data;
     this.surrendered = false;
+    // ⚠️ Выбор сбрасывается на первый ДОСТУПНЫЙ тип (§F.5). Раньше оставался
+    // дефолт 'sword', и при одном лишь монастыре серый «мечник» оставался
+    // помеченным как выбранный — красная обводка на недоступном варианте,
+    // и ветка 2/3 отдавала мечника из казарм, которых нет.
+    this.picked = data.options.find((o) => o.available)?.weapon ?? 'sword';
     const W = this.scale.width;
     const H = this.scale.height;
 

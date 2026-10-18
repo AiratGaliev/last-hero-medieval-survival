@@ -1169,11 +1169,17 @@ export function applyRunToMeta(s: RunSummary): RunMetaResult {
       ? (prev > 0 ? Math.min(prev, rv) : rv)
       : Math.max(prev, rv);
     st.quests.progress[id] = next;
+    // §K.2 требует `quest_progress` — без него воронка заданий (§K.3)
+    // не строится: видно только терминальное закрытие, а не то, где
+    // игроки отваливаются по дороге.
+    if (next !== prev) {
+      track('quest_progress', { quest: def.id, value: next, goal: def.goal, done: achieved });
+    }
     if (achieved) {
       st.quests.done.push(id);
       st.glory += def.reward;
       res.questsCompleted.push(def);
-      track('quest_complete', { quest: def.id, reward: def.reward });
+      track('quest_done', { quest: def.id, reward: def.reward });
       addPassXp(st, res, PASS.XP.quest);
       bumpWeekly(st, 1);
     }
@@ -1699,8 +1705,13 @@ export function chainClaimed(chainId: string, tier: number): boolean {
 export function markCodex(id: string, n = 1): void {
   if (!id) return;
   const st = rollMetaDay();
-  st.codex[id] = (st.codex[id] ?? 0) + n;
+  const was = st.codex[id] ?? 0;
+  st.codex[id] = was + n;
   saveMetaState(st);
+  // §K.2: `codex_entry` — сигнал открытия записи. Без него нельзя понять,
+  // какие записи кодекса реально открываются игроками (§H.10 — перфекционистский
+  // двигатель возврата, его эффективность измеряется этим событием).
+  if (was === 0) track('codex_entry', { entry: id });
 }
 
 /** Прогресс полноты кодекса: открытые записи / всего. */

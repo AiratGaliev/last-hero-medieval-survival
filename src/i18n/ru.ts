@@ -344,15 +344,25 @@ export const ru = {
   'hud.pawns': 'Пешки: {a}/{b}',
 
   // ---------- Лента поселения (TZ §H.2) ----------
+  // Род включён в титул: Приложение A1 требует «сборщик/сборщица,
+  // каменщик/каменщица, плотник/плотница, боец, монах/монахиня».
+  // Раньше женские формы отсутствовали, и «каменщик Агата» читалось неграмотно.
   'pawn.titled.collector': 'сборщик',
+  'pawn.titled.collectorF': 'сборщица',
   'pawn.titled.builder': 'каменщик',
+  'pawn.titled.builderF': 'каменщица',
   'pawn.titled.repairer': 'плотник',
+  'pawn.titled.repairerF': 'плотница',
   'pawn.titled.fighter': 'боец',
   'pawn.titled.healer': 'монах',
+  'pawn.titled.healerF': 'монахиня',
   'pawn.arrived': 'В поселение прибыло! {v} присоединяется',
   'pawn.wounded': '{v} ранен и уходит лечиться',
+  'pawn.woundedF': '{v} ранена и уходит лечиться',
   'pawn.bleeding': '{v} истекает кровью — 0:{s}',
+  'pawn.bleedingF': '{v} истекает кровью — 0:{s}',
   'pawn.died': '{v} погиб',
+  'pawn.diedF': '{v} погибла',
   'pawn.saved': '{v} спасён!',
   'pawn.left': '{v} уходит — некуда вернуться',
   'pawn.veteran': '{v} пережил третью осаду — ветеран!',
@@ -367,8 +377,10 @@ export const ru = {
   'order.post': 'НА ПОСТ',
   'order.hold': 'ДЕРЖАТЬ',
   'order.monastery': 'В ОБИТЕЛЬ',
+  'order.reset': 'СБРОС ПРИКАЗА',
   'order.disabled': 'недоступно',
   'order.hint': 'Shift+клик или удержание — приказ',
+  'orders.locked': 'Приказы откроются после второго дома',
 
   // ---------- Стройка и найм ----------
   'building.house.name': 'Дом',
@@ -923,6 +935,10 @@ export const ru = {
   'over.gloryX2': 'Смотреть ролик: слава ×2',
   'over.goldX2': 'Смотреть ролик: золото ×2',
   'over.x2Done': 'Уже удвоено',
+  // §J.3: кнопка недоступна → гаснет С ПОДПИСЬЮ причины
+  'ad.reasonLimit': 'Реклама уже использована',
+  'ad.reasonUnavailable': 'Реклама недоступна',
+  'over.gloryX2Cap': 'Слава уже на максимуме',
   'over.questsDone': 'Задания дня: {v}',
   'over.passUp': 'Пропуск +{v} ур.',
   'over.chainsUp': 'Цепи: {v}',

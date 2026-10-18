@@ -7,7 +7,7 @@ import { t, num, clock, type TranslationKey } from '../../i18n';
 import { submitScore, LEADERBOARD_DAILY, LEADERBOARD_ENDLESS } from '../../platform/leaderboard';
 import { isAuthorized, displayName } from '../../platform/player';
 import {
-  placementAvailable, registerRunOutcome, showInterstitial, showPlacementRewarded,
+  placementAvailable, placementBlockReason, registerRunOutcome, showInterstitial, showPlacementRewarded,
   showStickyBanner,
 } from '../../platform/ads';
 import { gameplayStop } from '../../platform/lifecycle';
@@ -130,6 +130,13 @@ export class GameOverScene extends Phaser.Scene {
   private gloryBtn: Button | null = null;
   private goldDoubled = false;
   private gloryDoubled = false;
+  /** Причина недоступности ×2-кнопок (§J.3: гаснет С ПОДПИСЬЮ причины). */
+  private goldBlock: 'platform' | 'limit' | null = null;
+  private gloryBlock: 'platform' | 'limit' | null = null;
+  private goldNote = '';
+  private gloryNote = '';
+  /** R9 при нулевой прибавке (слава у потолка) — показ бессмысленен. */
+  private gloryDead = false;
   /** Разовые за матч действия: исход для рекламы, вызов дня, вторичные борды. */
   private matchHandled: GameOverStats | null = null;
   /** Не допускаем повторные запросы рекламы/рестарта при быстрых тапах. */
@@ -191,11 +198,15 @@ export class GameOverScene extends Phaser.Scene {
     // Кнопка бесконечного режима (§H.7): видна после первой победы
     const showEndless = loadMetaState().firstWin || !!s.meta?.endless;
     const actRowH = showEndless ? Math.max(44, actH) : actH;
-    // Ширины по контенту измеряем заранее — от них зависит число рядов
+    // §H.3: «после блока 3 — кнопка „ЕЩЁ РАЗ“ КРУПНЕЕ ВСЕХ ОСТАЛЬНЫХ».
+    // Раньше ширина считалась по контенту, и на широком экране
+    // «ДЕРЖАТЬ КРЕПОСТЬ» выходила шире — главный призыв к рестарту выглядел
+    // второстепенным. Теперь у «ЕЩЁ РАЗ» и шрифт на ступень больше, и
+    // минимальная ширина не меньше, чем у соседей по ряду.
     const endlessPlan: ActionPlan | null = showEndless
       ? {
-          wAgain: this.btnWidthFor(t('over.again'), 16, 110, 240),
-          wEndless: this.btnWidthFor(t('over.endlessEnter'), 15, 150, Math.max(160, width - 40)),
+          wAgain: this.btnWidthFor(t('over.again'), 18, 150, 300),
+          wEndless: this.btnWidthFor(t('over.endlessEnter'), 15, 150, Math.min(260, Math.max(160, width - 40))),
           wMenu: this.btnWidthFor(t('over.toMenu'), 15, 96, 200),
           threeInRow: false,
           rowY: 0,
@@ -206,11 +217,31 @@ export class GameOverScene extends Phaser.Scene {
         endlessPlan.wAgain + endlessPlan.wEndless + endlessPlan.wMenu + 20 + 24 <= width;
     }
 
-    // ×2-кнопки (R5/R9): в компактном режиме прячем, чтобы не ломать низ
+    // §J.3: «Кнопка недоступна → гаснет с подписью причины». Паттерн применяется
+    // ко ВСЕМ точкам реестра, не только к преемственности. Раньше кнопки
+    // просто исчезали, и игрок не понимал, почему реклама недоступна.
+    // У R9 дополнительно гасим при нулевой прибавке: показ ролика за 0 славы
+    // — это трата внимания впустую.
+    const goldBlock = placementBlockReason('wallet-x2');
+    const gloryBlock = placementBlockReason('glory-x2');
+    const gloryGain = s.meta?.glory ? gloryDoubleExtra(s.meta.glory) : 0;
+    const gloryDead = gloryGain <= 0;
     const x2 = {
       gold: !compact && s.gold > 0 && (this.goldDoubled || placementAvailable('wallet-x2')),
-      glory: !compact && !!s.meta?.glory && (this.gloryDoubled || placementAvailable('glory-x2')),
+      glory: !compact && !!s.meta?.glory && !gloryDead
+        && (this.gloryDoubled || placementAvailable('glory-x2')),
     };
+    const x2Note = (block: 'platform' | 'limit' | null): string =>
+      this.goldDoubled || this.gloryDoubled ? t('over.x2Done')
+        : block === 'limit' ? t('ad.reasonLimit')
+          : block === 'platform' ? t('ad.reasonUnavailable') : '';
+    // Сохраняем причины для applyX2State — она вызывается и при повторном
+    // входе в экран (рестарт сцены), когда x2 уже вычислены заново.
+    this.goldBlock = goldBlock;
+    this.goldNote = x2Note(goldBlock);
+    this.gloryBlock = gloryBlock;
+    this.gloryNote = x2Note(gloryBlock);
+    this.gloryDead = gloryDead;
     const saveW = Math.min(280, width - 70);
     // Обе кнопки рядом обязаны влезать в ряд: ограничиваем ширину заранее
     const x2Cap = x2.gold && x2.glory ? Math.floor((width - 42) / 2) : Math.max(120, width - 70);
@@ -922,14 +953,25 @@ export class GameOverScene extends Phaser.Scene {
         : scroll(make(t('over.gloryX2'), L.gloryW, width / 2, L.rowY, this.watchGloryX2));
     }
 
-    // Уже удвоено в этом матче (переживает рестарт сцены) — рисуем выключенной
-    if (this.goldDoubled) {
-      this.goldBtn?.setEnabled(false);
-      this.goldBtn?.setLabel(t('over.x2Done'));
+    // Уже удвоено в этом матче (переживает рестарт сцены) — рисуем выключенной.
+    // Если кнопка показана, но показ недоступен — гасим С ПОДПИСЬЮ ПРИЧИНЫ.
+    if (this.goldBtn) {
+      if (this.goldDoubled) {
+        this.goldBtn.setEnabled(false);
+        this.goldBtn.setLabel(t('over.x2Done'));
+      } else if (this.goldBlock) {
+        this.goldBtn.setEnabled(false);
+        this.goldBtn.setLabel(this.goldNote);
+      }
     }
-    if (this.gloryDoubled) {
-      this.gloryBtn?.setEnabled(false);
-      this.gloryBtn?.setLabel(t('over.x2Done'));
+    if (this.gloryBtn) {
+      if (this.gloryDoubled || this.gloryDead) {
+        this.gloryBtn.setEnabled(false);
+        this.gloryBtn.setLabel(this.gloryDoubled ? t('over.x2Done') : t('over.gloryX2Cap'));
+      } else if (this.gloryBlock) {
+        this.gloryBtn.setEnabled(false);
+        this.gloryBtn.setLabel(this.gloryNote);
+      }
     }
   }
 

@@ -2,6 +2,7 @@ import Phaser from 'phaser';
 import { SIEGE, TAUNT, SCORE } from '../constants';
 import { SUCCESSION_SOURCES, type BuildingKind } from '../data';
 import { track } from '../../platform/analytics';
+import { audio } from './Audio';
 import type { Economy } from './Economy';
 import { Building } from '../entities/Building';
 import type { Pawn } from '../entities/Pawn';
@@ -144,8 +145,11 @@ export class Settlement {
           p.updateStarBadge();
           if (p.siegesSurvived === 3) {
             this.ctx.onFeed(`★ ${p.name} — ветеран!`, '#ffd76e');
-            // Ветеран 3★ — +10% скорости работы (крошечный бонус, §H.2)
-            p.speed = Math.round(p.speed * 1.1);
+            // Ветеран 3★ — +10% СКОРОСТИ РАБОТЫ (§H.2), а не скорости
+            // передвижения: бонус обещан за «рубку/добычу», и в коде работа
+            // идёт через workSpeed/tune. Раньше множился p.speed (ходьба),
+            // то есть обещанного бонуса не было вовсе.
+            p.workSpeedMult = 1.1;
             // Микро-награды ветеранства: +100 очков, +25 XP (§E.8, §H.6)
             this.ctx.onVeteran(p);
           }
@@ -172,14 +176,21 @@ export class Settlement {
         const share = Math.min(amount * TAUNT.SHARE, sword.hp);
         amount -= share;
         this.eco.woundPawn(sword, share, this.scene.time.now);
-        this.scene.events.emit('garrison_taunt', b.kind, share);
+        this.flashTaunt(sword);
         // Телеметрия §K.2: таунт перетянул долю урона на себя
         track('garrison_taunt', { weapon: sword.weapon ?? 'sword', building_kind: b.kind, dmg_redirected: Math.round(share * 10) / 10 });
       }
     }
 
     // Потолок осады: считается по всей инфраструктуре (§E.4.2)
-    if (siegeIdx >= 0 && siegeIdx === this.siegeIdx) {
+    if (siegeIdx >= 0) {
+      // ⚠️ Раньше условие было `siegeIdx === this.siegeIdx`. Горение живёт
+      // 6 секунд, а Building.damage() перезаписывал lastSiegeIdx при ЛЮБОМ
+      // уроне — в том числе уроном босса (−1). Огонь, начатый осадой N,
+      // дожигал дом уже после её закрытия и уходил в здание ПОЛНОСТЬЮ,
+      // минуя потолок: «огонь не суммируется в DoT сверх потолка» (§E.4.4)
+      // переставал выполняться. Здесь любой осадный урон (включая DoT
+      // прошлой осады) идёт через один и тот же счётчик.
       const infra = this.infrastructureHp;
       const total = this.infrastructureMax;
       const cap = infra < total * SIEGE.LOW_HP ? SIEGE.MAX_INFRA_DMG_LOW : SIEGE.MAX_INFRA_DMG;
@@ -190,15 +201,18 @@ export class Settlement {
       }
       this.siegeDmg += amount;
       if (amount <= 0) return;
-    } else if (siegeIdx < 0) {
-      // Не осада (босс фаза 2): без потолка — кульминация (§E.6)
     }
+    // siegeIdx < 0 — не осада (босс фаза 2): без потолка, это кульминация (§E.6)
 
     if (b.kind === 'castle') {
       this.facts.castleMinHp = Math.min(this.facts.castleMinHp, Math.max(0, b.hp - amount));
     }
     b.damage(amount, siegeIdx);
   }
+
+  /** Обитель уже обрушивалась в этом ране — второго обрушения не будет
+   *  (гейт §G.11 п.19). Пятно стройки освобождается, отстроить можно. */
+  private monasteryCollapsed = false;
 
   private tauntingSword(b: Building): Pawn | null {
     for (const p of this.eco.garrison) {
@@ -207,6 +221,45 @@ export class Settlement {
       if (Math.hypot(p.x - b.x, p.y - b.y) <= TAUNT.RADIUS) return p;
     }
     return null;
+  }
+
+  /**
+   * Урон по гражданскому с перетягиванием на мечника (§B.7.1: «То же для урона
+   * по гражданскому в этом радиусе»). Раньше таунт работал только по зданиям.
+   */
+  tauntCivilian(victim: Pawn, raw: number, siegeIdx: number): number {
+    if (siegeIdx < 0) return raw;
+    const sword = this.tauntingSwordAt(victim);
+    if (!sword) return raw;
+    const share = Math.min(raw * TAUNT.SHARE, sword.hp);
+    this.eco.woundPawn(sword, share, this.scene.time.now);
+    this.flashTaunt(sword);
+    track('garrison_taunt', {
+      weapon: sword.weapon ?? 'sword', building_kind: 'pawn', dmg_redirected: Math.round(share * 10) / 10,
+    });
+    return raw - share;
+  }
+
+  private tauntingSwordAt(victim: Pawn): Pawn | null {
+    for (const p of this.eco.garrison) {
+      if (p.kind !== 'fighter' || p.weapon !== 'sword' || p.dead) continue;
+      if (p.state !== 'fight') continue;
+      if (Math.hypot(p.x - victim.x, p.y - victim.y) <= TAUNT.RADIUS) return p;
+    }
+    return null;
+  }
+
+  /**
+   * Видимое подтверждение таунта (§B.7.1): «на мечнике вспыхивает
+   * щит-контур, а над ним — индикатор „−50%“». Без этого игрок не видил, что
+   * его воин перетянул урон, — а без обратной связи нельзя принять решение
+   * «поставить мечника под осаду», ради которого таунт и придуман.
+   */
+  private flashTaunt(sword: Pawn): void {
+    if (sword.tauntFlashUntil > this.scene.time.now) return;
+    sword.tauntFlashUntil = this.scene.time.now + 700;
+    sword.showTauntBadge();
+    audio.play('hit');
   }
 
   /** Лимит ранений за осаду (§E.4: SIEGE_WOUND_CAP). */
@@ -230,8 +283,12 @@ export class Settlement {
   /** Разрушение здания: обитель убивает раненых, дом снижает лимит (§G.5, §B.4). */
   onBuildingDestroyed(b: Building): void {
     this.ctx.onBuildingDestroyed(b);
-    // Обрушение обители: все раненые внутри погибают (§G.5, вариант B)
-    if (b.kind === 'monastery') {
+    // Обрушение обители: все раненые внутри погибают (§G.5, вариант B).
+    // Гейт §G.11 п.19: за матч обрушение происходит НЕ ЧАЩЕ РАЗА. Второе
+    // разрушение — уже не «событие», а рутина, которая выбивает население
+    // каждые пару минут и обещает игроку бесперспективность.
+    if (b.kind === 'monastery' && !this.monasteryCollapsed) {
+      this.monasteryCollapsed = true;
       const victims: Pawn[] = [];
       for (const slot of b.healSlots) {
         if (slot) victims.push(slot as Pawn);
@@ -240,18 +297,20 @@ export class Settlement {
       this.facts.monasteryVictims += victims.length;
       for (const v of victims) this.eco.removePawn(v);
       if (victims.length > 0) this.ctx.onMonasteryCollapsed(victims.length);
+      track('monastery_collapsed', { victims_n: victims.length });
     }
-    // Дом падает — лимит рабочих уменьшается; лишние пешки уходят (§B.4)
-    if (b.kind === 'house') {
-      const excess = this.eco.civilians.length - this.eco.pawnLimit;
-      for (let i = 0; i < excess; i++) {
-        const victim = this.eco.civilians[this.eco.civilians.length - 1 - i];
-        if (victim) {
-          this.ctx.onFeed(`{${victim.name}} ${'—'} уходит — некуда вернуться`, '#ff8866');
-          this.eco.removePawn(victim);
+    // Дом падает — лимит рабочих уменьшается; лишние пешки уходят (§B.4).
+      // Уход — не смерть: восстановление за дерево и мясо не запускается.
+      if (b.kind === 'house') {
+        const excess = this.eco.civilians.length - this.eco.pawnLimit;
+        for (let i = 0; i < excess; i++) {
+          const victim = this.eco.civilians[this.eco.civilians.length - 1 - i];
+          if (victim) {
+            this.ctx.onFeed(`{${victim.name}} ${'—'} уходит — некуда вернуться`, '#ff8866');
+            this.eco.removePawn(victim, false);
+          }
         }
       }
-    }
   }
 
   private fmtTime(): string {

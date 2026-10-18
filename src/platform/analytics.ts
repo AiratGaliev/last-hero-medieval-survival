@@ -22,10 +22,14 @@ export type AnalyticsEvent =
   | 'speedup_bought' | 'combo_milestone' | 'levelup_card_picked'
   | 'perf_fps' | 'end_screen_action'
   | 'hint_shown' | 'hint_dismissed'
-  // Раунд 2 (фазы Q/S, TZ §K.2)
-  | 'glory_earned' | 'tree_node_bought' | 'quest_complete' | 'quest_reroll'
-  | 'daily_bonus_claim' | 'daily_chest_claim' | 'challenge_start' | 'contract_signed' | 'ukaz_active'
-  | 'endless_start' | 'pass_level' | 'sku_view' | 'skin_applied' | 'shop_refreshed'
+  // Раунд 2 (фазы Q/S, TZ §K.2). Имена — РОВНО по карте §K.2: дашборд,
+  // построенный на спецификации, молча ничего не найдёт, если событие
+  // называется `quest_complete` вместо `quest_done`.
+  | 'glory_earned' | 'tree_node_bought' | 'quest_progress' | 'quest_done' | 'quest_reroll'
+  | 'daily_claim' | 'daily_chest_claim' | 'challenge_start' | 'challenge_result' | 'codex_entry'
+  | 'contract_signed' | 'ukaz_taken'
+  | 'endless_start' | 'endless_death' | 'pass_level' | 'sku_view' | 'skin_equipped'
+  | 'shop_refreshed'
   | 'iap_purchase' | 'iap_consume_fail';
 
 const MAX_BUFFER = 400;   // события последнего рана (сжатый буфер §K.1)

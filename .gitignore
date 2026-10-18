@@ -60,3 +60,4 @@ tool-results/
 /Caddyfile
 /upload/
 /bun.lock
+/test-results/

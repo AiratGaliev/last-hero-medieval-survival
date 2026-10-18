@@ -42,19 +42,37 @@ export class HealerAI {
     this.switchAt = now + HEALER.SWITCH_MS;
 
     // Список нуждающихся с приоритетом
-    interface Need { pawn: Pawn | null; prio: number; x: number; y: number }
+    interface Need { pawn: Pawn | null; prio: number; x: number; y: number; hpRatio: number }
     const needs: Need[] = [];
     for (const p of eco.pawns) {
       if (p.dead || !p.active) continue;
-      if (p.state === 'retreat' && p.cls === 'garrison') needs.push({ pawn: p, prio: 0, x: p.x, y: p.y });
-      else if (p.state === 'wounded' && p.hp > 0) needs.push({ pawn: p, prio: 1, x: p.x, y: p.y });
-      else if (p.hp < p.maxHp * 0.6) needs.push({ pawn: p, prio: 2, x: p.x, y: p.y });
+      if (p.hp >= p.maxHp) continue;
+      // ⚠️ Только в радиусе лечения (§B.7.2). Без фильтра монах уходил
+      // за две тысячи пикселей к раненому за краем карты — «лечение» было
+      // неуправляемым, а не «скорая помощь».
+      let need = false;
+      for (const m of monks) {
+        if (Phaser.Math.Distance.Between(m.x, m.y, p.x, p.y) <= HEALER.RADIUS * 1.6) { need = true; break; }
+      }
+      if (!need) continue;
+      const ratio = p.hp / p.maxHp;
+      // Приоритет: раненый гарнизон > раненый гражданский > герой < 40% (§B.7.2)
+      let prio = 3;
+      if (p.state === 'retreat' && p.cls === 'garrison') prio = 0;
+      else if (p.state === 'wounded') prio = 1;
+      else if (p.cls === 'civilian') prio = 2;
+      needs.push({ pawn: p, prio, x: p.x, y: p.y, hpRatio: ratio });
     }
     const hero = this.heroFn?.() ?? null;
     if (hero && hero.hp < hero.maxHp * 0.4) {
-      needs.push({ pawn: null, prio: 3, x: hero.x, y: hero.y });
+      needs.push({
+        pawn: null, prio: 2, x: hero.x, y: hero.y, hpRatio: hero.hp / hero.maxHp,
+      });
     }
-    needs.sort((a, b) => a.prio - b.prio);
+    // ⚠️ Внутри одного приоритета — САМАЯ НИЗКАЯ ДОЛЯ HP (§B.7.2): лечим того,
+    // кто вот-вот умрёт. Раньше сортировка шла только по prio, и внутри полосы
+    // порядок задавал массив — то есть «первого попавшегося».
+    needs.sort((a, b) => (a.prio - b.prio) || (a.hpRatio - b.hpRatio));
 
     const free = [...monks];
     for (const need of needs) {
@@ -69,11 +87,16 @@ export class HealerAI {
       if (!best) continue;
       free.splice(free.indexOf(best), 1);
       best.healTarget = need.pawn;
+      // Герой лечится отдельно: цель в Pawn — это Pawn, а не герой (§B.7.2
+      // «лечит героя и союзников»), поэтому помечаем точку и оставляем healTarget
+      // уединённым, а healHeroTick разбирает это по флагу.
+      best.healHeroPoint = need.pawn ? null : { x: need.x, y: need.y };
       best.orderTarget = { x: need.x, y: need.y };
       best.taskProgress = now; // метка последнего назначения
     }
     for (const m of free) {
       if (m.healTarget) m.healTarget = null;
+      if (m.healHeroPoint) m.healHeroPoint = null;
       // Свободный монах следует за линией боя в 200 px позади (§B.7.2)
     }
   }
@@ -107,5 +130,22 @@ export class HealerAI {
       eco.emit('pawnSaved', { pawn: target });
       monk.healTarget = null;
     }
+  }
+
+  /**
+   * Полевое лечение ГЕРОЯ (§B.7.2, приказ СЛЕДОВАТЬ: «лечит героя и
+   * союзников в радиусе 120 px»). Бесплатно — дерево платится только за
+   * лечение в обители (§B.7.2).
+   *
+   * Раньше герой в списке нуждающихся давал `pawn: null`, и монах всё равно
+   * уходил в полевое лечение пешки: назначение снималось, а цели лечения у
+   * монаха не появлялось — мёртвая ветка.
+   */
+  static fieldHealHeroTick(monk: Pawn, dtMs: number, hero: { hp: number; maxHp: number; x: number; y: number }): void {
+    const amount = (HEALER.HPS + HealerAI.hpsBonus) * (dtMs / 1000);
+    const heal = Math.min(amount, hero.maxHp - hero.hp);
+    if (heal <= 0) return;
+    hero.hp += heal;
+    monk.state = 'heal';
   }
 }

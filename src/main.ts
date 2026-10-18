@@ -63,6 +63,19 @@ function maybeExportTelemetry(): void {
 }
 
 /**
+ * ID счётчика Яндекс Метрики (§K.1 — единственный канал «в облако»).
+ *
+ * Берётся из `VITE_YM_ID` на этапе сборки. Без него `track()` писал только
+ * в локальный буфер Player Data, а весь раздел §K.2 (воронки FTUE, осады,
+ * задания, A/B) оставался недоступным для анализа.
+ */
+const YM_COUNTER_ID: number = (() => {
+  const raw = import.meta.env.VITE_YM_ID;
+  const n = raw ? Number(raw) : NaN;
+  return Number.isFinite(n) && n > 0 ? n : NaN;
+})();
+
+/**
  * Если игра не смонтировалась за отведённое время, надпись «Загружаем игру...»
  * оставалась на экране навсегда — без причины и без возможности что-то сделать.
  * Показываем, что именно сломалось, и даём перезагрузить страницу.
@@ -137,7 +150,10 @@ const boot = async (): Promise<void> => {
 
   // T0 аналитики (§K.1): шина поднимается до любых механик — session_start
   // уходит первым, sessionIdx проставляется всем событиям сессии.
-  initAnalytics({ dev: import.meta.env.DEV });
+  initAnalytics({
+    dev: import.meta.env.DEV,
+    ymId: Number.isFinite(YM_COUNTER_ID) ? YM_COUNTER_ID : undefined,
+  });
   maybeExportTelemetry();
   // §J.6.1 (1.13.1): платёжный слой + консумирование необработанных покупок —
   // ДО первого purchase() и до старта сцен. Вне Яндекса — no-op заглушка.

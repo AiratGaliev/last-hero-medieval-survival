@@ -8,8 +8,18 @@ export default defineConfig({
   testDir: './tests/e2e',
   fullyParallel: true,
   forbidOnly: Boolean(process.env.CI),
-  retries: process.env.CI ? 2 : 0,
-  workers: process.env.CI ? 2 : undefined,
+  retries: process.env.CI ? 2 : 1,
+  // Игра держит в памяти WebGL-контекст и ~150 МБ ассетов. При 2+ воркерах
+  // headless-Chromium на CI упирался в память и падал с «Target page … has
+  // been closed» — тесты выглядели поломками приложения. Один воркер
+  // проходит весь набор детерминированно.
+  workers: 1,
+  // Игра грузит ~1.5 МБ ассетов через dev-сервер Vite: холодная трансформация
+  // первого воркера занимает до 30 сек, и при fullyParallel второй тест
+  // успевал выйти по дефолтному таймауту, не дождавшись канваса. Это
+  // выглядело как падение приложения, хотя старт занимает ~6 сек.
+  timeout: 90_000,
+  expect: { timeout: 20_000 },
   reporter: process.env.CI
     ? [['list'], ['html', { open: 'never' }]]
     : 'list',
@@ -33,6 +43,8 @@ export default defineConfig({
     command: 'npm run dev -- --host 127.0.0.1',
     url: 'http://127.0.0.1:3000',
     reuseExistingServer: !process.env.CI,
-    timeout: 30_000,
+    // Старт dev-сервера: Vite поднимается быстро, но первый запрос
+    // трансформирует весь граф модулей — запас нужен на холодный старт.
+    timeout: 90_000,
   },
 });

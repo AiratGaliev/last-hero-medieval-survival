@@ -18,30 +18,39 @@ export interface ShopUpgradeDef {
 
 export type ShopUpgradeId = 'might' | 'vitality' | 'speed' | 'magnet' | 'luck';
 
+/**
+ * ⚠️ `name`/`desc` — геттеры, а не значения.
+ *
+ * Статические импорты вычисляются ДО `await detectLanguage()` в main.ts, так
+ * что модуль уровня `t('shop.…')` в литерале замораживал язык на стартовом
+ * 'ru': вся вкладка «ЛАВКА» в англоязычной сборке показывала русские названия.
+ * Геттер переводит ключ в момент обращения, то есть уже после определения
+ * языка. Создание апгрейдов не изменилось — оно data-only.
+ */
 export const SHOP_UPGRADES: ShopUpgradeDef[] = [
   {
-    id: 'might', name: t('shop.might.name'), icon: 'icon-might',
-    desc: t('shop.might.desc'),
+    id: 'might', get name() { return t('shop.might.name'); }, icon: 'icon-might',
+    get desc() { return t('shop.might.desc'); },
     costs: [150, 350, 700],
   },
   {
-    id: 'vitality', name: t('shop.vitality.name'), icon: 'icon-heart',
-    desc: t('shop.vitality.desc'),
+    id: 'vitality', get name() { return t('shop.vitality.name'); }, icon: 'icon-heart',
+    get desc() { return t('shop.vitality.desc'); },
     costs: [150, 350, 700],
   },
   {
-    id: 'speed', name: t('shop.speed.name'), icon: 'icon-boots',
-    desc: t('shop.speed.desc'),
+    id: 'speed', get name() { return t('shop.speed.name'); }, icon: 'icon-boots',
+    get desc() { return t('shop.speed.desc'); },
     costs: [120, 300, 600],
   },
   {
-    id: 'magnet', name: t('shop.magnet.name'), icon: 'icon-magnet',
-    desc: t('shop.magnet.desc'),
+    id: 'magnet', get name() { return t('shop.magnet.name'); }, icon: 'icon-magnet',
+    get desc() { return t('shop.magnet.desc'); },
     costs: [120, 300, 600],
   },
   {
-    id: 'luck', name: t('shop.luck.name'), icon: 'icon-coin',
-    desc: t('shop.luck.desc'),
+    id: 'luck', get name() { return t('shop.luck.name'); }, icon: 'icon-coin',
+    get desc() { return t('shop.luck.desc'); },
     costs: [180, 420, 800],
   },
 ];

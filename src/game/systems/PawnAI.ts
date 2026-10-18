@@ -1,6 +1,6 @@
 import Phaser from 'phaser';
-import { AGGRO, GARRISON, RETREAT_HP, KITE, HEALER, BLEEDOUT_SEC } from '../constants';
-import { RESOURCES, FIGHTERS, BUILDING_PLANS, type BuildingKind } from '../data';
+import { AGGRO, GARRISON, RETREAT_HP, KITE, HEALER, BLEEDOUT_SEC, REPAIR } from '../constants';
+import { RESOURCES, FIGHTERS, BUILDING_PLANS, garrisonSourceOf, type BuildingKind } from '../data';
 import { t } from '../../i18n';
 import { track } from '../../platform/analytics';
 import { HealerAI } from './HealerAI';
@@ -28,6 +28,8 @@ export interface PawnAICtx {
   shootArrow(from: Pawn, target: Enemy): void;
   /** Здание, которое сейчас бьёт осада (для таунта). */
   besiegedBuilding(): Building | null;
+  /** Состояние героя — цель полевого лечения монаха (§B.7.2). */
+  hero(): { hp: number; maxHp: number; x: number; y: number } | null;
 }
 
 const RANGE_WOOD = 46;
@@ -36,7 +38,8 @@ export class PawnAI {
   private scene: Phaser.Scene;
   private eco: Economy;
   private ctx: PawnAICtx;
-  private combatAcc = 0;
+  /** Аккумулятор тика combatAI — строго на каждого воина (§B.7.1). */
+  private combatAcc = new Map<Pawn, number>();
   private curTickMs: number = GARRISON.TICK_MS;
   /** Пункты патруля гарнизона. */
   private patrolPoints = new Map<Pawn, { x: number; y: number }>();
@@ -107,6 +110,17 @@ export class PawnAI {
 
     // --- 3. Приказы игрока (перебивают автоприоритеты, §B.6) ---
     if (p.order === 'build') {
+      // ⚠️ Если стройка УЖЕ оплачена этой пешкой — продолжаем её, а не берём
+      // новое пятно. `nearestFreeSpot` на следующем тике вернул бы уже другое
+      // пятно (первое занято markSpot), строитель ушёл бы, оплаченная стройка
+      // зависла бы навсегда — и пешка заплатила бы за ВТОРОЕ здание.
+      const mine = eco.buildJobs.find((j) => j.pawn === p);
+      if (mine) {
+        const d = Phaser.Math.Distance.Between(p.x, p.y, mine.spot.x, mine.spot.y);
+        if (d > 90) { p.state = 'walk'; this.walkTo(p, mine.spot.x, mine.spot.y, dtMs); }
+        else { p.state = 'work'; p.taskProgress = 0; }
+        return;
+      }
       const spot = this.nearestFreeSpot(p);
       if (spot) {
         if (Phaser.Math.Distance.Between(p.x, p.y, spot.x, spot.y) < 70) {
@@ -288,7 +302,8 @@ export class PawnAI {
     p.workNode = node;
     p.state = 'work';
     const def = RESOURCES[node.res];
-    p.taskProgress += dtMs;
+    // Ветеран 3★ работает на 10% быстрее (§H.2)
+    p.taskProgress += dtMs * (p.workSpeedMult ?? 1);
     p.playWork(this.eco.toolFor(node.res));
     p.setVelocity(0, 0);
     if (p.taskProgress >= def.workMs * def.ticksPerCycle) {
@@ -305,28 +320,46 @@ export class PawnAI {
   }
 
   /**
-   * Узел для сборщика: дефицит/дистанция (§B.6) со штрафом за врагов рядом —
-   * иначе сборщик идёт в гущу толпы и цикл сбора превращается в беготню.
+   * Узел для сборщика в автоповедении: дефицит/дистанция (§B.6) со штрафом
+   * за врагов рядом — иначе сборщик идёт в гущу толпы и цикл сбора
+   * превращается в беготню.
+   *
+   * Формула — ровно из спецификации: `max(0, план − склад) / max(1, dist)`.
+   * Раньше здесь стоял `Math.max(0.5, план − склад × 0.5)`: из-за нижней
+   * границы 0.5 и «половинного» склада узел с ИЗБЫТКОМ ресурса всегда
+   * набирал положительную оценку и обгонял далёкий действительно нужный —
+   * ровно тот тупик, от которого предостерегает §B.6 («ближайший порождал
+   * тупик: сборщик бесконечно таскал ненужное мясо, пока горят дома»).
+   * Нужды нет → возвращаем null, и пешка уходит на IdlePoint (§B.6 п.6).
    */
   private pickNodeFor(p: Pawn): ResourceNode | null {
     const eco = this.eco;
     const enemies = this.c.enemies();
-    // Дефицит: план расхода (стройки/ремонт) против склада + базовый план
-    // старта (первый дом 30 дерева, казармы 40+15 — §B.4, §B.9)
+    // Дефицит: план расхода (стройки/ремонт/лечение/наём) против склада
+    // + базовый план старта (первый дом 30 дерева, казармы 40+15 — §B.4, §B.9)
     const target: Record<string, number> = { wood: 30, ore: 15, meat: 3 };
     for (const j of eco.buildJobs) {
       for (const [k, v] of Object.entries(BUILDING_PLANS[j.spot.kind].cost)) {
         target[k] += v;
       }
     }
-    for (const j of eco.repairJobs) target.wood += j.rebuild ? 60 : 30;
+    for (const j of eco.repairJobs) target.wood += j.rebuild ? REPAIR.REBUILD_WOOD : REPAIR.WOOD;
+    // Запланированный найм гарнизона — тоже часть плана расхода (§B.9.1)
+    for (const weapon of ['sword', 'lance', 'bow', 'staff'] as const) {
+      const h = eco.garrisonLimit(garrisonSourceOf(weapon)) - eco.hireSlotUse(weapon);
+      if (h <= 0) continue;
+      for (const [k, v] of Object.entries(eco.hireCost(weapon))) {
+        target[k] = (target[k] ?? 0) + v;
+      }
+    }
     let best: ResourceNode | null = null;
-    let bestScore = -1;
+    let bestScore = 0;
     for (const n of eco.nodes) {
       if (!n.alive || (n.claimedBy && n.claimedBy !== p)) continue;
       if (Math.hypot(n.x - eco.castleX, n.y - eco.castleY) > 1000) continue;
       if (n.claimedBy === p) return n;
-      const deficit = Math.max(0.5, target[n.res] - eco.resources[n.res] * 0.5);
+      if (eco.tune.meatDisabled && n.res === 'meat') continue;
+      const deficit = Math.max(0, target[n.res] - eco.resources[n.res]);
       const dist = Math.max(60, Math.hypot(n.x - p.x, n.y - p.y));
       let score = deficit / dist;
       // Штраф: враги в 260 px от узла делают его непривлекательным
@@ -399,8 +432,11 @@ export class PawnAI {
     const mon = eco.nearestMonastery(p);
     if (p.state === 'bleeding') {
       p.bleedTimer -= dtMs / 1000;
+      // Раненый не работает (§G.3) — но и не «висит» в воздухе: он лежит
+      // на месте, куда его свалили. `bleedBanner` однажды назван пешке.
       p.playMove(false);
       p.setVelocity(0, 0);
+      p.updateStarBadge();
       if (p.bleedTimer <= 0) {
         // Окончательная гибель (§G.3)
         eco.removePawn(p);
@@ -409,20 +445,19 @@ export class PawnAI {
     }
     // state === 'wounded'
     if (!mon) {
-      // Монастыря нет вообще → сразу bleeding у замка (§G.3)
-      p.state = 'bleeding';
-      p.bleedTimer = BLEEDOUT_SEC;
-      this.eco.emit('feed', { text: t('pawn.bleeding', { v: p.name, s: BLEEDOUT_SEC }), color: '#ff6655' });
-      track('pawn_bleeding_start', { fatal: true, monastery: false });
+      // Монастыря нет вообще → сразу bleeding у ЗАМКА (§G.3)
+      this.toBleeding(p);
+      this.bleedStep(p, eco.castleX, eco.castleY, dtMs);
       return;
     }
     const d = Phaser.Math.Distance.Between(p.x, p.y, mon.x, mon.y);
     if (d < 110) {
       const slot = mon.claimHealSlot(p);
       if (slot === null) {
-        p.state = 'bleeding';
-        p.bleedTimer = BLEEDOUT_SEC;
-        track('pawn_bleeding_start', { fatal: true, monastery: true });
+        // ⚠️ Именной анонс обязателен (§G.3 / §G.11 п.23): раньше он
+        // вызывался ТОЛЬКО при отсутствии монастыря, и переполнение
+        // обители происходило молча — игрок не понимал, кого он теряет.
+        this.toBleeding(p);
       } else {
         p.monasterySlot = slot;
         p.state = 'wounded'; // лечится внутри; monasteryHealTick поднимет
@@ -434,25 +469,63 @@ export class PawnAI {
     }
   }
 
+  /** Вход в состояние истечения кровью: таймер, именной анонс, телеметрия. */
+  private toBleeding(p: Pawn): void {
+    p.state = 'bleeding';
+    p.bleedTimer = this.bleedoutSec();
+    this.eco.emit('feed', {
+      text: t('pawn.bleeding', { v: p.name, s: Math.ceil(p.bleedTimer) }),
+      color: '#ff6655',
+    });
+    track('pawn_bleeding_start', { fatal: true, monastery: this.eco.nearestMonastery(p) !== null });
+    p.updateStarBadge();
+  }
+
+  /** 45 сек, +15 с картой «Полевой лекарь» (§G.3 / §H.5). */
+  private bleedoutSec(): number {
+    return BLEEDOUT_SEC + (this.eco.card('fieldmedic') > 0 ? 15 : 0);
+  }
+
+  /** Доводит истекающего до ворот (у монастыря — уже там, у замка — нет). */
+  private bleedStep(p: Pawn, x: number, y: number, dtMs: number): void {
+    if (Phaser.Math.Distance.Between(p.x, p.y, x, y) > 60) {
+      this.walkTo(p, x, y, dtMs, 0.6);
+    } else {
+      p.playMove(false);
+      p.setVelocity(0, 0);
+    }
+  }
+
   // ================= ГАРНИЗОН (тик 150 мс) =================
 
   updateCombat(p: Pawn, dtMs: number, now: number): void {
-    // Логика состояния — по тику; движение — каждый кадр (§B.7.1)
-    this.combatAcc += dtMs;
+    // Логика состояний — по собственному тику каждого воина (§B.7.1); движение
+    // — каждый кадр. Аккумулятор обязан быть ПЕР-ЮНИТОМ: общий на всех
+    // отдавал одно 150-миллисекундное окно первому попавшему, и при двух
+    // воинах первый думал вдвое чаще второго — с ростом гарнизона тайминг
+    // боя становился всё более неровным.
+    const acc = (this.combatAcc.get(p) ?? 0) + dtMs;
     const frame = dtMs;
-    if (this.combatAcc >= this.curTickMs) {
+    if (acc >= this.curTickMs) {
       // Фолбэк тика при просадке FPS (§B.7.1)
       const fps = this.scene.game.loop.actualFps;
       this.curTickMs = fps < 40 ? GARRISON.TICK_FALLBACK_MS : GARRISON.TICK_MS;
-      this.combatAcc = 0;
-      this.combatThink(p, now);
+      // Отнимаем ровно одно окно, а не обнуляем: при просадке FPS на 16
+      // остаток не должен копиться и превращать тик в 250 мс «раз в 4 кадра».
+      this.combatAcc.set(p, acc - this.curTickMs);
+      this.combatThink(p, now, this.curTickMs);
+    } else {
+      this.combatAcc.set(p, acc);
     }
     this.combatMove(p, frame);
   }
 
-  private combatThink(p: Pawn, now: number): void {
+  private combatThink(p: Pawn, now: number, tickMs: number): void {
     const eco = this.eco;
-    if (p.state === 'wounded' || p.state === 'bleeding') { this.woundedTick(p, 0); return; }
+    // ⚠️ dtMs обязан быть реальным: раньше сюда передавался 0, и таймер
+    // истечения кровью у гарнизона не уменьшался НИКОГДА — раненый воин был
+    // бессмертным (§G.3).
+    if (p.state === 'wounded' || p.state === 'bleeding') { this.woundedTick(p, tickMs); return; }
 
     // Отступление при HP < 35%: к монастырю/замку, слот не занимает (§B.7.1)
     if (p.state !== 'retreat' && p.hp < p.maxHp * RETREAT_HP) {
@@ -463,14 +536,59 @@ export class PawnAI {
     }
     if (p.state === 'retreat') {
       // Поле лечения монаха может поднять — тогда вернётся в строй
-      if (p.hp >= p.maxHp * 0.7) { p.state = 'idle'; }
+      if (p.hp >= p.maxHp * 0.7) { p.state = 'idle'; return; }
+      // Отход к обители (а её нет — к замку). Без явного walkTo воин сохранял
+      // скорость последнего боя и уезжал дальше, ПРЯМО в врага: у Arcade-тела
+      // нет ни гравитации, ни трения, и тормозит только явный setVelocity(0,0).
+      const mon = eco.nearestMonastery(p);
+      const rx = mon ? mon.x : eco.castleX;
+      const ry = mon ? mon.y : eco.castleY;
+      const away = this.nearestEnemy(p, 200);
+      let tx = rx, ty = ry;
+      if (away) {
+        // Если враг между воином и обителью — обходим вбок от него.
+        const dx = rx - p.x, dy = ry - p.y;
+        const len = Math.max(1, Math.hypot(dx, dy));
+        const px = -dy / len, py = dx / len;
+        tx = p.x + dx * 0.4 + px * 160;
+        ty = p.y + dy * 0.4 + py * 160;
+      }
+      this.walkTo(p, tx, ty, tickMs, 1.05);
       return;
     }
 
-    p.attackCd = Math.max(0, p.attackCd - this.curTickMs);
+    p.attackCd = Math.max(0, p.attackCd - tickMs);
+
+    const enemies = this.c.enemies();
+
+    // Монах: полевое лечение работает ВСЕГДА (§B.6 — приказы СЛЕДОВАТЬ /
+    // НА ПОСТ / ДЕРЖАТЬ тоже лечат, иначе приказ полностью обессценивает
+    // единственного лекаря). Проверяем ДО веток приказов.
+    if (p.kind === 'healer') {
+      if (p.healTarget && (p.healTarget.dead || !p.healTarget.active)) p.healTarget = null;
+      if (p.healTarget) {
+        const tgt = p.healTarget;
+        const d = Phaser.Math.Distance.Between(p.x, p.y, tgt.x, tgt.y);
+        if (d > HEALER.RADIUS * 0.5) this.walkTo(p, tgt.x, tgt.y, tickMs, 1.1);
+        else { p.playMove(false); p.setVelocity(0, 0); }
+        HealerAI.fieldHealTick(p, tgt, tickMs, eco);
+        return;
+      }
+      // Герой — полноправная цель полевого лечения (§B.7.2, §B.6 «СЛЕДОВАТЬ»)
+      if (p.healHeroPoint) {
+        const hero = this.c.hero();
+        if (!hero || hero.hp >= hero.maxHp) { p.healHeroPoint = null; }
+        else {
+          const d = Phaser.Math.Distance.Between(p.x, p.y, hero.x, hero.y);
+          if (d > HEALER.RADIUS * 0.5) this.walkTo(p, hero.x, hero.y, tickMs, 1.1);
+          else { p.playMove(false); p.setVelocity(0, 0); }
+          HealerAI.fieldHealHeroTick(p, tickMs, hero);
+          return;
+        }
+      }
+    }
 
     // Приказы гарнизону держатся до отмены (§B.6)
-    const enemies = this.c.enemies();
     if (p.order === 'hold' && p.orderTarget) {
       this.fightAround(p, enemies, p.orderTarget.x, p.orderTarget.y, 120, now, true);
       return;
@@ -494,19 +612,6 @@ export class PawnAI {
     // Автоповедение: враг в радиусе 700 px от поселения → fight (§B.6)
     const sx = eco.castleX, sy = eco.castleY;
 
-    // Монах: полевое лечение цели от системы (§B.7.2)
-    if (p.kind === 'healer' && p.healTarget) {
-      const tgt = p.healTarget;
-      if (tgt.dead || !tgt.active) { p.healTarget = null; }
-      else {
-        const d = Phaser.Math.Distance.Between(p.x, p.y, tgt.x, tgt.y);
-        if (d > HEALER.RADIUS * 0.5) this.walkTo(p, tgt.x, tgt.y, this.curTickMs, 1.1);
-        else { p.playMove(false); p.setVelocity(0, 0); }
-        HealerAI.fieldHealTick(p, tgt, this.curTickMs, eco);
-        return;
-      }
-    }
-
     let target: Enemy | null = null;
     let bestD: number = GARRISON.RALLY;
     for (const e of enemies) {
@@ -514,21 +619,33 @@ export class PawnAI {
       const d = Math.hypot(e.x - sx, e.y - sy);
       if (d < bestD) { bestD = d; target = e; }
     }
-    // Перехват: враг идёт к пешке/зданию — воин в 260 px перехватывает (§B.7.1)
+    // Перехват (§B.7.1): враг выбрал целью пешку или идёт к стене — ближайший
+    // воин в GARRISON.INTERCEPT перехватывает и переводит бой на себя.
+    // Раньше блок срабатывал только при осаде и с завышенным радиусом 380 px.
     if (!target) {
       const besieged = this.c.besiegedBuilding();
-      if (besieged) {
+      const markedPawn = besieged ? null : this.pawnUnderAttack(p, enemies);
+      const marked = besieged ?? markedPawn;
+      if (marked) {
         for (const e of enemies) {
           if (!e.active || e.dead) continue;
-          if (Math.hypot(e.x - besieged.x, e.y - besieged.y) < 200
-            && Math.hypot(p.x - besieged.x, p.y - besieged.y) < GARRISON.INTERCEPT + 120) {
+          // К стене: враг уже у цели профиля осады. К пешке: враг выбрал
+          // её целью (§A.5, приоритет №2/№3).
+          const onTarget = besieged
+            ? Math.hypot(e.x - besieged.x, e.y - besieged.y) < 200
+            : e.aimedPawn === markedPawn?.pawn
+              || Phaser.Math.Distance.Between(e.x, e.y, marked.x, marked.y) < 60;
+          if (onTarget && Phaser.Math.Distance.Between(p.x, p.y, e.x, e.y) < GARRISON.INTERCEPT) {
             target = e;
             break;
           }
         }
       }
     }
-    if (target) {
+    if (target && this.withinLeash(p)) {
+      // ⚠️ Поводок (§B.7.1): за 900 px от ближайшего здания бой прекращается
+      // и воин возвращается к патрулю. Без этого гарнизон уводился за карту,
+      // и база оставалась без защиты — ровно то, ради чего он и нанят.
       p.state = 'fight';
       this.approachAndAttack(p, target, now);
       return;
@@ -536,13 +653,13 @@ export class PawnAI {
 
     // Патруль вокруг замка: точка смены каждые 6–10 сек (§B.6)
     if (p.kind === 'healer') {
-      // Монах без цели: за линией боя, у замка
+      // Монах без цели: за линией боя, у замка (§B.7.2 — отступ 200 px).
       const fighters = eco.garrison.filter((f) => f.kind === 'fighter' && f.state === 'fight');
       const anchor = fighters[0];
       if (anchor) {
-        this.walkTo(p, anchor.x + HEALER.FOLLOW_OFFSET * 0.4, anchor.y + HEALER.FOLLOW_OFFSET * 0.4, this.curTickMs);
+        this.walkTo(p, anchor.x + HEALER.FOLLOW_OFFSET, anchor.y + HEALER.FOLLOW_OFFSET, tickMs);
       } else {
-        this.walkTo(p, sx + 60, sy + 80, this.curTickMs);
+        this.walkTo(p, sx + 60, sy + 80, tickMs);
       }
       return;
     }
@@ -555,7 +672,55 @@ export class PawnAI {
     }
     const pt = this.patrolPoints.get(p)!;
     p.state = 'walk';
-    this.walkTo(p, pt.x, pt.y, this.curTickMs);
+    this.walkTo(p, pt.x, pt.y, tickMs);
+  }
+
+  /** Ближайшее живое здание поселения и расстояние до него. */
+  private nearestBuilding(p: Pawn): Building | null {
+    let best: Building | null = null;
+    let bestD = Infinity;
+    for (const b of this.eco.buildings) {
+      if (!b.alive) continue;
+      const d = Phaser.Math.Distance.Between(p.x, p.y, b.x, b.y);
+      if (d < bestD) { bestD = d; best = b; }
+    }
+    if (!best) {
+      // Замок всегда считается зданием — поводок не должен «исчезать».
+      return { x: this.eco.castleX, y: this.eco.castleY } as unknown as Building;
+    }
+    return best;
+  }
+
+  /** В пределах поводка от ближайшего здания? (§B.7.1, GARRISON.LEASH) */
+  private withinLeash(p: Pawn): boolean {
+    const b = this.nearestBuilding(p);
+    if (!b) return true;
+    return Phaser.Math.Distance.Between(p.x, p.y, b.x, b.y) <= GARRISON.LEASH;
+  }
+
+  /** Пешка, которую враг выбрал целью, и до которой осталось немного (§B.7.1). */
+  private pawnUnderAttack(self: Pawn, enemies: Enemy[]): { pawn: Pawn; x: number; y: number } | null {
+    for (const e of enemies) {
+      if (!e.active || e.dead) continue;
+      const target = e.aimedPawn;
+      if (!target || target === self || target.dead) continue;
+      const d = Phaser.Math.Distance.Between(self.x, self.y, target.x, target.y);
+      if (d > GARRISON.INTERCEPT * 2) continue;
+      return { pawn: target, x: target.x, y: target.y };
+    }
+    return null;
+  }
+
+  /** Ближайший живой враг в радиусе (для обхода при отступлении). */
+  private nearestEnemy(p: Pawn, r: number): Enemy | null {
+    let best: Enemy | null = null;
+    let bestD = r;
+    for (const e of this.c.enemies()) {
+      if (!e.active || e.dead) continue;
+      const d = Phaser.Math.Distance.Between(p.x, p.y, e.x, e.y);
+      if (d < bestD) { bestD = d; best = e; }
+    }
+    return best;
   }
 
   /** Бой вокруг точки (пост/герой/точка ДЕРЖАТЬ). */
@@ -592,6 +757,17 @@ export class PawnAI {
     const w = p.weapon ?? 'sword';
     const def = FIGHTERS[w];
     const d = Phaser.Math.Distance.Between(p.x, p.y, e.x, e.y);
+
+    // ⚠️ Монах НЕ БЬЁТ (§B.2, §B.7.2) — его работа только лечение. Раньше
+    // `staff` проваливался в ветку мечника, а `pawnAttackEnemy` с `dmg = 0`
+    // в GameScene делает `Math.max(1, …)` — получался урон 1 за 150 мс.
+    if (w === 'staff') {
+      p.state = 'fight';
+      if (d > HEALER.FOLLOW_OFFSET) this.walkTo(p, e.x, e.y, this.curTickMs);
+      else { p.playMove(false); p.setVelocity(0, 0); }
+      void now;
+      return;
+    }
 
     if (w === 'bow') {
       // Кайтинг: враг ближе 180 px — отход на 80 px, стрельба на ходу (§B.7.1)
@@ -652,7 +828,7 @@ export class PawnAI {
     }
 
     // Мечник: держит 40 px и бьёт каждые 1.2 с (§B.7.1)
-    if (d <= def.range + 14) {
+    if (d <= def.range) {
       p.state = 'fight';
       p.playMove(false);
       p.setVelocity(0, 0);

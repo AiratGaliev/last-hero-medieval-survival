@@ -117,6 +117,8 @@ export class HUD {
   private garrisonText!: Phaser.GameObjects.Text;
   private feedItems: Array<Phaser.GameObjects.Container> = [];
   private speedupBtns: Record<string, Phaser.GameObjects.Container> = {};
+  /** Фон кнопки ускорения — гасится, когда ускорять нечего (§G.8). */
+  private speedupBg: Record<string, Phaser.GameObjects.Rectangle> = {};
   private speedupHandlers: { repair: () => void; heal: () => void } = { repair: () => {}, heal: () => {} };
 
   private resizeHandler = () => { resetSafeInsets(); this.layout(); };
@@ -494,24 +496,28 @@ export class HUD {
     });
   }
 
-  /** Кнопки ускорений (§G.8): видны только когда есть цель; callback’и GameScene. */
+  /** Кнопки ускорений (§G.8): callback’и GameScene. */
   setSpeedupHandlers(h: { repair: () => void; heal: () => void }): void {
     this.speedupHandlers = h;
   }
 
+/**
+ * Кнопки ускорений (§G.8).
+ *
+ * §G.8 и гейт §G.11 п.21 требуют: «кнопки появляются только когда есть
+ * активный ремонт / есть раненые в радиусе, иначе СЕРЫЕ с подсказкой почему».
+ * Раньше при отсутствии цели кнопка просто УДАЛЯЛАСЬ — игрок не понимал, что
+ * механика есть и почему она не работает. Теперь кнопка всегда на месте и
+ * меняет подпись на причину отказа.
+ */
   updateSpeedups(repairTarget: boolean, healTarget: boolean): void {
     const H = this.scene.scale.height;
-    const defs: Array<[string, string, boolean, number]> = [
-      ['repair', t('speedup.repair'), repairTarget, 0],
-      ['heal', t('speedup.heal'), healTarget, 46],
+    const defs: Array<[string, string, boolean, number, string]> = [
+      ['repair', t('speedup.repair'), repairTarget, 0, t('speedup.noTarget')],
+      ['heal', t('speedup.heal'), healTarget, 46, t('speedup.noTarget')],
     ];
-    for (const [key, label, enabled, dy] of defs) {
+    for (const [key, label, enabled, dy, why] of defs) {
       let c = this.speedupBtns[key];
-      if (!enabled) {
-        c?.destroy();
-        delete this.speedupBtns[key];
-        continue;
-      }
       if (!c) {
         c = this.scene.add.container(0, 0);
         const bg = this.scene.add.rectangle(0, 0, 148, 30, 0x1b1008, 0.9).setOrigin(1, 0.5)
@@ -520,10 +526,22 @@ export class HUD {
           fontFamily: FONT, fontSize: '10px', color: '#ffe9b0',
         }).setOrigin(1, 0.5);
         c.add([bg, txt]);
+        this.speedupBg[key] = bg;
         bg.on('pointerdown', () => this.speedupHandlers[key as 'repair' | 'heal']());
         c.setSize(148, 30);
         this.speedupBtns[key] = c;
         this.root.add(c);
+      }
+      const list = c.list as Phaser.GameObjects.GameObject[];
+      const txt = list[1] as Phaser.GameObjects.Text;
+      const bgs = this.speedupBg[key];
+      if (bgs) {
+        bgs.setStrokeStyle(1, enabled ? 0x8a6d3b : 0x4a4038);
+        bgs.setFillStyle(enabled ? 0x1b1008 : 0x14100b, 0.75);
+        txt.setColor(enabled ? '#ffe9b0' : '#6f6558');
+        txt.setText(enabled ? label : why);
+        bgs.input!.enabled = enabled;
+        bgs.input!.cursor = enabled ? 'pointer' : 'default';
       }
       c.setPosition(this.scene.scale.width - 14, H - hudBottomInset() - 60 - dy);
     }

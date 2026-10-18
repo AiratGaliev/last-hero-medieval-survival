@@ -72,21 +72,41 @@ export class Succession {
     }));
   }
 
-  /** Цена ветви 2 по номеру смены (§F.7) с узлом «Дорога героя» ×0.90 (§H.16). */
-  resourceCost(): ResourceCost {
-    const base = SUCCESSION_COST[Math.min(this.successionsDone, SUCCESSION_COST.length - 1)];
-    if (this.costMult === 1) return base;
+  /**
+ * Цена ресурсной ветви (§F.7): 40д+15р → 80д+35р → 140д+60р.
+ *
+ * ⚠️ С 4-й смены ресурсная ветвь ЗАКРЫТА (§F.7: «4-я и далее — только золото
+ * матча, ×1.5 за каждую»). Раньше `min(successionsDone, len-1)` держал цену
+ * 140д+60р вечно, то есть дерево можно было тратить на преемников
+ * бесконечно — ровно то, чего спецификация запрещает.
+ */
+  resourceCost(): ResourceCost | null {
+    const tier = SUCCESSION_COST[Math.min(this.successionsDone, SUCCESSION_COST.length - 1)];
+    if (!tier || this.successionsDone >= SUCCESSION_COST.length) return null;
+    if (this.costMult === 1) return tier;
     const out: ResourceCost = {};
-    if (base.wood !== undefined) out.wood = Math.max(1, Math.round(base.wood * this.costMult));
-    if (base.ore !== undefined) out.ore = Math.max(1, Math.round(base.ore * this.costMult));
-    if (base.meat !== undefined) out.meat = Math.max(1, Math.round(base.meat * this.costMult));
+    if (tier.wood !== undefined) out.wood = Math.max(1, Math.round(tier.wood * this.costMult));
+    if (tier.ore !== undefined) out.ore = Math.max(1, Math.round(tier.ore * this.costMult));
+    if (tier.meat !== undefined) out.meat = Math.max(1, Math.round(tier.meat * this.costMult));
     return out;
   }
 
-  /** Цена золота матча ветви 3 (§F.8) с узлом «Дорога героя» ×0.90 (§H.16). */
+  /** Доступна ли ресурсная ветвь (не 4-я смена и не контракт «Один в поле»). */
+  resourcesBranchAvailable(): boolean {
+    return !this.resourcesBranchDisabled && this.successionsDone < SUCCESSION_COST.length;
+  }
+
+  /**
+   * Цена золота матча ветви 3 (§F.8): 500 / 900 / 1500, далее ×1.5 за каждую
+   * смену (§F.7 — «4-я и далее — только золото матча, ×1.5 за каждую»).
+   */
   goldCost(): number {
-    const base = SUCCESSION_GOLD[Math.min(this.successionsDone, SUCCESSION_GOLD.length - 1)];
-    return Math.max(1, Math.round(base * this.costMult));
+    const n = this.successionsDone;
+    const base = SUCCESSION_GOLD[Math.min(n, SUCCESSION_GOLD.length - 1)];
+    const escalated = n >= SUCCESSION_GOLD.length
+      ? base * Math.pow(1.5, n - (SUCCESSION_GOLD.length - 1))
+      : base;
+    return Math.max(1, Math.round(escalated * this.costMult));
   }
 
   /** Первая преемственность аккаунта бесплатна (§F.4). */
@@ -111,15 +131,17 @@ export class Succession {
   }
 
   /** Ветвь 2: воин приходит из здания за ресурсы (бесплатно для игрока).
-   *  Контракт «Один в поле» (§H.9) ветвь глушит. */
+   *  Контракт «Один в поле» (§H.9) и 4-я смена ветвь глушат (§F.7). */
   canAffordResources(): boolean {
-    if (this.resourcesBranchDisabled) return false;
-    return this.eco.canAfford(this.resourceCost());
+    const cost = this.resourceCost();
+    if (!cost) return false;
+    return this.eco.canAfford(cost);
   }
 
   payResources(): boolean {
-    if (this.resourcesBranchDisabled) return false;
-    const ok = this.eco.spend(this.resourceCost());
+    const cost = this.resourceCost();
+    if (!cost || this.resourcesBranchDisabled) return false;
+    const ok = this.eco.spend(cost);
     if (ok) this.successionsDone++;
     return ok;
   }
@@ -134,8 +156,28 @@ export class Succession {
     this.markFreeUsed();
   }
 
-  /** Первая преемственность аккаунта: ничего не списываем (§F.4, §I.4). */
+  /**
+   * Первая преемственность аккаунта: ничего не списываем (§F.4, §I.4).
+   *
+   * ⚠️ Счётчик эскалации ОБЯЗАТЕЛЬНО растёт (§F.7: «Номер смены считает
+   * только оплаченные и бесплатные преемники (включая lifetime-бесплатную
+   * первую)»). Раньше он оставался 0, и вторая смерть стоила 40д+15р вместо
+   * 80д+35р — гейт §F.13 п.11 не выполнялся.
+   */
   payFree(): void {
     this.markFreeUsed();
+    this.successionsDone++;
+  }
+
+  /** Тип воина разрешён, если стоит его здание-источник (§F.4, §F.5, §F.13 п.6). */
+  typeAvailable(weapon: PawnWeapon): boolean {
+    const t = SUCCESSION_TYPES.find((x) => x.weapon === weapon);
+    if (!t) return false;
+    return this.eco.buildings.some((b) => b.alive && b.kind === t.source && !b.underConstruction);
+  }
+
+  /** Герой, соответствующий подтипу воина (§F.6): bow → archer, staff → monk. */
+  heroFor(weapon: PawnWeapon): HeroId {
+    return SUCCESSION_TYPES.find((x) => x.weapon === weapon)?.hero ?? 'warrior';
   }
 }

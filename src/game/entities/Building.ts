@@ -95,7 +95,10 @@ export class Building extends Phaser.GameObjects.Image {
     // Руины (hp=0, uc=true) и стройка урон не принимают
     if (!this.alive || this.underConstruction) return;
     this.hp = Math.max(0, this.hp - amount);
-    this.lastSiegeIdx = siegeIdx;
+    // ⚠️ Метку осады обновляем только осадным уроном. Раньше `lastSiegeIdx`
+    // перезаписывался при ЛЮБОМ уроне, в том числе уроном босса (−1), —
+    // и оставшийся DoT осады «терял» принадлежность к потолку.
+    if (siegeIdx >= 0) this.lastSiegeIdx = siegeIdx;
     this.ctx.onDamaged(this, amount, siegeIdx);
     // Предупреждения обители: 30% и 10% HP (TZ §G.5.1)
     if (this.kind === 'monastery') {

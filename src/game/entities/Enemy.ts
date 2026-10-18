@@ -25,6 +25,10 @@ export interface EnemyContext {
   attackBuilding(b: unknown, dmg: number, fire: boolean, isBoss: boolean): void;
   /** Бросок снаряда по зданию (кость гнолла / шар шамана); building — цель урона */
   siegeShoot(kind: EnemyShotKind, x: number, y: number, tx: number, ty: number, fire: boolean, building: unknown): void;
+  /** Пешка рядом — для ранений осадой, дошедшей внутрь (§E.4). */
+  nearPawn?: (x: number, y: number, r: number) => Pawn | null;
+  /** Окно атаки истекло — враг осады отступает (§E.4.2). */
+  onSiegeWindowEnd?: (e: Enemy) => void;
 }
 
 type AiState = 'chase' | 'windup' | 'charge' | 'recover' | 'bossPhase2';
@@ -70,10 +74,21 @@ export class Enemy extends Phaser.Physics.Arcade.Sprite {
   /** Здание-цель осады (Building; unknown — разрыв цикла импорта) */
   buildingTarget: unknown = null;
   private targetPawn: Pawn | null = null;
+  /**
+   * Текущая цель-пешка (TZ §A.5, выбор цели №2/№3).
+   *
+   * Открыт наружу для перехвата гарнизоном (§B.7.1: «враг, выбравший целью
+   * №2 или №3, идёт к ней; ближайший `fighter` перехватывает») — раньше это
+   * было невозможно, поле было приватным, и перехват срабатывал только на осаду.
+   */
+  get aimedPawn(): Pawn | null { return this.targetPawn; }
   private lastPick = 0;
   private buildingAtkCd = 0;
   /** Момент спавна — таймер отступления осады 60 сек (§E.4.2) */
   spawnedAt = 0;
+  /** Окно атаки у стены, конец в мс (0 — не ограничено; §E.4.2) */
+  attackWindowEnds = 0;
+  private meleeCd = 0;
 
   constructor(scene: Phaser.Scene, x: number, y: number, kind: EnemyKind, hpMult: number, dmgMult: number, ctx: EnemyContext) {
     const def = ENEMIES[kind];
@@ -141,8 +156,14 @@ export class Enemy extends Phaser.Physics.Arcade.Sprite {
     }
   }
 
-  /** Однократная анимация (бросок/удар/замах); после завершения — движение */
+  /** Однократная анимация (бросок/удар/замах); после завершения — движение.
+   *
+   *  Ключ проверяется до присвоения `lastAnim`. Иначе отсутствующая анимация
+   *  ( Phaser молча игнорирует play() и не присылает animationcomplete )
+   *  оставляла бы `lastAnim` залипшим навсегда: существо переставало
+   *  переключать run/idle и ездило в бегущем цикле стоя на месте. */
   private playOnce(key: string): void {
+    if (!this.scene.anims.exists(key)) return;
     this.lastAnim = key;
     this.play(key, true);
     this.once('animationcomplete', (anim: Phaser.Animations.Animation) => {
@@ -202,9 +223,31 @@ export class Enemy extends Phaser.Physics.Arcade.Sprite {
       }
       if (!this.lastAnim || this.lastAnim === `${this.kind}-idle`) this.playMove(true);
     } else {
-      // Окно атаки: у стены (§E.4.2)
+      // Окно атаки: у стены (§E.4.2). По умолчанию бой длится до гибели
+      // осады; окно в 10 секунд держит вызов из GameScene (§E.4.2 — именно
+      // из него выведены все числа §E.4.1/§E.4.3).
+      if (this.attackWindowEnds > 0 && time >= this.attackWindowEnds) {
+        // Окно истекло — осада отходит за край карты (§E.4.2 «отступает»)
+        this.siege = false;
+        this.buildingTarget = null;
+        body.setVelocity(0, 0);
+        this.playMove(false);
+        this.ctx.onSiegeWindowEnd?.(this);
+        return;
+      }
       body.setVelocity(0, 0);
       this.setFlipX(this.def.facesRight ? dx < 0 : dx > 0);
+      // Пробившийся внутрь осады враг РАНИТ пешек, которых достиг (§E.4).
+      // Без этого ветка SIEGE_WOUND_CAP (1/1/2/2/3) и весь второй канал убыли
+      // населения (§E.3.1) были мёртвым кодом.
+      this.meleeCd -= delta;
+      if (this.meleeCd <= 0 && this.ctx.nearPawn) {
+        const pawn = this.ctx.nearPawn(this.x, this.y, 64);
+        if (pawn) {
+          this.meleeCd = 2000;
+          this.ctx.attackPawn(pawn, this.damage, true);
+        }
+      }
       this.buildingAtkCd -= delta;
       if (this.buildingAtkCd <= 0) {
         // Босс в фазе 2 бьёт замок быстрее осады: 8 урона / 0.535 c ≈ 15 HP/с
@@ -230,6 +273,22 @@ export class Enemy extends Phaser.Physics.Arcade.Sprite {
       }
     }
     void time;
+  }
+
+  /**
+ * Отключает боевую логику, оставляя спрайт видимым.
+ *
+ * Нужно для анимации смерти босса (§A.2): сцена удаляет врага из группы и
+ * физики сразу, а `dead`-лист должен доиграться. Проверки `active` в
+ * preUpdate без этого вернули бы телу логику и рывки.
+ */
+  deactivateBossBody(): void {
+    this.dead = true;
+    const body = this.body as Phaser.Physics.Arcade.Body | null;
+    if (body) {
+      body.setVelocity(0, 0);
+      body.enable = false;
+    }
   }
 
   takeDamage(dmg: number): boolean {

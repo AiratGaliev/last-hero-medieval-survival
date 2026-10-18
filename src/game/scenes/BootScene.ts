@@ -29,18 +29,27 @@ export const CREATURE_SHEETS: CreatureSheet[] = [
   ] },
   { kind: 'gnoll', dir: 'gnoll', base: 'gnoll', frameW: 192, sheets: [
     ['idle', 'idle', 6, 7], ['run', 'walk', 8, 10], ['shoot', 'throw', 8, 12],
+    // Брони нет, но ближний удар существо всё равно наносит (§A.5, выбор цели
+    // №3), а общая ветка замаха играет `${kind}-atk`. Без алиаса Phaser
+    // молча игнорирует play() и `lastAnim` навсегда залипает на ключе:
+    // существо перестаёт переключать run/idle (ездит в бегущем цикле стоя).
+    ['atk', 'throw', 8, 12],
   ] },
   { kind: 'skull', dir: 'skull', base: 'skull', frameW: 192, sheets: [
     ['idle', 'idle', 8, 7], ['run', 'run', 6, 11], ['atk', 'attack', 7, 12], ['guard', 'guard', 7, 10],
   ] },
   { kind: 'shaman', dir: 'goblin-raiders/hex-shaman', base: 'hex-shaman', frameW: 192, sheets: [
     ['idle', 'idle', 8, 7], ['run', 'run', 4, 10], ['shoot', 'attack', 10, 12],
+    ['atk', 'attack', 10, 12],
   ] },
   { kind: 'pig-rider', dir: 'goblin-raiders/pig-rider-spear-goblin', base: 'pig-rider', frameW: 256, sheets: [
     ['idle', 'idle', 8, 7], ['run', 'run', 4, 12], ['atk', 'attack', 7, 12],
   ] },
   { kind: 'bomb-fish', dir: 'pirate-fish/bomb-fish', base: 'bomb-fish', frameW: 192, sheets: [
     ['idle', 'idle', 8, 7], ['run', 'run', 6, 12],
+    // Подрыв «в упор» (§A.5): рыба подрывается рядом с пешкой. Штатных
+    // idle/run мало — используем собственный bomb-fish-shoot (7 кадров).
+    ['atk', 'shoot', 7, 12],
   ] },
   { kind: 'bear', dir: 'caveborn/bear', base: 'bear', frameW: 256, sheets: [
     ['idle', 'idle', 8, 6], ['run', 'run', 5, 10], ['atk', 'attack', 9, 12],
