@@ -2326,3 +2326,25 @@ Stage Summary:
 - Eleven new Playwright regression scenarios were added to `tests/e2e/payments.spec.ts`; the branch CI result is pending and must be recorded before merge.
 - Local `npm run check`/Playwright has not been run for this branch. Do not treat the presence of tests as a successful test run; use GitHub Actions as the validation gate.
 - External gate remains open: confirm ELS is active; create all supported SKUs with exact IDs and product types in Yandex Games Console; verify actual catalog prices and currency artwork; run Sandbox success/cancel/interrupted-network/relaunch flows against the deployed build; verify that each consumable receipt is consumed after a durable grant while persistent entitlements remain restorable.
+
+
+---
+
+## 2026-10-18 — Фаза A: runtime-регрессии существ из `enemies/`
+
+### Аудит и исправления
+
+- Повторно сверены §A.2/§A.3 `docs/TZ.md`, `ENEMIES`, `WAVE_EVENTS`, `pickRegularKind()`, таблица `CREATURE_SHEETS`, загрузчик ресурсов, AI существ и код победы над Огром. Поиск десяти legacy enemy IDs выполнен по всем 59 исходным TypeScript/JavaScript-файлам под `src/`: совпадений нет.
+- Исправлена регистрация одноразовых анимаций: `boss-recover` больше не зациклен, а `boss-windup` циклический и не возвращается к idle посреди 900-мс телеграфа.
+- В AI включены ранее не использовавшиеся `pig-rider-atk`, `minotaur-guard`/`minotaur-atk` и `bomb-fish-atk`; частота анимации рыбы согласована с телеграфом 620 мс.
+- HP-полосы элит/босса теперь перерисовываются после перемещения, включая осадную ветку.
+- Исправлена смерть Огра: ранее `boss-dead` запускалась, но в том же вызове спрайт удалялся из сцены. Теперь тело отключается, объект временно удаляется из группы, а анимация может доиграть 10 кадров; в обычном режиме сценарий победы ждёт её завершения. Для мёртвого босса добавлен ранний выход из AI, чтобы спрайт не двигался после отключения тела.
+- Исправлен призыв свиты Огра при заполненном лимите толпы: после удаления дальнего обычного врага спавн гоблина выполняется повторно, а не теряется освободившийся слот.
+- Добавлен `tests/e2e/enemy-pool.spec.ts`: runtime-проверка всех 10 texture/animation keys, проектилей/FX/аватаров, сохранности ассетов монаха, repeat-mode фазовых анимаций, геометрии enemy defs, расписания волн и первого spawn в `GameScene`; отдельный сценарий проверяет жизненный цикл анимации смерти босса.
+
+### Проверка и статус
+
+- Поиск legacy идентификаторов: проверены 59 исходных `.ts/.tsx/.js` файлов под `src/`, совпадений нет.
+- Playwright/TypeScript/lint/build для новой ревизии должны быть подтверждены GitHub Actions PR-run; наличие тестов само по себе не является результатом CI.
+- Ручными остаются три гейта, которые нельзя честно закрыть статическим тестом: визуальная приёмка стоп/коллизий/кино-заставок, настоящий 15-минутный матч на desktop+mobile с измерением бюджета кадра, и полный лечебный цикл героя-монаха.
+- Статусы Phase A в `docs/ROADMAP.md` разделяют автоматизированные проверки и эти оставшиеся ручные гейты. После CI в журнал будет добавлен точный run URL и SHA проверенной ревизии.
