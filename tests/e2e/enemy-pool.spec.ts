@@ -13,6 +13,7 @@ type RuntimeEnemy = {
 };
 type RuntimeScene = {
   scene: { isActive: () => boolean };
+  hints: { current: { id: string; ui: string } | null };
   player: { x: number; y: number };
   enemyGroup: {
     getChildren: () => RuntimeEnemy[];
@@ -56,6 +57,10 @@ async function openApp(page: Page): Promise<void> {
 }
 
 async function startGameplay(page: Page): Promise<void> {
+  // Изолируем первый запуск и закрываем FTUE тем же действием, которым его
+  // закрывает игрок. Не подменяем hintOverlayPaused вручную: это оставило бы
+  // tutorial overlay открытым и проверяло бы бой в некорректном состоянии.
+  await page.evaluate(() => window.localStorage.removeItem('tss-hints'));
   await page.evaluate(() => {
     const game = (window as unknown as { __tss?: RuntimeGame }).__tss;
     if (!game) throw new Error('Phaser instance was not exported to window.__tss');
@@ -69,6 +74,26 @@ async function startGameplay(page: Page): Promise<void> {
     }),
     { timeout: startupTimeout, message: 'GameScene should start from the menu-independent test path' },
   ).toBe(true);
+  await expect.poll(
+    () => page.evaluate(() => {
+      const game = (window as unknown as { __tss?: RuntimeGame }).__tss;
+      if (!game?.scene.getScene('Game').scene.isActive()) return null;
+      return game.scene.getScene('Game').hints.current?.id ?? null;
+    }),
+    { timeout: startupTimeout, message: 'The first-run movement tutorial should be visible' },
+  ).toBe('move');
+  const canvas = page.locator('#game canvas');
+  const bounds = await canvas.boundingBox();
+  if (!bounds) throw new Error('Game canvas has no bounds');
+  await page.mouse.click(bounds.x + bounds.width / 2, bounds.y + bounds.height / 2);
+  await expect.poll(
+    () => page.evaluate(() => {
+      const game = (window as unknown as { __tss?: RuntimeGame }).__tss;
+      if (!game?.scene.getScene('Game').scene.isActive()) return true;
+      return game.scene.getScene('Game').hintOverlayPaused;
+    }),
+    { timeout: startupTimeout, message: 'The tutorial action should resume active gameplay' },
+  ).toBe(false);
 }
 
 test('creature sheets, combat animations, projectiles and hero-monk regression assets load at runtime', async ({ page }) => {
@@ -225,9 +250,7 @@ test('gameplay spawns the opening goblin and keeps Ogre death animation alive to
     const game = (window as unknown as { __tss?: RuntimeGame }).__tss;
     if (!game) throw new Error('Phaser game instance is unavailable');
     const scene = game.scene.getScene('Game');
-    // Tutorial overlay is a separate UX gate; advance the wave director directly
-    // to assert the real spawn callback without waiting for a player interaction.
-    scene.hintOverlayPaused = false;
+    // Advance the wave director directly after the tutorial has been dismissed.
     scene.spawner.stopped = false;
     scene.spawner.update(2.1);
     return scene.enemyGroup.getChildren().filter((enemy) => enemy.active).map((enemy) => enemy.kind);
