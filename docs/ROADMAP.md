@@ -66,7 +66,7 @@ VLM + пиксельный анализ + dev.log). Балансировка и 
 
 ### Подтверждённые несоответствия и приоритеты
 
-1. **P1 — IAP fail-open: код исправлен в текущем инкременте.** `purchaseSku()` возвращает отказ без начисления, если в platform/production недоступен Payment SDK; локальная симуляция разрешена только в DEV-сборке. Добавлены регрессии на недоступный SDK, отказ `purchase()`, успешное подтверждение при ошибке consume, one-shot duplicate и DEV/mock. CI-гейт закрывается только после зелёного workflow PR; реальную транзакцию в Yandex Games Sandbox проверять отдельно.
+1. **P1 — IAP fail-open закрыт кодом и CI (PR #11).** `purchaseSku()` возвращает отказ без начисления, если в platform/production недоступен Payment SDK; локальная симуляция разрешена только в DEV-сборке. Регрессии проверяют недоступный SDK, отказ `purchase()`, подтверждённую покупку при ошибке consume, повторный one-shot SKU и DEV/mock. CI PR #11 [#63](https://github.com/AiratGaliev/last-hero-medieval-survival/actions/runs/39120418184) и общий CI `main` после последовательных инкрементов [#67](https://github.com/AiratGaliev/last-hero-medieval-survival/actions/runs/39130652317) завершились успешно. Реальная транзакция и конфигурация SKU в Yandex Games Sandbox остаются внешним гейтом.
 2. **P1 — SDK-каталог реализован и влит в `main` (PR #12).** `ShopScene` вызывает `fetchCatalog()` при открытии вкладки крон, отображает SDK-название/описание/цену/изображения и использует `getPriceCurrencyImage('small')`. Неизвестные SKU отбрасываются; пустой/ошибочный каталог не подменяется фиктивными платформенными ценами. CI PR #12 [#66](https://github.com/AiratGaliev/last-hero-medieval-survival/actions/runs/39129243242) и CI `main` после слияния [#67](https://github.com/AiratGaliev/last-hero-medieval-survival/actions/runs/39130652317) завершились успешно. Открыт только внешний гейт: сверка SKU/цен/иконок в консоли и реальная покупка в Yandex Games Sandbox.
 3. **P1 — потерян callback монастыря.** `Building.damage()` вызывает `onMonasteryFalling`, но `Economy.tryStartBuild()` передаёт no-op. Требуется подключить callback к HUD/аналитике и проверить пороги 30%/10% и число пострадавших.
 4. **P2 — профиль «Клещи».** На `main` исходное несоответствие состоит в одном секторе спавна. В PR #13 добавлены явное поле `SiegeProfile.formation`, чистая функция `calculateSiegeSpawnAngles()` и два Playwright-регрессионных сценария: противоположные фланги и сохранение старой формации остальных осад. Пункт не отмечать принятым до зелёного CI PR #13 и отдельной проверки реального pathfinding/выбора целей.
@@ -96,7 +96,7 @@ VLM + пиксельный анализ + dev.log). Балансировка и 
 - [x] CI PR #12 завершился успешно: [run #66](https://github.com/AiratGaliev/last-hero-medieval-survival/actions/runs/39129243242); после merge CI `main` также успешен: [run #67](https://github.com/AiratGaliev/last-hero-medieval-survival/actions/runs/39130652317).
 - [ ] Настоящие SKU/цены, ЕЛС, валютная иконка из консоли и транзакция в Yandex Games Sandbox остаются внешним гейтом.
 
-----
+---
 
 ### Узкий инкремент — P2: геометрия осады «Клещи» (PR #13)
 
