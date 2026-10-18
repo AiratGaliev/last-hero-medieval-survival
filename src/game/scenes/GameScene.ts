@@ -829,7 +829,9 @@ export class GameScene extends Phaser.Scene {
       attempts++;
       const x = rng.between(WORLD.GRASS_MARGIN + 120, WORLD.SIZE - WORLD.GRASS_MARGIN - 120);
       const y = rng.between(WORLD.GRASS_MARGIN + 120, WORLD.SIZE - WORLD.GRASS_MARGIN - 120);
-      if (Math.hypot(x - this.castleX, y - this.castleY) < 200) continue;
+      const castleDistance = Math.hypot(x - this.castleX, y - this.castleY);
+      // PawnAI ignores resources beyond 1000 px: keep veins in that work radius.
+      if (castleDistance < 200 || castleDistance > 1000) continue;
       if (!canPlace(x, y, 70)) continue;
       const variant = rng.between(1, 5);
       const img = this.add.sprite(x, y, `gold-vein-${variant}`).setScale(0.9)

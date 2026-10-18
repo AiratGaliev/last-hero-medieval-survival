@@ -63,6 +63,7 @@ type EconomyRuntime = {
   castleX: number;
   castleY: number;
   freeSpots(): BuildSpotRuntime[];
+  markSpot(x: number, y: number): void;
   tryStartBuild(kind: string, pawn: PawnRuntime, preferredSpot?: BuildSpotRuntime): boolean;
   repair(building: BuildingRuntime, pawn: PawnRuntime | null): boolean;
   finishRepairInstant(): boolean;
@@ -210,9 +211,11 @@ test('phases C-D: harvesting delivers resources and depleted veins can recharge'
     const initialSheepCount = economy.nodes.filter(n => n.kind === 'sheep' && n.alive).length;
     const tree = economy.nodes.find(n => n.kind === 'tree' && n.available);
     const sheep = economy.nodes.find(n => n.kind === 'sheep' && n.available);
-    const vein = economy.nodes.find(n => n.kind === 'vein' && n.available);
+    const vein = economy.nodes.find(n => n.kind === 'vein' && n.available
+      && Math.hypot(n.x - economy.castleX, n.y - economy.castleY) <= 1_000);
     const veins = economy.nodes.filter(n => n.kind === 'vein');
     const minimumVeinDistance = Math.min(...veins.map(n => Math.hypot(n.x - economy.castleX, n.y - economy.castleY)));
+    const maximumVeinDistance = Math.max(...veins.map(n => Math.hypot(n.x - economy.castleX, n.y - economy.castleY)));
     const minimumVeinPairDistance = Math.min(...veins.flatMap((node, i) =>
       veins.slice(i + 1).map(other => Math.hypot(node.x - other.x, node.y - other.y))));
     const veinSprites = veins.map(node => ({
@@ -313,6 +316,14 @@ test('phases C-D: harvesting delivers resources and depleted veins can recharge'
     economy.pawnAI.updateCivilian(collector, 1, scene.time.now + 20_047);
     const carriedOre = collector.carrying;
     const oreAmount = collector.carriedAmount;
+    const oreDebug = {
+      nodeRes: vein.res, nodeKind: vein.kind, nodeRemaining: vein.remaining, nodeAvailable: vein.available,
+      claimedByCollector: vein.claimedBy === collector,
+      claimedByOther: vein.claimedBy !== null && vein.claimedBy !== collector,
+      progressAfterThreshold: collector.taskProgress,
+      workNodeKindAfterThreshold: collector.workNode && 'kind' in collector.workNode ? collector.workNode.kind : null,
+      stateAfterThreshold: collector.state, oreStored: economy.resources.ore,
+    };
     collector.x = economy.castleX;
     collector.y = economy.castleY;
     collector.cooldown = 0;
@@ -366,9 +377,11 @@ test('phases C-D: harvesting delivers resources and depleted veins can recharge'
       depositedMeat,
       carriedOre,
       oreAmount,
+      oreDebug,
       depositedOre,
       veinCount: veins.length,
       minimumVeinDistance,
+      maximumVeinDistance,
       minimumVeinPairDistance,
       veinSprites,
       treeCount: economy.nodes.filter(n => n.kind === 'tree' && n.alive).length,
@@ -385,6 +398,7 @@ test('phases C-D: harvesting delivers resources and depleted veins can recharge'
   expect(report.woodBeforeThreshold).toBeNull();
   expect(report.meatBeforeThreshold).toBeNull();
   expect(report.oreBeforeThreshold).toBeNull();
+  console.log('[settlement ore diagnostics]', JSON.stringify(report.oreDebug));
   expect(report.carrying).toBe('wood');
   expect(report.carriedAmount).toBe(5);
   expect(report.carryIdleAnimation).toBe('pawn-carry-idle-wood');
@@ -402,6 +416,7 @@ test('phases C-D: harvesting delivers resources and depleted veins can recharge'
   expect(report.depositedOre).toBe(20);
   expect(report.veinCount).toBe(10);
   expect(report.minimumVeinDistance).toBeGreaterThanOrEqual(200);
+  expect(report.maximumVeinDistance).toBeLessThanOrEqual(1_000);
   expect(report.minimumVeinPairDistance).toBeGreaterThanOrEqual(140);
   expect(report.veinSprites.every(node => node.type === 'Sprite' && !node.hasPhysicsBody)).toBe(true);
   expect(report.treeCount).toBe(report.initialTreeCount - 1);
@@ -476,6 +491,8 @@ test('phases E-F: construction uses the approached spot and repair costs are gua
     if (houseSpots.length < 2) throw new Error('House build spots are not configured');
     const targetHouseSpot = houseSpots[houseSpots.length - 1];
     const limitBeforeHouse = economy.pawnLimit;
+    const firstHouseBuiltBefore = (economy as unknown as { firstHouseBuilt: boolean }).firstHouseBuilt;
+    const populationBeforeHouse = economy.civilians.map(p => ({ kind: p.kind, dead: p.dead, state: p.state }));
     const woodBeforeHouse = economy.resources.wood;
     const existing = new Set(economy.buildings);
     const pawnContext = scene.registry.get('tss-pawnai-ctx') as { enemies: () => unknown[] };
@@ -511,6 +528,8 @@ test('phases E-F: construction uses the approached spot and repair costs are gua
     builder.order = null;
     const houseFinished = house.alive && !house.underConstruction;
     const limitAfterHouse = economy.pawnLimit;
+    const firstHouseBuiltAfter = (economy as unknown as { firstHouseBuilt: boolean }).firstHouseBuilt;
+    const populationAfterHouse = economy.civilians.map(p => ({ kind: p.kind, dead: p.dead, state: p.state }));
 
     const barracksSpot = economy.freeSpots().find(s => s.kind === 'barracks');
     if (!barracksSpot) throw new Error('Barracks build spot is missing');
@@ -555,6 +574,58 @@ test('phases E-F: construction uses the approached spot and repair costs are gua
     const woodAfterRebuild = economy.resources.wood;
     const rebuildFinished = economy.finishRepairInstant();
 
+    // Phase E fallback: gather inputs when the next structure is unaffordable,
+    // then keep gathering even after every build spot is occupied.
+    const fallbackTree = economy.nodes.find(n => n.kind === 'tree' && n.available);
+    const blocker = economy.pawns.find(p => p.kind === 'collector');
+    if (!fallbackTree || !blocker) throw new Error('Builder fallback needs a free tree and collector');
+    for (const node of economy.nodes) {
+      if (node.available && node !== fallbackTree) node.claimedBy = blocker;
+    }
+    fallbackTree.claimedBy = null;
+    for (const spot of economy.freeSpots().filter(s => s.kind === 'house')) {
+      economy.markSpot(spot.x, spot.y);
+    }
+    economy.resources.wood = 0;
+    economy.resources.ore = 0;
+    economy.resources.meat = 0;
+    builder.x = fallbackTree.x;
+    builder.y = fallbackTree.y;
+    builder.state = 'idle';
+    builder.order = null;
+    builder.carrying = null;
+    builder.carriedAmount = 0;
+    builder.taskProgress = 0;
+    builder.cooldown = 0;
+    builder.workNode = null;
+    economy.pawnAI.updateCivilian(builder, 3_999, scene.time.now + 40_000);
+    const builderFallbackBeforeThreshold = builder.carrying;
+    economy.pawnAI.updateCivilian(builder, 1, scene.time.now + 43_999);
+    const builderFallbackCarry = builder.carrying;
+    const builderFallbackAmount = builder.carriedAmount;
+
+    // Fill remaining large-building spots and prove a fully occupied settlement
+    // still sends the builder back to a resource node.
+    builder.carrying = null;
+    builder.carriedAmount = 0;
+    builder.taskProgress = 0;
+    builder.cooldown = 0;
+    builder.workNode = null;
+    for (const spot of economy.freeSpots()) economy.markSpot(spot.x, spot.y);
+    fallbackTree.claimedBy = null;
+    builder.x = fallbackTree.x;
+    builder.y = fallbackTree.y;
+    builder.state = 'idle';
+    economy.resources.wood = 0;
+    economy.resources.ore = 0;
+    economy.resources.meat = 0;
+    economy.pawnAI.updateCivilian(builder, 3_999, scene.time.now + 50_000);
+    const builderFullBeforeThreshold = builder.carrying;
+    economy.pawnAI.updateCivilian(builder, 1, scene.time.now + 53_999);
+    const builderFullCapacityCarry = builder.carrying;
+    const builderFullCapacityAmount = builder.carriedAmount;
+    const freeSpotsWhenFull = economy.freeSpots().length;
+
     return {
       initialBuildSpotCount: initialBuildSpots.length,
       buildSpotOverlaps,
@@ -570,6 +641,10 @@ test('phases E-F: construction uses the approached spot and repair costs are gua
       houseFinished,
       limitBeforeHouse,
       limitAfterHouse,
+      firstHouseBuiltBefore,
+      firstHouseBuiltAfter,
+      populationBeforeHouse,
+      populationAfterHouse,
       residentCount: economy.pawns.filter(p => !p.dead && p.kind === 'collector').length,
       startedBarracks,
       barracksWoodCost,
@@ -598,9 +673,17 @@ test('phases E-F: construction uses the approached spot and repair costs are gua
       rebuildFinished,
       rebuiltAlpha: house.alpha,
       rebuiltUnderConstruction: house.underConstruction,
+      builderFallbackBeforeThreshold,
+      builderFallbackCarry,
+      builderFallbackAmount,
+      builderFullBeforeThreshold,
+      builderFullCapacityCarry,
+      builderFullCapacityAmount,
+      freeSpotsWhenFull,
     };
   });
 
+  console.log('[settlement first-house diagnostics]', JSON.stringify({ before: report.firstHouseBuiltBefore, after: report.firstHouseBuiltAfter, populationBefore: report.populationBeforeHouse, populationAfter: report.populationAfterHouse }));
   expect(report.initialBuildSpotCount).toBe(10);
   expect(report.buildSpotOverlaps).toEqual([]);
   expect(report.expandedBuildSpotCount).toBe(15);
@@ -612,7 +695,6 @@ test('phases E-F: construction uses the approached spot and repair costs are gua
   expect(report.houseY).toBe(report.expectedHouseY);
   expect(report.houseFinished).toBe(true);
   expect(report.limitAfterHouse).toBe(report.limitBeforeHouse + 1);
-  expect(report.residentCount).toBeGreaterThanOrEqual(3);
   expect(report.startedBarracks).toBe(true);
   expect(report.barracksWoodCost).toBe(40);
   expect(report.barracksOreCost).toBe(15);
@@ -635,4 +717,12 @@ test('phases E-F: construction uses the approached spot and repair costs are gua
   expect(report.rebuildFinished).toBe(true);
   expect(report.rebuiltAlpha).toBe(1);
   expect(report.rebuiltUnderConstruction).toBe(false);
+  expect(report.builderFallbackBeforeThreshold).toBeNull();
+  expect(report.builderFallbackCarry).toBe('wood');
+  expect(report.builderFallbackAmount).toBe(5);
+  expect(report.builderFullBeforeThreshold).toBeNull();
+  expect(report.freeSpotsWhenFull).toBe(0);
+  expect(report.builderFullCapacityCarry).toBe('wood');
+  expect(report.builderFullCapacityAmount).toBe(5);
+  expect(report.residentCount).toBeGreaterThanOrEqual(3);
 });

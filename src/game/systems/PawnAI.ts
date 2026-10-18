@@ -1,6 +1,6 @@
 import Phaser from 'phaser';
 import { AGGRO, GARRISON, RETREAT_HP, KITE, HEALER, BLEEDOUT_SEC, REPAIR } from '../constants';
-import { RESOURCES, FIGHTERS, BUILDING_PLANS, garrisonSourceOf, type BuildingKind } from '../data';
+import { RESOURCES, FIGHTERS, BUILDING_PLANS, garrisonSourceOf, type BuildingKind, type ResourceKind } from '../data';
 import { t } from '../../i18n';
 import { track } from '../../platform/analytics';
 import { HealerAI } from './HealerAI';
@@ -213,6 +213,15 @@ export class PawnAI {
           return;
         }
       }
+
+      // Если строить нельзя из-за нехватки ресурсов или свободных пятен больше
+      // нет, строитель возвращается к сбору; иначе фаза E может застрять в idle.
+      const required = target ? BUILDING_PLANS[target.kind].cost : undefined;
+      const node = this.pickNodeFor(p, required);
+      if (node) {
+        this.gotoNode(p, node, dtMs);
+        return;
+      }
     }
 
     // --- 5. Ремонтник: повреждённое здание (активировано фазой L) ---
@@ -339,7 +348,7 @@ export class PawnAI {
    * тупик: сборщик бесконечно таскал ненужное мясо, пока горят дома»).
    * Нужды нет → возвращаем null, и пешка уходит на IdlePoint (§B.6 п.6).
    */
-  private pickNodeFor(p: Pawn): ResourceNode | null {
+  private pickNodeFor(p: Pawn, minimums?: Partial<Record<ResourceKind, number>>): ResourceNode | null {
     const eco = this.eco;
     const enemies = this.c.enemies();
     // Дефицит: план расхода (стройки/ремонт/лечение/наём) против склада
@@ -358,6 +367,12 @@ export class PawnAI {
       for (const [k, v] of Object.entries(eco.hireCost(weapon))) {
         target[k] = (target[k] ?? 0) + v;
       }
+    }
+    // При fallback строителя повышаем целевой запас до стоимости его следующей
+    // постройки, даже когда общий план спроса на ресурс уже выполнен.
+    for (const key of ['wood', 'ore', 'meat'] as const) {
+      const required = minimums?.[key];
+      if (required !== undefined) target[key] = Math.max(target[key] ?? 0, required);
     }
     let best: ResourceNode | null = null;
     let bestScore = 0;
