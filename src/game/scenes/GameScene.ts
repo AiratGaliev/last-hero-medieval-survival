@@ -235,8 +235,6 @@ export class GameScene extends Phaser.Scene {
   private questCheckAcc = 0;
   /** FTUE (§I.2): тепличный первый матч — плотность волн −20% первые 3 минуты. */
   private ftueSoftStart = false;
-  /** FTUE milestones use threshold latches, not narrow frame windows. */
-  private moveHintArmed = true;
   /** Подсказка «построй дом» — один раз при 30 дерева (§I.2). */
   private houseHintArmed = true;
   private pawnsHintArmed = true;
@@ -330,7 +328,6 @@ export class GameScene extends Phaser.Scene {
     this.heroDpsAtTenMinutes = null;
     this.garrisonDpsBudget.reset();
     this.hintOverlayPaused = false;
-    this.moveHintArmed = true;
     this.houseHintArmed = true;
     this.pawnsHintArmed = true;
     this.elapsed = 0; this.kills = 0; this.level = 1;
@@ -610,6 +607,10 @@ export class GameScene extends Phaser.Scene {
       if (paused) this.physics.world.pause();
       else this.physics.world.resume();
     });
+    // The movement lesson is the first FTUE step. Present it before update()
+    // can enqueue the house banner; otherwise that banner can occupy the
+    // queue/current slot and postpone the blocking tutorial for 20 seconds.
+    this.hints.show('move');
     this.orderMenu = new OrderMenu(this);
     void cx; void cy;
 
@@ -1553,12 +1554,8 @@ private ordersUnlocked(): boolean {
       this.updateIndicators();
     }
 
-    // Подсказки FTUE (§I.2): latch на пороге вместо временного окна в 50 мс.
-    // При delta около 50 мс старое условие могло пропустить подсказку целиком.
-    if (this.moveHintArmed && this.elapsed >= 2) {
-      this.moveHintArmed = false;
-      this.hints.show('move');
-    }
+    // Подсказки FTUE (§I.2): оставшиеся milestones срабатывают по порогу,
+    // а не по узкому окну кадра. Вводный overlay был показан до первого update.
     if (this.houseHintArmed && this.economy.resources.wood >= 30) {
       this.houseHintArmed = false;
       this.hints.show('house');
