@@ -805,6 +805,8 @@ export interface MetaState {
   /** Дата победы в вызове дня ('YYYY-MM-DD') — 3 кроны раз в день. */
   challengeWinDate: string;
   purchasedSkus: string[];
+  /** SDK receipt tokens already granted; stored atomically with the reward. */
+  processedIapTokens: string[];
 }
 
 const LS_META2 = 'tss-meta2';
@@ -883,6 +885,7 @@ const EMPTY: MetaState = {
   endlessBestWave: 0,
   challengeWinDate: '',
   purchasedSkus: [],
+  processedIapTokens: [],
 };
 
 /** Санитизация: мусор из хранилища не роняет игру. */
@@ -980,6 +983,7 @@ function sanitize(raw: unknown): MetaState {
     challengeWinDate: typeof (o as { challengeWinDate?: unknown }).challengeWinDate === 'string'
       ? String((o as { challengeWinDate?: unknown }).challengeWinDate).slice(0, 10) : '',
     purchasedSkus: strArr(o.purchasedSkus),
+    processedIapTokens: strArr(o.processedIapTokens),
   };
 }
 
@@ -1000,9 +1004,9 @@ function structuredCloneSafe(s: MetaState): MetaState {
   return JSON.parse(JSON.stringify(s)) as MetaState;
 }
 
-export function saveMetaState(st: MetaState): void {
+export function saveMetaState(st: MetaState): boolean {
   cached = st;
-  saveJson(LS_META2, st);
+  return saveJson(LS_META2, st);
 }
 
 /** Гарантирует актуальность дневных/недельных/сезонных секций. */
@@ -1497,10 +1501,37 @@ export function convertCrownsToGold(): { ok: boolean; reason?: 'limit' | 'poor' 
 }
 
 /** Кроны капают бесплатно (§J.7) — учитываются вне инапов, витрина честна. */
-/** Начисление за покупку SKU (вызывается из platform/payments). */
-export function grantSku(sku: string): { crowns: number; skin?: string; consumable?: ConsumableId } {
-  const st = rollMetaDay();
-  st.purchasedSkus.push(sku);
+
+const PAID_SKIN_SKUS = [
+  'skin_hero_warrior_red', 'skin_hero_warrior_yellow',
+  'skin_hero_archer_red', 'skin_hero_archer_purple',
+  'skin_hero_lancer_red', 'skin_hero_lancer_black',
+  'skin_hero_monk_red', 'skin_hero_monk_yellow',
+  'skin_bld_red', 'skin_bld_purple', 'skin_bld_yellow', 'skin_bld_black',
+  'hero_trail_gold', 'hero_trail_ember',
+] as const;
+const GRANTABLE_IAP_SKUS = new Set([
+  'crowns_s', 'crowns_m', 'crowns_l', 'crowns_xl',
+  'starter_castellan', 'no_interstitial', 'pass_chronicle',
+  ...PAID_SKIN_SKUS,
+  'cs_horseshoe', 'cs_horn', 'cs_forester',
+]);
+const NON_REPLAYABLE_IAP_SKUS = new Set([
+  'starter_castellan', 'no_interstitial', ...PAID_SKIN_SKUS,
+]);
+
+export interface IapGrantResult {
+  supported: boolean;
+  duplicate: boolean;
+  /** False means the reward and receipt ledger could not be persisted safely. */
+  persisted: boolean;
+  granted: { crowns: number; skin?: string; consumable?: ConsumableId };
+}
+
+function applySkuGrant(st: MetaState, sku: string): { crowns: number; skin?: string; consumable?: ConsumableId } {
+  if (!GRANTABLE_IAP_SKUS.has(sku)) return { crowns: 0 };
+  if (!st.purchasedSkus.includes(sku)) st.purchasedSkus.push(sku);
+
   const PAKS: Record<string, { crowns: number }> = {
     crowns_s: { crowns: 90 },
     crowns_m: { crowns: 500 },
@@ -1522,7 +1553,7 @@ export function grantSku(sku: string): { crowns: number; skin?: string; consumab
     grantSkin(st, skin);
     st.speedupTokens += 3;
   } else if (sku === 'no_interstitial') {
-    // one-shot: отключение interstitial учитывается в platform/ads
+    // Entitlement is represented by purchasedSkus and restored from getPurchases().
   } else if (sku === 'pass_chronicle') {
     // Покупка задним числом: выдаёт все уже набранные премиум-уровни (§J.6.3)
     st.pass.premium = true;
@@ -1541,8 +1572,54 @@ export function grantSku(sku: string): { crowns: number; skin?: string; consumab
     consumable = sku;
     st.consumables[sku] += 1;
   }
-  saveMetaState(st);
   return { crowns, skin, consumable };
+}
+
+/** Local/dev grant. Platform purchases must use grantSkuForPurchase() instead. */
+export function grantSku(sku: string): { crowns: number; skin?: string; consumable?: ConsumableId } {
+  const st = rollMetaDay();
+  const granted = applySkuGrant(st, sku);
+  if (GRANTABLE_IAP_SKUS.has(sku)) saveMetaState(st);
+  return granted;
+}
+
+/**
+ * Atomically writes the reward and platform receipt token in the same metadata
+ * record. Replaying getPurchases() therefore cannot credit a consumable twice.
+ */
+export function grantSkuForPurchase(sku: string, purchaseToken: string): IapGrantResult {
+  const token = purchaseToken.trim();
+  if (!GRANTABLE_IAP_SKUS.has(sku) || !token) {
+    return { supported: false, duplicate: false, persisted: false, granted: { crowns: 0 } };
+  }
+
+  const st = rollMetaDay();
+  if (st.processedIapTokens.includes(token)) {
+    return { supported: true, duplicate: true, persisted: true, granted: { crowns: 0 } };
+  }
+
+  // Non-consumable/one-shot products may be present in getPurchases() forever.
+  // Keep their entitlement, but never replay the original reward on a new token.
+  // Keep a rollback snapshot: saveMetaState mutates the in-memory cache before storage.
+  // If the browser denies persistence (quota/private mode), do not leave an
+  // uncommitted token in that cache or the next retry could consume the receipt.
+  const beforeGrant = structuredCloneSafe(st);
+  const alreadyOwned = (NON_REPLAYABLE_IAP_SKUS.has(sku) && hasIapEntitlement(st, sku))
+    || (sku === 'pass_chronicle' && st.pass.premium);
+  const granted = alreadyOwned ? { crowns: 0 } : applySkuGrant(st, sku);
+  st.processedIapTokens.push(token);
+  const persisted = saveMetaState(st);
+  if (!persisted) cached = beforeGrant;
+  return { supported: true, duplicate: alreadyOwned, persisted, granted };
+}
+
+/** True when the profile already owns the entitlement represented by an IAP SKU. */
+export function hasIapEntitlement(st: MetaState, sku: string): boolean {
+  if (st.purchasedSkus.includes(sku)) return true;
+  if (sku.startsWith('skin_')) return st.skins.owned.includes(sku);
+  if (sku === 'hero_trail_gold') return st.skins.owned.includes('trail_gold');
+  if (sku === 'hero_trail_ember') return st.skins.owned.includes('trail_ember');
+  return false;
 }
 
 export function hasNoInterstitial(): boolean {

@@ -11,6 +11,7 @@ import { placementAvailable, showPlacementRewarded, showStickyBanner } from '../
 import {
   rollMetaDay,
   saveMetaState,
+  hasIapEntitlement,
   buySkinWithCrowns,
   setActiveSkin,
   ownedBanners,
@@ -57,12 +58,26 @@ const TAB_TITLES: Record<TabId, TranslationKey> = {
   crowns: 'store.title',
 };
 
-/** SKU полки крон (§J.6.2) в порядке показа. */
-const CROWN_SKUS: string[] = [
+/** In-app products supported by both the SDK catalogue and the reward mapper. */
+const STORE_SKUS: string[] = [
   'crowns_s', 'crowns_m', 'crowns_l', 'crowns_xl',
   'starter_castellan', 'no_interstitial', 'pass_chronicle',
+  'skin_hero_warrior_red', 'skin_hero_warrior_yellow',
+  'skin_hero_archer_red', 'skin_hero_archer_purple',
+  'skin_hero_lancer_red', 'skin_hero_lancer_black',
+  'skin_hero_monk_red', 'skin_hero_monk_yellow',
+  'skin_bld_red', 'skin_bld_purple', 'skin_bld_yellow', 'skin_bld_black',
+  'hero_trail_gold', 'hero_trail_ember',
 ];
-const ONE_SHOT_SKUS: string[] = ['starter_castellan', 'no_interstitial', 'pass_chronicle'];
+const ONE_SHOT_SKUS: string[] = [
+  'starter_castellan', 'no_interstitial',
+  'skin_hero_warrior_red', 'skin_hero_warrior_yellow',
+  'skin_hero_archer_red', 'skin_hero_archer_purple',
+  'skin_hero_lancer_red', 'skin_hero_lancer_black',
+  'skin_hero_monk_red', 'skin_hero_monk_yellow',
+  'skin_bld_red', 'skin_bld_purple', 'skin_bld_yellow', 'skin_bld_black',
+  'hero_trail_gold', 'hero_trail_ember',
+];
 
 function catalogTextureKey(uri: string): string {
   let hash = 2166136261;
@@ -81,6 +96,20 @@ const SKU_LABELS: Record<string, TranslationKey> = {
   starter_castellan: 'store.starter',
   no_interstitial: 'store.no_interstitial',
   pass_chronicle: 'store.pass',
+  skin_hero_warrior_red: 'skins.skin.hero_warrior_red',
+  skin_hero_warrior_yellow: 'skins.skin.hero_warrior_yellow',
+  skin_hero_archer_red: 'skins.skin.hero_archer_red',
+  skin_hero_archer_purple: 'skins.skin.hero_archer_purple',
+  skin_hero_lancer_red: 'skins.skin.hero_lancer_red',
+  skin_hero_lancer_black: 'skins.skin.hero_lancer_black',
+  skin_hero_monk_red: 'skins.skin.hero_monk_red',
+  skin_hero_monk_yellow: 'skins.skin.hero_monk_yellow',
+  skin_bld_red: 'skins.skin.bld_red',
+  skin_bld_purple: 'skins.skin.bld_purple',
+  skin_bld_yellow: 'skins.skin.bld_yellow',
+  skin_bld_black: 'skins.skin.bld_black',
+  hero_trail_gold: 'skins.skin.trail_gold',
+  hero_trail_ember: 'skins.skin.trail_ember',
 };
 
 interface ShopPayload {
@@ -333,9 +362,9 @@ export class ShopScene extends Phaser.Scene {
     // Only show SKU IDs that this game knows how to grant; never expose an unknown console SKU.
     const byId = new Map<string, CatalogProduct>();
     for (const product of fetched) {
-      if (CROWN_SKUS.includes(product.id) && product.price?.trim()) byId.set(product.id, product);
+      if (STORE_SKUS.includes(product.id) && product.price?.trim()) byId.set(product.id, product);
     }
-    const ordered = CROWN_SKUS
+    const ordered = STORE_SKUS
       .map((sku) => byId.get(sku))
       .filter((product): product is CatalogProduct => product !== undefined);
     this.catalogProducts = new Map(ordered.map((product) => [product.id, product]));
@@ -951,8 +980,8 @@ export class ShopScene extends Phaser.Scene {
     } else {
       const fallback = this.catalogState === 'fallback';
       const catalogSkus = fallback
-        ? CROWN_SKUS.map((sku) => ({ sku, product: undefined as CatalogProduct | undefined }))
-        : CROWN_SKUS.map((sku) => ({ sku, product: this.catalogProducts.get(sku) }))
+        ? STORE_SKUS.map((sku) => ({ sku, product: undefined as CatalogProduct | undefined }))
+        : STORE_SKUS.map((sku) => ({ sku, product: this.catalogProducts.get(sku) }))
           .filter((item): item is { sku: string; product: CatalogProduct } => item.product !== undefined);
       const hasTopUp = fallback || catalogSkus.some(({ sku }) => sku.startsWith('crowns_'));
       if (hasTopUp && !st.purchasedSkus.includes('first_topup')) {
@@ -1033,7 +1062,8 @@ export class ShopScene extends Phaser.Scene {
       row.add(this.add.image(w / 2 - 80, -14, currencyKey).setDisplaySize(13, 13));
     }
 
-    const sold = ONE_SHOT_SKUS.includes(sku) && st.purchasedSkus.includes(sku);
+    const sold = (ONE_SHOT_SKUS.includes(sku) && hasIapEntitlement(st, sku))
+      || (sku === 'pass_chronicle' && st.pass.premium);
     if (sold) {
       row.add(this.appliedChip(w / 2 - 45, 13, t('store.sold')));
     } else {
@@ -1065,7 +1095,7 @@ export class ShopScene extends Phaser.Scene {
     const note = SKUS[sku]?.note ?? '';
     const oneShot = ONE_SHOT_SKUS.includes(sku);
     const bought = st.purchasedSkus.includes(sku);
-    const sold = oneShot && bought;
+    const sold = (oneShot && bought) || (sku === 'pass_chronicle' && st.pass.premium);
 
     // Для купленных one-shot справа ещё и note — имя ужмём сильнее
     const name = this.label(-w / 2 + 14, 0, t(SKU_LABELS[sku] ?? 'store.title'), 12, '#3b2410', 0);

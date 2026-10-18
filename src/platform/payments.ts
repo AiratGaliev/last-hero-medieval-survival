@@ -1,12 +1,10 @@
 // ============ Платежи Яндекс Игр (TZ §J.6.1, фаза S) ============
 //
 // Требования модерации, на которых построен модуль:
-//   • 1.13.1 — при старте обязательно консумировать необработанные покупки:
-//     getPayments() → getPurchases() → consumePurchase() для каждого токена,
-//     ДО первого вызова purchase(). Ненулевые необработанные платежи
-//     блокируют модерацию;
-//   • начисление награды — только после успешного purchase(); повторное
-//     начисление исключается консумированием токена сразу после выдачи;
+//   • 1.13.1 — при старте обязательно сверять getPurchases() ДО нового purchase();
+//     consumable: атомарно сохранить награду + receipt token, затем consumePurchase();
+//     non-consumable: восстановить entitlement, но НЕ удалять его через consumePurchase();
+//   • неизвестный SKU/отсутствующий токен/ошибка персистентности оставляют чек-аут закрытым;
 //   • клиентская обработка достаточна для старта (signed: false);
 //   • названия/иконки портальной валюты в UI — только из данных SDK
 //     (требование 1.13.2, см. getCatalog).
@@ -16,25 +14,41 @@
 // на платформе не должно превращать покупку в бесплатное начисление.
 
 import { getSdk, isMockMode, isOnYandex, type YandexCatalogProduct, type YandexPayments } from './sdk';
-import { grantSku, showcaseUnlocked } from '../game/meta';
+import { grantSku, grantSkuForPurchase, hasIapEntitlement, rollMetaDay, showcaseUnlocked } from '../game/meta';
 import { track } from './analytics';
 
 export type { YandexPayments };
 
 /** Каталог SKU игры (TZ §J.6.2). Идентификаторы = SKU в Консоли Яндекса. */
-export const SKUS: Record<string, { crowns?: number; note: string }> = {
-  crowns_s: { crowns: 90, note: '~49' },
-  crowns_m: { crowns: 500, note: '~249 (+11%)' },
-  crowns_l: { crowns: 1100, note: '~499 (+22%)' },
-  crowns_xl: { crowns: 2500, note: '~999 (+39%)' },
-  starter_castellan: { crowns: 350, note: 'one-shot 48ч' },
-  no_interstitial: { note: 'one-shot' },
-  pass_chronicle: { note: 'season' },
-  skin_hero_warrior_red: { note: 'cosmetic' },
-  skin_hero_archer_purple: { note: 'cosmetic' },
-  skin_bld_red: { note: 'cosmetic' },
-  hero_trail_gold: { note: 'cosmetic' },
+export const SKUS: Record<string, { crowns?: number; note: string; consumable: boolean }> = {
+  crowns_s: { crowns: 90, note: 'DEV mock', consumable: true },
+  crowns_m: { crowns: 500, note: 'DEV mock', consumable: true },
+  crowns_l: { crowns: 1100, note: 'DEV mock', consumable: true },
+  crowns_xl: { crowns: 2500, note: 'DEV mock', consumable: true },
+  // One-time starter offer combines spendable rewards with a permanent cosmetic;
+  // keep its receipt restorable instead of deleting the only platform entitlement.
+  starter_castellan: { crowns: 350, note: 'DEV mock', consumable: false },
+  no_interstitial: { note: 'DEV mock', consumable: false },
+  // The same pass SKU is reusable each season, so consume each successful season purchase.
+  pass_chronicle: { note: 'DEV mock', consumable: true },
+  skin_hero_warrior_red: { note: 'DEV mock', consumable: false },
+  skin_hero_warrior_yellow: { note: 'DEV mock', consumable: false },
+  skin_hero_archer_red: { note: 'DEV mock', consumable: false },
+  skin_hero_archer_purple: { note: 'DEV mock', consumable: false },
+  skin_hero_lancer_red: { note: 'DEV mock', consumable: false },
+  skin_hero_lancer_black: { note: 'DEV mock', consumable: false },
+  skin_hero_monk_red: { note: 'DEV mock', consumable: false },
+  skin_hero_monk_yellow: { note: 'DEV mock', consumable: false },
+  skin_bld_red: { note: 'DEV mock', consumable: false },
+  skin_bld_purple: { note: 'DEV mock', consumable: false },
+  skin_bld_yellow: { note: 'DEV mock', consumable: false },
+  skin_bld_black: { note: 'DEV mock', consumable: false },
+  hero_trail_gold: { note: 'DEV mock', consumable: false },
+  hero_trail_ember: { note: 'DEV mock', consumable: false },
 };
+
+const ONE_SHOT_SKUS = new Set(['starter_castellan', 'no_interstitial']);
+const inFlightSkus = new Set<string>();
 
 /** Витрина крон скрыта до 5-го матча (§J.6.4, гейт 45). */
 export function showcaseVisible(): boolean {
@@ -46,52 +60,87 @@ let paymentsTried = false;
 let pendingProcessed = false;
 
 /**
- * Предзагрузка платёжного слоя + консумирование необработанных покупок
- * (требование 1.13.1). Вызывается один раз из main.ts до старта сцен.
- * Вне Яндекса — заглушка, консумировать нечего.
+ * Предзагрузка платежей и восстановление незавершённых покупок до показа
+ * сцен. Consumables начисляются идемпотентно и затем потребляются; постоянные
+ * покупки остаются в getPurchases() для восстановления entitlement.
  */
 export async function initPayments(): Promise<void> {
   if (paymentsTried) return;
   paymentsTried = true;
   if (!isOnYandex()) { pendingProcessed = true; return; }
   const sdk = getSdk();
-  if (!sdk?.getPayments) { pendingProcessed = true; return; }
+  if (!sdk?.getPayments) {
+    // Keep initialization retryable if the SDK payment layer becomes available later.
+    paymentsTried = false;
+    pendingProcessed = false;
+    return;
+  }
   try {
     payments = await sdk.getPayments({ signed: false });
     await processPending();
   } catch (err) {
-    // Платежи недоступны (ЕЛС не активен и т.п.) — играем без инапов
-    console.warn('[payments] слой недоступен, витрина будет недоступна:', err);
+    // Purchases unavailable (for example, ELS or console configuration is incomplete).
+    console.warn('[payments] layer unavailable; in-app purchases stay closed:', err);
     payments = null;
-    pendingProcessed = true;
+    paymentsTried = false;
+    pendingProcessed = false;
   }
 }
 
 /**
- * Консумирует все необработанные покупки. Начисление при этом НЕ повторяется:
- * токен без награды по регламенту консумируется молча (ошибка прошлого
- * показа не должна блокировать модерацию), а начисление делает purchase() в
- * момент оплаты.
+ * Reconcile unfinished purchases before allowing a new checkout.
+ * Unknown SKUs and receipts without tokens are left untouched: deleting a
+ * paid-but-unmapped receipt would permanently lose the player's purchase.
  */
-async function processPending(): Promise<void> {
-  if (!payments || pendingProcessed) return;
+async function processPending(): Promise<boolean> {
+  if (!payments) return false;
+  if (pendingProcessed) return true;
+
+  let reconciled = true;
   try {
     const list = await payments.getPurchases();
-    for (const p of list ?? []) {
-      if (p.purchaseToken) {
+    if (!Array.isArray(list)) {
+      pendingProcessed = false;
+      return false;
+    }
+
+    for (const purchase of list) {
+      const sku = typeof purchase?.productID === 'string' ? purchase.productID : '';
+      const token = typeof purchase?.purchaseToken === 'string' ? purchase.purchaseToken.trim() : '';
+      if (!sku || !SKUS[sku] || !token) {
+        console.warn('[payments] pending receipt left unprocessed; SKU/token is missing or unsupported', sku || '(missing SKU)');
+        // Keep the receipt untouched; checkout remains blocked until it is mapped in code.
+        reconciled = false;
+        continue;
+      }
+      const result = grantSkuForPurchase(sku, token);
+      if (!result.supported || !result.persisted) {
+        // grantSkuForPurchase rolls back the in-memory ledger if storage fails.
+        // Keep the receipt pending, but allow a retry if storage recovers.
+        reconciled = false;
+        continue;
+      }
+      if (ONE_SHOT_SKUS.has(sku)) markPurchasedOnce(sku);
+
+      if (SKUS[sku].consumable) {
         try {
-          await payments.consumePurchase(p.purchaseToken);
+          await payments.consumePurchase(token);
         } catch (err) {
-          console.warn('[payments] консумирование не удалось:', p.productID, err);
-          track('iap_consume_fail', { sku: p.productID, stage: 'pending' });
+          console.warn('[payments] consume pending receipt failed:', sku, err);
+          track('iap_consume_fail', { sku, stage: 'pending' });
+          reconciled = false;
         }
       }
+      // Non-consumable purchases intentionally remain available to getPurchases()
+      // so a reinstall or empty local store can restore the entitlement.
     }
   } catch (err) {
-    console.warn('[payments] getPurchases не удался:', err);
-  } finally {
-    pendingProcessed = true;
+    console.warn('[payments] getPurchases failed; checkout remains closed:', err);
+    reconciled = false;
   }
+
+  pendingProcessed = reconciled;
+  return reconciled;
 }
 
 export interface PurchaseResult {
@@ -102,51 +151,84 @@ export interface PurchaseResult {
 }
 
 /**
- * Покупка SKU. Награда начисляется через meta.grantSku сразу после
- * подтверждения платформы, затем токен консумируется. one-shot SKU
- * (starter_castellan, no_interstitial) защищены от повторной выдачи.
+ * Fail-closed checkout:
+ * - only registered, reward-mapped SKUs can be purchased;
+ * - startup receipts must be reconciled first;
+ * - purchase response must match the requested SKU and include a token;
+ * - reward + token ledger are persisted before consuming a consumable.
  */
 export async function purchaseSku(sku: string): Promise<PurchaseResult> {
-  const oneShot = sku === 'starter_castellan' || sku === 'no_interstitial' || sku === 'pass_chronicle';
-  if (oneShot && purchasedOnce().includes(sku)) {
-    return { ok: false, reason: 'duplicate' };
-  }
-
-  // Локальная симуляция разрешена только в dev-сборке. В частности,
-  // ?ysdk=mock не должен позволять бесплатно получать SKU в production.
-  if (import.meta.env.DEV && (isMockMode() || !isOnYandex())) {
-    const granted = grantSku(sku);
-    markPurchasedOnce(sku);
-    return { ok: true, granted };
-  }
-
-  // Fail-closed: в Yandex Games/production отсутствие платёжного слоя —
-  // это отказ покупки, никогда не локальная выдача награды.
-  if (!isOnYandex() || !payments) {
-    console.warn('[payments] покупка отклонена: платёжный слой недоступен', sku);
+  if (!SKUS[sku]) {
+    console.warn('[payments] unknown SKU rejected before checkout:', sku);
     return { ok: false, reason: 'fail' };
   }
+  const meta = rollMetaDay();
+  if ((ONE_SHOT_SKUS.has(sku)
+      && (purchasedOnce().includes(sku) || hasIapEntitlement(meta, sku)))
+    || (sku === 'pass_chronicle' && meta.pass.premium)) {
+    return { ok: false, reason: 'duplicate' };
+  }
+  if (inFlightSkus.has(sku)) return { ok: false, reason: 'fail' };
+  inFlightSkus.add(sku);
 
   try {
-    await processPending();
-    const res = await payments.purchase({ id: sku });
-    const granted = grantSku(sku);
-    markPurchasedOnce(sku);
+    // A transient startup failure must not permanently disable purchases for this session.
+    if (!payments && isOnYandex()) await initPayments();
+
+    // Local simulation is allowed only in a development build.
+    if (import.meta.env.DEV && (isMockMode() || !isOnYandex())) {
+      const granted = grantSku(sku);
+      if (ONE_SHOT_SKUS.has(sku)) markPurchasedOnce(sku);
+      return { ok: true, granted };
+    }
+
+    if (!isOnYandex() || !payments) {
+      console.warn('[payments] purchase rejected: platform payment layer unavailable', sku);
+      return { ok: false, reason: 'fail' };
+    }
+
+    if (!(await processPending())) {
+      console.warn('[payments] purchase rejected: unresolved platform receipts remain');
+      return { ok: false, reason: 'fail' };
+    }
+
+    const receipt = await payments.purchase({ id: sku });
+    const returnedSku = typeof receipt?.productID === 'string' ? receipt.productID : '';
+    const token = typeof receipt?.purchaseToken === 'string' ? receipt.purchaseToken.trim() : '';
+    if (returnedSku !== sku || !token) {
+      // Leave the platform receipt for the next reconciliation pass; never
+      // guess a reward when the response is incomplete or names another SKU.
+      pendingProcessed = false;
+      console.warn('[payments] purchase response is incomplete or mismatched', { requested: sku, returned: returnedSku });
+      return { ok: false, reason: 'fail' };
+    }
+
+    const result = grantSkuForPurchase(sku, token);
+    if (!result.supported || !result.persisted) {
+      pendingProcessed = false;
+      console.warn('[payments] reward not consumed because its receipt ledger could not be persisted', sku);
+      return { ok: false, reason: 'fail' };
+    }
+
+    if (ONE_SHOT_SKUS.has(sku)) markPurchasedOnce(sku);
     track('iap_purchase', { sku });
-    if (res.purchaseToken) {
+
+    if (SKUS[sku].consumable) {
       try {
-        await payments.consumePurchase(res.purchaseToken);
+        await payments.consumePurchase(token);
       } catch (err) {
-        // Токен остался необработанным — при следующем старте уйдёт в
-        // processPending. Награда уже выдана, повторной выдачи не будет.
-        console.warn('[payments] consume после покупки не удался:', sku, err);
+        // The receipt ledger makes the next reconciliation idempotent.
+        pendingProcessed = false;
+        console.warn('[payments] consume after purchase failed; receipt will be retried:', sku, err);
         track('iap_consume_fail', { sku, stage: 'post-purchase' });
       }
     }
-    return { ok: true, granted };
+    return { ok: true, granted: result.granted };
   } catch (err) {
-    console.warn('[payments] покупка не состоялась:', sku, err);
+    console.warn('[payments] platform purchase failed:', sku, err);
     return { ok: false, reason: 'fail' };
+  } finally {
+    inFlightSkus.delete(sku);
   }
 }
 
@@ -186,9 +268,9 @@ export interface CatalogProduct {
   priceCurrencyImage?: string;
 }
 
-/** Accept only HTTP(S) images from SDK; resolve relative URIs against the game origin. */
-function safeCatalogImageUri(uri: string | undefined): string | undefined {
-  if (!uri?.trim() || typeof window === 'undefined') return undefined;
+/** Accept only HTTP(S) URLs from SDK; resolve relative URIs against the game origin. */
+function safeCatalogImageUri(uri: unknown): string | undefined {
+  if (typeof uri !== 'string' || !uri.trim() || typeof window === 'undefined') return undefined;
   try {
     const parsed = new URL(uri, window.location.href);
     if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') return undefined;
@@ -196,6 +278,10 @@ function safeCatalogImageUri(uri: string | undefined): string | undefined {
   } catch {
     return undefined;
   }
+}
+
+function catalogText(value: unknown): string | undefined {
+  return typeof value === 'string' && value.trim() ? value.trim() : undefined;
 }
 
 /**
@@ -214,9 +300,9 @@ export async function fetchCatalog(): Promise<CatalogProduct[]> {
     if (!Array.isArray(products)) return [];
     return products.flatMap((product: YandexCatalogProduct) => {
       if (!product || typeof product.id !== 'string' || !product.id.trim()) return [];
-      const priceValue = product.priceValue?.trim() || undefined;
-      const priceCurrencyCode = product.priceCurrencyCode?.trim() || undefined;
-      const price = product.price?.trim()
+      const priceValue = catalogText(product.priceValue);
+      const priceCurrencyCode = catalogText(product.priceCurrencyCode);
+      const price = catalogText(product.price)
         || (priceValue && priceCurrencyCode ? priceValue + ' ' + priceCurrencyCode : undefined);
       let currencyImageUri: string | undefined;
       try {
@@ -226,8 +312,8 @@ export async function fetchCatalog(): Promise<CatalogProduct[]> {
       }
       return [{
         id: product.id.trim(),
-        title: product.title?.trim() || undefined,
-        description: product.description?.trim() || undefined,
+        title: catalogText(product.title),
+        description: catalogText(product.description),
         imageURI: safeCatalogImageUri(product.imageURI),
         price,
         priceValue,

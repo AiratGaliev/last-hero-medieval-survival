@@ -3,15 +3,19 @@ import { expect, test, type Page } from '@playwright/test';
 const startupTimeout = 30_000;
 
 type PaymentMode = 'missing' | 'reject' | 'success';
-type CatalogMode = 'valid' | 'empty' | 'error';
+type CatalogMode = 'valid' | 'empty' | 'error' | 'malformed';
+type PurchaseResponseMode = 'match' | 'mismatch' | 'missing-token';
 
 async function bootWithYandexPayments(
   page: Page,
   mode: PaymentMode,
   consumeFails = false,
   catalogMode: CatalogMode = 'empty',
+  pendingPurchases: Array<{ productID: string; purchaseToken?: string }> = [],
+  purchaseResponse: PurchaseResponseMode = 'match',
 ): Promise<void> {
-  await page.addInitScript(({ paymentMode, failConsume, catalogMode: configuredCatalogMode }) => {
+  await page.addInitScript(({ paymentMode, failConsume, catalogMode: configuredCatalogMode, pendingPurchases: configuredPendingPurchases, purchaseResponse: configuredPurchaseResponse }) => {
+    const pendingReceipts = [...configuredPendingPurchases];
     localStorage.setItem('tss-meta2', JSON.stringify({
       matchesPlayed: 5,
       crowns: 42,
@@ -30,17 +34,24 @@ async function bootWithYandexPayments(
       purchase: async ({ id }: { id: string }) => {
         probe.__paymentProbe.purchaseCalls += 1;
         if (paymentMode === 'reject') throw new Error('QA purchase rejection');
-        return { productID: id, purchaseToken: 'qa-purchase-token' };
+        const productID = configuredPurchaseResponse === 'mismatch' ? 'crowns_m' : id;
+        const purchaseToken = configuredPurchaseResponse === 'missing-token'
+          ? undefined : `qa-purchase-token-${probe.__paymentProbe.purchaseCalls}`;
+        pendingReceipts.push({ productID, ...(purchaseToken ? { purchaseToken } : {}) });
+        return { productID, ...(purchaseToken ? { purchaseToken } : {}) };
       },
-      consumePurchase: async (_token: string) => {
+      consumePurchase: async (token: string) => {
         probe.__paymentProbe.consumeCalls += 1;
         if (failConsume) throw new Error('QA consume failure');
+        for (let i = pendingReceipts.length - 1; i >= 0; i -= 1) {
+          if (pendingReceipts[i].purchaseToken === token) pendingReceipts.splice(i, 1);
+        }
       },
-      getPurchases: async () => [],
+      getPurchases: async () => [...pendingReceipts],
       getCatalog: async () => {
         if (configuredCatalogMode === 'error') throw new Error('QA catalog failure');
-        if (configuredCatalogMode !== 'valid') return [];
-        return [{
+        if (configuredCatalogMode === 'empty') return [];
+        const validProduct = {
           id: 'crowns_s',
           title: 'SDK Crown Pack',
           description: 'Description supplied by the platform catalog',
@@ -52,7 +63,28 @@ async function bootWithYandexPayments(
             probe.__catalogProbe.currencyImageSizes.push(size);
             return '/src/assets/game/gem-gold.png';
           },
-        }];
+        };
+        const validSkin = {
+          id: 'skin_hero_warrior_red',
+          title: 'SDK Warrior Skin',
+          description: 'A permanent cosmetic entitlement',
+          imageURI: '/src/assets/game/gem-gold.png',
+          price: '77 TST',
+          priceValue: '77',
+          priceCurrencyCode: 'TST',
+          getPriceCurrencyImage: (size: 'small' | 'medium' | 'svg') => {
+            probe.__catalogProbe.currencyImageSizes.push(size);
+            return '/src/assets/game/gem-gold.png';
+          },
+        };
+        if (configuredCatalogMode === 'malformed') {
+          return [
+            { id: 'crowns_m', title: 'Malformed price', priceValue: 123, priceCurrencyCode: 'TST' },
+            validProduct,
+            validSkin,
+          ];
+        }
+        return [validProduct, validSkin];
       },
     };
 
@@ -104,11 +136,45 @@ async function bootWithYandexPayments(
       sdk.getPayments = async () => payments;
     }
     probe.YaGames = { init: async () => sdk };
-  }, { paymentMode: mode, failConsume: consumeFails, catalogMode });
+  }, { paymentMode: mode, failConsume: consumeFails, catalogMode, pendingPurchases, purchaseResponse });
 
   await page.goto('/?lang=en');
   await expect(page.locator('#game canvas')).toBeVisible({ timeout: startupTimeout });
   await expect(page.locator('#boot')).toHaveCount(0, { timeout: startupTimeout });
+}
+
+async function metaSnapshot(page: Page): Promise<{
+  crowns: number;
+  speedupTokens: number;
+  ownedSkins: string[];
+  purchasedSkus: string[];
+  processedIapTokens: string[];
+  probe: { purchaseCalls: number; consumeCalls: number };
+}> {
+  return page.evaluate(async () => {
+    const metaUrl = new URL('/src/game/meta.ts', window.location.origin).href;
+    const meta = await import(/* @vite-ignore */ metaUrl) as {
+      loadMetaState: () => {
+        crowns: number;
+        speedupTokens: number;
+        skins: { owned: string[] };
+        purchasedSkus: string[];
+        processedIapTokens: string[];
+      };
+    };
+    const state = meta.loadMetaState();
+    const probe = (window as unknown as {
+      __paymentProbe?: { purchaseCalls: number; consumeCalls: number };
+    }).__paymentProbe ?? { purchaseCalls: 0, consumeCalls: 0 };
+    return {
+      crowns: state.crowns,
+      speedupTokens: state.speedupTokens,
+      ownedSkins: [...state.skins.owned],
+      purchasedSkus: [...state.purchasedSkus],
+      processedIapTokens: [...state.processedIapTokens],
+      probe,
+    };
+  });
 }
 
 async function attemptPurchase(page: Page, sku: string): Promise<{
@@ -173,7 +239,7 @@ test('a rejected platform purchase does not grant the SKU', async ({ page }) => 
   expect(result.probe.purchaseCalls).toBe(1);
 });
 
-test('a confirmed purchase grants once even when consumePurchase reports an error', async ({ page }) => {
+test('a confirmed consumable grants once even when consumePurchase reports an error', async ({ page }) => {
   await bootWithYandexPayments(page, 'success', true);
 
   const result = await attemptPurchase(page, 'crowns_s');
@@ -182,6 +248,177 @@ test('a confirmed purchase grants once even when consumePurchase reports an erro
   expect(result.afterCrowns).toBeGreaterThan(result.beforeCrowns);
   expect(result.afterPurchased).toContain('crowns_s');
   expect(result.probe).toEqual({ purchaseCalls: 1, consumeCalls: 1 });
+});
+
+test('a pending consumable receipt is granted before consumption and cannot be double-credited', async ({ page }) => {
+  await bootWithYandexPayments(page, 'success', false, 'empty', [
+    { productID: 'crowns_s', purchaseToken: 'recovery-token' },
+  ]);
+
+  const recovered = await metaSnapshot(page);
+  expect(recovered.crowns).toBe(222); // 42 + first-top-up bonus (90 × 2)
+  expect(recovered.purchasedSkus).toContain('crowns_s');
+  expect(recovered.processedIapTokens).toContain('recovery-token');
+  expect(recovered.probe).toEqual({ purchaseCalls: 0, consumeCalls: 1 });
+
+  const nextPurchase = await attemptPurchase(page, 'crowns_s');
+  expect(nextPurchase.beforeCrowns).toBe(222);
+  expect(nextPurchase.afterCrowns).toBe(312); // The second receipt grants 90, not the first-top-up bonus.
+  expect(nextPurchase.probe).toEqual({ purchaseCalls: 1, consumeCalls: 2 });
+});
+
+test('pending non-consumable restores ownership without being consumed', async ({ page }) => {
+  await bootWithYandexPayments(page, 'success', false, 'empty', [
+    { productID: 'no_interstitial', purchaseToken: 'ownership-token' },
+  ]);
+
+  const state = await metaSnapshot(page);
+  expect(state.purchasedSkus).toContain('no_interstitial');
+  expect(state.processedIapTokens).toContain('ownership-token');
+  expect(state.crowns).toBe(42);
+  expect(state.probe).toEqual({ purchaseCalls: 0, consumeCalls: 0 });
+});
+
+test('pending one-time starter bundle restores its reward without consuming the entitlement', async ({ page }) => {
+  await bootWithYandexPayments(page, 'success', false, 'empty', [
+    { productID: 'starter_castellan', purchaseToken: 'starter-entitlement-token' },
+  ]);
+
+  await expect.poll(async () => (await metaSnapshot(page)).processedIapTokens)
+    .toContain('starter-entitlement-token');
+  const firstLoad = await metaSnapshot(page);
+  expect(firstLoad.crowns).toBe(392);
+  expect(firstLoad.speedupTokens).toBeGreaterThanOrEqual(3);
+  expect(firstLoad.ownedSkins).toContain('skin_hero_warrior_red');
+  expect(firstLoad.purchasedSkus).toContain('starter_castellan');
+  expect(firstLoad.probe).toEqual({ purchaseCalls: 0, consumeCalls: 0 });
+
+  // A relaunch still sees the permanent receipt, but its reward must not replay.
+  await page.reload();
+  await expect.poll(async () => (await metaSnapshot(page)).processedIapTokens)
+    .toContain('starter-entitlement-token');
+  const secondLoad = await metaSnapshot(page);
+  expect(secondLoad.crowns).toBe(392);
+  expect(secondLoad.probe).toEqual({ purchaseCalls: 0, consumeCalls: 0 });
+});
+
+test('purchase receipt remains unconsumed when durable reward persistence fails', async ({ page }) => {
+  await bootWithYandexPayments(page, 'success');
+
+  const result = await page.evaluate(async () => {
+    const paymentsUrl = new URL('/src/platform/payments.ts', window.location.origin).href;
+    const metaUrl = new URL('/src/game/meta.ts', window.location.origin).href;
+    const [payments, meta] = await Promise.all([
+      import(/* @vite-ignore */ paymentsUrl) as Promise<{
+        purchaseSku: (sku: string) => Promise<{ ok: boolean; reason?: string }>;
+      }>,
+      import(/* @vite-ignore */ metaUrl) as Promise<{
+        loadMetaState: () => { crowns: number; processedIapTokens: string[] };
+      }>,
+    ]);
+    const beforeCrowns = meta.loadMetaState().crowns;
+    const originalSetItem = Storage.prototype.setItem;
+    Storage.prototype.setItem = function (key: string, value: string): void {
+      if (key === 'tss-meta2') throw new Error('QA storage write failure');
+      originalSetItem.call(this, key, value);
+    };
+    try {
+      const purchase = await payments.purchaseSku('crowns_s');
+      const after = meta.loadMetaState();
+      const probe = (window as unknown as {
+        __paymentProbe: { purchaseCalls: number; consumeCalls: number };
+      }).__paymentProbe;
+      return {
+        result: purchase.reason ? { ok: purchase.ok, reason: purchase.reason } : { ok: purchase.ok },
+        beforeCrowns,
+        afterCrowns: after.crowns,
+        tokenRetainedInMemory: after.processedIapTokens.some((token) => token.startsWith('qa-purchase-token-')),
+        probe,
+      };
+    } finally {
+      Storage.prototype.setItem = originalSetItem;
+    }
+  });
+
+  expect(result.result).toEqual({ ok: false, reason: 'fail' });
+  expect(result.afterCrowns).toBe(result.beforeCrowns);
+  expect(result.tokenRetainedInMemory).toBe(false);
+  expect(result.probe).toEqual({ purchaseCalls: 1, consumeCalls: 0 });
+});
+
+test('unregistered SKU is rejected before opening the platform checkout', async ({ page }) => {
+  await bootWithYandexPayments(page, 'success');
+
+  const result = await attemptPurchase(page, 'skin_admin_override');
+
+  expect(result.result).toEqual({ ok: false, reason: 'fail' });
+  expect(result.afterCrowns).toBe(result.beforeCrowns);
+  expect(result.afterPurchased).toEqual(result.beforePurchased);
+  expect(result.probe.purchaseCalls).toBe(0);
+});
+
+test('an already owned cosmetic cannot be purchased again through IAP', async ({ page }) => {
+  await bootWithYandexPayments(page, 'success');
+  await page.evaluate(async () => {
+    const metaUrl = new URL('/src/game/meta.ts', window.location.origin).href;
+    const meta = await import(/* @vite-ignore */ metaUrl) as {
+      loadMetaState: () => { skins: { owned: string[] } };
+      saveMetaState: (state: { skins: { owned: string[] } }) => boolean;
+    };
+    const state = meta.loadMetaState();
+    state.skins.owned.push('skin_hero_warrior_red');
+    meta.saveMetaState(state);
+  });
+
+  const result = await attemptPurchase(page, 'skin_hero_warrior_red');
+
+  expect(result.result).toEqual({ ok: false, reason: 'duplicate' });
+  expect(result.probe.purchaseCalls).toBe(0);
+});
+
+test('mismatched product ID in a resolved receipt does not grant the requested SKU', async ({ page }) => {
+  await bootWithYandexPayments(page, 'success', false, 'empty', [], 'mismatch');
+
+  const result = await attemptPurchase(page, 'crowns_s');
+
+  expect(result.result).toEqual({ ok: false, reason: 'fail' });
+  expect(result.afterCrowns).toBe(result.beforeCrowns);
+  expect(result.afterPurchased).toEqual(result.beforePurchased);
+  expect(result.probe).toEqual({ purchaseCalls: 1, consumeCalls: 0 });
+});
+
+test('purchase response without a token does not grant or consume a reward', async ({ page }) => {
+  await bootWithYandexPayments(page, 'success', false, 'empty', [], 'missing-token');
+
+  const result = await attemptPurchase(page, 'crowns_s');
+
+  expect(result.result).toEqual({ ok: false, reason: 'fail' });
+  expect(result.afterCrowns).toBe(result.beforeCrowns);
+  expect(result.afterPurchased).toEqual(result.beforePurchased);
+  expect(result.probe).toEqual({ purchaseCalls: 1, consumeCalls: 0 });
+});
+
+test('an unresolved receipt is preserved and blocks a second checkout', async ({ page }) => {
+  await bootWithYandexPayments(page, 'success', false, 'empty', [
+    { productID: 'removed_legacy_sku', purchaseToken: 'legacy-token' },
+  ]);
+
+  const result = await attemptPurchase(page, 'crowns_s');
+
+  expect(result.result).toEqual({ ok: false, reason: 'fail' });
+  expect(result.afterCrowns).toBe(result.beforeCrowns);
+  expect(result.afterPurchased).toEqual(result.beforePurchased);
+  expect(result.probe).toEqual({ purchaseCalls: 0, consumeCalls: 0 });
+});
+
+test('malformed catalog item cannot hide valid products', async ({ page }) => {
+  await bootWithYandexPayments(page, 'success', false, 'malformed');
+  await openCrownsTab(page);
+
+  await expect.poll(async () => (await shopSnapshot(page)).texts).toContain('SDK Crown Pack');
+  const snapshot = await shopSnapshot(page);
+  expect(snapshot.texts).toContain('123 TST');
+  expect(snapshot.texts).not.toContain('Malformed price');
 });
 
 test('a one-shot SKU cannot be purchased twice in the same browser profile', async ({ page }) => {
@@ -194,6 +431,37 @@ test('a one-shot SKU cannot be purchased twice in the same browser profile', asy
   expect(second.result).toEqual({ ok: false, reason: 'duplicate' });
   expect(second.afterPurchased.filter((sku) => sku === 'no_interstitial')).toHaveLength(1);
   expect(second.probe.purchaseCalls).toBe(1);
+});
+
+test('Chronicle pass is single-purchase within a season and purchasable again next season', async ({ page }) => {
+  await bootWithYandexPayments(page, 'success');
+
+  const first = await attemptPurchase(page, 'pass_chronicle');
+  const sameSeason = await attemptPurchase(page, 'pass_chronicle');
+  expect(first.result).toEqual({ ok: true });
+  expect(sameSeason.result).toEqual({ ok: false, reason: 'duplicate' });
+  expect(sameSeason.probe).toEqual({ purchaseCalls: 1, consumeCalls: 1 });
+
+  const reset = await page.evaluate(async () => {
+    const metaUrl = new URL('/src/game/meta.ts', window.location.origin).href;
+    const meta = await import(/* @vite-ignore */ metaUrl) as {
+      loadMetaState: () => { pass: { season: string; premium: boolean } };
+      saveMetaState: (state: { pass: { season: string; premium: boolean } }) => boolean;
+      rollMetaDay: () => { pass: { season: string; premium: boolean } };
+    };
+    const state = meta.loadMetaState();
+    state.pass.season = 'expired-test-season';
+    meta.saveMetaState(state);
+    const current = meta.rollMetaDay();
+    return { season: current.pass.season, premium: current.pass.premium };
+  });
+  expect(reset.season).not.toBe('expired-test-season');
+  expect(reset.premium).toBe(false);
+
+  const nextSeason = await attemptPurchase(page, 'pass_chronicle');
+  expect(nextSeason.result).toEqual({ ok: true });
+  expect(nextSeason.probe).toEqual({ purchaseCalls: 2, consumeCalls: 2 });
+  expect(nextSeason.afterPurchased.filter((sku) => sku === 'pass_chronicle')).toHaveLength(1);
 });
 
 test('the explicit Yandex mock mode grants locally only in the dev build', async ({ page }) => {
@@ -276,13 +544,15 @@ test('shop displays product details and currency artwork from the SDK catalog', 
   const snapshot = await shopSnapshot(page);
   expect(snapshot.texts).toContain('Description supplied by the platform catalog');
   expect(snapshot.texts).toContain('123 TST');
+  expect(snapshot.texts).toContain('SDK Warrior Skin');
+  expect(snapshot.texts).toContain('77 TST');
   expect(snapshot.texts).toContain('BUY');
-  expect(snapshot.catalogTextures.length).toBeGreaterThanOrEqual(2);
+  expect(snapshot.catalogTextures.length).toBeGreaterThanOrEqual(4);
 
   const currencyImageSizes = await page.evaluate(() => (
     (window as unknown as { __catalogProbe: { currencyImageSizes: string[] } }).__catalogProbe.currencyImageSizes
   ));
-  expect(currencyImageSizes).toEqual(['small']);
+  expect(currencyImageSizes).toEqual(['small', 'small']);
 });
 
 test('an empty platform catalog never falls back to fictional local SKU prices', async ({ page }) => {
