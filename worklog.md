@@ -2289,3 +2289,40 @@ Stage Summary:
 - Validation: PR HEAD `db702fb5f2c37a71649f9f6e85db9af19a3d86bc` passed [GitHub Actions run #39137784813](https://github.com/AiratGaliev/last-hero-medieval-survival/actions/runs/39137784813). All gates were green: typecheck/lint, production build, Yandex Games archive validation and all **62 Playwright tests** across Chromium desktop and mobile. The previously failing intro/monastery/garrison scenario passed on both projects.
 - PR #14 was merged to `main` as `1e5c66286d89c790945c95a84181d24e71c93210`. The separate post-merge main workflow is recorded at [run #39138236992](https://github.com/AiratGaliev/last-hero-medieval-survival/actions/runs/39138236992); its status must be evaluated independently from PR CI.
 - Remaining manual gates are unchanged: real Yandex Games Sandbox IAP/SKU/ELS, Metrica delivery, persistence in the published environment, and a full 15-minute runtime/balance run. This CI success does not claim those platform/gameplay acceptance checks are complete.
+
+
+---
+
+## 2026-10-18 — IAP receipt recovery, season-aware SKU handling, and catalog completion
+
+### Audit findings
+
+- The previous startup reconciliation blindly called `consumePurchase()` for every item from `getPurchases()` without granting it first. That could permanently discard a paid consumable and also incorrectly consume persistent entitlements such as ad removal or cosmetics.
+- The previous checkout path accepted any SKU string and granted the requested reward on a resolved `purchase()` call without checking that the returned `productID` matched the request or that a non-empty `purchaseToken` was present.
+- The paid cosmetic reward mapper covered several existing cosmetic assets, but the real SDK catalogue allowlist and store UI exposed only a subset of them.
+- The old global one-shot guard treated `pass_chronicle` as owned forever even though pass state and rewards reset every 30-day season. It therefore prevented legitimate purchases in future seasons.
+- Official platform rules say `consumePurchase()` permanently removes a receipt, consumables must be persisted before consumption, non-consumables are restored through `getPurchases()`, and portal-currency artwork/price comes from `getCatalog()`. Reference: https://yandex.com/dev/games/doc/en/sdk/sdk-purchases
+
+### Implementation
+
+- Added `MetaState.processedIapTokens` and an exact-once purchase-grant path that writes reward state and receipt token to the same `tss-meta2` record before any consumable receipt is consumed.
+- Pending purchase reconciliation now validates each SKU/token, restores known non-consumable entitlements without consuming them, credits unprocessed consumables before consumption, and leaves unknown or malformed receipts untouched. A failed reconciliation blocks new checkout rather than silently losing a paid receipt.
+- Checkout now rejects unregistered SKU IDs before calling the platform, validates that the resolved product ID matches the requested ID and includes a non-empty token, prevents concurrent duplicate calls for the same SKU, and retries transient SDK initialization failures.
+- Made the reward mapping an explicit allowlist for every implemented SKU. Completed SDK catalog/display wiring for 14 purchasable hero/building/trail cosmetics. Product titles, prices, descriptions and currency icons are always supplied by the SDK catalog; malformed catalogue entries are skipped without hiding valid products.
+- Classified `crowns_*` and `pass_chronicle` as platform-consumable products. The season pass can be purchased once in each season and is consumed per successful purchase. `starter_castellan` is a persistent one-time entitlement because it bundles currency with a permanent cosmetic; `no_interstitial` and cosmetic SKUs are also restored through `getPurchases()` and are never consumed.
+- Updated `docs/TZ.md` to define matching product types, exact supported cosmetics, and clarify that prices in the design table are not portal prices. Updated `docs/ROADMAP.md` to separate code-complete items from the external Console/ELS/Sandbox gate.
+
+### Regression coverage added
+
+- Pending consumable receipt is granted before consumption and does not double-credit on the next checkout.
+- Pending persistent `no_interstitial` and starter-bundle receipts restore entitlements without `consumePurchase()`; the starter's currency/speedups/skin are granted once and verified across relaunch.
+- Unknown SKU, mismatched resolved `productID`, missing token and unresolved legacy receipt fail closed and do not grant/consume incorrectly. Already-owned cosmetics are also rejected before opening checkout.
+- If durable storage rejects a grant, the in-memory receipt ledger is rolled back; no reward is credited and the receipt is not consumed.
+- Chronicle pass can be purchased only once in the active season and becomes purchasable after the season rolls over.
+- Malformed catalog data does not suppress valid products; supported cosmetic catalog entries and SDK currency artwork are rendered.
+
+### Validation and remaining gates
+
+- Eleven new Playwright regression scenarios were added to `tests/e2e/payments.spec.ts`; the branch CI result is pending and must be recorded before merge.
+- Local `npm run check`/Playwright has not been run for this branch. Do not treat the presence of tests as a successful test run; use GitHub Actions as the validation gate.
+- External gate remains open: confirm ELS is active; create all supported SKUs with exact IDs and product types in Yandex Games Console; verify actual catalog prices and currency artwork; run Sandbox success/cancel/interrupted-network/relaunch flows against the deployed build; verify that each consumable receipt is consumed after a durable grant while persistent entitlements remain restorable.
