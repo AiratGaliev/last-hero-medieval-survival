@@ -3,7 +3,7 @@ import { Cursor } from '../systems/Cursor';
 import {
   WORLD, PLAYER_BASE, DEPTH, ENEMY_CAP, SCORE, XP_CURVE, COMBO, MAX_LEVEL,
   AGGRO, SIEGE, LONGPRESS_MS, VEIN_COUNT, VEIN_CHARGES, VEIN_YIELD,
-  TOWER, BOSS_GOLD, HEAL_HP_PER_SEC,
+  TOWER, BOSS_GOLD, HEAL_HP_PER_SEC, GARRISON_DPS_CAP,
 } from '../constants';
 import {
   WEAPONS, PASSIVES, HEROES, ENEMIES, DIFFICULTIES, EVOLUTIONS,
@@ -29,6 +29,7 @@ import { Pickups } from '../systems/Pickups';
 import { Projectiles } from '../systems/Projectiles';
 import { Spawner, type SpawnerCtx } from '../systems/Spawner';
 import { WeaponSystem, type WeaponCtx } from '../systems/Weapons';
+import { GarrisonDpsBudget } from '../systems/GarrisonDpsBudget';
 import { HUD } from '../systems/HUD';
 import { Joystick } from '../systems/Joystick';
 import { AchTracker, commitMeta } from '../achievements';
@@ -80,7 +81,12 @@ export class GameScene extends Phaser.Scene {
   private succession!: Succession;
   private speedup!: Speedup;
   private hints!: Hints;
+  private hintOverlayPaused = false;
   private orderMenu!: OrderMenu;
+  /** Shared per-second damage budget for every garrison unit. */
+  private readonly garrisonDpsBudget = new GarrisonDpsBudget(GARRISON_DPS_CAP);
+  /** Frozen theoretical hero DPS baseline captured at game time 10:00. */
+  private heroDpsAtTenMinutes: number | null = null;
   /** Замок стоит в центре-севере арены (как декор раньше). */
   private readonly castleX = WORLD.SIZE / 2;
   private readonly castleY = WORLD.SIZE / 2 - 460;
@@ -318,6 +324,9 @@ export class GameScene extends Phaser.Scene {
   }
 
   private resetState(): void {
+    this.heroDpsAtTenMinutes = null;
+    this.garrisonDpsBudget.reset();
+    this.hintOverlayPaused = false;
     this.elapsed = 0; this.kills = 0; this.level = 1;
     this.xp = 0; this.xpNext = XP_CURVE(1); this.gold = 0; this.score = 0;
     this.pendingLevelUps = 0; this.overlayOpen = false; this.gameEnded = false;
@@ -516,6 +525,10 @@ export class GameScene extends Phaser.Scene {
       onRepairComplete: () => {},
       onBurnDamage: (b, amount) => this.settlement.damageBuilding(b, amount, b.lastSiegeIdx, false),
       onBuildingDestroyed: (b) => this.settlement.onBuildingDestroyed(b),
+      onMonasteryFalling: (_building, victims) => {
+        this.hud?.announce(t('siege.monasteryFalling', { v: victims }), '#ff5544');
+        track('monastery_falling', { victims });
+      },
       // ---- Мета-эффекты рана (§H.16 дерево, §H.17 указы, §H.9 контракты, A2, §J.6.2) ----
       pawnSpeedMult: this.fx.pawnSpeedMult
         * (this.mods.blessing === 'bl_pawn_speed' ? 1.10 : 1)
@@ -569,10 +582,6 @@ export class GameScene extends Phaser.Scene {
         // заведён в обоих словарях, но ни разу не показывался.
         this.hints?.show('veteran');
       },
-      onMonasteryFalling: (victims) => {
-        this.hud?.announce(t('siege.monasteryFalling', { v: victims }), '#ff5544');
-        track('monastery_falling', { victims });
-      },
       onMonasteryCollapsed: (victims) => {
         this.hud?.announce(t('siege.monasteryCollapsed', { v: victims }), '#ff5544');
         this.economy.emit('feed', { text: t('siege.monasteryCollapsed', { v: victims }) });
@@ -590,7 +599,11 @@ export class GameScene extends Phaser.Scene {
       successionCostMult: this.fx.successionCostMult,
     });
     this.speedup = new Speedup(this.economy);
-    this.hints = new Hints(this);
+    this.hints = new Hints(this, (paused) => {
+      this.hintOverlayPaused = paused;
+      if (paused) this.physics.world.pause();
+      else this.physics.world.resume();
+    });
     this.orderMenu = new OrderMenu(this);
     void cx; void cy;
 
@@ -1340,7 +1353,7 @@ private ordersUnlocked(): boolean {
     // Решение о поражении принимается здесь — после всей физики кадра.
     // Если тем же тиком погиб босс, победа уже объявлена и урон не считается.
     if (this.confirmDefeat()) return;
-    if (!this.started || this.gameEnded || this.victoryPending) return;
+    if (!this.started || this.gameEnded || this.victoryPending || this.hintOverlayPaused) return;
 
     // Хитстоп: короткая заморозка мира (после убийств элит/взрывов/урона)
     if (time < this.hitstopUntil) {
@@ -1362,6 +1375,12 @@ private ordersUnlocked(): boolean {
     }
 
     this.elapsed += dt;
+    // Фиксируем единый theoretical single-target DPS героя на отметке 10:00.
+    // Все атаки гарнизона после этого момента расходуют общий токен-бакет.
+    if (this.elapsed >= 600 && this.heroDpsAtTenMinutes === null) {
+      this.heroDpsAtTenMinutes = this.weapons.estimateTheoreticalDps();
+      this.garrisonDpsBudget.reset(time);
+    }
 
     // Движение игрока
     let vx = 0, vy = 0;
@@ -2080,7 +2099,11 @@ private bossDeathSequence(e: Enemy): void {
   /** Убийство врага гарнизоном: KILL растёт, комбо игрока — нет (§B.7.1). */
   private damageEnemyByPawn(e: Enemy, dmg: number, weapon: string): void {
     if (!e.active || e.dead) return;
-    const final = Math.max(1, Math.round(dmg * (this.economy.card('militia') > 0 ? 1.25 : 1)));
+    const rawDamage = Math.max(1, Math.round(dmg * (this.economy.card('militia') > 0 ? 1.25 : 1)));
+    const final = this.heroDpsAtTenMinutes === null
+      ? rawDamage
+      : this.garrisonDpsBudget.apply(rawDamage, this.time.now, this.heroDpsAtTenMinutes);
+    if (final <= 0) return;
     this.effects.damage(e.x, e.y - 40 * e.def.scale, final, false);
     const died = e.takeDamage(final);
     if (died) this.onEnemyDeath(e, undefined, true);
