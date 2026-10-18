@@ -117,8 +117,15 @@ export class PawnAI {
       const mine = eco.buildJobs.find((j) => j.pawn === p);
       if (mine) {
         const d = Phaser.Math.Distance.Between(p.x, p.y, mine.spot.x, mine.spot.y);
-        if (d > 90) { p.state = 'walk'; this.walkTo(p, mine.spot.x, mine.spot.y, dtMs); }
-        else { p.state = 'work'; p.taskProgress = 0; }
+        if (d > 90) {
+          p.state = 'walk';
+          this.walkTo(p, mine.spot.x, mine.spot.y, dtMs);
+        } else {
+          p.state = 'work';
+          p.playWork('hammer');
+          p.setVelocity(0, 0);
+          p.taskProgress = 0;
+        }
         return;
       }
       const spot = this.nearestFreeSpot(p);
