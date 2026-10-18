@@ -435,23 +435,33 @@ test('phases E-F: construction uses the approached spot and repair costs are gua
       monastery: { w: 205, h: 205 },
       archery: { w: 163, h: 218 },
     };
-    const placedFootprints = [
-      { kind: 'castle', x: economy.castleX, y: economy.castleY },
-      ...initialBuildSpots,
-    ];
-    const buildSpotOverlaps: string[] = [];
-    for (let i = 0; i < placedFootprints.length; i++) {
-      for (let j = i + 1; j < placedFootprints.length; j++) {
-        const a = placedFootprints[i];
-        const b = placedFootprints[j];
-        const fa = footprint[a.kind];
-        const fb = footprint[b.kind];
-        if (Math.abs(a.x - b.x) < (fa.w + fb.w) / 2
-          && Math.abs(a.y - b.y) < (fa.h + fb.h) / 2) {
-          buildSpotOverlaps.push(`${a.kind}@${a.x},${a.y} × ${b.kind}@${b.x},${b.y}`);
+    const findFootprintOverlaps = (spots: BuildSpotRuntime[]): string[] => {
+      const placed = [
+        { kind: 'castle', x: economy.castleX, y: economy.castleY },
+        ...spots,
+      ];
+      const overlaps: string[] = [];
+      for (let i = 0; i < placed.length; i++) {
+        for (let j = i + 1; j < placed.length; j++) {
+          const a = placed[i];
+          const b = placed[j];
+          const fa = footprint[a.kind];
+          const fb = footprint[b.kind];
+          if (Math.abs(a.x - b.x) < (fa.w + fb.w) / 2
+            && Math.abs(a.y - b.y) < (fa.h + fb.h) / 2) {
+            overlaps.push(`${a.kind}@${a.x},${a.y} × ${b.kind}@${b.x},${b.y}`);
+          }
         }
       }
-    }
+      return overlaps;
+    };
+    const buildSpotOverlaps = findFootprintOverlaps(initialBuildSpots);
+    const mutableTuning = economy as unknown as { tune: { extraHouseSpots: number } };
+    const previousExtraHouseSpots = mutableTuning.tune.extraHouseSpots;
+    mutableTuning.tune.extraHouseSpots = 5;
+    const expandedBuildSpots = economy.freeSpots();
+    const expandedBuildSpotOverlaps = findFootprintOverlaps(expandedBuildSpots);
+    mutableTuning.tune.extraHouseSpots = previousExtraHouseSpots;
     economy.resources.wood = 1_000;
     economy.resources.ore = 1_000;
     const houseSpots = economy.freeSpots().filter(s => s.kind === 'house');
@@ -536,6 +546,8 @@ test('phases E-F: construction uses the approached spot and repair costs are gua
     return {
       initialBuildSpotCount: initialBuildSpots.length,
       buildSpotOverlaps,
+      expandedBuildSpotCount: expandedBuildSpots.length,
+      expandedBuildSpotOverlaps,
       houseStarted,
       houseBuildAnimation,
       houseCost,
@@ -579,6 +591,8 @@ test('phases E-F: construction uses the approached spot and repair costs are gua
 
   expect(report.initialBuildSpotCount).toBe(10);
   expect(report.buildSpotOverlaps).toEqual([]);
+  expect(report.expandedBuildSpotCount).toBe(15);
+  expect(report.expandedBuildSpotOverlaps).toEqual([]);
   expect(report.houseStarted).toBe(true);
   expect(report.houseBuildAnimation).toBe('pawny-work-hammer');
   expect(report.houseCost).toBe(30);
