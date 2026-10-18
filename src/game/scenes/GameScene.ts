@@ -1669,7 +1669,7 @@ private ordersUnlocked(): boolean {
     // на два противоположных фланга (TZ §E.4.3).
     const baseA = Math.random() * Math.PI * 2;
     const unitCount = profile.squad.reduce((total, part) => total + part.n, 0);
-    const spawnAngles = calculateSiegeSpawnAngles(profile.name, unitCount, baseA);
+    const spawnAngles = calculateSiegeSpawnAngles(profile.formation ?? 'single', unitCount, baseA);
     let unitIdx = 0;
     for (const part of profile.squad) {
       for (let i = 0; i < part.n; i++) {
