@@ -618,7 +618,13 @@ export class Economy extends Phaser.Events.EventEmitter {
     if (!j) return false;
     j.building.hp = j.building.maxHp;
     j.building.underConstruction = false;
-    j.building.setScale(j.building.scaleX, j.building.scaleX);
+    j.building.warnedReset();
+    j.building.setAlpha(1);
+    j.building.clearTint();
+    // Восстановление руин должно повторно пройти визуальный цикл постройки;
+    // иначе мгновенный ремонт оставляет здание серым и полупрозрачным.
+    if (j.rebuild) j.building.finishConstruction();
+    else j.building.setScale(j.building.scaleX, j.building.scaleX);
     if (j.pawn) j.pawn.workNode = null;
     this.repairJobs.shift();
     this.emit('repairDone', { building: j.building });
