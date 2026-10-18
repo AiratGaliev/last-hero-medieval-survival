@@ -525,6 +525,7 @@ test('phases E-F: construction uses the approached spot and repair costs are gua
     // Мгновенный ремонт должен восстанавливать не только HP, но и внешний вид
     // разрушенных руин — этот путь используется ускорением ремонта.
     house.damage(house.maxHp + 10, -1);
+    const ruinsHp = house.hp;
     const ruinsAlpha = house.alpha;
     economy.resources.wood = 100;
     const woodBeforeRebuild = economy.resources.wood;
@@ -565,6 +566,7 @@ test('phases E-F: construction uses the approached spot and repair costs are gua
       partiallyRepairedHp,
       houseHpAfterRepair: house.hp,
       houseMaxHp: house.maxHp,
+      ruinsHp,
       ruinsAlpha,
       rebuildAccepted,
       woodBeforeRebuild,
@@ -599,7 +601,8 @@ test('phases E-F: construction uses the approached spot and repair costs are gua
   expect(report.woodAfterDamagedRepair).toBe(report.woodBeforeCastleRepair - 30);
   expect(report.repairFinished).toBe(true);
   expect(report.partiallyRepairedHp).toBe(report.houseMaxHp);
-  expect(report.houseHpAfterRepair).toBe(0);
+  expect(report.houseHpAfterRepair).toBe(report.houseMaxHp);
+  expect(report.ruinsHp).toBe(0);
   expect(report.ruinsAlpha).toBeCloseTo(0.35, 2);
   expect(report.rebuildAccepted).toBe(true);
   expect(report.woodAfterRebuild).toBe(report.woodBeforeRebuild - 60);
