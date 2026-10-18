@@ -18,6 +18,7 @@ type RuntimeScene = {
   enemyGroup: {
     getChildren: () => RuntimeEnemy[];
     contains: (enemy: RuntimeEnemy) => boolean;
+    remove: (enemy: RuntimeEnemy, removeFromScene?: boolean, destroyChild?: boolean) => unknown;
   };
   spawner: { update: (seconds: number) => void; stopped: boolean };
   spawnEnemy: (kind: string, x: number, y: number) => boolean;
@@ -261,7 +262,14 @@ test('gameplay spawns the opening goblin and keeps Ogre death animation alive to
     const game = (window as unknown as { __tss?: RuntimeGame }).__tss;
     if (!game) throw new Error('Phaser game instance is unavailable');
     const scene = game.scene.getScene('Game');
-    if (!scene.spawnEnemy('boss', scene.player.x + 90, scene.player.y + 90)) {
+    // Изолируем lifecycle-сценарий: не оставляем обычные волны и не даём
+    // собрать 200 XP/дроп босса во время замера, иначе LevelUp overlay может
+    // штатно приостановить GameScene и её clock до выбора игрока.
+    scene.spawner.stopped = true;
+    for (const enemy of scene.enemyGroup.getChildren()) {
+      scene.enemyGroup.remove(enemy, true, true);
+    }
+    if (!scene.spawnEnemy('boss', scene.player.x + 450, scene.player.y + 450)) {
       throw new Error('Could not create a QA Ogre');
     }
     const boss = scene.enemyGroup.getChildren().find((enemy) => enemy.active && enemy.kind === 'boss');
