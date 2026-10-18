@@ -20,7 +20,6 @@ export type LoseCause = 'hero' | 'castle' | 'population';
 export interface SettlementCtx {
   onFeed(text: string, color?: string): void;
   onDefeat(cause: LoseCause): void;
-  onMonasteryFalling(victims: number): void;
   onMonasteryCollapsed(victims: number): void;
   onBuildingDestroyed(b: Building): void;
   onSiegeScore(outcome: 'defended' | 'partial', index: number): void;
