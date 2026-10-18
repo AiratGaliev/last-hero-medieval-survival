@@ -415,7 +415,7 @@ export class Economy extends Phaser.Events.EventEmitter {
     let best: ResourceNode | null = null;
     let bestD = Infinity;
     for (const n of this.nodes) {
-      if (!n.alive || n.res !== res) continue;
+      if (!n.available || n.res !== res) continue;
       if (n.claimedBy && n.claimedBy !== from) continue;
       if (Math.hypot(n.x - this.castleX, n.y - this.castleY) > 1000) continue;
       const d = (n.x - from.x) ** 2 + (n.y - from.y) ** 2;
@@ -448,7 +448,7 @@ export class Economy extends Phaser.Events.EventEmitter {
     let best: ResourceNode | null = null;
     let bestScore = -1;
     for (const n of this.nodes) {
-      if (!n.alive || (n.claimedBy && n.claimedBy !== from)) continue;
+      if (!n.available || (n.claimedBy && n.claimedBy !== from)) continue;
       if (n.claimedBy === from) return n; // уже наш узел
       if (Math.hypot(n.x - this.castleX, n.y - this.castleY) > 1000) continue;
       // Контракт «Голодный год» (§H.9): мясо не добывается
@@ -468,7 +468,7 @@ export class Economy extends Phaser.Events.EventEmitter {
     let best: ResourceNode | null = null;
     let bestD = Infinity;
     for (const n of this.nodes) {
-      if (!n.alive) continue;
+      if (!n.available) continue;
       if (n.claimedBy && n.claimedBy !== from) continue;
       if (this.tune.meatDisabled && n.res === 'meat') continue;
       if (Math.hypot(n.x - this.castleX, n.y - this.castleY) > 1000) continue;
@@ -541,9 +541,19 @@ export class Economy extends Phaser.Events.EventEmitter {
    * Заложить стройку: spend() в момент СТАРТА (§D.2 — не по завершении),
    * здание появляется недостроенным, строитель играет pawny-work-hammer.
    */
-  tryStartBuild(kind: BuildingKind, pawn: Pawn): boolean {
+  tryStartBuild(
+    kind: BuildingKind,
+    pawn: Pawn,
+    preferredSpot?: { x: number; y: number },
+  ): boolean {
     const plan = BUILDING_PLANS[kind];
-    const spot = this.spotFor(kind);
+    // Пешка должна возводить объект именно на пятне, к которому пришла.
+    // Если пятно уже занято, задача пересчитается на следующем тике вместо
+    // скрытого переноса стройки на другой конец поселения.
+    const spot = preferredSpot
+      ? this.freeSpots().find((s) => s.kind === kind
+        && s.x === preferredSpot.x && s.y === preferredSpot.y) ?? null
+      : this.spotFor(kind);
     if (!spot) return false;
     if (!this.spend(this.buildingCost(kind))) return false;
     const tex = plan.sprites
@@ -591,6 +601,8 @@ export class Economy extends Phaser.Events.EventEmitter {
     if (this.buildJobs.some((j) => j.building === building)) return false; // ещё строится
     if (this.repairJobs.some((j) => j.building === building)) return false;
     const rebuild = building.hp <= 0;
+    // Не списываем дерево за вызов ремонта для уже здоровой постройки.
+    if (!rebuild && building.hp >= building.maxHp) return false;
     // «Сметливые ремонтники» (§H.16): стоимость ремонта ×0.75
     const wood = Math.round((rebuild ? REPAIR.REBUILD_WOOD : REPAIR.WOOD) * this.tune.repairCost);
     if (!this.spend({ wood })) return false;
