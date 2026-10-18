@@ -99,6 +99,8 @@ export interface EconomyOpts {
   onBurnDamage?: (b: Building, amount: number) => void;
   /** Разрушение здания → Settlement (обитель убивает раненых, §G.5) */
   onBuildingDestroyed?: (b: Building) => void;
+  /** Предупреждение на порогах 30%/10% HP монастыря до его обрушения (§G.5.1). */
+  onMonasteryFalling?: (b: Building, victims: number) => void;
 
   // ---- Мета-модификаторы рана (фазы Q/S, §H.16–H.18, A2, §J.6.2) ----
   /** «Торопливые ноги» / «Суровая зима»: скорость пешек. */
@@ -558,7 +560,9 @@ export class Economy extends Phaser.Events.EventEmitter {
         if (!ruins) this.usedSpots.delete(`${bb.x}:${bb.y}`);
         this.opts.onBuildingDestroyed?.(bb);
       },
-      onMonasteryFalling: () => {},
+      onMonasteryFalling: (building, victims) => {
+        if (kind === 'monastery') this.opts.onMonasteryFalling?.(building, victims);
+      },
     }, {
       // HP зданий: карта «Каменное зодчество» +15%/ур. (§H.5), мета-эффекты
       hpMult: this.tune.buildingHp * (1 + 0.15 * this.card('masonry')),
