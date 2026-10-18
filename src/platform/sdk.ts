@@ -77,13 +77,26 @@ export interface YandexSdk {
   off(event: string, handler: () => void): void;
 }
 
+/** Товар из payments.getCatalog() в официальном SDK. */
+export interface YandexCatalogProduct {
+  id: string;
+  title?: string;
+  description?: string;
+  imageURI?: string;
+  price?: string;
+  priceValue?: string;
+  priceCurrencyCode?: string;
+  /** Иконка портальной валюты возвращается методом, а не полем. */
+  getPriceCurrencyImage?: (size: 'small' | 'medium' | 'svg') => string;
+}
+
 /** Покупки Яндекс Игр (TZ §J.6.1) — срез, используемый игрой. */
 export interface YandexPayments {
   purchase(options: { id: string }): Promise<{ productID: string; purchaseToken?: string }>;
   consumePurchase(token: string): Promise<void>;
   getPurchases(): Promise<{ productID: string; purchaseToken?: string }[]>;
-  /** Каталог SKU с названиями/иконками портальной валюты (требование 1.13.2). */
-  getCatalog?(): Promise<Array<{ id: string; title?: string; description?: string; imageURI?: string; price?: string; priceValue?: string; priceCurrencyImage?: string; priceCurrencyCode?: string }>>;
+  /** Каталог товаров Yandex Games (SDK purchases API, §J.6.1). */
+  getCatalog?(): Promise<YandexCatalogProduct[]>;
 }
 
 /** Скрипт SDK лежит в архиве игры (public/vendor → dist/vendor). */

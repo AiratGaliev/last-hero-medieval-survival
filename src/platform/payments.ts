@@ -15,7 +15,7 @@
 // заглушка. В production локальная выдача запрещена: отсутствие платежей
 // на платформе не должно превращать покупку в бесплатное начисление.
 
-import { getSdk, isMockMode, isOnYandex, type YandexPayments } from './sdk';
+import { getSdk, isMockMode, isOnYandex, type YandexCatalogProduct, type YandexPayments } from './sdk';
 import { grantSku, showcaseUnlocked } from '../game/meta';
 import { track } from './analytics';
 
@@ -175,19 +175,66 @@ function markPurchasedOnce(sku: string): void {
   }
 }
 
+export interface CatalogProduct {
+  id: string;
+  title?: string;
+  description?: string;
+  imageURI?: string;
+  price?: string;
+  priceValue?: string;
+  priceCurrencyCode?: string;
+  priceCurrencyImage?: string;
+}
+
+/** Accept only HTTP(S) images from SDK; resolve relative URIs against the game origin. */
+function safeCatalogImageUri(uri: string | undefined): string | undefined {
+  if (!uri?.trim() || typeof window === 'undefined') return undefined;
+  try {
+    const parsed = new URL(uri, window.location.href);
+    if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') return undefined;
+    return parsed.href;
+  } catch {
+    return undefined;
+  }
+}
+
 /**
- * Каталог из SDK: названия, описания и иконка портальной валюты берутся
- * только отсюда (требование 1.13.2). Вне Яндекса — пусто, витрина рисует
- * цены в условных единицах.
+ * Load and normalize the official SDK catalog. Empty/error results stay empty so
+ * the platform store can fail closed rather than showing fictional local prices.
  */
-export async function fetchCatalog(): Promise<Array<{ id: string; title?: string; description?: string; imageURI?: string; price?: string; priceCurrencyImage?: string }>> {
+export async function fetchCatalog(): Promise<CatalogProduct[]> {
   const sdk = getSdk();
   if (!payments && sdk?.getPayments && isOnYandex()) {
     try { payments = await sdk.getPayments({ signed: false }); } catch { payments = null; }
   }
   if (!payments?.getCatalog) return [];
+
   try {
-    return await payments.getCatalog();
+    const products = await payments.getCatalog();
+    if (!Array.isArray(products)) return [];
+    return products.flatMap((product: YandexCatalogProduct) => {
+      if (!product || typeof product.id !== 'string' || !product.id.trim()) return [];
+      const priceValue = product.priceValue?.trim() || undefined;
+      const priceCurrencyCode = product.priceCurrencyCode?.trim() || undefined;
+      const price = product.price?.trim()
+        || (priceValue && priceCurrencyCode ? priceValue + ' ' + priceCurrencyCode : undefined);
+      let currencyImageUri: string | undefined;
+      try {
+        currencyImageUri = product.getPriceCurrencyImage?.('small');
+      } catch {
+        // Currency artwork is optional; the canonical price string is still useful.
+      }
+      return [{
+        id: product.id.trim(),
+        title: product.title?.trim() || undefined,
+        description: product.description?.trim() || undefined,
+        imageURI: safeCatalogImageUri(product.imageURI),
+        price,
+        priceValue,
+        priceCurrencyCode,
+        priceCurrencyImage: safeCatalogImageUri(currencyImageUri),
+      }];
+    });
   } catch {
     return [];
   }

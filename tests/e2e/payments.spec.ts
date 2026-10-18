@@ -3,13 +3,15 @@ import { expect, test, type Page } from '@playwright/test';
 const startupTimeout = 30_000;
 
 type PaymentMode = 'missing' | 'reject' | 'success';
+type CatalogMode = 'valid' | 'empty' | 'error';
 
 async function bootWithYandexPayments(
   page: Page,
   mode: PaymentMode,
   consumeFails = false,
+  catalogMode: CatalogMode = 'empty',
 ): Promise<void> {
-  await page.addInitScript(({ paymentMode, failConsume }) => {
+  await page.addInitScript(({ paymentMode, failConsume, catalogMode: configuredCatalogMode }) => {
     localStorage.setItem('tss-meta2', JSON.stringify({
       matchesPlayed: 5,
       crowns: 42,
@@ -18,9 +20,11 @@ async function bootWithYandexPayments(
 
     const probe = window as unknown as {
       __paymentProbe: { purchaseCalls: number; consumeCalls: number };
+      __catalogProbe: { currencyImageSizes: string[] };
       YaGames: { init: () => Promise<unknown> };
     };
     probe.__paymentProbe = { purchaseCalls: 0, consumeCalls: 0 };
+    probe.__catalogProbe = { currencyImageSizes: [] };
 
     const payments = {
       purchase: async ({ id }: { id: string }) => {
@@ -33,7 +37,23 @@ async function bootWithYandexPayments(
         if (failConsume) throw new Error('QA consume failure');
       },
       getPurchases: async () => [],
-      getCatalog: async () => [],
+      getCatalog: async () => {
+        if (configuredCatalogMode === 'error') throw new Error('QA catalog failure');
+        if (configuredCatalogMode !== 'valid') return [];
+        return [{
+          id: 'crowns_s',
+          title: 'SDK Crown Pack',
+          description: 'Description supplied by the platform catalog',
+          imageURI: '/src/assets/game/gem-gold.png',
+          price: '123 TST',
+          priceValue: '123',
+          priceCurrencyCode: 'TST',
+          getPriceCurrencyImage: (size: 'small' | 'medium' | 'svg') => {
+            probe.__catalogProbe.currencyImageSizes.push(size);
+            return '/src/assets/game/gem-gold.png';
+          },
+        }];
+      },
     };
 
     const sdk: Record<string, unknown> = {
@@ -84,9 +104,9 @@ async function bootWithYandexPayments(
       sdk.getPayments = async () => payments;
     }
     probe.YaGames = { init: async () => sdk };
-  }, { paymentMode: mode, failConsume: consumeFails });
+  }, { paymentMode: mode, failConsume: consumeFails, catalogMode });
 
-  await page.goto('/');
+  await page.goto('/?lang=en');
   await expect(page.locator('#game canvas')).toBeVisible({ timeout: startupTimeout });
   await expect(page.locator('#boot')).toHaveCount(0, { timeout: startupTimeout });
 }
@@ -193,4 +213,97 @@ test('the explicit Yandex mock mode grants locally only in the dev build', async
   expect(result.result).toEqual({ ok: true });
   expect(result.afterCrowns).toBeGreaterThan(result.beforeCrowns);
   expect(result.afterPurchased).toContain('crowns_s');
+});
+
+
+type ShopSceneForTest = {
+  scene: { launch: (key: string, data?: { tab: string }) => void };
+  sys?: { displayList: { list: Array<ShopDisplayObject> } };
+};
+type ShopDisplayObject = {
+  type?: string;
+  text?: string;
+  list?: ShopDisplayObject[];
+  texture?: { key?: string };
+};
+type GameWithShop = {
+  scene: {
+    isActive: (key: string) => boolean;
+    getScene: (key: string) => ShopSceneForTest;
+  };
+};
+
+async function openCrownsTab(page: Page): Promise<void> {
+  await page.evaluate(() => {
+    const game = (window as unknown as { __tss?: GameWithShop }).__tss;
+    if (!game) throw new Error('Phaser game is not available');
+    game.scene.getScene('Menu').scene.launch('Shop', { tab: 'crowns' });
+  });
+  await expect.poll(() => page.evaluate(() => {
+    const game = (window as unknown as { __tss?: GameWithShop }).__tss;
+    return Boolean(game && game.scene.isActive('Shop'));
+  }), { timeout: startupTimeout }).toBe(true);
+}
+
+async function shopSnapshot(page: Page): Promise<{ texts: string[]; catalogTextures: string[] }> {
+  return page.evaluate(() => {
+    const game = (window as unknown as { __tss?: GameWithShop }).__tss;
+    if (!game || !game.scene.isActive('Shop')) return { texts: [], catalogTextures: [] };
+    const scene = game.scene.getScene('Shop');
+    if (!scene.sys) return { texts: [], catalogTextures: [] };
+    const objects: ShopDisplayObject[] = [];
+    const visit = (items: ShopDisplayObject[]): void => {
+      for (const item of items) {
+        objects.push(item);
+        if (Array.isArray(item.list)) visit(item.list);
+      }
+    };
+    visit(scene.sys.displayList.list);
+    return {
+      texts: objects.filter((item) => item.type === 'Text' && typeof item.text === 'string')
+        .map((item) => item.text as string),
+      catalogTextures: objects.filter((item) => item.type === 'Image' && item.texture?.key?.startsWith('catalog-'))
+        .map((item) => item.texture?.key as string),
+    };
+  });
+}
+
+test('shop displays product details and currency artwork from the SDK catalog', async ({ page }) => {
+  await bootWithYandexPayments(page, 'success', false, 'valid');
+  await openCrownsTab(page);
+
+  await expect.poll(async () => (await shopSnapshot(page)).texts).toContain('SDK Crown Pack');
+  const snapshot = await shopSnapshot(page);
+  expect(snapshot.texts).toContain('Description supplied by the platform catalog');
+  expect(snapshot.texts).toContain('123 TST');
+  expect(snapshot.texts).toContain('BUY');
+  expect(snapshot.catalogTextures.length).toBeGreaterThanOrEqual(2);
+
+  const currencyImageSizes = await page.evaluate(() => (
+    (window as unknown as { __catalogProbe: { currencyImageSizes: string[] } }).__catalogProbe.currencyImageSizes
+  ));
+  expect(currencyImageSizes).toEqual(['small']);
+});
+
+test('an empty platform catalog never falls back to fictional local SKU prices', async ({ page }) => {
+  await bootWithYandexPayments(page, 'success', false, 'empty');
+  await openCrownsTab(page);
+
+  await expect.poll(async () => (await shopSnapshot(page)).texts)
+    .toContain('Purchases are temporarily unavailable. Please try again later.');
+  const texts = (await shopSnapshot(page)).texts;
+  expect(texts).not.toContain('~49');
+  expect(texts).not.toContain('90 crowns');
+  expect(texts).not.toContain('SDK Crown Pack');
+});
+
+test('a failed platform catalog request keeps IAP items unavailable without crashing the scene', async ({ page }) => {
+  const pageErrors: string[] = [];
+  page.on('pageerror', (error) => pageErrors.push(error.message));
+  await bootWithYandexPayments(page, 'success', false, 'error');
+  await openCrownsTab(page);
+
+  await expect.poll(async () => (await shopSnapshot(page)).texts)
+    .toContain('Purchases are temporarily unavailable. Please try again later.');
+  expect(pageErrors).toEqual([]);
 });

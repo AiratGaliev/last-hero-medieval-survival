@@ -888,6 +888,9 @@ export const en: Record<TranslationKey, string> = {
 
   'store.title': 'CROWNS',
   'store.locked': 'The showcase opens after your 5th match',
+  'store.catalogLoading': 'Loading purchase catalog…',
+  'store.catalogUnavailable': 'Purchases are temporarily unavailable. Please try again later.',
+  'store.buy': 'BUY',
   'store.crowns_s': '90 crowns',
   'store.crowns_m': '500 crowns (+11%)',
   'store.crowns_l': '1,100 crowns (+22%)',
