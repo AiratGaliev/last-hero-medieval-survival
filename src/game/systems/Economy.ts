@@ -482,12 +482,14 @@ export class Economy extends Phaser.Events.EventEmitter {
 
   /** Дополнительные пятна домов (§H.16 «Шестое пятно», §H.12 — +4 дома). */
   private extraSpots(): Array<{ kind: BuildingKind; dx: number; dy: number }> {
+    // Дополнительные пятна согласованы с базовыми BUILD_SPOTS: бонусы
+    // должны расширять поселение, а не ставить дома поверх крупных зданий.
     const pts: Array<{ dx: number; dy: number }> = [
-      { dx: -380, dy: 260 },
-      { dx: -440, dy: -100 },
-      { dx: 500, dy: 180 },
-      { dx: 160, dy: -320 },
-      { dx: -600, dy: 140 },
+      { dx: -420, dy: -330 },
+      { dx: 350, dy: -350 },
+      { dx: 500, dy: 500 },
+      { dx: -250, dy: -420 },
+      { dx: 580, dy: 300 },
     ];
     const out: Array<{ kind: BuildingKind; dx: number; dy: number }> = [];
     for (let i = 0; i < this.tune.extraHouseSpots && i < pts.length; i++) {
