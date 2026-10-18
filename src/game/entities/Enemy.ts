@@ -162,6 +162,14 @@ export class Enemy extends Phaser.Physics.Arcade.Sprite {
    *  ( Phaser молча игнорирует play() и не присылает animationcomplete )
    *  оставляла бы `lastAnim` залипшим навсегда: существо переставало
    *  переключать run/idle и ездило в бегущем цикле стоя на месте. */
+  /** Зафиксировать циклическую анимацию текущей AI-фазы до явного перехода. */
+  private playLoop(key: string): void {
+    if (!this.scene.anims.exists(key)) return;
+    if (this.lastAnim === key && this.anims.currentAnim?.key === key) return;
+    this.lastAnim = key;
+    this.play(key, true);
+  }
+
   private playOnce(key: string): void {
     if (!this.scene.anims.exists(key)) return;
     this.lastAnim = key;
@@ -352,6 +360,13 @@ export class Enemy extends Phaser.Physics.Arcade.Sprite {
   preUpdate(time: number, delta: number): void {
     super.preUpdate(time, delta);
     if (!this.active) return;
+    // Умерший босс остаётся в display list только на время финальной анимации.
+    // super.preUpdate уже продвинул кадр; больше AI и физика не должны двигать спрайт.
+    if (this.dead) {
+      const body = this.body as Phaser.Physics.Arcade.Body | null;
+      body?.setVelocity(0, 0);
+      return;
+    }
 
     // Хитстоп: короткая заморозка врагов (реестр пишет GameScene)
     const freezeUntil = (this.scene.registry.get('tss-freeze') as number | undefined) ?? 0;
@@ -369,6 +384,7 @@ export class Enemy extends Phaser.Physics.Arcade.Sprite {
       const groundOff = this.def.groundY - this.def.frameW / 2;
       this.shadow.setPosition(this.x, this.y + groundOff * this.def.scale);
       this.setDepth(DEPTH.ENTITY_BASE + this.y);
+      if (this.def.isElite || this.def.isBoss) this.drawHpBar();
       return;
     }
 
@@ -490,14 +506,20 @@ export class Enemy extends Phaser.Physics.Arcade.Sprite {
         switch (this.aiState) {
           case 'chase':
             vx = nx * this.speed; vy = ny * this.speed;
-            if (dist < 380) { this.aiState = 'windup'; this.stateTimer = 480; }
+            if (dist < 380) {
+              this.aiState = 'windup';
+              this.stateTimer = 480;
+              this.playLoop(`${this.kind}-idle`);
+            }
             break;
           case 'windup':
             this.setTint(0xff9999);
             if (this.stateTimer <= 0) {
               this.clearTint();
               this.chargeDirX = nx; this.chargeDirY = ny;
-              this.aiState = 'charge'; this.stateTimer = 560;
+              this.aiState = 'charge';
+              this.stateTimer = 560;
+              this.playOnce(`${this.kind}-atk`);
             }
             break;
           case 'charge':
@@ -532,6 +554,7 @@ export class Enemy extends Phaser.Physics.Arcade.Sprite {
           if (dist < 115) {
             this.aiState = 'windup';
             this.stateTimer = 620;
+            this.playOnce(`${this.kind}-atk`);
             audio.play('slam');
           }
         }
@@ -545,15 +568,21 @@ export class Enemy extends Phaser.Physics.Arcade.Sprite {
           case 'chase':
             vx = nx * this.speed; vy = ny * this.speed;
             this.atkCd -= delta;
-            if (dist < 430) { this.aiState = 'windup'; this.stateTimer = 550; }
+            if (dist < 430) {
+              this.aiState = 'windup';
+              this.stateTimer = 550;
+              this.playLoop(`${this.kind}-guard`);
+            }
             break;
           case 'windup':
-            // телеграф: дрожь и красный tint
+            // Телеграф держится весь замах: циклический guard не обрывает состояние.
             this.setTint(0xff8888);
             if (this.stateTimer <= 0) {
               this.clearTint();
               this.chargeDirX = nx; this.chargeDirY = ny;
-              this.aiState = 'charge'; this.stateTimer = 700;
+              this.aiState = 'charge';
+              this.stateTimer = 700;
+              this.playOnce(`${this.kind}-atk`);
             }
             break;
           case 'charge':
@@ -623,6 +652,8 @@ export class Enemy extends Phaser.Physics.Arcade.Sprite {
     const groundOff = this.def.groundY - this.def.frameW / 2;
     this.shadow.setPosition(this.x, this.y + groundOff * this.def.scale);
     this.setDepth(DEPTH.ENTITY_BASE + this.y);
+    // HP-бар — world-space Graphics, перерисовываем его после каждого смещения.
+    if (this.def.isElite || this.def.isBoss) this.drawHpBar();
   }
 
   // ---- Фазы босса (Огр-разрушитель) ----
@@ -650,7 +681,9 @@ export class Enemy extends Phaser.Physics.Arcade.Sprite {
           this.aiState = 'windup';
           this.stateTimer = 900;
           this.setTint(0xff9090);
-          this.playOnce('boss-windup');
+          // Замах длится 900 мс, поэтому короткий пятикадровый лист должен
+          // циклически держать телеграф до фактического начала атаки.
+          this.playLoop('boss-windup');
         }
         break;
       case 'windup':
