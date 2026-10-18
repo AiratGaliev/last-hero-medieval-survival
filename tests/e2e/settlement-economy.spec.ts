@@ -43,6 +43,7 @@ type BuildingRuntime = {
   y: number;
   hp: number;
   maxHp: number;
+  alpha: number;
   alive: boolean;
   underConstruction: boolean;
   finishConstruction(): void;
