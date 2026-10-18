@@ -18,6 +18,7 @@ import { Building } from '../entities/Building';
 import { ResourceNode } from '../entities/ResourceNode';
 import { Economy } from '../systems/Economy';
 import { Settlement, type LoseCause } from '../systems/Settlement';
+import { calculateSiegeSpawnAngles } from '../systems/SiegeFormation';
 import { Succession } from '../systems/Succession';
 import { Speedup } from '../systems/Speedup';
 import { Hints } from '../systems/Hints';
@@ -1664,12 +1665,15 @@ private ordersUnlocked(): boolean {
     audio.play('boss');
     this.cameras.main.flash(200, 190, 40, 30, false);
     const enemies: Enemy[] = [];
-    // Отряд приходит СТОРОНОЙ к базе: точки на окружности вокруг замка
+    // Обычные осады подходят с одной стороны; «Клещи» делят отряд
+    // на два противоположных фланга (TZ §E.4.3).
     const baseA = Math.random() * Math.PI * 2;
+    const unitCount = profile.squad.reduce((total, part) => total + part.n, 0);
+    const spawnAngles = calculateSiegeSpawnAngles(profile.name, unitCount, baseA);
     let unitIdx = 0;
     for (const part of profile.squad) {
       for (let i = 0; i < part.n; i++) {
-        const a = baseA + (unitIdx % 8) * 0.28;
+        const a = spawnAngles[unitIdx] ?? baseA;
         unitIdx++;
         const r = 760 + Math.random() * 220;
         const x = Phaser.Math.Clamp(this.castleX + Math.cos(a) * r, WORLD.GRASS_MARGIN + 60, WORLD.SIZE - WORLD.GRASS_MARGIN - 60);
