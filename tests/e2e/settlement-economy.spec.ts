@@ -13,6 +13,7 @@ type PawnRuntime = {
   carrying: string | null;
   carriedAmount: number;
   taskProgress: number;
+  anims: { currentAnim?: { key: string } | null };
   cooldown: number;
   order: string | null;
   workNode: ResourceNodeRuntime | BuildingRuntime | null;
@@ -390,6 +391,8 @@ test('phases E-F: construction uses the approached spot and repair costs are gua
     builder.workNode = null;
     economy.pawnAI.updateCivilian(builder, 16, scene.time.now);
     const houseStarted = economy.buildings.some(b => b.kind === 'house' && !existing.has(b));
+    economy.pawnAI.updateCivilian(builder, 16, scene.time.now + 16);
+    const houseBuildAnimation = builder.anims.currentAnim?.key ?? null;
     const house = economy.buildings.find(b => !existing.has(b) && b.kind === 'house');
     if (!house) throw new Error('Started house was not registered');
 
@@ -439,6 +442,7 @@ test('phases E-F: construction uses the approached spot and repair costs are gua
     const repairFinished = economy.finishRepairInstant();
     return {
       houseStarted,
+      houseBuildAnimation,
       houseCost,
       houseX: house.x,
       houseY: house.y,
@@ -470,6 +474,7 @@ test('phases E-F: construction uses the approached spot and repair costs are gua
   });
 
   expect(report.houseStarted).toBe(true);
+  expect(report.houseBuildAnimation).toBe('pawny-work-hammer');
   expect(report.houseCost).toBe(30);
   expect(report.houseX).toBe(report.expectedHouseX);
   expect(report.houseY).toBe(report.expectedHouseY);
