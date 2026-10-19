@@ -315,6 +315,8 @@ export const DIFFICULTIES: Record<DifficultyId, DifficultyDef> = {
 export type EnemyKind =
   | 'goblin' | 'thief' | 'gnoll' | 'skull' | 'shaman'
   | 'pig-rider' | 'bomb-fish'
+  | 'spider' | 'snake' | 'lizard' | 'turtle'
+  | 'gnome' | 'panda' | 'spear-goblin' | 'harpoon-shark' | 'paddle-shark'
   | 'bear' | 'minotaur' | 'boss';
 
 export interface EnemyDef {
@@ -404,9 +406,58 @@ export const ENEMIES: Record<EnemyKind, EnemyDef> = {
     hp: 18, speed: 108, damage: 4, xp: 2, gem: 'gem-green',
     explodeDmg: 24, explodeRadius: 150,
   },
+  // Резервный набор раунда 2: эти существа могут входить в ежедневный пул.
+  // Ориентация, хитбоксы и высота стоп заданы на каждый конкретный лист (§C.2).
+  spider: {
+    kind: 'spider', name: t('enemy.spider.name'), frameW: 192, scale: 0.5,
+    body: { cx: 96, cy: 122, r: 18 }, groundY: 140,
+    hp: 20, speed: 96, damage: 7, xp: 2, gem: 'gem-blue',
+  },
+  snake: {
+    kind: 'snake', name: t('enemy.snake.name'), frameW: 192, scale: 0.52,
+    body: { cx: 96, cy: 125, r: 16 }, groundY: 143,
+    hp: 16, speed: 124, damage: 8, xp: 2, gem: 'gem-blue',
+  },
+  lizard: {
+    kind: 'lizard', name: t('enemy.lizard.name'), frameW: 192, scale: 0.56,
+    body: { cx: 96, cy: 124, r: 20 }, groundY: 143,
+    hp: 32, speed: 78, damage: 12, xp: 4, gem: 'gem-green',
+  },
+  turtle: {
+    kind: 'turtle', name: t('enemy.turtle.name'), frameW: 320, scale: 0.6,
+    body: { cx: 160, cy: 210, r: 29 }, groundY: 239,
+    hp: 90, speed: 38, damage: 16, xp: 8, gem: 'gem-green',
+    armorFront: 0.2,
+  },
+  gnome: {
+    kind: 'gnome', name: t('enemy.gnome.name'), frameW: 192, scale: 0.53,
+    body: { cx: 94, cy: 122, r: 18 }, groundY: 141, facesRight: false,
+    hp: 18, speed: 112, damage: 7, xp: 2, gem: 'gem-blue',
+  },
+  panda: {
+    kind: 'panda', name: t('enemy.panda.name'), frameW: 256, scale: 0.82,
+    body: { cx: 128, cy: 160, r: 30 }, groundY: 188, facesRight: false,
+    hp: 75, speed: 65, damage: 15, xp: 8, gem: 'gem-green',
+    armorFront: 0.1,
+  },
+  'spear-goblin': {
+    kind: 'spear-goblin', name: t('enemy.spearGoblin.name'), frameW: 256, scale: 0.55,
+    body: { cx: 128, cy: 145, r: 27 }, groundY: 167, facesRight: false,
+    hp: 38, speed: 86, damage: 13, xp: 5, gem: 'gem-green',
+  },
+  'harpoon-shark': {
+    kind: 'harpoon-shark', name: t('enemy.harpoonShark.name'), frameW: 192, scale: 0.58,
+    body: { cx: 96, cy: 136, r: 23 }, groundY: 155, facesRight: false,
+    hp: 42, speed: 78, damage: 12, xp: 5, gem: 'gem-green',
+    buildingDmg: 2,
+  },
+  'paddle-shark': {
+    kind: 'paddle-shark', name: t('enemy.paddleShark.name'), frameW: 192, scale: 0.5,
+    body: { cx: 96, cy: 130, r: 22 }, groundY: 151, facesRight: false,
+    hp: 30, speed: 100, damage: 10, xp: 4, gem: 'gem-green',
+  },
   bear: {
-    // Пещерный медведь (элита 5:00). `facesRight` не нужен: лист, как и все
-    // остальные существа, нарисован вправо (дефолт Enemy.faceDir)
+    // Пещерный медведь (элита 5:00).
     kind: 'bear', name: t('enemy.bear.name'), frameW: 256, scale: 1.1,
     body: { cx: 131, cy: 150, r: 34 }, groundY: 178, headOffset: 49,
     hp: 400, speed: 84, damage: 24, xp: 25, gem: 'gem-red', isElite: true,
@@ -517,16 +568,63 @@ const SPAWN_WEIGHTS: Array<{ from: number; weights: Partial<Record<EnemyKind, nu
   { from: 11, weights: { goblin: 4, thief: 1.6, gnoll: 2.4, skull: 2.4, shaman: 2.4, 'pig-rider': 3.2, 'bomb-fish': 4 } },
 ];
 
-export function pickRegularKind(minute: number, rng: () => number): EnemyKind {
-  let w = SPAWN_WEIGHTS[0].weights;
+/** Набор регулярных врагов, доступный в ежедневном варианте раунда 2. */
+const DAILY_POOL_CANDIDATES: EnemyKind[] = [
+  'goblin', 'thief', 'gnoll', 'skull', 'shaman', 'pig-rider', 'bomb-fish',
+  'spider', 'snake', 'lizard', 'turtle', 'gnome', 'panda', 'spear-goblin',
+  'harpoon-shark', 'paddle-shark',
+];
+
+/**
+ * Стабильный поднабор врагов дня. Функция намеренно не использует Math.random:
+ * одна дата/seed должна давать один и тот же набор во всех браузерах и прогонах.
+ * Три базовых вида сохраняют читаемую кривую сложности, ещё шесть ротируются.
+ */
+export function pickDailyPool(seed: string): EnemyKind[] {
+  let state = 2166136261;
+  for (let i = 0; i < seed.length; i++) {
+    state ^= seed.charCodeAt(i);
+    state = Math.imul(state, 16777619);
+  }
+  const required: EnemyKind[] = ['goblin', 'thief', 'gnoll'];
+  const optional = DAILY_POOL_CANDIDATES.filter((kind) => !required.includes(kind));
+  for (let i = optional.length - 1; i > 0; i--) {
+    // xorshift32 даёт детерминированный Fisher–Yates без зависимости от среды.
+    state ^= state << 13;
+    state ^= state >>> 17;
+    state ^= state << 5;
+    const j = (state >>> 0) % (i + 1);
+    [optional[i], optional[j]] = [optional[j], optional[i]];
+  }
+  return [...required, ...optional.slice(0, 6)];
+}
+
+export function pickRegularKind(
+  minute: number,
+  rng: () => number,
+  allowedPool?: readonly EnemyKind[],
+): EnemyKind {
+  let source = SPAWN_WEIGHTS[0].weights;
   for (const row of SPAWN_WEIGHTS) {
-    if (minute >= row.from) w = row.weights;
+    if (minute >= row.from) source = row.weights;
+  }
+  // В обычном ране используется исходная кривая без изменений. В ежедневном
+  // ране отфильтровываем её по пулу и даём резервным видам небольшой вес,
+  // чтобы новые виды действительно встречались, а не оставались только в кодексе.
+  let weights: Partial<Record<EnemyKind, number>> = source;
+  if (allowedPool?.length) {
+    const filtered: Partial<Record<EnemyKind, number>> = {};
+    for (const kind of allowedPool) {
+      if (ENEMIES[kind].isElite || ENEMIES[kind].isBoss) continue;
+      filtered[kind] = source[kind] ?? 1;
+    }
+    if (Object.keys(filtered).length > 0) weights = filtered;
   }
   let total = 0;
-  for (const k in w) total += w[k];
+  for (const k in weights) total += weights[k] ?? 0;
   let r = rng() * total;
-  for (const k in w) {
-    r -= w[k];
+  for (const k in weights) {
+    r -= weights[k] ?? 0;
     if (r < 0) return k as EnemyKind;
   }
   return 'goblin';
