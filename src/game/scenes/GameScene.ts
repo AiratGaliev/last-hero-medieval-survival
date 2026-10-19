@@ -1259,6 +1259,7 @@ export class GameScene extends Phaser.Scene {
       esc: Phaser.Input.Keyboard.KeyCodes.ESC,
       p: Phaser.Input.Keyboard.KeyCodes.P,
       m: Phaser.Input.Keyboard.KeyCodes.M,
+      shift: Phaser.Input.Keyboard.KeyCodes.SHIFT,
     }) as Keys;
     kb.addCapture('UP,DOWN,LEFT,RIGHT,SPACE');
     this.joystick = new Joystick(this);
@@ -1275,8 +1276,10 @@ export class GameScene extends Phaser.Scene {
       ));
       if (hitsOrderMenu) return;
       if (this.gameEnded || this.overlayOpen) return;
-      const shift = !pointer.wasTouch
-        && ((pointer.event as unknown as { shiftKey?: boolean })?.shiftKey === true);
+      // Нативный MouseEvent — основной источник, Phaser Keyboard — резерв:
+      // часть браузеров/сценариев передаёт pointer.event уже после keyup Shift.
+      const nativeShift = (pointer.event as unknown as { shiftKey?: boolean })?.shiftKey === true;
+      const shift = !pointer.wasTouch && (nativeShift || this.keys.shift.isDown);
 
       // Повторный Shift+ЛКМ закрывает меню. Обычное удержание мыши не запускает
       // long-press: на desktop требуется явный Shift.

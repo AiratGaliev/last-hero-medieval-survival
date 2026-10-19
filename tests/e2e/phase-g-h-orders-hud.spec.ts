@@ -63,11 +63,28 @@ type GameSceneRuntime = {
     preRender(): unknown;
     getWorldPoint(x: number, y: number): { x: number; y: number };
   } };
-  player: { x: number; y: number };
+  player: { x: number; y: number; hp: number; maxHp: number };
+  input: { on(event: string, callback: (pointer: {
+    wasTouch: boolean; event: Event; x: number; y: number; worldX: number; worldY: number;
+  }, currentlyOver?: Array<{ type: string; __tssOrderMenuTarget?: boolean }>) => void): unknown };
+  overlayOpen: boolean;
+  gameEnded: boolean;
+  victoryPending: boolean;
+  defeatPending: boolean;
   hintOverlayPaused: boolean;
 };
 type PhaserRuntime = { scene: { getScene(key: string): unknown; isActive(key: string): boolean } };
-type RuntimeWindow = Window & { __tss?: PhaserRuntime };
+type PointerDiagnostic = {
+  wasTouch: boolean;
+  shiftKey: boolean;
+  eventType: string;
+  x: number;
+  y: number;
+  worldX: number;
+  worldY: number;
+  over: Array<{ type: string; marked: boolean }>;
+};
+type RuntimeWindow = Window & { __tss?: PhaserRuntime; __tssLastPointerDown?: PointerDiagnostic };
 
 const startupTimeout = 30_000;
 
@@ -123,6 +140,24 @@ async function preparePawn(page: Page): Promise<Point> {
     if (!game) throw new Error('Phaser runtime is unavailable');
     const scene = game.scene.getScene('Game') as GameSceneRuntime;
     scene.ordersUnlocked = () => true;
+    // Изолируем ввод от смерти/модального overlay, пока тест разбирает меню.
+    scene.overlayOpen = false;
+    scene.gameEnded = false;
+    scene.victoryPending = false;
+    scene.defeatPending = false;
+    scene.player.hp = scene.player.maxHp;
+    scene.input.on('pointerdown', (pointer, currentlyOver = []) => {
+      (window as RuntimeWindow).__tssLastPointerDown = {
+        wasTouch: pointer.wasTouch,
+        shiftKey: (pointer.event as MouseEvent).shiftKey === true,
+        eventType: pointer.event.type,
+        x: pointer.x, y: pointer.y, worldX: pointer.worldX, worldY: pointer.worldY,
+        over: currentlyOver.map(target => ({
+          type: target.type,
+          marked: target.__tssOrderMenuTarget === true,
+        })),
+      };
+    });
     const pawn = scene.economy.pawns.find(p => p.kind === 'collector');
     if (!pawn) throw new Error('No collector pawn in the initial settlement');
     pawn.order = null;
@@ -166,7 +201,18 @@ test('phase G: desktop menu is explicit, closable and BUILD order ends after con
   await page.mouse.up();
 
   await page.mouse.click(point.x, point.y, { modifiers: ['Shift'] });
-  await expect.poll(isOpen).toBe(true);
+  const initialOpenSnapshot = await page.evaluate(() => {
+    const game = (window as RuntimeWindow).__tss!;
+    const scene = game.scene.getScene('Game') as GameSceneRuntime;
+    return {
+      open: scene.orderMenu.isOpen,
+      overlayOpen: scene.overlayOpen,
+      gameEnded: scene.gameEnded,
+      houses: scene.economy.pawns.length,
+      pointer: (window as RuntimeWindow).__tssLastPointerDown ?? null,
+    };
+  });
+  expect(initialOpenSnapshot.open, JSON.stringify(initialOpenSnapshot)).toBe(true);
   const entries = await page.evaluate(() => {
     const game = (window as RuntimeWindow).__tss!;
     const scene = game.scene.getScene('Game') as GameSceneRuntime;
