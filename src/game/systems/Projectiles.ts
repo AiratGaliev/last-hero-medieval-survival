@@ -27,6 +27,8 @@ interface EnemyShot extends Phaser.Physics.Arcade.Sprite {
   targetB?: { x: number; y: number } | null;
   fire?: boolean;
   onArrive?: (s: EnemyShot) => void;
+  /** Переиспользуемые спрайты пламени позади огненной стрелы. */
+  trailSprites?: Phaser.GameObjects.Sprite[];
 }
 
 interface Bomb {
@@ -67,6 +69,8 @@ export class Projectiles {
   private spearPool: Proj[] = [];
   private knifePool: Proj[] = [];
   private enemyShotPool: EnemyShot[] = [];
+  /** Осада: отдельный пул стрелы и повторно используемый шлейф пламени (§K). */
+  private fireArrowPool: EnemyShot[] = [];
   private friendlyArrowPool: Proj[] = [];
   private bombs: Bomb[] = [];
 
@@ -182,7 +186,7 @@ export class Projectiles {
     kind: EnemyShotKind, x: number, y: number, tx: number, ty: number,
     dmg: number, fire: boolean, onArrive: (s: EnemyShot) => void,
   ): void {
-    const p = this.acquireShot(kind);
+    const p = fire ? this.acquireFireArrow() : this.acquireShot(kind);
     if (!p) return;
     const cfg = ENEMY_SHOTS[kind];
     p.shotKind = kind;
@@ -192,13 +196,22 @@ export class Projectiles {
     p.setPosition(x, y);
     const a = Math.atan2(ty - y, tx - x);
     p.setVelocity(Math.cos(a) * cfg.speed, Math.sin(a) * cfg.speed);
+    p.setRotation(a);
     p.dmg = dmg;
     p.pierceLeft = 0;
     p.life = cfg.life;
     p.setDepth(DEPTH.PROJECTILE);
-    p.setScale(cfg.scale);
     const body = p.body as Phaser.Physics.Arcade.Body;
-    body.setSize(cfg.body, cfg.body, true);
+    if (fire) {
+      // Исходная разноцветная arrow.png не окрашивается tint-ом: она летит
+      // вместе со шлейфом частиц fire-01, как отдельный огненный снаряд.
+      p.setScale(0.7);
+      body.setSize(34, 10, true);
+      this.showFireTrail(p);
+    } else {
+      p.setScale(cfg.scale);
+      body.setSize(cfg.body, cfg.body, true);
+    }
     audio.play('shoot');
   }
 
@@ -299,12 +312,11 @@ export class Projectiles {
     for (const p of this.enemyShotPool) {
       if (!p.active) continue;
       p.life -= dtMs;
+      if (p.fire) this.updateFireTrail(p);
       if (p.targetB) {
         const d = Math.hypot(p.x - p.targetB.x, p.y - p.targetB.y);
         if (d < 48) {
           const cb = p.onArrive;
-          p.targetB = null;
-          p.onArrive = undefined;
           this.release(p as unknown as Proj);
           cb?.(p);
           continue;
@@ -366,6 +378,53 @@ export class Projectiles {
     return p;
   }
 
+  /** Получить огненную стрелу из отдельного ограниченного пула. */
+  private acquireFireArrow(): EnemyShot | null {
+    let p = this.fireArrowPool.find((shot) => !shot.active);
+    if (!p) {
+      if (!this.hasRoom) return null;
+      p = this.scene.physics.add.sprite(0, 0, 'arrow') as EnemyShot;
+      p.setActive(false).setVisible(false);
+      p.trailSprites = Array.from({ length: 3 }, (_, index) => {
+        const flame = this.scene.add.sprite(0, 0, 'fx-fire')
+          .setScale(0.36 - index * 0.04)
+          .setDepth(DEPTH.PROJECTILE - 1);
+        flame.setActive(false).setVisible(false);
+        return flame;
+      });
+      this.enemyShots.add(p);
+      this.fireArrowPool.push(p);
+    }
+    p.setActive(true).setVisible(true);
+    const body = p.body as Phaser.Physics.Arcade.Body;
+    body.enable = true;
+    body.setAllowGravity(false);
+    p.clearTint();
+    p.setTexture('arrow');
+    p.setScale(0.7);
+    p.setDepth(DEPTH.PROJECTILE);
+    for (const [index, flame] of (p.trailSprites ?? []).entries()) {
+      flame.setActive(true).setVisible(true).setAlpha(0.85 - index * 0.18);
+      flame.play('fire-arrow-trail', true);
+    }
+    return p;
+  }
+
+  /** Переставить частицы за стрелой по её текущему вектору скорости. */
+  private updateFireTrail(p: EnemyShot): void {
+    if (!p.active || !p.trailSprites?.length) return;
+    const velocity = (p.body as Phaser.Physics.Arcade.Body).velocity;
+    const angle = Math.atan2(velocity.y, velocity.x);
+    p.trailSprites.forEach((flame, index) => {
+      const distance = 20 + index * 17;
+      flame.setPosition(
+        p.x - Math.cos(angle) * distance,
+        p.y - Math.sin(angle) * distance,
+      );
+      flame.setRotation(angle);
+    });
+  }
+
   /** Урон по врагу от снаряда; true = снаряд исчерпал пробитие */
   consumePierce(p: Proj): boolean {
     p.pierceLeft -= 1;
@@ -380,6 +439,13 @@ export class Projectiles {
     p.setActive(false).setVisible(false);
     (p.body as Phaser.Physics.Arcade.Body).enable = false;
     (p.body as Phaser.Physics.Arcade.Body).stop();
+    const shot = p as unknown as EnemyShot;
+    shot.targetB = null;
+    shot.onArrive = undefined;
+    shot.fire = false;
+    for (const flame of shot.trailSprites ?? []) {
+      flame.setActive(false).setVisible(false);
+    }
   }
 
   releaseEnemyShot(p: Proj): void {
@@ -398,7 +464,8 @@ export class Projectiles {
    */
   get size(): number {
     return this.arrowPool.length + this.spearPool.length
-      + this.knifePool.length + this.enemyShotPool.length + this.friendlyArrowPool.length;
+      + this.knifePool.length + this.enemyShotPool.length
+      + this.fireArrowPool.length + this.friendlyArrowPool.length;
   }
 
   /** Есть ли свободный слот в общем пуле снарядов. */
@@ -407,7 +474,11 @@ export class Projectiles {
   }
 
   clear(): void {
-    const pools: Array<Array<Proj>> = [this.arrowPool, this.spearPool, this.knifePool, this.enemyShotPool as unknown as Proj[], this.friendlyArrowPool];
+    const pools: Array<Array<Proj>> = [
+      this.arrowPool, this.spearPool, this.knifePool,
+      this.enemyShotPool as unknown as Proj[],
+      this.fireArrowPool as unknown as Proj[], this.friendlyArrowPool,
+    ];
     const done = new Set<Phaser.GameObjects.GameObject>();
     for (const pool of pools) {
       for (const p of pool) {
