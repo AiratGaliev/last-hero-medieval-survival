@@ -134,6 +134,17 @@ async function startRun(page: Page, width = 1280, height = 720): Promise<void> {
   }), { timeout: 10_000 }).toBe(true);
 }
 
+async function shiftClick(page: Page, x: number, y: number): Promise<void> {
+  // Playwright Mouse.click не принимает modifiers; удерживаем Shift явно,
+  // чтобы Chromium действительно отправил mousedown с shiftKey=true.
+  await page.keyboard.down('Shift');
+  try {
+    await page.mouse.click(x, y);
+  } finally {
+    await page.keyboard.up('Shift');
+  }
+}
+
 async function preparePawn(page: Page): Promise<Point> {
   return page.evaluate(() => {
     const game = (window as RuntimeWindow).__tss;
@@ -200,7 +211,7 @@ test('phase G: desktop menu is explicit, closable and BUILD order ends after con
   expect(await isOpen()).toBe(false);
   await page.mouse.up();
 
-  await page.mouse.click(point.x, point.y, { modifiers: ['Shift'] });
+  await shiftClick(page, point.x, point.y);
   const initialOpenSnapshot = await page.evaluate(() => {
     const game = (window as RuntimeWindow).__tss!;
     const scene = game.scene.getScene('Game') as GameSceneRuntime;
@@ -231,15 +242,15 @@ test('phase G: desktop menu is explicit, closable and BUILD order ends after con
   await page.mouse.click(disabledPoint.x, disabledPoint.y);
   await expect.poll(isOpen).toBe(true);
 
-  await page.mouse.click(point.x, point.y, { modifiers: ['Shift'] });
+  await shiftClick(page, point.x, point.y);
   await expect.poll(isOpen).toBe(false);
-  await page.mouse.click(point.x, point.y, { modifiers: ['Shift'] });
+  await shiftClick(page, point.x, point.y);
   await expect.poll(isOpen).toBe(true);
   await page.keyboard.press('Escape');
   await expect.poll(isOpen).toBe(false);
   expect(await page.evaluate(() => (window as RuntimeWindow).__tss!.scene.isActive('Pause'))).toBe(false);
 
-  await page.mouse.click(point.x, point.y, { modifiers: ['Shift'] });
+  await shiftClick(page, point.x, point.y);
   // Кнопка «СТРОИТЬ» расположена справа от центра меню на 74 CSS px.
   const buildPoint = { x: point.x + 74, y: point.y };
   await page.mouse.click(buildPoint.x, buildPoint.y);
