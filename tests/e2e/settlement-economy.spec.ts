@@ -277,7 +277,11 @@ test('phase B: player can walk past a civilian without a blocking pawn collider'
   expect(start.playerSpeed).toBeGreaterThan(0);
 
   await page.keyboard.down('d');
-  await page.waitForTimeout(1_500);
+  // Start gap is 180 px, but the assertion requires crossing the pawn by 30 px.
+  // Scale the input hold by the actual player speed and keep 35% slack for frame cadence.
+  const requiredTravel = start.pawnX + 50 - start.playerStartX;
+  const traversalWaitMs = Math.ceil((requiredTravel / start.playerSpeed) * 1_000 * 1.35);
+  await page.waitForTimeout(traversalWaitMs);
   await page.keyboard.up('d');
 
   const result = await page.evaluate(() => {
