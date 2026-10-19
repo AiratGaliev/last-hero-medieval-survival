@@ -512,6 +512,12 @@ export class BootScene extends Phaser.Scene {
     this.once('fx-explosion2', 'fx-explosion2', 10, 16);
     this.once('fx-dust', 'fx-dust', 8, 14);
     this.once('fx-fire', 'fx-fire', 8, 12);
+    this.anims.create({
+      key: 'fire-arrow-trail',
+      frames: this.anims.generateFrameNumbers('fx-fire', { start: 0, end: 7 }),
+      frameRate: 14,
+      repeat: -1,
+    });
     this.once('fx-heal', 'fx-heal', 11, 12);
     this.sheet('fx-foam', 'fx-foam', 16, 8);
     this.sheet('fx-treasure', 'fx-treasure', 6, 10);
