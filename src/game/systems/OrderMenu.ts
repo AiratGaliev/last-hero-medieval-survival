@@ -41,9 +41,12 @@ export class OrderMenu {
     if (!this.ring || !this.ringOrigin) return 0;
     const k = Math.min(1, (now - this.ringStart) / durationMs);
     this.ring.clear();
-    this.ring.lineStyle(5, 0xffe9b0, 0.95);
+    const canvasWidth = this.scene.game.canvas.getBoundingClientRect().width;
+    const gameUnitsPerCssPx = this.scene.scale.width / Math.max(1, canvasWidth);
+    const uiScale = gameUnitsPerCssPx / Math.max(0.01, this.scene.cameras.main.zoom);
+    this.ring.lineStyle(5 * uiScale, 0xffe9b0, 0.95);
     this.ring.beginPath();
-    this.ring.arc(this.ringOrigin.x, this.ringOrigin.y, 34, -Math.PI / 2, -Math.PI / 2 + k * Math.PI * 2);
+    this.ring.arc(this.ringOrigin.x, this.ringOrigin.y, 34 * uiScale, -Math.PI / 2, -Math.PI / 2 + k * Math.PI * 2);
     this.ring.strokePath();
     return k;
   }
@@ -64,7 +67,10 @@ export class OrderMenu {
     this.close();
     this.pawn = pawn;
     const entries = this.entriesFor(pawn);
-    const R = 74;
+    const canvasWidth = this.scene.game.canvas.getBoundingClientRect().width;
+    const gameUnitsPerCssPx = this.scene.scale.width / Math.max(1, canvasWidth);
+    const uiScale = gameUnitsPerCssPx / Math.max(0.01, this.scene.cameras.main.zoom);
+    const R = 74 * uiScale;
     const container = this.scene.add.container(0, 0).setDepth(9450);
 
     // Затемнение-ловушка: клик мимо пунктов закрывает меню
@@ -78,7 +84,7 @@ export class OrderMenu {
       const a = -Math.PI / 2 + (i / entries.length) * Math.PI * 2;
       const ix = wx + Math.cos(a) * R;
       const iy = wy + Math.sin(a) * R;
-      const c = this.scene.add.container(ix, iy);
+      const c = this.scene.add.container(ix, iy).setScale(uiScale);
       // Круглая кнопка из набора Tiny Swords вместо нарисованного круга:
       // радиальное меню — часть интерфейса, и оно должно выглядеть так же,
       // как остальные кнопки игры.
@@ -98,15 +104,17 @@ export class OrderMenu {
           onPick(e.key);
           this.close();
         });
-        this.scene.tweens.add({ targets: c, scale: { from: 0.4, to: 1 }, duration: 130, ease: 'Back.easeOut' });
+        this.scene.tweens.add({ targets: c, scale: { from: 0.4 * uiScale, to: uiScale }, duration: 130, ease: 'Back.easeOut' });
       }
       items.push(c);
       container.add(c);
     });
 
     // Центральный крестик «закрыть»
-    const close = this.scene.add.circle(wx, wy, 18, 0x1a0f08, 0.9).setStrokeStyle(2, 0x8a6d3b).setInteractive({ useHandCursor: true });
-    const cross = this.scene.add.text(wx, wy, '✕', { fontFamily: FONT, fontSize: '14px', color: '#ffe9b0' }).setOrigin(0.5);
+    const close = this.scene.add.circle(wx, wy, 18, 0x1a0f08, 0.9)
+      .setStrokeStyle(2, 0x8a6d3b).setInteractive({ useHandCursor: true }).setScale(uiScale);
+    const cross = this.scene.add.text(wx, wy, '✕', { fontFamily: FONT, fontSize: '14px', color: '#ffe9b0' })
+      .setOrigin(0.5).setScale(uiScale);
     close.on('pointerdown', () => { this.close(); onClose?.(); });
     container.add([close, cross]);
 
@@ -118,7 +126,10 @@ export class OrderMenu {
   openCustom(entries: OrderMenuEntry[], wx: number, wy: number, onPick: (key: string) => void): void {
     this.close();
     this.pawn = null;
-    const R = 74;
+    const canvasWidth = this.scene.game.canvas.getBoundingClientRect().width;
+    const gameUnitsPerCssPx = this.scene.scale.width / Math.max(1, canvasWidth);
+    const uiScale = gameUnitsPerCssPx / Math.max(0.01, this.scene.cameras.main.zoom);
+    const R = 74 * uiScale;
     const container = this.scene.add.container(0, 0).setDepth(9450);
     const veil = this.scene.add.rectangle(0, 0, this.scene.scale.width * 2, this.scene.scale.height * 2, 0x000000, 0.25)
       .setInteractive();
@@ -128,7 +139,7 @@ export class OrderMenu {
       const a = -Math.PI / 2 + (i / entries.length) * Math.PI * 2;
       const ix = wx + Math.cos(a) * R;
       const iy = wy + Math.sin(a) * R;
-      const c = this.scene.add.container(ix, iy);
+      const c = this.scene.add.container(ix, iy).setScale(uiScale);
       const bg = this.scene.add.image(0, 0, e.disabled ? 'btn-small-red-round' : 'btn-small-blue-round')
         .setDisplaySize(68, 68);
       if (e.disabled) bg.setTint(0x8a8078);
@@ -145,7 +156,7 @@ export class OrderMenu {
           onPick(e.key);
           this.close();
         });
-        this.scene.tweens.add({ targets: c, scale: { from: 0.4, to: 1 }, duration: 130, ease: 'Back.easeOut' });
+        this.scene.tweens.add({ targets: c, scale: { from: 0.4 * uiScale, to: uiScale }, duration: 130, ease: 'Back.easeOut' });
       }
       container.add(c);
     });
@@ -153,7 +164,7 @@ export class OrderMenu {
     // стой здесь и держи — и забыл»), поэтому у приказа обязателен явный
     // «сброс» в радиальном меню. Без него перевести воина обратно на
     // автоповедение было невозможно в принципе.
-    const reset = this.scene.add.container(wx, wy - 54);
+    const reset = this.scene.add.container(wx, wy - 54 * uiScale).setScale(uiScale);
     const rbg = this.scene.add.rectangle(0, 0, 96, 26, 0x5a4327, 0.95)
       .setStrokeStyle(2, 0xd8c9a8).setInteractive({ useHandCursor: true });
     const rtxt = this.scene.add.text(0, 0, t('order.reset'), {
@@ -166,8 +177,10 @@ export class OrderMenu {
     reset.add([rbg, rtxt]);
     container.add(reset);
 
-    const close = this.scene.add.circle(wx, wy, 18, 0x1a0f08, 0.9).setStrokeStyle(2, 0x8a6d3b).setInteractive({ useHandCursor: true });
-    const cross = this.scene.add.text(wx, wy, '✕', { fontFamily: FONT, fontSize: '14px', color: '#ffe9b0' }).setOrigin(0.5);
+    const close = this.scene.add.circle(wx, wy, 18, 0x1a0f08, 0.9)
+      .setStrokeStyle(2, 0x8a6d3b).setInteractive({ useHandCursor: true }).setScale(uiScale);
+    const cross = this.scene.add.text(wx, wy, '✕', { fontFamily: FONT, fontSize: '14px', color: '#ffe9b0' })
+      .setOrigin(0.5).setScale(uiScale);
     close.on('pointerdown', () => this.close());
     container.add([close, cross]);
     this.container = container;

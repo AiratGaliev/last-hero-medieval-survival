@@ -1303,7 +1303,12 @@ export class GameScene extends Phaser.Scene {
   }
 
   private findPawnAt(x: number, y: number, touch: boolean): Pawn | null {
-    const r = touch ? 40 : 26; // зона попадания ≥ 56 px в диаметре на таче (§B.6)
+    // Радиус пересчитывается из экранных CSS-пикселей в мир с учётом зума камеры.
+    // При zoom=0.55 прежние 40 world units превращались лишь в 22 px.
+    const canvasWidth = this.game.canvas.getBoundingClientRect().width;
+    const gameUnitsPerCssPx = this.scale.width / Math.max(1, canvasWidth);
+    const worldUnitsPerCssPx = gameUnitsPerCssPx / Math.max(0.01, this.cameras.main.zoom);
+    const r = touch ? Math.max(40, 32 * worldUnitsPerCssPx) : 26;
     let best: Pawn | null = null;
     let bestD = r * r;
     for (const p of this.economy.pawns) {

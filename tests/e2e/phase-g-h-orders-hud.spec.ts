@@ -333,7 +333,8 @@ test('phase G: touch long-press opens the same menu; early release and swipe can
   expect(await isOpen()).toBe(false);
   await touch('touchEnd', point.x + 20, point.y);
 
-  await touch('touchStart', point.x, point.y);
+  // Касание у края зоны проверяет hit-test при уменьшенном зуме мобильной камеры.
+  await touch('touchStart', point.x + 28, point.y);
   await page.waitForTimeout(650);
   expect(await isOpen()).toBe(true);
   expect(await isRinging()).toBe(false);
