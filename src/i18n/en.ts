@@ -367,6 +367,8 @@ export const en: Record<TranslationKey, string> = {
   'pawn.titled.healerF': 'monk',
   'pawn.arrived': 'A newcomer! {v} joins the settlement',
   'pawn.wounded': '{v} is wounded and seeks healing',
+  'pawn.badgeWounded': 'WOUNDED',
+  'pawn.badgeRetreat': 'RETREAT',
   'pawn.woundedF': '{v} is wounded and seeks healing',
   'pawn.bleeding': '{v} is bleeding out — 0:{s}',
   'pawn.bleedingF': '{v} is bleeding out — 0:{s}',
