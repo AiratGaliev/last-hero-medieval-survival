@@ -1449,7 +1449,7 @@ private ordersUnlocked(): boolean {
       `hero@10m: ${heroDps === null ? 'not captured' : heroDps.toFixed(1)} /s`,
       `garrison: ${rawDps.toFixed(1)} → ${appliedDps.toFixed(1)} /s`,
       `cap: ${capDps === null ? 'not active' : capDps.toFixed(1) + ' /s'} · bank ${this.garrisonDpsBudget.availableDamage.toFixed(1)}`,
-    ].join('\\n'));
+    ].join('\n'));
     this.dpsDebugRawDamage = 0;
     this.dpsDebugAppliedDamage = 0;
     this.lastDpsDebugUpdate = time;
