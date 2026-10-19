@@ -12,6 +12,7 @@ type PawnRuntime = {
   carrying: string | null;
   carriedAmount: number;
   cooldown: number;
+  arrivalMs: number;
   workNode: unknown;
   setPosition(x: number, y: number): unknown;
   setVelocity(x: number, y: number): unknown;
@@ -110,9 +111,13 @@ async function preparePawn(page: Page): Promise<Point> {
     pawn.carrying = null;
     pawn.carriedAmount = 0;
     pawn.workNode = null;
+    // Убираем стартовую анимацию входа и ставим пешку в изолированную точку,
+    // чтобы её экранные координаты не уплывали между долгим нажатием и кликом.
+    pawn.arrivalMs = 0;
     pawn.state = 'idle';
     pawn.cooldown = 30;
     pawn.setVelocity(0, 0);
+    pawn.setPosition(scene.economy.castleX + 220, scene.economy.castleY + 240);
     const camera = scene.cameras.main;
     const canvas = document.querySelector('#game canvas');
     if (!canvas) throw new Error('Game canvas is missing');
