@@ -245,6 +245,9 @@ test('phase B: player can walk past a civilian without a blocking pawn collider'
     // Freeze civilian AI so the test measures the player collider contract, not target choice.
     (economy.pawnAI as unknown as { updateCivilian: () => void }).updateCivilian = () => {};
     for (const civilian of economy.pawns) {
+      // A newly granted collector may still be in its two-second entrance tween.
+      // Kill it before positioning the pawn, otherwise the target moves during traversal.
+      scene.tweens.killTweensOf(civilian);
       civilian.setPosition(economy.castleX + 220, economy.castleY + 350);
       const body = (civilian as unknown as { body: { setVelocity(x: number, y: number): void } }).body;
       body.setVelocity(0, 0);
