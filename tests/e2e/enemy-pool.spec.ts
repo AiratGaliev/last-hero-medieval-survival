@@ -276,6 +276,64 @@ test('enemy weight tiers, daily pool and scheduled waves stay aligned with the e
   expect(report.firstSpawnInterval).toBe(850);
 });
 
+test('phase I: every reserved creature spawns under the cap with runtime animations', async ({ page }) => {
+  const pageErrors: string[] = [];
+  const consoleErrors: string[] = [];
+  page.on('pageerror', (error) => pageErrors.push(error.message));
+  page.on('console', (message) => {
+    if (message.type() === 'error') consoleErrors.push(message.text());
+  });
+  await openApp(page);
+  await startGameplay(page);
+
+  const report = await page.evaluate(async () => {
+    const game = (window as unknown as { __tss?: RuntimeGame }).__tss;
+    if (!game) throw new Error('Phaser runtime is unavailable');
+    const root = window.location.origin;
+    const [data, constants] = await Promise.all([
+      import(/* @vite-ignore */ new URL('/src/game/data.ts', root).href) as Promise<{
+        ENEMIES: Record<string, { isElite?: boolean; isBoss?: boolean }>;
+        pickDailyPool: (seed: string) => string[];
+      }>,
+      import(/* @vite-ignore */ new URL('/src/game/constants.ts', root).href) as Promise<{
+        ENEMY_CAP: number;
+      }>,
+    ]);
+    const scene = game.scene.getScene('Game');
+    scene.spawner.stopped = true;
+    const reserved = [
+      'spider', 'snake', 'lizard', 'turtle', 'gnome', 'panda',
+      'spear-goblin', 'harpoon-shark', 'paddle-shark',
+    ];
+    const results = reserved.map((kind, index) => ({
+      kind,
+      spawned: scene.spawnEnemy(kind, scene.player.x + 160 + index * 28, scene.player.y + 120),
+      hasIdle: game.anims.exists(`${kind}-idle`),
+      hasAttack: game.anims.exists(`${kind}-atk`),
+      hasPortrait: game.textures.exists(`face-${kind}`),
+    }));
+    const active = scene.enemyGroup.getChildren().filter((enemy) => enemy.active);
+    const pool = data.pickDailyPool('2026-10-19');
+    return {
+      results,
+      activeCount: active.length,
+      cap: constants.ENEMY_CAP,
+      dailyPoolValid: pool.every((kind) => kind in data.ENEMIES
+        && !data.ENEMIES[kind].isElite && !data.ENEMIES[kind].isBoss),
+    };
+  });
+
+  expect(report.results.every((item) => item.spawned && item.hasIdle && item.hasAttack && item.hasPortrait)).toBe(true);
+  expect(report.results.map((item) => item.kind)).toEqual([
+    'spider', 'snake', 'lizard', 'turtle', 'gnome', 'panda',
+    'spear-goblin', 'harpoon-shark', 'paddle-shark',
+  ]);
+  expect(report.activeCount).toBeLessThanOrEqual(report.cap);
+  expect(report.dailyPoolValid).toBe(true);
+  expect(pageErrors).toEqual([]);
+  expect(consoleErrors.filter((message) => /Frame not found|Missing animation/i.test(message))).toEqual([]);
+});
+
 test('gameplay spawns the opening goblin and keeps Ogre death animation alive to completion', async ({ page }) => {
   const pageErrors: string[] = [];
   page.on('pageerror', (error) => pageErrors.push(error.message));
