@@ -291,30 +291,29 @@ test('phases C-D: harvesting delivers resources and depleted veins can recharge'
     economy.pawnAI.updateCivilian(collector, 16, scene.time.now + 4_016);
     const carryRunAnimation = collector.anims.currentAnim?.key ?? null;
 
+    // Проверяем абсолютный приоритет сдачи ресурса до сброса carrying на складе.
+    const carryTarget = economy.nodes.find(n => n !== tree && n.available
+      && n.claimedBy === blocker
+      && Math.hypot(n.x - economy.castleX, n.y - economy.castleY) > 140);
+    if (!carryTarget) throw new Error('Carry-priority regression needs another available distant node');
+    carryTarget.claimedBy = null;
+    const carryTargetRemaining = carryTarget.remaining;
+    collector.x = carryTarget.x;
+    collector.y = carryTarget.y;
+    collector.cooldown = 0;
+    economy.pawnAI.updateCivilian(collector, 16, scene.time.now + 4_024);
+    const carryingPriorityRespected = collector.carrying === 'wood'
+      && collector.workNode === null
+      && carryTarget.remaining === carryTargetRemaining
+      && carryTarget.claimedBy === null;
+    carryTarget.claimedBy = blocker;
+
     collector.x = economy.castleX;
     collector.y = economy.castleY;
     collector.cooldown = 0;
     economy.pawnAI.updateCivilian(collector, 16, scene.time.now + 4_032);
     const depositedWood = economy.resources.wood - woodBefore;
     const hudAfterWood = readHudResources();
-
-    // Carry имеет абсолютный приоритет: пока ресурс на руках, сборщик не начинает
-    // новый узел, даже если другая пешка освободила его между AI-тиками.
-    const carryTarget = economy.nodes.find(n => n !== tree && n.available && n.claimedBy === blocker);
-    if (!carryTarget) throw new Error('Carry-priority regression needs another available node');
-    carryTarget.claimedBy = null;
-    const carryTargetRemaining = carryTarget.remaining;
-    collector.x = carryTarget.x;
-    collector.y = carryTarget.y;
-    collector.cooldown = 0;
-    economy.pawnAI.updateCivilian(collector, 16, scene.time.now + 4_008);
-    const carryingPriorityRespected = collector.carrying === 'wood'
-      && collector.workNode === null
-      && carryTarget.remaining === carryTargetRemaining
-      && carryTarget.claimedBy === null;
-    carryTarget.claimedBy = blocker;
-    collector.x = tree.x;
-    collector.y = tree.y;
 
     // Повторяем тот же поток для овцы: мясо не появляется на земле, а уходит
     // в склад только после возвращения пешки к замку.

@@ -1948,6 +1948,7 @@ private ordersUnlocked(): boolean {
       const finishBossDeath = (): void => {
         if (deathFinished) return;
         deathFinished = true;
+        e.clearDeathCleanupTimer();
         if (e.active) e.destroy();
         if (e === this.boss && !this.mods.endless && !this.gameEnded) {
           this.victoryPending = false;
@@ -1958,7 +1959,8 @@ private ordersUnlocked(): boolean {
       e.once('animationcomplete', (anim: Phaser.Animations.Animation) => {
         if (anim.key === 'boss-dead') finishBossDeath();
       });
-      this.time.delayedCall(BOSS_DEATH_ANIMATION_MS + 500, finishBossDeath);
+      // Frame-delta watchdog also works if a Scene Clock event is paused/cancelled.
+      e.setDeathCleanupTimer(BOSS_DEATH_ANIMATION_MS + 500, finishBossDeath);
     } else {
       this.enemyGroup.remove(e, true, true);
     }

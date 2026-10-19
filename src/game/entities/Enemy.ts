@@ -42,6 +42,8 @@ export class Enemy extends Phaser.Physics.Arcade.Sprite {
   damage: number;
   xpValue: number;
   dead = false;   // защита от повторной обработки смерти
+  private deathCleanupRemainingMs: number | null = null;
+  private deathCleanup: (() => void) | null = null;
   aiState: AiState = 'chase';
   stateTimer = 0;
   /** Внешний буст скорости от Шамана (до этого момента времени) */
@@ -299,6 +301,17 @@ export class Enemy extends Phaser.Physics.Arcade.Sprite {
     }
   }
 
+  /** Frame-delta fallback if the Scene Clock is paused during the death transition. */
+  setDeathCleanupTimer(delayMs: number, callback: () => void): void {
+    this.deathCleanupRemainingMs = Math.max(0, delayMs);
+    this.deathCleanup = callback;
+  }
+
+  clearDeathCleanupTimer(): void {
+    this.deathCleanupRemainingMs = null;
+    this.deathCleanup = null;
+  }
+
   takeDamage(dmg: number): boolean {
     if (this.dead) return false;
     let final = dmg;
@@ -365,6 +378,14 @@ export class Enemy extends Phaser.Physics.Arcade.Sprite {
     if (this.dead) {
       const body = this.body as Phaser.Physics.Arcade.Body | null;
       body?.setVelocity(0, 0);
+      if (this.deathCleanup && this.deathCleanupRemainingMs !== null) {
+        this.deathCleanupRemainingMs = Math.max(0, this.deathCleanupRemainingMs - Math.max(0, delta));
+        if (this.deathCleanupRemainingMs === 0) {
+          const cleanup = this.deathCleanup;
+          this.clearDeathCleanupTimer();
+          cleanup();
+        }
+      }
       return;
     }
 
@@ -750,6 +771,7 @@ export class Enemy extends Phaser.Physics.Arcade.Sprite {
   }
 
   destroy(fromScene?: boolean): void {
+    this.clearDeathCleanupTimer();
     this.shadow.destroy();
     this.hpBar?.destroy();
     this.auraRing?.destroy();
