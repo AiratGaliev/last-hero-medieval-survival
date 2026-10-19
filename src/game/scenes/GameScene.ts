@@ -106,7 +106,7 @@ export class GameScene extends Phaser.Scene {
   /** Тик башни: следующий выстрел по времени сцены (фаза M). */
   private towerNextShot = 0;
   /** Long-press приказов (§B.6). */
-  private pressState: { x: number; y: number; screenX: number; screenY: number; t: number; pawn: Pawn | null; building: Building | null } | null = null;
+  private pressState: { x: number; y: number; screenX: number; screenY: number; t: number; pointer: Phaser.Input.Pointer; pawn: Pawn | null; building: Building | null } | null = null;
 
   // Состояние матча
   private elapsed = 0;
@@ -1283,7 +1283,7 @@ export class GameScene extends Phaser.Scene {
       if (!hitPawn && !hitBuilding) return;
       this.pressState = {
         x: wp, y: wy, screenX: pointer.x, screenY: pointer.y,
-        t: this.time.now, pawn: hitPawn, building: hitBuilding,
+        t: this.time.now, pointer, pawn: hitPawn, building: hitBuilding,
       };
       if (shift && hitPawn) {
         this.openOrderMenu(hitPawn, wp, wy);
@@ -1294,7 +1294,9 @@ export class GameScene extends Phaser.Scene {
       }
       // Touch: ждём 500 мс; отпускание раньше порога отменяет жест.
     });
-    const clearPress = (): void => {
+    const clearPress = (pointer: Phaser.Input.Pointer): void => {
+      // Вторая точка касания не должна отменять long-press первой.
+      if (this.pressState && this.pressState.pointer.id !== pointer.id) return;
       this.pressState = null;
       this.orderMenu.hideRing();
     };
@@ -1478,7 +1480,7 @@ private ordersUnlocked(): boolean {
       // §B.6: «свайп от пальца = отмена». Палец, который уехал с пешки при
       // удержании, не хотел открывать меню — он двигал героя. Без проверки
       // приказная система на тач-свайпе срабатывала бы постоянно.
-      const ptr = this.input.activePointer;
+      const ptr = this.pressState.pointer;
       if (ptr.isDown) {
         const drift = Math.hypot(ptr.x - this.pressState.screenX, ptr.y - this.pressState.screenY);
         if (drift > 12) {
