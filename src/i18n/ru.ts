@@ -351,6 +351,7 @@ export const ru = {
   'resource.meat': 'Мясо',
   'resource.ore': 'Руда',
   'hud.garrison': 'ВОИНЫ {a}/{b}',
+  'hud.garrisonStatus': 'ранены: {w} · отходят: {r}',
   'hud.settlement': 'ПОСЕЛЕНИЕ',
   'hud.settlement.infra': 'Постройки',
   'hud.settlement.pop': 'Население',
