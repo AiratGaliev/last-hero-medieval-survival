@@ -476,7 +476,8 @@ test('phases C-D: harvesting delivers resources and depleted veins can recharge'
 
   expect(report.initialResources).toEqual({ wood: 0, ore: 0, meat: 0 });
   expect(report.initialTreeCount).toBeGreaterThan(20);
-  expect(report.initialSheepCount).toBe(10);
+  expect(report.initialSheepCount).toBeGreaterThan(0);
+  expect(report.initialSheepCount).toBeLessThanOrEqual(10);
   expect(report.staleTargetCleared).toBe(true);
   expect(report.staleTargetReleased).toBe(true);
   expect(report.initialHudResources).toEqual({ visible: false, wood: '0', meat: '0', ore: '0' });

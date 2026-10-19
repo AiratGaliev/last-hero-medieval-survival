@@ -3,9 +3,10 @@
 > Статусы основаны на конкретных исходниках и Playwright-гейтах. До зелёного полного CI на актуальном SHA фазы B–F не считаются принятыми.
 
 - [CI #140](https://github.com/AiratGaliev/last-hero-medieval-survival/actions/runs/39163843684), SHA `2a0c69bbe15b7964fdd497444a6742cb8c988903`: typecheck/lint, production build и Yandex archive validation прошли; Playwright **95 passed / 3 failed**. Отказы: Ogre не деактивировался на desktop, carry-priority assertion выполнялась уже после сдачи груза на desktop/mobile.
-- Кодовый follow-up `10e8ea84f0dbb43830c0a697eb7a8f396736c0ce` добавил frame-delta watchdog для Ogre и перенёс carry-check до сдачи ресурса. [CI #141](https://github.com/AiratGaliev/last-hero-medieval-survival/actions/runs/39195560974) был отменён запуском следующего workflow.
-- [CI #142](https://github.com/AiratGaliev/last-hero-medieval-survival/actions/runs/39195759206), SHA `b0a89a945af0ac25ab64515ac2687cdbeb4a9ef5`: typecheck/lint, production build и archive validation прошли; browser smoke был в процессе, когда подготовлен следующий инкремент, поэтому его финальный результат не использован для приёмки новых сценариев.
-- Дополнительный increment добавляет регрессии stale resource target (освобождение уничтоженного узла) и реального движения строителя к ближайшему свободному пятну без преждевременного расхода ресурсов. Ожидается полный CI на новом SHA.
+- Code fix `10e8ea84f0dbb43830c0a697eb7a8f396736c0ce` добавил frame-delta watchdog для Ogre и перенёс carry-check до сдачи ресурса.
+- [CI #142](https://github.com/AiratGaliev/last-hero-medieval-survival/actions/runs/39195759206), SHA `b0a89a945af0ac25ab64515ac2687cdbeb4a9ef5`: **success**, typecheck/lint, production build и Yandex archive validation прошли; Playwright **98 passed**. Это подтверждает lifecycle Огра, carry-priority и E2E для первого жителя/ремонта.
+- [CI #143](https://github.com/AiratGaliev/last-hero-medieval-survival/actions/runs/39196530062), SHA `f1e4a23c431aa1a356be8ccb81d4ec340a76a34e`: typecheck/lint, production build и archive прошли, browser smoke был в процессе при подготовке следующей правки. Аудит выявил избыточное утверждение `sheepCount === 10`: код делает 10 попыток спавна, но `canPlace()` может пропустить конфликтующие позиции. Тест скорректирован на допустимый диапазон; требуется новый полный прогон.
+- Дополнительные runtime-регрессии проверяют освобождение уничтоженного resource target и движение строителя к ближайшему свободному пятну без преждевременного списания ресурсов. Они остаются открытыми до зелёного CI на текущем SHA.
 - Визуальная приёмка карты/теней/коллизий, тайминг первого дома 30–45 сек, казарм к 4–6 минуте, 15-минутный матч desktop/mobile и реальные внешние Yandex Games IAP/ads остаются release gates.
 
 # Дорожная карта: «Последний герой: Средневековое выживание»
@@ -221,8 +222,7 @@ VLM + пиксельный анализ + dev.log). Балансировка и 
 - [x] E2E подтверждает активный `Economy.tick(dt)` во время матча
 - [ ] Ручной runtime-гейт: проверить, что игрок проходит рядом с пешками на desktop/mobile; прямой player↔pawn collider не подключён, но гражданские уязвимы для врагов по TZ §B.2
 - [x] Browser smoke проверяет carry/work-анимации и отсутствие `Frame not found` / `Missing animation`
-- [ ] Карта не стала пустой: удаление 16 декоративных жителей компенсировано
-      4 настоящими пешками — видно, что арена обжита
+- [ ] Ручной визуальный gate: проверить на desktop/mobile, что 4 настоящие пешки визуально оживляют арену после удаления декоративных жителей
 - [x] Typecheck/lint проходят в CI
 
 ---
@@ -233,7 +233,7 @@ VLM + пиксельный анализ + dev.log). Балансировка и 
 (сбор — в Фазе D).
 
 **Ожидаемые ассеты (проверить наличие, кадры и интеграцию в гейте):** `terrain/resources/gold-stones/gold-stone-{1..5}.png`
-+ `gold-stone-{1..5}-highlight.png` (8 кадров 128×128, анимация пульса).
++ `gold-stone-{1..5}-highlight.png` (6 кадров 128×128, анимация пульса).
 Ключ `gold-stone-6` **занят** как пикап сокровищ (`treasure`/`fx-treasure`) —
 не переиспользовать для жил.
 
@@ -241,7 +241,7 @@ VLM + пиксельный анализ + dev.log). Балансировка и 
       через `registerNode()` / `freeNode()`; узлы дерева, овец и руды связаны
       с экономикой. Отдельного списка `RESOURCE_NODES` в коде нет.
 - [x] `BootScene.ts` загружает `gold-vein-{1..5}` и pulse-анимации
-      анимации `gold-vein-pulse-{1..5}` (по 8 кадров каждая)
+      анимации `gold-vein-pulse-{1..5}` (по 6 кадров каждая)
 - [x] `src/game/entities/ResourceNode.ts` (новый) — объект узла: `kind`,
       `remaining`, `claim()` / `release()`, `extract(n)`; по нулю — `destroy()`
       (скрывает спрайт, освобождает место). Общий класс и для жил, и для
@@ -261,7 +261,7 @@ VLM + пиксельный анализ + dev.log). Балансировка и 
 - [x] E2E подтверждает стартовый склад `{ wood: 0, ore: 0, meat: 0 }` —
       ⚠️ именно `ore`, **не** `gold`: экономическое золото переименовано в руду
       (§B.5), иначе в HUD окажутся два «золота»
-- [ ] Деревья и овцы на месте в прежнем количестве (декор пока нетронут)
+- [x] E2E подтверждает доступность resource nodes до сбора; 10 попыток спавна овец могут создать меньше 10 объектов из-за overlap guard `canPlace()`
 
 ---
 
@@ -273,15 +273,15 @@ VLM + пиксельный анализ + dev.log). Балансировка и 
 интерактивными (исчезают после сбора).
 
 Цикл: `walk` → `work` (4/3/5 сек) → `carry` (идёт к замку с анимацией
-`pawn-run-{wood,meat,gold}`) → сдача (`pawn-idle-{res}`, +ресурс в склад,
+`pawn-carry-{wood,meat,gold}`) → сдача (`pawn-carry-idle-{res}`, +ресурс в склад,
 emit `change`) → `cooldown` (0.5 сек) → `walk`.
 
 - [x] `src/game/systems/PawnAI.ts` — состояния `walk`, `work`, `carry`,
-      `cooldown`; `findNearestResource()` с учётом `node.claimedBy`
+      `cooldown`; `pickNodeFor()` выбирает ресурс по дефициту/дистанции и учитывает `node.claimedBy`
 - [x] `src/game/entities/Pawn.ts` — `walkTo(x, y)` (180 px/s), `playWork(tool)`,
       `playCarry(res)`, `playIdleWith(res)`; поле `carrying: ResourceKind | null`
 - [x] `src/game/entities/ResourceNode.ts` — `claim(pawn)` / `release(pawn)`;
-      `extract(1)` за тик работы; на `remaining == 0` → `destroy()`
+      `extract()` списывает один цикл работы; дерево/овца удаляются на нуле, истощённая жила остаётся видимой и недоступной до endless-recharge
 - [x] `src/game/systems/Economy.ts` — `deposit(kind, amount)` (вызывается
       **на складе**, не у узла): `resources[kind] += amount`, emit `change`,
       звук `pickupGold` (переиспользовать)
@@ -310,7 +310,7 @@ emit `change`) → `cooldown` (0.5 сек) → `walk`.
       (регресс: не осталось вызовов `pickups.spawnMeat` из цикла овец)
 - [ ] Playwright проверяет, что `carrying` блокирует выбор нового узла до сдачи; ожидает следующий полный CI
 - [ ] Добавлен Playwright-сценарий: удалённый resource target освобождается, пешка выбирает другой доступный узел; ожидает следующий полный CI
-- [x] E2E подтверждает исходное наличие деревьев и 10 овец; штатный сбор удаляет по одному узлу каждого типа
+- [x] E2E проверяет исходное наличие деревьев и доступных овец (до 10 попыток спавна); штатный сбор удаляет по одному узлу каждого типа
 - [x] E2E проверяет HUD после сдачи дерева, мяса и руды
 - [x] Typecheck/lint проходят в CI, консоль без ошибок и «Frame not found»
 
@@ -382,9 +382,9 @@ emit `change`) → `cooldown` (0.5 сек) → `walk`.
 - [x] `src/game/entities/Pawn.ts` — `kind: 'repairer'` с инструментом `hammer`,
       анимация `pawny-work-hammer` (уже зарегистрирована)
 - [x] `src/game/systems/Economy.ts` — `repair(building): boolean` — работающая
-      механика (30 дерева / 5 сек за повреждённый дом, 60 / 10 за разрушенный),
-      но **пока не вызывается из AI**: пешка ремонтирует только по приказу
-      «ЧИНИТЬ» или из dev-консоли
+      механика (30 дерева / 5 сек за повреждённый дом, 60 / 10 за разрушенный);
+      после фазы L `PawnAI` автоматически выбирает повреждённые здания. Playwright
+      проверяет стоимость ремонта, отказ ремонта замка, rebuild руин и auto-repair.
 - [x] `src/game/data.ts` — `BUILDING_PLANS[*].hp > 0` (house 150, castle 500),
       флаг `noRepair: true` у замка, чтобы его нельзя было починить
 
