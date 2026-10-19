@@ -157,7 +157,18 @@ test('creature sheets, combat animations, projectiles and hero-monk regression a
       || enemy.frameW <= 0 || enemy.groundY <= 0 || enemy.body.r <= 0
       || ![enemy.body.cx, enemy.body.cy, enemy.body.r, enemy.groundY].every(Number.isFinite)
       || 'texture' in enemy
-      || (enemy.kind === 'bear' && enemy.facesRight !== true),
+      // Ориентация. Весь пак Tiny Swords (`units/*` и `enemies/*`) нарисован
+      // вправо, поэтому разворот идёт по знаку скорости (см. Enemy.faceDir),
+      // а флаг `facesRight` у существ не выставляется.
+      //
+      // Раньше здесь стояло `enemy.kind === 'bear' && enemy.facesRight !== true`:
+      // тест закреплял исключение медведя, который якобы нарисован влево. На
+      // деле лист, как и остальные десять, смотрит вправо — правило было неверным,
+      // и все девять «обычных» существ разворачивались при движении ВПРАВО, то
+      // есть пятились спиной. Теперь инвариант общий: флаг, отключающий разворот
+      // по умолчанию, в данных не используется и появляется только вместе с
+      // реально левым листом.
+      || enemy.facesRight === false,
     );
     const legacyIds = [
       'grunt', 'swarm', 'brute', 'bomber', 'taskmaster', 'midboss',
