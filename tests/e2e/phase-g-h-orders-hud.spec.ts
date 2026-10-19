@@ -58,6 +58,9 @@ type GameSceneRuntime = {
   cameras: { main: {
     x: number; y: number; zoom: number;
     worldView: { x: number; y: number; width: number; height: number };
+    stopFollow(): unknown;
+    centerOn(x: number, y: number): unknown;
+    preRender(): unknown;
     getWorldPoint(x: number, y: number): { x: number; y: number };
   } };
   player: { x: number; y: number };
@@ -127,33 +130,23 @@ async function preparePawn(page: Page): Promise<Point> {
     pawn.carrying = null;
     pawn.carriedAmount = 0;
     pawn.workNode = null;
-    // Убираем стартовую анимацию входа и ставим пешку в изолированную точку,
-    // чтобы её экранные координаты не уплывали между долгим нажатием и кликом.
     pawn.arrivalMs = 0;
     pawn.state = 'idle';
     pawn.cooldown = 30;
     pawn.setVelocity(0, 0);
     pawn.setPosition(scene.economy.castleX + 220, scene.economy.castleY + 240);
+
+    // Центрируем камеру на изолированной пешке через Phaser API. Клик в центр
+    // canvas не зависит от ручного преобразования world→screen в тестовом коде.
     const camera = scene.cameras.main;
+    camera.stopFollow();
+    camera.centerOn(pawn.x, pawn.y);
+    camera.preRender();
+
     const canvas = document.querySelector('#game canvas');
     if (!canvas) throw new Error('Game canvas is missing');
     const rect = canvas.getBoundingClientRect();
-    // Обратное преобразование по API камеры, не приближённая формула через worldView:
-    // учитывает origin камеры, zoom и экранные координаты Phaser одинаково для desktop/mobile.
-    const p0 = camera.getWorldPoint(0, 0);
-    const px = camera.getWorldPoint(1, 0);
-    const py = camera.getWorldPoint(0, 1);
-    const ax = px.x - p0.x, ay = py.x - p0.x;
-    const bx = px.y - p0.y, by = py.y - p0.y;
-    const det = ax * by - ay * bx;
-    if (Math.abs(det) < 1e-8) throw new Error('Camera screen/world transform is singular');
-    const dx = pawn.x - p0.x, dy = pawn.y - p0.y;
-    const logicalX = (dx * by - ay * dy) / det;
-    const logicalY = (ax * dy - dx * bx) / det;
-    return {
-      x: rect.left + logicalX * rect.width / scene.scale.width,
-      y: rect.top + logicalY * rect.height / scene.scale.height,
-    };
+    return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
   });
 }
 
@@ -187,24 +180,8 @@ test('phase G: desktop menu is explicit, closable and BUILD order ends after con
     { key: 'rest', disabled: true },
   ]);
 
-  // Клик по серой заготовке не должен выбирать её или закрывать меню.
-  const disabledPoint = await page.evaluate(() => {
-    const game = (window as RuntimeWindow).__tss!;
-    const scene = game.scene.getScene('Game') as GameSceneRuntime;
-    const pawn = scene.economy.pawns.find(p => p.kind === 'collector')!;
-    const camera = scene.cameras.main;
-    const canvas = document.querySelector('#game canvas');
-    if (!canvas) throw new Error('Game canvas is missing');
-    const rect = canvas.getBoundingClientRect();
-    const worldX = pawn.x;
-    const worldY = pawn.y + 74;
-    const x = camera.x + (worldX - camera.worldView.x) * camera.zoom;
-    const y = camera.y + (worldY - camera.worldView.y) * camera.zoom;
-    return {
-      x: rect.left + x * rect.width / scene.scale.width,
-      y: rect.top + y * rect.height / scene.scale.height,
-    };
-  });
+  // Нижняя кнопка «ЧИНИТЬ» имеет центр в 74 CSS px от пешки.
+  const disabledPoint = { x: point.x, y: point.y + 74 };
   await page.mouse.click(disabledPoint.x, disabledPoint.y);
   await expect.poll(isOpen).toBe(true);
 
@@ -217,30 +194,8 @@ test('phase G: desktop menu is explicit, closable and BUILD order ends after con
   expect(await page.evaluate(() => (window as RuntimeWindow).__tss!.scene.isActive('Pause'))).toBe(false);
 
   await page.mouse.click(point.x, point.y, { modifiers: ['Shift'] });
-  const buildPoint = await page.evaluate(() => {
-    const game = (window as RuntimeWindow).__tss!;
-    const scene = game.scene.getScene('Game') as GameSceneRuntime;
-    const pawn = scene.economy.pawns.find(p => p.kind === 'collector')!;
-    const camera = scene.cameras.main;
-    const canvas = document.querySelector('#game canvas');
-    if (!canvas) throw new Error('Game canvas is missing');
-    const rect = canvas.getBoundingClientRect();
-    const worldX = pawn.x + 74, worldY = pawn.y;
-    const p0 = camera.getWorldPoint(0, 0);
-    const px = camera.getWorldPoint(1, 0);
-    const py = camera.getWorldPoint(0, 1);
-    const ax = px.x - p0.x, ay = py.x - p0.x;
-    const bx = px.y - p0.y, by = py.y - p0.y;
-    const det = ax * by - ay * bx;
-    if (Math.abs(det) < 1e-8) throw new Error('Camera screen/world transform is singular');
-    const dx = worldX - p0.x, dy = worldY - p0.y;
-    const logicalX = (dx * by - ay * dy) / det;
-    const logicalY = (ax * dy - dx * bx) / det;
-    return {
-      x: rect.left + logicalX * rect.width / scene.scale.width,
-      y: rect.top + logicalY * rect.height / scene.scale.height,
-    };
-  });
+  // Кнопка «СТРОИТЬ» расположена справа от центра меню на 74 CSS px.
+  const buildPoint = { x: point.x + 74, y: point.y };
   await page.mouse.click(buildPoint.x, buildPoint.y);
   await expect.poll(() => page.evaluate(() => {
     const game = (window as RuntimeWindow).__tss!;
