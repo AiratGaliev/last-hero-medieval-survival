@@ -1,13 +1,12 @@
 ## Актуальный статус Phase B–F — 2026-10-19 (PR #17)
 
-> Статусы основаны на отдельных runtime/E2E-проверках и последнем завершённом CI. Фазы B–F нельзя считать полностью принятыми, пока полный Playwright не станет зелёным и не пройдут ручные release gates.
+> Статусы основаны на конкретных исходниках и Playwright-гейтах. До зелёного полного CI на актуальном SHA фазы B–F не считаются принятыми.
 
-- [CI #138](https://github.com/AiratGaliev/last-hero-medieval-survival/actions/runs/39160541224), SHA `a058d8776ade0b30c53435402da9d885b9abdb9f`: typecheck/lint, production build и Yandex archive validation прошли; Playwright **91 passed / 5 failed**.
-- [CI #139](https://github.com/AiratGaliev/last-hero-medieval-survival/actions/runs/39162066821), SHA `c79b85149738fc990edd9fdf07a3906a6e430803`: typecheck/lint, production build и archive прошли; Playwright **94 passed / 2 failed**. Обе ошибки были в E2E-коде lifecycle Огра (необъявленная переменная `game` внутри `page.evaluate`).
-- [CI #140](https://github.com/AiratGaliev/last-hero-medieval-survival/actions/runs/39163843684), SHA `2a0c69bbe15b7964fdd497444a6742cb8c988903`: typecheck/lint, production build и archive прошли; Playwright **95 passed / 3 failed**. Остались: уничтожение Огра по окончании `boss-dead` на desktop; дополнительная проверка carry-приоритета на desktop/mobile ошибочно выполнялась уже после сдачи груза.
-- Кодовые исправления в `10e8ea84f0dbb43830c0a697eb7a8f396736c0ce`: для босса добавлен watchdog на frame-delta update path (не только Scene Clock), а проверка carry перенесена до сдачи ресурсов. [CI #141](https://github.com/AiratGaliev/last-hero-medieval-survival/actions/runs/39195560974) проверяет этот SHA и был `in_progress` на момент обновления.
-- Автоматизированная проверка двухсекундного входа бесплатного жителя после первого дома прошла на desktop/mobile в CI #140. Сценарий строительства/ремонта (стоимость, отказ ремонта замка, rebuild руин, builder fallback и HUD гарнизона) также прошёл на desktop/mobile.
-- Несколько B–F runtime-checks отражены галочками ниже; не проверенные вручную позиционирование/визуальный polish, полноценный 15-минутный матч, фактический Yandex Games runtime и реальные IAP/ads остаются открытыми release gates.
+- [CI #140](https://github.com/AiratGaliev/last-hero-medieval-survival/actions/runs/39163843684), SHA `2a0c69bbe15b7964fdd497444a6742cb8c988903`: typecheck/lint, production build и Yandex archive validation прошли; Playwright **95 passed / 3 failed**. Отказы: Ogre не деактивировался на desktop, carry-priority assertion выполнялась уже после сдачи груза на desktop/mobile.
+- Кодовый follow-up `10e8ea84f0dbb43830c0a697eb7a8f396736c0ce` добавил frame-delta watchdog для Ogre и перенёс carry-check до сдачи ресурса. [CI #141](https://github.com/AiratGaliev/last-hero-medieval-survival/actions/runs/39195560974) был отменён запуском следующего workflow.
+- [CI #142](https://github.com/AiratGaliev/last-hero-medieval-survival/actions/runs/39195759206), SHA `b0a89a945af0ac25ab64515ac2687cdbeb4a9ef5`: typecheck/lint, production build и archive validation прошли; browser smoke был в процессе, когда подготовлен следующий инкремент, поэтому его финальный результат не использован для приёмки новых сценариев.
+- Дополнительный increment добавляет регрессии stale resource target (освобождение уничтоженного узла) и реального движения строителя к ближайшему свободному пятну без преждевременного расхода ресурсов. Ожидается полный CI на новом SHA.
+- Визуальная приёмка карты/теней/коллизий, тайминг первого дома 30–45 сек, казарм к 4–6 минуте, 15-минутный матч desktop/mobile и реальные внешние Yandex Games IAP/ads остаются release gates.
 
 # Дорожная карта: «Последний герой: Средневековое выживание»
 
@@ -220,7 +219,7 @@ VLM + пиксельный анализ + dev.log). Балансировка и 
 - [x] E2E desktop/mobile подтверждает четыре стартовые пешки, `idle` и отсутствие ошибок
 - [x] E2E подтверждает синих сборщиков (`pawn-*`) и жёлтых builder/repairer (`pawny-*`)
 - [x] E2E подтверждает активный `Economy.tick(dt)` во время матча
-- [ ] Пешки не мешают игре: не блокируют движение игрока, не получают урон
+- [ ] Ручной runtime-гейт: проверить, что игрок проходит рядом с пешками на desktop/mobile; прямой player↔pawn collider не подключён, но гражданские уязвимы для врагов по TZ §B.2
 - [x] Browser smoke проверяет carry/work-анимации и отсутствие `Frame not found` / `Missing animation`
 - [ ] Карта не стала пустой: удаление 16 декоративных жителей компенсировано
       4 настоящими пешками — видно, что арена обжита
@@ -309,11 +308,9 @@ emit `change`) → `cooldown` (0.5 сек) → `walk`.
 - [x] E2E проверяет 20 руды за цикл/80 суммарно; жила остаётся истощённой и недоступной, пульс гаснет после 2-го цикла
 - [x] E2E подтверждает сдачу 3 единиц мяса в склад пешкой
       (регресс: не осталось вызовов `pickups.spawnMeat` из цикла овец)
-- [ ] Пешка с `carrying` не берёт новый узел, пока не сдала добычу
-- [ ] Если узел исчезает под пешкой (другой забрал) — пешка освобождает цель,
-      ищет новую, ошибок в консоли нет
-- [ ] Карта не «лысеет»: деревья и овцы видны до прихода пешки и исчезают
-      только после сбора (не при спавне)
+- [ ] Playwright проверяет, что `carrying` блокирует выбор нового узла до сдачи; ожидает следующий полный CI
+- [ ] Добавлен Playwright-сценарий: удалённый resource target освобождается, пешка выбирает другой доступный узел; ожидает следующий полный CI
+- [x] E2E подтверждает исходное наличие деревьев и 10 овец; штатный сбор удаляет по одному узлу каждого типа
 - [x] E2E проверяет HUD после сдачи дерева, мяса и руды
 - [x] Typecheck/lint проходят в CI, консоль без ошибок и «Frame not found»
 
@@ -364,10 +361,8 @@ emit `change`) → `cooldown` (0.5 сек) → `walk`.
       после заполнения `builder` возвращается к сбору дерева
 
 **Гейт E:**
-- [ ] При `resources.wood >= 30` строитель идёт к ближайшему месту стройки,
-      через 10 сек появляется дом, `pawnLimit` += 1
-- [ ] Дерево и золото списаны в момент старта стройки (иначе можно запустить
-      две стройки на одни ресурсы)
+- [ ] Добавлен отдельный Playwright-гейт: builder движется к ближайшему свободному пятну без списания ресурсов до прибытия; ожидает следующий полный CI
+- [x] E2E проверяет цену дома 30 дерева и казарм 40 дерева + 15 руды, списываемые при старте
 - [x] E2E проверяет fallback builder при нехватке материалов
 - [ ] Первый дом падает на **~30–45 сек** матча (расчёт §B.8 TZ)
 - [ ] Казармы строятся в разумные сроки (40 дерева + 15 руды ≈ к 4–6 минуте)

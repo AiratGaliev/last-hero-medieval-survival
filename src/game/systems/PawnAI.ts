@@ -110,6 +110,19 @@ export class PawnAI {
       return;
     }
 
+    // Узел мог исчезнуть между тиками: освобождаем устаревшую цель,
+    // но не трогаем build/repair jobs (у Building нет boolean available).
+    const currentNode = p.workNode as ResourceNode | null;
+    if (currentNode && typeof currentNode.available === 'boolean' && !currentNode.available) {
+      currentNode.release(p);
+      p.workNode = null;
+      p.taskProgress = 0;
+      if (p.state === 'work') {
+        p.state = 'idle';
+        p.setVelocity(0, 0);
+      }
+    }
+
     // --- 2. Враг рядом → паника, бег к замку (§A.5, PANIC 220) ---
     if (this.enemyNear(p.x, p.y, AGGRO.PANIC)) {
       p.state = 'flee';
@@ -319,11 +332,16 @@ export class PawnAI {
     if (d > (node.kind === 'tree' || node.kind === 'sheep' ? RANGE_WOOD : 52)) {
       p.state = 'walk';
       node.release(p);
+      p.workNode = null;
       this.walkTo(p, node.x, node.y, dtMs);
       return;
     }
     // Работа: claim + тики
-    if (!node.claim(p)) { p.state = 'idle'; return; }
+    if (!node.claim(p)) {
+      p.workNode = null;
+      p.state = 'idle';
+      return;
+    }
     p.workNode = node;
     p.state = 'work';
     const def = RESOURCES[node.res];

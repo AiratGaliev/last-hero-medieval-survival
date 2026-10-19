@@ -38,6 +38,7 @@ type ResourceNodeRuntime = {
   release(pawn: PawnRuntime): void;
   extract(): boolean;
   recharge(): void;
+  destroy(): void;
 };
 
 type BuildingRuntime = {
@@ -396,7 +397,41 @@ test('phases C-D: harvesting delivers resources and depleted veins can recharge'
     };
     vein.release(collector);
 
+    // Regression: a work node can disappear between AI ticks if another worker takes it.
+    const nearCastle = (node: ResourceNodeRuntime) =>
+      Math.hypot(node.x - economy.castleX, node.y - economy.castleY) <= 1_000;
+    const staleTargetNode = economy.nodes.find(n => n.kind === 'tree'
+      && n.available && n.claimedBy === blocker && nearCastle(n));
+    const fallbackTargetNode = economy.nodes.find(n => n !== staleTargetNode
+      && n.kind === 'tree' && n.available && n.claimedBy === blocker && nearCastle(n));
+    if (!staleTargetNode || !fallbackTargetNode) {
+      throw new Error('Stale-node regression needs two available reachable trees');
+    }
+    for (const node of economy.nodes) {
+      if (node.available && node !== staleTargetNode && node !== fallbackTargetNode) node.claimedBy = blocker;
+    }
+    staleTargetNode.claimedBy = null;
+    fallbackTargetNode.claimedBy = null;
+    collector.carrying = null;
+    collector.carriedAmount = 0;
+    collector.cooldown = 0;
+    collector.order = null;
+    collector.taskProgress = 400;
+    collector.workNode = staleTargetNode;
+    collector.state = 'work';
+    collector.x = staleTargetNode.x;
+    collector.y = staleTargetNode.y;
+    if (!staleTargetNode.claim(collector)) throw new Error('Collector could not claim its stale test target');
+    staleTargetNode.destroy();
+    collector.x = fallbackTargetNode.x;
+    collector.y = fallbackTargetNode.y;
+    economy.pawnAI.updateCivilian(collector, 16, scene.time.now + 25_064);
+    const staleTargetCleared = collector.workNode === fallbackTargetNode;
+    const staleTargetReleased = staleTargetNode.claimedBy === null;
+
     return {
+      staleTargetCleared,
+      staleTargetReleased,
       initialResources,
       initialHudResources,
       hudAfterWood,
@@ -440,6 +475,10 @@ test('phases C-D: harvesting delivers resources and depleted veins can recharge'
   });
 
   expect(report.initialResources).toEqual({ wood: 0, ore: 0, meat: 0 });
+  expect(report.initialTreeCount).toBeGreaterThan(20);
+  expect(report.initialSheepCount).toBe(10);
+  expect(report.staleTargetCleared).toBe(true);
+  expect(report.staleTargetReleased).toBe(true);
   expect(report.initialHudResources).toEqual({ visible: false, wood: '0', meat: '0', ore: '0' });
   expect(report.hudAfterWood).toEqual({ visible: true, wood: '5', meat: '0', ore: '0' });
   expect(report.hudAfterMeat).toEqual({ visible: true, wood: '5', meat: '3', ore: '0' });
@@ -468,7 +507,7 @@ test('phases C-D: harvesting delivers resources and depleted veins can recharge'
   expect(report.maximumVeinDistance).toBeLessThanOrEqual(1_000);
   expect(report.minimumVeinPairDistance).toBeGreaterThanOrEqual(140);
   expect(report.veinSprites.every(node => node.type === 'Sprite' && !node.hasPhysicsBody)).toBe(true);
-  expect(report.treeCount).toBe(report.initialTreeCount - 1);
+  expect(report.treeCount).toBe(report.initialTreeCount - 2); // collected tree + stale-target teardown
   expect(report.sheepCount).toBe(report.initialSheepCount - 1);
   expect(report.pulseAfterFirstCycle).toBe(true);
   expect(report.pulseAfterSecondCycle).toBe(false);
@@ -562,6 +601,63 @@ test('phase E: the first-house bonus resident enters over two seconds', async ({
   expect(finish.alpha).toBe(1);
   expect(finish.distanceToHouse).toBeLessThan(220);
   expect(finish.anim).toBe('pawn-idle');
+});
+
+test('phase E: builder walks toward the nearest free spot before spending resources', async ({ page }) => {
+  await startRun(page);
+  const report = await page.evaluate(() => {
+    const game = (window as RuntimeWindow).__tss!;
+    const scene = game.scene.getScene('Game') as GameSceneRuntime;
+    const economy = scene.economy;
+    const builder = economy.pawns.find(p => p.kind === 'builder');
+    if (!builder) throw new Error('Builder is missing from the initial settlement');
+    const spots = economy.freeSpots();
+    if (!spots.length) throw new Error('No free construction spots are configured');
+    const context = scene.registry.get('tss-pawnai-ctx') as { enemies: () => unknown[] };
+    context.enemies = () => [];
+    economy.resources.wood = 1_000;
+    economy.resources.ore = 1_000;
+    economy.resources.meat = 0;
+    const startX = builder.x;
+    const startY = builder.y;
+    const nearest = spots.reduce((best, spot) =>
+      Math.hypot(spot.x - startX, spot.y - startY) < Math.hypot(best.x - startX, best.y - startY)
+        ? spot : best);
+    const woodBefore = economy.resources.wood;
+    const oreBefore = economy.resources.ore;
+    const buildingCountBefore = economy.buildings.length;
+    builder.order = 'build';
+    builder.state = 'idle';
+    builder.cooldown = 0;
+    builder.carrying = null;
+    builder.carriedAmount = 0;
+    builder.workNode = null;
+    builder.taskProgress = 0;
+    economy.pawnAI.updateCivilian(builder, 16, scene.time.now);
+    const velocity = (builder as unknown as { body: { velocity: { x: number; y: number } } }).body.velocity;
+    const dx = nearest.x - startX;
+    const dy = nearest.y - startY;
+    return {
+      state: builder.state,
+      targetDistance: Math.hypot(dx, dy),
+      velocityX: velocity.x,
+      velocityY: velocity.y,
+      velocityTowardTarget: velocity.x * dx + velocity.y * dy,
+      woodBefore,
+      woodAfter: economy.resources.wood,
+      oreBefore,
+      oreAfter: economy.resources.ore,
+      buildingCountBefore,
+      buildingCountAfter: economy.buildings.length,
+    };
+  });
+  expect(report.targetDistance).toBeGreaterThan(70);
+  expect(report.state).toBe('walk');
+  expect(Math.hypot(report.velocityX, report.velocityY)).toBeGreaterThan(0);
+  expect(report.velocityTowardTarget).toBeGreaterThan(0);
+  expect(report.woodAfter).toBe(report.woodBefore);
+  expect(report.oreAfter).toBe(report.oreBefore);
+  expect(report.buildingCountAfter).toBe(report.buildingCountBefore);
 });
 
 test('phases E-F: construction uses the approached spot and repair costs are guarded', async ({ page }) => {
