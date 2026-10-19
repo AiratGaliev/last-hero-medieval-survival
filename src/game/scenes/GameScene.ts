@@ -7,7 +7,7 @@ import {
 } from '../constants';
 import {
   WEAPONS, PASSIVES, HEROES, ENEMIES, DIFFICULTIES, EVOLUTIONS,
-  SETTLEMENT_CARDS, BUILD_SPOTS,
+  SETTLEMENT_CARDS, BUILD_SPOTS, pickDailyPool,
   type WeaponId, type PassiveId, type EnemyKind, type UpgradeCard, type HeroId, type HeroDef, type DifficultyId, type DifficultyDef,
   type SiegeProfile, type BuildingKind, type PawnWeapon,
 } from '../data';
@@ -991,6 +991,9 @@ export class GameScene extends Phaser.Scene {
       extraSiege: this.challengeMods.has('cm_gold_rush'),
       // FTUE (§I.2): первый матч аккаунта — плотность волн −20% первые 3 минуты
       ftueSoftStart: this.ftueSoftStart,
+      // Вызов дня использует повторяемый пул по дате — обычные и бесконечные
+      // матчи не меняют свой состав врагов.
+      dailyPool: this.mods.challenge ? pickDailyPool(rollMetaDay().quests.date) : undefined,
     });
 
     const weaponCtx: WeaponCtx = {
