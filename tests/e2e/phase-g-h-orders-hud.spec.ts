@@ -331,7 +331,8 @@ test('phase G: desktop menu is explicit, closable and BUILD order ends after con
   expect(result.pendingJob).toBe(false);
   expect(result.orderAfterCompletion).toBeNull();
   expect(result.targetAfterCompletion).toBeNull();
-  expect(result.autoResumed).toBe(true);
+  expect(result.resourcesAvailableForResume).toBe(true);
+  expect(result.autoResumed, JSON.stringify(result)).toBe(true);
 });
 
 test('phase G: carry phase deposits first and only then applies BUILD', async ({ page }) => {
