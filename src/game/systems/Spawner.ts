@@ -62,6 +62,8 @@ export interface SpawnerOpts {
   extraSiege?: boolean;
   /** FTUE (§I.2): тепличный первый матч — плотность волн −20% первые 3 минуты. */
   ftueSoftStart?: boolean;
+  /** Поднабор врагов из ежедневного вызова; undefined сохраняет обычный рандом. */
+  dailyPool?: readonly EnemyKind[];
 }
 
 export class Spawner {
@@ -177,13 +179,13 @@ export class Spawner {
       const black: EnemyKind[] = ['skull', 'shaman', 'pig-rider', 'bomb-fish'];
       return black[Math.floor(Math.random() * black.length)];
     }
-    const kind = pickRegularKind(minute, Math.random);
+    const kind = pickRegularKind(minute, Math.random, this.o.dailyPool);
     // «Красная долина»: в окне 7–12 минут черепа и шаманы приходят на 25%
     // чаще — если выпало другое существо, с вероятностью 0.2 перебрасываем
     // ещё раз (буст ~×1.25 к доле этих видов без правки весов data.ts).
     if (this.o.redValley && minute >= 7 && minute < 12
       && kind !== 'skull' && kind !== 'shaman' && Math.random() < 0.2) {
-      return pickRegularKind(minute, Math.random);
+      return pickRegularKind(minute, Math.random, this.o.dailyPool);
     }
     return kind;
   }
