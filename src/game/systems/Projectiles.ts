@@ -309,7 +309,12 @@ export class Projectiles {
 
   /** Снаряды врагов: у броска по зданию — прибытие к цели (§E.4.1). */
   private updateEnemyShots(dtMs: number): void {
-    for (const p of this.enemyShotPool) {
+    this.updateEnemyShotPool(this.enemyShotPool, dtMs);
+    this.updateEnemyShotPool(this.fireArrowPool, dtMs);
+  }
+
+  private updateEnemyShotPool(pool: EnemyShot[], dtMs: number): void {
+    for (const p of pool) {
       if (!p.active) continue;
       p.life -= dtMs;
       if (p.fire) this.updateFireTrail(p);
