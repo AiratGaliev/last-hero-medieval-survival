@@ -207,7 +207,6 @@ export class Projectiles {
       // вместе со шлейфом частиц fire-01, как отдельный огненный снаряд.
       p.setScale(0.7);
       body.setSize(34, 10, true);
-      this.showFireTrail(p);
     } else {
       p.setScale(cfg.scale);
       body.setSize(cfg.body, cfg.body, true);
