@@ -111,7 +111,7 @@ export class OrderMenu {
     });
 
     // Центральный крестик «закрыть»
-    const close = this.scene.add.circle(wx, wy, 24, 0x1a0f08, 0.9
+    const close = this.scene.add.circle(wx, wy, 24, 0x1a0f08, 0.9)
       .setStrokeStyle(2, 0x8a6d3b).setInteractive({ useHandCursor: true }).setScale(uiScale);
     const cross = this.scene.add.text(wx, wy, '✕', { fontFamily: FONT, fontSize: '14px', color: '#ffe9b0' })
       .setOrigin(0.5).setScale(uiScale);
@@ -177,7 +177,7 @@ export class OrderMenu {
     reset.add([rbg, rtxt]);
     container.add(reset);
 
-    const close = this.scene.add.circle(wx, wy, 24, 0x1a0f08, 0.9
+    const close = this.scene.add.circle(wx, wy, 24, 0x1a0f08, 0.9)
       .setStrokeStyle(2, 0x8a6d3b).setInteractive({ useHandCursor: true }).setScale(uiScale);
     const cross = this.scene.add.text(wx, wy, '✕', { fontFamily: FONT, fontSize: '14px', color: '#ffe9b0' })
       .setOrigin(0.5).setScale(uiScale);
