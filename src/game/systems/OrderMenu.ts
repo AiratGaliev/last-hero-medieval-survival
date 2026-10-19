@@ -28,6 +28,12 @@ export class OrderMenu {
     this.scene = scene;
   }
 
+  /** Помечает интерактивную цель меню, чтобы клик не обрабатывался под ней сценой. */
+  private markMenuTarget<T extends Phaser.GameObjects.GameObject>(target: T): T {
+    (target as T & { __tssOrderMenuTarget?: boolean }).__tssOrderMenuTarget = true;
+    return target;
+  }
+
   /** Кольцо заполнения лонг-пресса (в мировых координатах у камеры). */
   showRing(x: number, y: number, now: number): void {
     if (!this.ring) {
@@ -74,8 +80,10 @@ export class OrderMenu {
     const container = this.scene.add.container(0, 0).setDepth(9450);
 
     // Затемнение-ловушка: клик мимо пунктов закрывает меню
-    const veil = this.scene.add.rectangle(0, 0, this.scene.scale.width * 2, this.scene.scale.height * 2, 0x000000, 0.25)
-      .setInteractive();
+    const veil = this.markMenuTarget(
+      this.scene.add.rectangle(0, 0, this.scene.scale.width * 2, this.scene.scale.height * 2, 0x000000, 0.25)
+        .setInteractive(),
+    );
     veil.on('pointerdown', () => { this.close(); onClose?.(); });
     container.add(veil);
 
@@ -98,7 +106,7 @@ export class OrderMenu {
       c.add([bg, label]);
       // Disabled-кнопка ловит hit-test, но не имеет действия: без этого клик
       // проваливается на veil-подложку и закрывает меню вместо «ничего не делать».
-      bg.setInteractive({ useHandCursor: !e.disabled });
+      this.markMenuTarget(bg.setInteractive({ useHandCursor: !e.disabled }));
       if (!e.disabled) {
         bg.on('pointerdown', () => {
           onPick(e.key);
@@ -111,8 +119,10 @@ export class OrderMenu {
     });
 
     // Центральный крестик «закрыть»
-    const close = this.scene.add.circle(wx, wy, 24, 0x1a0f08, 0.9)
-      .setStrokeStyle(2, 0x8a6d3b).setInteractive({ useHandCursor: true }).setScale(uiScale);
+    const close = this.markMenuTarget(
+      this.scene.add.circle(wx, wy, 24, 0x1a0f08, 0.9)
+        .setStrokeStyle(2, 0x8a6d3b).setInteractive({ useHandCursor: true }).setScale(uiScale),
+    );
     const cross = this.scene.add.text(wx, wy, '✕', { fontFamily: FONT, fontSize: '14px', color: '#ffe9b0' })
       .setOrigin(0.5).setScale(uiScale);
     close.on('pointerdown', () => { this.close(); onClose?.(); });
@@ -131,8 +141,10 @@ export class OrderMenu {
     const uiScale = gameUnitsPerCssPx / Math.max(0.01, this.scene.cameras.main.zoom);
     const R = 74 * uiScale;
     const container = this.scene.add.container(0, 0).setDepth(9450);
-    const veil = this.scene.add.rectangle(0, 0, this.scene.scale.width * 2, this.scene.scale.height * 2, 0x000000, 0.25)
-      .setInteractive();
+    const veil = this.markMenuTarget(
+      this.scene.add.rectangle(0, 0, this.scene.scale.width * 2, this.scene.scale.height * 2, 0x000000, 0.25)
+        .setInteractive(),
+    );
     veil.on('pointerdown', () => this.close());
     container.add(veil);
     entries.forEach((e, i) => {
@@ -150,7 +162,7 @@ export class OrderMenu {
       c.add([bg, label]);
       // Disabled-кнопка ловит hit-test, но не имеет действия: без этого клик
       // проваливается на veil-подложку и закрывает меню вместо «ничего не делать».
-      bg.setInteractive({ useHandCursor: !e.disabled });
+      this.markMenuTarget(bg.setInteractive({ useHandCursor: !e.disabled }));
       if (!e.disabled) {
         bg.on('pointerdown', () => {
           onPick(e.key);
@@ -165,8 +177,10 @@ export class OrderMenu {
     // «сброс» в радиальном меню. Без него перевести воина обратно на
     // автоповедение было невозможно в принципе.
     const reset = this.scene.add.container(wx, wy - 54 * uiScale).setScale(uiScale);
-    const rbg = this.scene.add.rectangle(0, 0, 96, 26, 0x5a4327, 0.95)
-      .setStrokeStyle(2, 0xd8c9a8).setInteractive({ useHandCursor: true });
+    const rbg = this.markMenuTarget(
+      this.scene.add.rectangle(0, 0, 96, 26, 0x5a4327, 0.95)
+        .setStrokeStyle(2, 0xd8c9a8).setInteractive({ useHandCursor: true }),
+    );
     const rtxt = this.scene.add.text(0, 0, t('order.reset'), {
       fontFamily: FONT, fontSize: '12px', color: '#ffe9b0',
     }).setOrigin(0.5);
@@ -177,8 +191,10 @@ export class OrderMenu {
     reset.add([rbg, rtxt]);
     container.add(reset);
 
-    const close = this.scene.add.circle(wx, wy, 24, 0x1a0f08, 0.9)
-      .setStrokeStyle(2, 0x8a6d3b).setInteractive({ useHandCursor: true }).setScale(uiScale);
+    const close = this.markMenuTarget(
+      this.scene.add.circle(wx, wy, 24, 0x1a0f08, 0.9)
+        .setStrokeStyle(2, 0x8a6d3b).setInteractive({ useHandCursor: true }).setScale(uiScale),
+    );
     const cross = this.scene.add.text(wx, wy, '✕', { fontFamily: FONT, fontSize: '14px', color: '#ffe9b0' })
       .setOrigin(0.5).setScale(uiScale);
     close.on('pointerdown', () => this.close());

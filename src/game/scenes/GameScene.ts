@@ -1264,7 +1264,16 @@ export class GameScene extends Phaser.Scene {
     this.joystick = new Joystick(this);
 
     // ---- Приказы пешкам: Shift+ЛКМ (десктоп) / лонг-пресс 500 мс (тач) (§B.6) ----
-    this.input.on('pointerdown', (pointer: Phaser.Input.Pointer) => {
+    this.input.on('pointerdown', (
+      pointer: Phaser.Input.Pointer,
+      currentlyOver: Phaser.GameObjects.GameObject[] = [],
+    ) => {
+      // UI должен потреблять pointerdown до геймплейного слоя, даже если его
+      // callback закрыл меню на том же событии. Это исключает повторное открытие.
+      const hitsOrderMenu = currentlyOver.some((target) => (
+        (target as Phaser.GameObjects.GameObject & { __tssOrderMenuTarget?: boolean }).__tssOrderMenuTarget === true
+      ));
+      if (hitsOrderMenu) return;
       if (this.gameEnded || this.overlayOpen) return;
       const shift = !pointer.wasTouch
         && ((pointer.event as unknown as { shiftKey?: boolean })?.shiftKey === true);
