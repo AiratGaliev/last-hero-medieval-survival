@@ -55,7 +55,10 @@ type GameSceneRuntime = {
   time: { now: number };
   scale: { width: number; height: number };
   textures: { exists(key: string): boolean };
-  cameras: { main: { x: number; y: number; zoom: number; worldView: { x: number; y: number } } };
+  cameras: { main: {
+    x: number; y: number; zoom: number; worldView: { x: number; y: number };
+    getWorldPoint(x: number, y: number): { x: number; y: number };
+  } };
   hintOverlayPaused: boolean;
 };
 type PhaserRuntime = { scene: { getScene(key: string): unknown; isActive(key: string): boolean } };
@@ -122,11 +125,21 @@ async function preparePawn(page: Page): Promise<Point> {
     const canvas = document.querySelector('#game canvas');
     if (!canvas) throw new Error('Game canvas is missing');
     const rect = canvas.getBoundingClientRect();
-    const x = camera.x + (pawn.x - camera.worldView.x) * camera.zoom;
-    const y = camera.y + (pawn.y - camera.worldView.y) * camera.zoom;
+    // Обратное преобразование по API камеры, не приближённая формула через worldView:
+    // учитывает origin камеры, zoom и экранные координаты Phaser одинаково для desktop/mobile.
+    const p0 = camera.getWorldPoint(0, 0);
+    const px = camera.getWorldPoint(1, 0);
+    const py = camera.getWorldPoint(0, 1);
+    const ax = px.x - p0.x, ay = py.x - p0.x;
+    const bx = px.y - p0.y, by = py.y - p0.y;
+    const det = ax * by - ay * bx;
+    if (Math.abs(det) < 1e-8) throw new Error('Camera screen/world transform is singular');
+    const dx = pawn.x - p0.x, dy = pawn.y - p0.y;
+    const logicalX = (dx * by - ay * dy) / det;
+    const logicalY = (ax * dy - dx * bx) / det;
     return {
-      x: rect.left + x * rect.width / scene.scale.width,
-      y: rect.top + y * rect.height / scene.scale.height,
+      x: rect.left + logicalX * rect.width / scene.scale.width,
+      y: rect.top + logicalY * rect.height / scene.scale.height,
     };
   });
 }
@@ -199,12 +212,20 @@ test('phase G: desktop menu is explicit, closable and BUILD order ends after con
     const canvas = document.querySelector('#game canvas');
     if (!canvas) throw new Error('Game canvas is missing');
     const rect = canvas.getBoundingClientRect();
-    const worldX = pawn.x + 74;
-    const x = camera.x + (worldX - camera.worldView.x) * camera.zoom;
-    const y = camera.y + (pawn.y - camera.worldView.y) * camera.zoom;
+    const worldX = pawn.x + 74, worldY = pawn.y;
+    const p0 = camera.getWorldPoint(0, 0);
+    const px = camera.getWorldPoint(1, 0);
+    const py = camera.getWorldPoint(0, 1);
+    const ax = px.x - p0.x, ay = py.x - p0.x;
+    const bx = px.y - p0.y, by = py.y - p0.y;
+    const det = ax * by - ay * bx;
+    if (Math.abs(det) < 1e-8) throw new Error('Camera screen/world transform is singular');
+    const dx = worldX - p0.x, dy = worldY - p0.y;
+    const logicalX = (dx * by - ay * dy) / det;
+    const logicalY = (ax * dy - dx * bx) / det;
     return {
-      x: rect.left + x * rect.width / scene.scale.width,
-      y: rect.top + y * rect.height / scene.scale.height,
+      x: rect.left + logicalX * rect.width / scene.scale.width,
+      y: rect.top + logicalY * rect.height / scene.scale.height,
     };
   });
   await page.mouse.click(buildPoint.x, buildPoint.y);
