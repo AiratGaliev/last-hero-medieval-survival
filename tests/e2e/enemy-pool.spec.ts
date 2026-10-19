@@ -133,7 +133,9 @@ test('creature sheets, combat animations, projectiles and hero-monk regression a
     const sheetKinds = boot.CREATURE_SHEETS.map((item) => item.kind).sort();
     const faceKeys = [
       'face-goblin', 'face-thief', 'face-gnoll', 'face-skull', 'face-shaman',
-      'face-bomb-fish', 'face-bear', 'face-minotaur', 'face-boss',
+      'face-bomb-fish', 'face-spider', 'face-snake', 'face-lizard', 'face-turtle',
+      'face-gnome', 'face-panda', 'face-spear-goblin', 'face-harpoon-shark', 'face-paddle-shark',
+      'face-bear', 'face-minotaur', 'face-boss',
     ];
     const requiredTextures = [
       'proj-bone', 'proj-hex', 'fx-hex', ...faceKeys,
@@ -144,7 +146,7 @@ test('creature sheets, combat animations, projectiles and hero-monk regression a
     );
     const nonLooping = keys.filter((key) => {
       const anim = key.slice(key.lastIndexOf('-') + 1);
-      return ['atk', 'shoot', 'dead', 'recover'].includes(anim)
+      return ['atk', 'atkStrong', 'shoot', 'dead', 'recover', 'hit', 'guardIn', 'guardOut'].includes(anim)
         && game.anims.get(key)?.repeat !== 0;
     });
     const missingAnimations = keys.filter((key) => !game.anims.exists(key));
@@ -156,20 +158,13 @@ test('creature sheets, combat animations, projectiles and hero-monk regression a
       enemy.hp <= 0 || enemy.speed <= 0 || enemy.damage <= 0
       || enemy.frameW <= 0 || enemy.groundY <= 0 || enemy.body.r <= 0
       || ![enemy.body.cx, enemy.body.cy, enemy.body.r, enemy.groundY].every(Number.isFinite)
-      || 'texture' in enemy
-      // Ориентация. Весь пак Tiny Swords (`units/*` и `enemies/*`) нарисован
-      // вправо, поэтому разворот идёт по знаку скорости (см. Enemy.faceDir),
-      // а флаг `facesRight` у существ не выставляется.
-      //
-      // Раньше здесь стояло `enemy.kind === 'bear' && enemy.facesRight !== true`:
-      // тест закреплял исключение медведя, который якобы нарисован влево. На
-      // деле лист, как и остальные десять, смотрит вправо — правило было неверным,
-      // и все девять «обычных» существ разворачивались при движении ВПРАВО, то
-      // есть пятились спиной. Теперь инвариант общий: флаг, отключающий разворот
-      // по умолчанию, в данных не используется и появляется только вместе с
-      // реально левым листом.
-      || enemy.facesRight === false,
+      || 'texture' in enemy,
     );
+    const expectedLeftFacing = ['gnome', 'harpoon-shark', 'paddle-shark', 'panda', 'spear-goblin'];
+    const actualLeftFacing = Object.values(data.ENEMIES)
+      .filter((enemy) => enemy.facesRight === false).map((enemy) => enemy.kind).sort();
+    const wrongFacing = actualLeftFacing.filter((kind) => !expectedLeftFacing.includes(kind))
+      .concat(expectedLeftFacing.filter((kind) => !actualLeftFacing.includes(kind)));
     const legacyIds = [
       'grunt', 'swarm', 'brute', 'bomber', 'taskmaster', 'midboss',
       'boss-minion', 'elite-lancer', 'elite-monk', 'mercenary',
@@ -180,7 +175,7 @@ test('creature sheets, combat animations, projectiles and hero-monk regression a
 
     return {
       kinds, sheetKinds, missingAnimations, missingTextures, nonLooping,
-      invalidDefs: invalidDefs.map((enemy) => enemy.kind), legacyRuntimeKeys,
+      invalidDefs: invalidDefs.map((enemy) => enemy.kind), wrongFacing, legacyRuntimeKeys,
       hasMonk: 'monk' in data.HEROES,
       bossWindupRepeat: game.anims.get('boss-windup')?.repeat ?? null,
       bossRecoverRepeat: game.anims.get('boss-recover')?.repeat ?? null,
@@ -189,31 +184,35 @@ test('creature sheets, combat animations, projectiles and hero-monk regression a
   });
 
   expect(report.kinds).toEqual([
-    'bear', 'bomb-fish', 'boss', 'gnoll', 'goblin', 'minotaur', 'pig-rider', 'shaman', 'skull', 'thief',
+    'bear', 'bomb-fish', 'boss', 'gnoll', 'gnome', 'goblin', 'harpoon-shark', 'lizard',
+    'minotaur', 'paddle-shark', 'panda', 'pig-rider', 'shaman', 'skull', 'snake',
+    'spear-goblin', 'spider', 'thief', 'turtle',
   ]);
   expect(report.sheetKinds).toEqual(report.kinds);
   expect(report.missingAnimations).toEqual([]);
   expect(report.missingTextures).toEqual([]);
   expect(report.nonLooping).toEqual([]);
   expect(report.invalidDefs).toEqual([]);
+  expect(report.wrongFacing).toEqual([]);
   expect(report.legacyRuntimeKeys).toEqual([]);
   expect(report.hasMonk).toBe(true);
   expect(report.bossWindupRepeat).toBe(-1);
   expect(report.bossRecoverRepeat).toBe(0);
   expect(report.minotaurGuardRepeat).toBe(-1);
-  expect(report.kinds).toHaveLength(10);
-  expect(report.sheetKinds).toHaveLength(10);
+  expect(report.kinds).toHaveLength(19);
+  expect(report.sheetKinds).toHaveLength(19);
   expect(pageErrors).toEqual([]);
 });
 
-test('enemy weight tiers and scheduled waves stay aligned with the ten-kind pool', async ({ page }) => {
+test('enemy weight tiers, daily pool and scheduled waves stay aligned with the expanded pool', async ({ page }) => {
   await openApp(page);
   const report = await page.evaluate(async () => {
     const root = window.location.origin;
     const data = await import(/* @vite-ignore */ new URL('/src/game/data.ts', root).href) as {
       ENEMIES: Record<string, unknown>;
       WAVE_EVENTS: Array<{ t: number; type: string; enemy?: string; count?: number; interval?: number }>;
-      pickRegularKind: (minute: number, rng: () => number) => string;
+      pickRegularKind: (minute: number, rng: () => number, pool?: readonly string[]) => string;
+      pickDailyPool: (seed: string) => string[];
     };
     const latestKindAt = (minute: number) => data.pickRegularKind(minute, () => 0.999999);
     const byTimeAndType = (t: number, type: string) =>
@@ -226,9 +225,20 @@ test('enemy weight tiers and scheduled waves stay aligned with the ten-kind pool
     const poolSamples = Array.from({ length: 26 }, (_, minute) =>
       [0, 0.5, 0.999999].map((rng) => data.pickRegularKind(minute, () => rng)),
     ).flat();
+    const dailyPool = data.pickDailyPool('2026-10-19');
+    const sameDailyPool = data.pickDailyPool('2026-10-19');
+    const otherDailyPool = data.pickDailyPool('2026-10-20');
+    const dailySamples = Array.from({ length: 30 }, (_, i) =>
+      data.pickRegularKind(i / 2, () => (i % 3) / 3, dailyPool),
+    );
 
     return {
       sorted,
+      dailyPool,
+      sameDailyPool,
+      otherDailyPool,
+      dailySamples,
+      dailyPoolHasBosses: dailyPool.some((kind) => ['bear', 'minotaur', 'boss'].includes(kind)),
       unknownKinds: unknownKinds.map((event) => ({ t: event.t, enemy: event.enemy })),
       invalidSamples: poolSamples.filter((kind) => !pool.has(kind)),
       unlocks: [
@@ -247,6 +257,14 @@ test('enemy weight tiers and scheduled waves stay aligned with the ten-kind pool
   expect(report.sorted).toBe(true);
   expect(report.unknownKinds).toEqual([]);
   expect(report.invalidSamples).toEqual([]);
+  expect(report.dailyPool).toEqual(report.sameDailyPool);
+  expect(report.dailyPool).toHaveLength(9);
+  expect(report.dailyPool).toContain('goblin');
+  expect(report.dailyPool).toContain('thief');
+  expect(report.dailyPool).toContain('gnoll');
+  expect(report.otherDailyPool).not.toEqual(report.dailyPool);
+  expect(report.dailyPoolHasBosses).toBe(false);
+  expect(report.dailySamples.every((kind) => report.dailyPool.includes(kind))).toBe(true);
   expect(report.unlocks).toEqual([
     [0, 'goblin'], [1, 'goblin'], [2, 'thief'], [3, 'gnoll'],
     [5, 'skull'], [7, 'shaman'], [9, 'pig-rider'], [11, 'bomb-fish'],
