@@ -1097,3 +1097,74 @@ test('phases E-F: construction uses the approached spot and repair costs are gua
   expect(report.builderFullCapacityAmount).toBe(5);
   expect(report.residentCountAfterHouse).toBeGreaterThanOrEqual(3);
 });
+
+test('phase K: flaming siege arrows use a bounded pool, visible trail and arrival callback', async ({ page }) => {
+  const pageErrors: string[] = [];
+  await openApp(page);
+  await startGameplay(page);
+  page.on('pageerror', (error) => pageErrors.push(error.message));
+
+  const report = await page.evaluate(() => {
+    const game = (window as unknown as { __tss?: PhaserRuntime }).__tss;
+    if (!game) throw new Error('Phaser game instance is unavailable');
+    type TrailRuntime = { active: boolean; visible: boolean };
+    type FireArrowRuntime = {
+      active: boolean;
+      visible: boolean;
+      texture: { key: string };
+      targetB: { x: number; y: number } | null;
+      trailSprites?: TrailRuntime[];
+      setPosition(x: number, y: number): unknown;
+      isTinted?: boolean;
+    };
+    type ProjectilesRuntime = {
+      size: number;
+      enemyShots: { getChildren(): FireArrowRuntime[] };
+      shootAtBuilding(
+        kind: string, x: number, y: number, tx: number, ty: number,
+        dmg: number, fire: boolean, onArrive: () => void,
+      ): void;
+      update(deltaMs: number): void;
+      clear(): void;
+    };
+    const scene = game.scene.getScene('Game') as GameSceneRuntime & {
+      projectiles: ProjectilesRuntime;
+      spawner: { stopped: boolean };
+    };
+    scene.spawner.stopped = true;
+    scene.projectiles.clear();
+    const castle = scene.economy.buildings.find((building) => building.kind === 'castle');
+    if (!castle) throw new Error('Castle is missing');
+    const before = scene.projectiles.size;
+    let arrivals = 0;
+    scene.projectiles.shootAtBuilding(
+      'hex', castle.x + 150, castle.y, castle.x, castle.y, 8, true, () => { arrivals++; },
+    );
+    const arrow = scene.projectiles.enemyShots.getChildren()
+      .find((shot) => shot.active && shot.texture.key === 'arrow' && shot.targetB !== null);
+    if (!arrow) throw new Error('Fire arrow was not created');
+    const result = {
+      sizeBefore: before,
+      sizeAfter: scene.projectiles.size,
+      arrowTexture: arrow.texture.key,
+      trailCount: arrow.trailSprites?.length ?? 0,
+      trailVisible: arrow.trailSprites?.every((flame) => flame.active && flame.visible) ?? false,
+      animationExists: game.anims.exists('fire-arrow-trail'),
+      tinted: arrow.isTinted ?? false,
+    };
+    arrow.setPosition(castle.x, castle.y);
+    scene.projectiles.update(16);
+    result['arrivals' as keyof typeof result] = arrivals as never;
+    scene.projectiles.clear();
+    return result;
+  });
+
+  expect(report.sizeAfter).toBe(report.sizeBefore + 1);
+  expect(report.arrowTexture).toBe('arrow');
+  expect(report.trailCount).toBe(3);
+  expect(report.trailVisible).toBe(true);
+  expect(report.animationExists).toBe(true);
+  expect(report.tinted).toBe(false);
+  expect((report as typeof report & { arrivals: number }).arrivals).toBe(1);
+  expect(pageErrors).toEqual([]);
+});
