@@ -1945,22 +1945,29 @@ private ordersUnlocked(): boolean {
       // wall-clock таймером. Watchdog оставляет защиту на случай потерянного
       // animationcomplete в throttled/background вкладке.
       let deathFinished = false;
+      let wallClockWatchdog: number | null = null;
       const finishBossDeath = (): void => {
         if (deathFinished) return;
         deathFinished = true;
+        if (wallClockWatchdog !== null) {
+          window.clearTimeout(wallClockWatchdog);
+          wallClockWatchdog = null;
+        }
         e.clearDeathCleanupTimer();
         if (e.active) e.destroy();
-        if (e === this.boss && !this.mods.endless && !this.gameEnded) {
+        if (e === this.boss && !this.mods.endless && !this.gameEnded && this.sys.isActive()) {
           this.victoryPending = false;
           this.victory();
         }
       };
-      // Use the generic animation completion event, then filter the exact one-shot clip.
+      // Prefer the actual one-shot clip when it completes.
       e.once('animationcomplete', (anim: Phaser.Animations.Animation) => {
         if (anim.key === 'boss-dead') finishBossDeath();
       });
-      // Frame-delta watchdog also works if a Scene Clock event is paused/cancelled.
+      // Frame-delta fallback handles a paused Scene Clock. The native browser timer
+      // is an independent last resort if the display-list update path is suspended.
       e.setDeathCleanupTimer(BOSS_DEATH_ANIMATION_MS + 500, finishBossDeath);
+      wallClockWatchdog = window.setTimeout(finishBossDeath, BOSS_DEATH_ANIMATION_MS + 500);
     } else {
       this.enemyGroup.remove(e, true, true);
     }
