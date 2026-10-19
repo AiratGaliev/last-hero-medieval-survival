@@ -60,19 +60,6 @@ type RuntimeWindow = Window & { __tss?: PhaserRuntime };
 
 const startupTimeout = 30_000;
 
-function screenPoint(scene: GameSceneRuntime, worldX: number, worldY: number): Point {
-  const camera = scene.cameras.main;
-  const canvas = document.querySelector('#game canvas');
-  if (!canvas) throw new Error('Game canvas is missing');
-  const rect = canvas.getBoundingClientRect();
-  const x = camera.x + (worldX - camera.worldView.x) * camera.zoom;
-  const y = camera.y + (worldY - camera.worldView.y) * camera.zoom;
-  return {
-    x: rect.left + x * rect.width / scene.scale.width,
-    y: rect.top + y * rect.height / scene.scale.height,
-  };
-}
-
 async function startRun(page: Page, width = 1280, height = 720): Promise<void> {
   await page.setViewportSize({ width, height });
   await page.goto('/?lang=en&ysdk=mock');
@@ -124,7 +111,16 @@ async function preparePawn(page: Page): Promise<Point> {
     pawn.state = 'idle';
     pawn.cooldown = 30;
     pawn.setVelocity(0, 0);
-    return screenPoint(scene, pawn.x, pawn.y);
+    const camera = scene.cameras.main;
+    const canvas = document.querySelector('#game canvas');
+    if (!canvas) throw new Error('Game canvas is missing');
+    const rect = canvas.getBoundingClientRect();
+    const x = camera.x + (pawn.x - camera.worldView.x) * camera.zoom;
+    const y = camera.y + (pawn.y - camera.worldView.y) * camera.zoom;
+    return {
+      x: rect.left + x * rect.width / scene.scale.width,
+      y: rect.top + y * rect.height / scene.scale.height,
+    };
   });
 }
 
@@ -171,7 +167,17 @@ test('phase G: desktop menu is explicit, closable and BUILD order ends after con
     const game = (window as RuntimeWindow).__tss!;
     const scene = game.scene.getScene('Game') as GameSceneRuntime;
     const pawn = scene.economy.pawns.find(p => p.kind === 'collector')!;
-    return screenPoint(scene, pawn.x + 74, pawn.y);
+    const camera = scene.cameras.main;
+    const canvas = document.querySelector('#game canvas');
+    if (!canvas) throw new Error('Game canvas is missing');
+    const rect = canvas.getBoundingClientRect();
+    const worldX = pawn.x + 74;
+    const x = camera.x + (worldX - camera.worldView.x) * camera.zoom;
+    const y = camera.y + (pawn.y - camera.worldView.y) * camera.zoom;
+    return {
+      x: rect.left + x * rect.width / scene.scale.width,
+      y: rect.top + y * rect.height / scene.scale.height,
+    };
   });
   await page.mouse.click(buildPoint.x, buildPoint.y);
   await expect.poll(() => page.evaluate(() => {
