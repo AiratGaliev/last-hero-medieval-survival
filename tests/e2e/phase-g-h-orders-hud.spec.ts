@@ -88,9 +88,14 @@ type RuntimeWindow = Window & { __tss?: PhaserRuntime; __tssLastPointerDown?: Po
 
 const startupTimeout = 30_000;
 
-async function startRun(page: Page, width = 1280, height = 720): Promise<void> {
+async function startRun(
+  page: Page,
+  width = 1280,
+  height = 720,
+  url = '/?lang=en&ysdk=mock',
+): Promise<void> {
   await page.setViewportSize({ width, height });
-  await page.goto('/?lang=en&ysdk=mock');
+  await page.goto(url);
   await expect(page.locator('#game canvas')).toBeVisible({ timeout: startupTimeout });
   await expect(page.locator('#boot')).toHaveCount(0, { timeout: startupTimeout });
   await expect.poll(
@@ -501,4 +506,44 @@ test('phase H: resource HUD labels stock separately from match gold and plays de
   expect(result.assetKeysLoaded).toBe(true);
   expect(result.withinViewport).toBe(true);
   expect(result.hiddenAfterReset).toBe(true);
+});
+
+test('phase J: ?debug DPS panel and pawn retreat/wounded badges are visible', async ({ page }) => {
+  await startRun(page, 1280, 720, '/?lang=en&ysdk=mock&debug=1');
+  const report = await page.evaluate(() => {
+    const runtime = (window as RuntimeWindow).__tss;
+    if (!runtime) throw new Error('Phaser runtime is unavailable');
+    const scene = runtime.scene.getScene('Game') as GameSceneRuntime & {
+      dpsDebugText: { active: boolean; visible: boolean; text: string } | null;
+      updateDpsDebug(time: number): void;
+      time: { now: number };
+    };
+    if (!scene.dpsDebugText) throw new Error('Debug panel was not created for ?debug=1');
+    scene.updateDpsDebug(scene.time.now + 1_001);
+    const pawn = scene.economy.pawns[0] as PawnRuntime & {
+      preUpdate(time: number, delta: number): void;
+      stateBadge: { text: string; active: boolean } | null;
+    };
+    if (!pawn) throw new Error('Initial settlement has no pawn');
+    const originalState = pawn.state;
+    pawn.state = 'retreat';
+    pawn.preUpdate(scene.time.now, 16);
+    const retreatLabel = pawn.stateBadge?.text ?? '';
+    pawn.state = 'wounded';
+    pawn.preUpdate(scene.time.now + 16, 16);
+    const woundedLabel = pawn.stateBadge?.text ?? '';
+    pawn.state = originalState;
+    pawn.preUpdate(scene.time.now + 32, 16);
+    return {
+      debugVisible: scene.dpsDebugText.active && scene.dpsDebugText.visible,
+      debugText: scene.dpsDebugText.text,
+      retreatLabel,
+      woundedLabel,
+    };
+  });
+
+  expect(report.debugVisible).toBe(true);
+  expect(report.debugText).toContain('DPS QA');
+  expect(report.retreatLabel).toBe('RETREAT');
+  expect(report.woundedLabel).toBe('WOUNDED');
 });
