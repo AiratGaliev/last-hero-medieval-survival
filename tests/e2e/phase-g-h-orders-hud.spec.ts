@@ -378,6 +378,16 @@ test('phase H: resource HUD labels stock separately from match gold and plays de
     const noWeaponOverlap = weaponBounds.every(bounds => !overlaps(resourcesBounds, bounds));
     const assetKeysLoaded = scene.textures.exists('res-wood')
       && scene.textures.exists('res-meat') && scene.textures.exists('res-ore');
+    // getBounds() возвращает мировые координаты. HUD компенсирует camera zoom
+    // через корневой scrollFactor(0)-контейнер, поэтому для viewport-гейта
+    // переводим прямоугольник назад в экранные логические координаты.
+    const zoom = scene.cameras.main.zoom;
+    const screenResourcesBounds = {
+      x: scene.scale.width / 2 + (resourcesBounds.x - scene.scale.width / 2) * zoom,
+      y: scene.scale.height / 2 + (resourcesBounds.y - scene.scale.height / 2) * zoom,
+      width: resourcesBounds.width * zoom,
+      height: resourcesBounds.height * zoom,
+    };
     const snapshot = {
       hiddenAtStart,
       visibleAfterDeposit: hud.resGroup.visible,
@@ -392,9 +402,9 @@ test('phase H: resource HUD labels stock separately from match gold and plays de
       weaponIconCount: weaponBounds.length,
       noWeaponOverlap,
       assetKeysLoaded,
-      withinViewport: resourcesBounds.x >= 0 && resourcesBounds.y >= 0
-        && resourcesBounds.x + resourcesBounds.width <= scene.scale.width
-        && resourcesBounds.y + resourcesBounds.height <= scene.scale.height,
+      withinViewport: screenResourcesBounds.x >= 0 && screenResourcesBounds.y >= 0
+        && screenResourcesBounds.x + screenResourcesBounds.width <= scene.scale.width
+        && screenResourcesBounds.y + screenResourcesBounds.height <= scene.scale.height,
     };
     economy.resources.wood = 0;
     economy.resources.meat = 0;
