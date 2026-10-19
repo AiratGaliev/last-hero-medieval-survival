@@ -1822,6 +1822,7 @@ private ordersUnlocked(): boolean {
       }
     }
     this.assignSiegeTarget(profile, enemies);
+    this.showSiegeTargetIndicators(enemies);
     this.settlement.beginSiege(index, profile.woundCap, enemies);
     this.siegeAlive = true;
     this.siegeDestroyed = 0;
@@ -1835,6 +1836,40 @@ private ordersUnlocked(): boolean {
     }
     this.hints?.show('siege');
     track('siege_start', { index, profile: profile.name });
+  }
+
+  /**
+   * На 3 секунды показывает направление осадного отряда к его текущей цели.
+   * Это короткая подсказка поверх карты, а не постоянный навигационный слой.
+   */
+  private showSiegeTargetIndicators(enemies: Enemy[]): void {
+    if (enemies.length === 0) return;
+    const marker = this.add.graphics().setDepth(DEPTH.FX + 1);
+    marker.lineStyle(2, 0xff5544, 0.78);
+    marker.fillStyle(0xff5544, 0.92);
+    for (const enemy of enemies) {
+      const target = enemy.buildingTarget ?? this.settlement.castle;
+      const dx = target.x - enemy.x;
+      const dy = target.y - enemy.y;
+      const length = Math.hypot(dx, dy);
+      if (length < 1) continue;
+      const ux = dx / length;
+      const uy = dy / length;
+      const tipX = target.x - ux * 46;
+      const tipY = target.y - uy * 46;
+      marker.beginPath();
+      marker.moveTo(enemy.x, enemy.y);
+      marker.lineTo(tipX, tipY);
+      marker.strokePath();
+      const baseX = tipX - ux * 17;
+      const baseY = tipY - uy * 17;
+      const px = -uy * 8;
+      const py = ux * 8;
+      marker.fillTriangle(tipX, tipY, baseX + px, baseY + py, baseX - px, baseY - py);
+    }
+    this.time.delayedCall(3_000, () => {
+      if (marker.active) marker.destroy();
+    });
   }
 
   /** Осадный юнит: флаг siege, вне лимита толпы не считается (это волна события). */
