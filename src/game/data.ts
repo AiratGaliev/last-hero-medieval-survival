@@ -633,16 +633,18 @@ export const BUILDING_PLANS: Record<BuildingKind, BuildingPlan> = {
 export interface BuildSpot { kind: BuildingKind; dx: number; dy: number; }
 
 export const BUILD_SPOTS: BuildSpot[] = [
-  { kind: 'barracks', dx: -360, dy: 40 },
-  { kind: 'tower',    dx: 380,  dy: 60 },
-  { kind: 'monastery', dx: 40,  dy: 420 },
-  { kind: 'archery',  dx: -420, dy: 300 },
-  { kind: 'house', dx: -190, dy: 190 },
-  { kind: 'house', dx: 200,  dy: 200 },
-  { kind: 'house', dx: -60,  dy: 300 },
-  { kind: 'house', dx: 120,  dy: 120 },
-  { kind: 'house', dx: -300, dy: 150 },
-  { kind: 'house', dx: 320,  dy: 210 },
+  // Крупные здания вынесены на внешний пояс, чтобы прямоугольники спрайтов
+  // не пересекались с домами при штатных масштабах Building.
+  { kind: 'barracks', dx: -460, dy: -120 },
+  { kind: 'tower',    dx: 480,  dy: -100 },
+  { kind: 'monastery', dx: 0,   dy: 560 },
+  { kind: 'archery',  dx: -560, dy: 500 },
+  { kind: 'house', dx: -260, dy: 180 },
+  { kind: 'house', dx: 260,  dy: 180 },
+  { kind: 'house', dx: -60,  dy: 320 },
+  { kind: 'house', dx: 140,  dy: 340 },
+  { kind: 'house', dx: -340, dy: 380 },
+  { kind: 'house', dx: 340,  dy: 380 },
 ];
 
 /** Порядок найма: казармы/тир/обитель дают своих бойцов (TZ §F.6). */

@@ -38,6 +38,8 @@ export class Pawn extends Phaser.Physics.Arcade.Sprite {
   /** Точка патруля гарнизона. */
   patrolTarget: { x: number; y: number } | null = null;
   cooldown = 0;
+  /** Входная анимация бесплатного жителя после первого дома (§E.5). */
+  arrivalMs = 0;
   /** Таймер истечения кровью (bleeding). */
   bleedTimer = 0;
   /** Кулдаут атаки (гарнизон). */
@@ -155,6 +157,38 @@ export class Pawn extends Phaser.Physics.Arcade.Sprite {
         this.play(want, true);
       }
     }
+  }
+
+  /**
+   * Появление бесплатного жителя из-за края видимой области к дому (§E.5).
+   * AI удерживает пешку в транзитном состоянии, пока этот tween не завершится.
+   */
+  arriveFrom(startX: number, startY: number, durationMs = 2_000): void {
+    const targetX = this.x;
+    const targetY = this.y;
+    this.arrivalMs = durationMs;
+    this.state = 'walk';
+    this.setPosition(startX, startY).setAlpha(0);
+    this.shadow.setPosition(startX, startY + 8).setAlpha(0);
+    this.lastAnim = '';
+    this.playMove(true);
+    this.scene.tweens.add({
+      targets: this,
+      x: targetX,
+      y: targetY,
+      alpha: 1,
+      duration: durationMs,
+      ease: 'Sine.easeOut',
+      onComplete: () => {
+        this.arrivalMs = 0;
+        if (!this.active) return;
+        this.setAlpha(1);
+        this.shadow.setAlpha(0.3);
+        this.lastAnim = '';
+        this.playMove(false);
+        this.setDepth(DEPTH.ENTITY_BASE + this.y);
+      },
+    });
   }
 
   /** Работа инструментом: pawn-interact-{axe,hammer,knife,pickaxe}. */

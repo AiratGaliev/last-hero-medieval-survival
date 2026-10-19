@@ -415,7 +415,7 @@ export class Economy extends Phaser.Events.EventEmitter {
     let best: ResourceNode | null = null;
     let bestD = Infinity;
     for (const n of this.nodes) {
-      if (!n.alive || n.res !== res) continue;
+      if (!n.available || n.res !== res) continue;
       if (n.claimedBy && n.claimedBy !== from) continue;
       if (Math.hypot(n.x - this.castleX, n.y - this.castleY) > 1000) continue;
       const d = (n.x - from.x) ** 2 + (n.y - from.y) ** 2;
@@ -448,7 +448,7 @@ export class Economy extends Phaser.Events.EventEmitter {
     let best: ResourceNode | null = null;
     let bestScore = -1;
     for (const n of this.nodes) {
-      if (!n.alive || (n.claimedBy && n.claimedBy !== from)) continue;
+      if (!n.available || (n.claimedBy && n.claimedBy !== from)) continue;
       if (n.claimedBy === from) return n; // уже наш узел
       if (Math.hypot(n.x - this.castleX, n.y - this.castleY) > 1000) continue;
       // Контракт «Голодный год» (§H.9): мясо не добывается
@@ -468,7 +468,7 @@ export class Economy extends Phaser.Events.EventEmitter {
     let best: ResourceNode | null = null;
     let bestD = Infinity;
     for (const n of this.nodes) {
-      if (!n.alive) continue;
+      if (!n.available) continue;
       if (n.claimedBy && n.claimedBy !== from) continue;
       if (this.tune.meatDisabled && n.res === 'meat') continue;
       if (Math.hypot(n.x - this.castleX, n.y - this.castleY) > 1000) continue;
@@ -482,12 +482,14 @@ export class Economy extends Phaser.Events.EventEmitter {
 
   /** Дополнительные пятна домов (§H.16 «Шестое пятно», §H.12 — +4 дома). */
   private extraSpots(): Array<{ kind: BuildingKind; dx: number; dy: number }> {
+    // Дополнительные пятна согласованы с базовыми BUILD_SPOTS: бонусы
+    // должны расширять поселение, а не ставить дома поверх крупных зданий.
     const pts: Array<{ dx: number; dy: number }> = [
-      { dx: -380, dy: 260 },
-      { dx: -440, dy: -100 },
-      { dx: 500, dy: 180 },
-      { dx: 160, dy: -320 },
-      { dx: -600, dy: 140 },
+      { dx: -420, dy: -330 },
+      { dx: 350, dy: -350 },
+      { dx: 500, dy: 500 },
+      { dx: -250, dy: -420 },
+      { dx: 580, dy: 300 },
     ];
     const out: Array<{ kind: BuildingKind; dx: number; dy: number }> = [];
     for (let i = 0; i < this.tune.extraHouseSpots && i < pts.length; i++) {
@@ -541,9 +543,19 @@ export class Economy extends Phaser.Events.EventEmitter {
    * Заложить стройку: spend() в момент СТАРТА (§D.2 — не по завершении),
    * здание появляется недостроенным, строитель играет pawny-work-hammer.
    */
-  tryStartBuild(kind: BuildingKind, pawn: Pawn): boolean {
+  tryStartBuild(
+    kind: BuildingKind,
+    pawn: Pawn,
+    preferredSpot?: { x: number; y: number },
+  ): boolean {
     const plan = BUILDING_PLANS[kind];
-    const spot = this.spotFor(kind);
+    // Пешка должна возводить объект именно на пятне, к которому пришла.
+    // Если пятно уже занято, задача пересчитается на следующем тике вместо
+    // скрытого переноса стройки на другой конец поселения.
+    const spot = preferredSpot
+      ? this.freeSpots().find((s) => s.kind === kind
+        && s.x === preferredSpot.x && s.y === preferredSpot.y) ?? null
+      : this.spotFor(kind);
     if (!spot) return false;
     if (!this.spend(this.buildingCost(kind))) return false;
     const tex = plan.sprites
@@ -591,6 +603,8 @@ export class Economy extends Phaser.Events.EventEmitter {
     if (this.buildJobs.some((j) => j.building === building)) return false; // ещё строится
     if (this.repairJobs.some((j) => j.building === building)) return false;
     const rebuild = building.hp <= 0;
+    // Не списываем дерево за вызов ремонта для уже здоровой постройки.
+    if (!rebuild && building.hp >= building.maxHp) return false;
     // «Сметливые ремонтники» (§H.16): стоимость ремонта ×0.75
     const wood = Math.round((rebuild ? REPAIR.REBUILD_WOOD : REPAIR.WOOD) * this.tune.repairCost);
     if (!this.spend({ wood })) return false;
@@ -606,7 +620,13 @@ export class Economy extends Phaser.Events.EventEmitter {
     if (!j) return false;
     j.building.hp = j.building.maxHp;
     j.building.underConstruction = false;
-    j.building.setScale(j.building.scaleX, j.building.scaleX);
+    j.building.warnedReset();
+    j.building.setAlpha(1);
+    j.building.clearTint();
+    // Восстановление руин должно повторно пройти визуальный цикл постройки;
+    // иначе мгновенный ремонт оставляет здание серым и полупрозрачным.
+    if (j.rebuild) j.building.finishConstruction();
+    else j.building.setScale(j.building.scaleX, j.building.scaleX);
     if (j.pawn) j.pawn.workNode = null;
     this.repairJobs.shift();
     this.emit('repairDone', { building: j.building });
@@ -729,9 +749,14 @@ export class Economy extends Phaser.Events.EventEmitter {
           const first = j.spot.kind === 'house' && !this.firstHouseBuilt;
           if (first) {
             this.firstHouseBuilt = true;
-            // Первый дом дарит жителя бесплатно (§E.5)
+            // Первый дом дарит жителя бесплатно (§E.5): вход к дому за 2 секунды.
             const v = this.spawnPawn('collector', j.spot.x, j.spot.y + 40);
-            void v;
+            if (v) {
+              const dx = v.x - this.castleX;
+              const dy = v.y - this.castleY;
+              const distance = Math.max(1, Math.hypot(dx, dy));
+              v.arriveFrom(v.x + (dx / distance) * 360, v.y + (dy / distance) * 360, 2_000);
+            }
           }
           this.emit('built', { kind: j.spot.kind, first });
           this.opts.onBuildComplete?.(j.spot.kind, j.spot.x, j.spot.y);

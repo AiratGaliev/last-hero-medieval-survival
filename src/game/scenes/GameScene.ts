@@ -829,10 +829,12 @@ export class GameScene extends Phaser.Scene {
       attempts++;
       const x = rng.between(WORLD.GRASS_MARGIN + 120, WORLD.SIZE - WORLD.GRASS_MARGIN - 120);
       const y = rng.between(WORLD.GRASS_MARGIN + 120, WORLD.SIZE - WORLD.GRASS_MARGIN - 120);
-      if (Math.hypot(x - this.castleX, y - this.castleY) < 200) continue;
+      const castleDistance = Math.hypot(x - this.castleX, y - this.castleY);
+      // PawnAI ignores resources beyond 1000 px: keep veins in that work radius.
+      if (castleDistance < 200 || castleDistance > 1000) continue;
       if (!canPlace(x, y, 70)) continue;
       const variant = rng.between(1, 5);
-      const img = this.add.image(x, y, `gold-vein-${variant}`).setScale(0.9)
+      const img = this.add.sprite(x, y, `gold-vein-${variant}`).setScale(0.9)
         .setDepth(DEPTH.ENTITY_BASE + y);
       const pulse = this.add.sprite(x, y, `gold-vein-pulse-${variant}`)
         .setScale(0.9).setDepth(DEPTH.GEM + 1).setBlendMode(Phaser.BlendModes.ADD);
@@ -1943,17 +1945,29 @@ private ordersUnlocked(): boolean {
       // wall-clock таймером. Watchdog оставляет защиту на случай потерянного
       // animationcomplete в throttled/background вкладке.
       let deathFinished = false;
+      let wallClockWatchdog: number | null = null;
       const finishBossDeath = (): void => {
         if (deathFinished) return;
         deathFinished = true;
+        if (wallClockWatchdog !== null) {
+          window.clearTimeout(wallClockWatchdog);
+          wallClockWatchdog = null;
+        }
+        e.clearDeathCleanupTimer();
         if (e.active) e.destroy();
-        if (e === this.boss && !this.mods.endless && !this.gameEnded) {
+        if (e === this.boss && !this.mods.endless && !this.gameEnded && this.sys.isActive()) {
           this.victoryPending = false;
           this.victory();
         }
       };
-      e.once('animationcomplete-boss-dead', finishBossDeath);
-      this.time.delayedCall(BOSS_DEATH_ANIMATION_MS + 500, finishBossDeath);
+      // Prefer the actual one-shot clip when it completes.
+      e.once('animationcomplete', (anim: Phaser.Animations.Animation) => {
+        if (anim.key === 'boss-dead') finishBossDeath();
+      });
+      // Frame-delta fallback handles a paused Scene Clock. The native browser timer
+      // is an independent last resort if the display-list update path is suspended.
+      e.setDeathCleanupTimer(BOSS_DEATH_ANIMATION_MS + 500, finishBossDeath);
+      wallClockWatchdog = window.setTimeout(finishBossDeath, BOSS_DEATH_ANIMATION_MS + 500);
     } else {
       this.enemyGroup.remove(e, true, true);
     }

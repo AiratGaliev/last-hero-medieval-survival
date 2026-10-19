@@ -1,6 +1,6 @@
 import Phaser from 'phaser';
 import { AGGRO, GARRISON, RETREAT_HP, KITE, HEALER, BLEEDOUT_SEC, REPAIR } from '../constants';
-import { RESOURCES, FIGHTERS, BUILDING_PLANS, garrisonSourceOf, type BuildingKind } from '../data';
+import { RESOURCES, FIGHTERS, BUILDING_PLANS, garrisonSourceOf, type BuildingKind, type ResourceKind } from '../data';
 import { t } from '../../i18n';
 import { track } from '../../platform/analytics';
 import { HealerAI } from './HealerAI';
@@ -71,6 +71,15 @@ export class PawnAI {
 
   updateCivilian(p: Pawn, dtMs: number, _now: number): void {
     const eco = this.eco;
+
+    // Не прерываем двухсекундное появление первого бесплатного жителя (§E.5).
+    if (p.arrivalMs > 0) {
+      p.arrivalMs = Math.max(0, p.arrivalMs - dtMs);
+      p.state = 'walk';
+      p.playMove(true);
+      p.setVelocity(0, 0);
+      return;
+    }
     p.cooldown = Math.max(0, p.cooldown - dtMs / 1000);
 
     // --- Раненая / истекающая кровью — важнее любой работы (§G.3) ---
@@ -101,6 +110,19 @@ export class PawnAI {
       return;
     }
 
+    // Узел мог исчезнуть между тиками: освобождаем устаревшую цель,
+    // но не трогаем build/repair jobs (у Building нет boolean available).
+    const currentNode = p.workNode as ResourceNode | null;
+    if (currentNode && typeof currentNode.available === 'boolean' && !currentNode.available) {
+      currentNode.release(p);
+      p.workNode = null;
+      p.taskProgress = 0;
+      if (p.state === 'work') {
+        p.state = 'idle';
+        p.setVelocity(0, 0);
+      }
+    }
+
     // --- 2. Враг рядом → паника, бег к замку (§A.5, PANIC 220) ---
     if (this.enemyNear(p.x, p.y, AGGRO.PANIC)) {
       p.state = 'flee';
@@ -117,14 +139,21 @@ export class PawnAI {
       const mine = eco.buildJobs.find((j) => j.pawn === p);
       if (mine) {
         const d = Phaser.Math.Distance.Between(p.x, p.y, mine.spot.x, mine.spot.y);
-        if (d > 90) { p.state = 'walk'; this.walkTo(p, mine.spot.x, mine.spot.y, dtMs); }
-        else { p.state = 'work'; p.taskProgress = 0; }
+        if (d > 90) {
+          p.state = 'walk';
+          this.walkTo(p, mine.spot.x, mine.spot.y, dtMs);
+        } else {
+          p.state = 'work';
+          p.playWork('hammer');
+          p.setVelocity(0, 0);
+          p.taskProgress = 0;
+        }
         return;
       }
       const spot = this.nearestFreeSpot(p);
       if (spot) {
         if (Phaser.Math.Distance.Between(p.x, p.y, spot.x, spot.y) < 70) {
-          if (eco.tryStartBuild(spot.kind, p)) {
+          if (eco.tryStartBuild(spot.kind, p, spot)) {
             p.state = 'work';
             p.taskProgress = 0;
             return;
@@ -195,7 +224,7 @@ export class PawnAI {
         const afford = eco.resources.wood >= (cost.wood ?? 0) && eco.resources.ore >= (cost.ore ?? 0);
         if (afford) {
           if (Phaser.Math.Distance.Between(p.x, p.y, target.x, target.y) < 70) {
-            if (eco.tryStartBuild(target.kind, p)) {
+            if (eco.tryStartBuild(target.kind, p, target)) {
               p.state = 'work';
               p.taskProgress = 0;
             }
@@ -205,6 +234,15 @@ export class PawnAI {
           this.walkTo(p, target.x, target.y, dtMs);
           return;
         }
+      }
+
+      // Если строить нельзя из-за нехватки ресурсов или свободных пятен больше
+      // нет, строитель возвращается к сбору; иначе фаза E может застрять в idle.
+      const required = target ? BUILDING_PLANS[target.kind].cost : undefined;
+      const node = this.pickNodeFor(p, required);
+      if (node) {
+        this.gotoNode(p, node, dtMs);
+        return;
       }
     }
 
@@ -247,7 +285,7 @@ export class PawnAI {
         if (afford && (!builderAlive || buildersBusy >= 1)
           && Phaser.Math.Distance.Between(p.x, p.y, freeSpot.x, freeSpot.y) < 400) {
           if (Phaser.Math.Distance.Between(p.x, p.y, freeSpot.x, freeSpot.y) < 70) {
-            if (this.eco.tryStartBuild(freeSpot.kind, p)) {
+            if (this.eco.tryStartBuild(freeSpot.kind, p, freeSpot)) {
               p.state = 'work';
               p.taskProgress = 0;
               return;
@@ -289,16 +327,21 @@ export class PawnAI {
 
   /** Идти к узлу → работать → нести (общая ветка сборки/приказа). */
   private gotoNode(p: Pawn, node: ResourceNode, dtMs: number): void {
-    if (!node.alive) { node.release(p); p.workNode = null; p.state = 'idle'; return; }
+    if (!node.available) { node.release(p); p.workNode = null; p.state = 'idle'; return; }
     const d = Phaser.Math.Distance.Between(p.x, p.y, node.x, node.y);
     if (d > (node.kind === 'tree' || node.kind === 'sheep' ? RANGE_WOOD : 52)) {
       p.state = 'walk';
       node.release(p);
+      p.workNode = null;
       this.walkTo(p, node.x, node.y, dtMs);
       return;
     }
     // Работа: claim + тики
-    if (!node.claim(p)) { p.state = 'idle'; return; }
+    if (!node.claim(p)) {
+      p.workNode = null;
+      p.state = 'idle';
+      return;
+    }
     p.workNode = node;
     p.state = 'work';
     const def = RESOURCES[node.res];
@@ -332,7 +375,7 @@ export class PawnAI {
    * тупик: сборщик бесконечно таскал ненужное мясо, пока горят дома»).
    * Нужды нет → возвращаем null, и пешка уходит на IdlePoint (§B.6 п.6).
    */
-  private pickNodeFor(p: Pawn): ResourceNode | null {
+  private pickNodeFor(p: Pawn, minimums?: Partial<Record<ResourceKind, number>>): ResourceNode | null {
     const eco = this.eco;
     const enemies = this.c.enemies();
     // Дефицит: план расхода (стройки/ремонт/лечение/наём) против склада
@@ -352,10 +395,16 @@ export class PawnAI {
         target[k] = (target[k] ?? 0) + v;
       }
     }
+    // При fallback строителя повышаем целевой запас до стоимости его следующей
+    // постройки, даже когда общий план спроса на ресурс уже выполнен.
+    for (const key of ['wood', 'ore', 'meat'] as const) {
+      const required = minimums?.[key];
+      if (required !== undefined) target[key] = Math.max(target[key] ?? 0, required);
+    }
     let best: ResourceNode | null = null;
     let bestScore = 0;
     for (const n of eco.nodes) {
-      if (!n.alive || (n.claimedBy && n.claimedBy !== p)) continue;
+      if (!n.available || (n.claimedBy && n.claimedBy !== p)) continue;
       if (Math.hypot(n.x - eco.castleX, n.y - eco.castleY) > 1000) continue;
       if (n.claimedBy === p) return n;
       if (eco.tune.meatDisabled && n.res === 'meat') continue;
