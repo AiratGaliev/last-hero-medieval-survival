@@ -106,7 +106,7 @@ export class GameScene extends Phaser.Scene {
   /** Тик башни: следующий выстрел по времени сцены (фаза M). */
   private towerNextShot = 0;
   /** Long-press приказов (§B.6). */
-  private pressState: { x: number; y: number; t: number; pawn: Pawn | null; building: Building | null } | null = null;
+  private pressState: { x: number; y: number; screenX: number; screenY: number; t: number; pointer: Phaser.Input.Pointer; pawn: Pawn | null; building: Building | null } | null = null;
 
   // Состояние матча
   private elapsed = 0;
@@ -1259,39 +1259,70 @@ export class GameScene extends Phaser.Scene {
       esc: Phaser.Input.Keyboard.KeyCodes.ESC,
       p: Phaser.Input.Keyboard.KeyCodes.P,
       m: Phaser.Input.Keyboard.KeyCodes.M,
+      shift: Phaser.Input.Keyboard.KeyCodes.SHIFT,
     }) as Keys;
     kb.addCapture('UP,DOWN,LEFT,RIGHT,SPACE');
     this.joystick = new Joystick(this);
 
     // ---- Приказы пешкам: Shift+ЛКМ (десктоп) / лонг-пресс 500 мс (тач) (§B.6) ----
-    this.input.on('pointerdown', (pointer: Phaser.Input.Pointer) => {
+    this.input.on('pointerdown', (
+      pointer: Phaser.Input.Pointer,
+      currentlyOver: Phaser.GameObjects.GameObject[] = [],
+    ) => {
+      // UI должен потреблять pointerdown до геймплейного слоя, даже если его
+      // callback закрыл меню на том же событии. Это исключает повторное открытие.
+      const hitsOrderMenu = currentlyOver.some((target) => (
+        (target as Phaser.GameObjects.GameObject & { __tssOrderMenuTarget?: boolean }).__tssOrderMenuTarget === true
+      ));
+      if (hitsOrderMenu) return;
       if (this.gameEnded || this.overlayOpen) return;
-      if (this.orderMenu.isOpen) return;
+      // Нативный MouseEvent — основной источник, Phaser Keyboard — резерв:
+      // часть браузеров/сценариев передаёт pointer.event уже после keyup Shift.
+      const nativeShift = (pointer.event as unknown as { shiftKey?: boolean })?.shiftKey === true;
+      const shift = !pointer.wasTouch && (nativeShift || this.keys.shift.isDown);
+
+      // Повторный Shift+ЛКМ закрывает меню. Обычное удержание мыши не запускает
+      // long-press: на desktop требуется явный Shift.
+      if (this.orderMenu.isOpen) {
+        if (shift) this.orderMenu.close();
+        return;
+      }
+      if (!pointer.wasTouch && !shift) return;
+
       const wp = pointer.worldX, wy = pointer.worldY;
       const hitPawn = this.findPawnAt(wp, wy, pointer.wasTouch);
       const hitBuilding = hitPawn ? null : this.findBuildingAt(wp, wy);
       if (!hitPawn && !hitBuilding) return;
-      const shift = !pointer.wasTouch
-        && ((pointer.event as unknown as { shiftKey?: boolean })?.shiftKey === true);
-      this.pressState = { x: wp, y: wy, t: this.time.now, pawn: hitPawn, building: hitBuilding };
+      this.pressState = {
+        x: wp, y: wy, screenX: pointer.x, screenY: pointer.y,
+        t: this.time.now, pointer, pawn: hitPawn, building: hitBuilding,
+      };
       if (shift && hitPawn) {
-        // Десктоп: приказ сразу
         this.openOrderMenu(hitPawn, wp, wy);
         this.pressState = null;
       } else if (shift && hitBuilding) {
         this.openHireMenu(hitBuilding, wp, wy);
         this.pressState = null;
       }
-      // Иначе ждём лонг-пресс (обрабатывается в update)
+      // Touch: ждём 500 мс; отпускание раньше порога отменяет жест.
     });
-    this.input.on('pointerup', () => {
+    const clearPress = (pointer: Phaser.Input.Pointer): void => {
+      // Вторая точка касания не должна отменять long-press первой.
+      if (this.pressState && this.pressState.pointer.id !== pointer.id) return;
       this.pressState = null;
       this.orderMenu.hideRing();
-    });
+    };
+    this.input.on('pointerup', clearPress);
+    this.input.on('pointerupoutside', clearPress);
   }
 
   private findPawnAt(x: number, y: number, touch: boolean): Pawn | null {
-    const r = touch ? 40 : 26; // зона попадания ≥ 56 px в диаметре на таче (§B.6)
+    // Радиус пересчитывается из экранных CSS-пикселей в мир с учётом зума камеры.
+    // При zoom=0.55 прежние 40 world units превращались лишь в 22 px.
+    const canvasWidth = this.game.canvas.getBoundingClientRect().width;
+    const gameUnitsPerCssPx = this.scale.width / Math.max(1, canvasWidth);
+    const worldUnitsPerCssPx = gameUnitsPerCssPx / Math.max(0.01, this.cameras.main.zoom);
+    const r = touch ? Math.max(40, 32 * worldUnitsPerCssPx) : 26;
     let best: Pawn | null = null;
     let bestD = r * r;
     for (const p of this.economy.pawns) {
@@ -1380,8 +1411,17 @@ private ordersUnlocked(): boolean {
     const dt = Math.min(delta, 50) / 1000;
     const dtMs = Math.min(delta, 50);
 
-    // Пауза
-    if (Phaser.Input.Keyboard.JustDown(this.keys.esc) || Phaser.Input.Keyboard.JustDown(this.keys.p)) {
+    // Escape закрывает меню приказов, не создавая поверх него окно паузы.
+    const escapePressed = Phaser.Input.Keyboard.JustDown(this.keys.esc);
+    const pausePressed = Phaser.Input.Keyboard.JustDown(this.keys.p);
+    if (escapePressed && this.orderMenu.isOpen) {
+      this.orderMenu.close();
+      this.pressState = null;
+      return;
+    }
+    if (escapePressed || pausePressed) {
+      this.orderMenu.close();
+      this.pressState = null;
       this.openPause();
       return;
     }
@@ -1452,10 +1492,15 @@ private ordersUnlocked(): boolean {
       // §B.6: «свайп от пальца = отмена». Палец, который уехал с пешки при
       // удержании, не хотел открывать меню — он двигал героя. Без проверки
       // приказная система на тач-свайпе срабатывала бы постоянно.
-      const ptr = this.input.activePointer;
+      const ptr = this.pressState.pointer;
       if (ptr.isDown) {
-        const drift = Math.hypot(ptr.worldX - this.pressState.x, ptr.worldY - this.pressState.y);
-        if (drift > 48) {
+        // Phaser pointer.x/y — логические координаты canvas; пересчитываем в CSS px,
+        // чтобы порог 12 px не менялся при FIT/масштабировании холста.
+        const canvas = this.game.canvas.getBoundingClientRect();
+        const cssDx = (ptr.x - this.pressState.screenX) * canvas.width / Math.max(1, this.scale.width);
+        const cssDy = (ptr.y - this.pressState.screenY) * canvas.height / Math.max(1, this.scale.height);
+        const drift = Math.hypot(cssDx, cssDy);
+        if (drift > 12) {
           this.orderMenu.hideRing();
           this.pressState = null;
         }

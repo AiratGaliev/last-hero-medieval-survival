@@ -126,6 +126,11 @@ class AudioSystem {
     src.start(t0);
   }
 
+  /** Звук сдачи ресурсов на склад (§B.8); использует процедурный pickup SFX. */
+  pickupGold(): void {
+    this.play('pickup');
+  }
+
   play(name: SfxName): void {
     if (!this.ensure()) return;
     switch (name) {
