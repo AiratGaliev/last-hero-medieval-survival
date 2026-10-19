@@ -2303,8 +2303,10 @@ private bossDeathSequence(e: Enemy): boolean {
     const final = this.heroDpsAtTenMinutes === null
       ? rawDamage
       : this.garrisonDpsBudget.apply(rawDamage, this.time.now, this.heroDpsAtTenMinutes);
-    this.dpsDebugRawDamage += rawDamage;
-    this.dpsDebugAppliedDamage += final;
+    if (this.dpsDebugText) {
+      this.dpsDebugRawDamage += rawDamage;
+      this.dpsDebugAppliedDamage += final;
+    }
     if (final <= 0) return;
     this.effects.damage(e.x, e.y - 40 * e.def.scale, final, false);
     const died = e.takeDamage(final);
