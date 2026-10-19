@@ -173,6 +173,7 @@ export class OrderMenu {
     this.container?.destroy();
     this.container = null;
     this.pawn = null;
+    this.hideRing();
   }
 
   get openPawn(): Pawn | null {

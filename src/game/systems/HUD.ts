@@ -139,6 +139,7 @@ export class HUD {
 
   // ---- Поселение (TZ §B.8, §E.11, §H.2) ----
   private resGroup!: Phaser.GameObjects.Container;
+  private resLabels: Record<string, Phaser.GameObjects.Text> = {};
   private resTexts: Record<string, Phaser.GameObjects.Text> = {};
   private resVisible = false;
   private settleGroup!: Phaser.GameObjects.Container;
@@ -352,19 +353,28 @@ export class HUD {
     this.resGroup = this.scene.add.container(0, 0).setVisible(false);
     const RES_ICON = 15;
     const RES_GAP = 5;
-    const resDefs: Array<[string, string, number]> = [
-      ['wood', 'res-wood', 0xffffff], ['meat', 'res-meat', 0xffffff], ['ore', 'res-ore', 0xfff0b0],
+    const RES_COUNT_X = 76;
+    const resDefs: Array<[string, string, number, string]> = [
+      ['wood', 'res-wood', 0xffffff, t('resource.wood')],
+      ['meat', 'res-meat', 0xffffff, t('resource.meat')],
+      ['ore', 'res-ore', 0xfff0b0, t('resource.ore')],
     ];
-    resDefs.forEach(([key, tex, tint], i) => {
+    resDefs.forEach(([key, tex, tint, labelText], i) => {
       const rowY = i * 20;
       const ic = this.scene.add.image(0, rowY, tex).setDisplaySize(RES_ICON, RES_ICON).setOrigin(0, 0.5);
       if (tint !== 0xffffff) ic.setTint(tint);
-      const txt = this.mkText('0', 12, {
-        fontFamily: FONT, color: '#ffe9b0',
+      // Вся группа масштабируется в layout(), поэтому детям задаются базовые размеры.
+      const label = this.scene.add.text(RES_ICON + RES_GAP, rowY, labelText, {
+        fontFamily: FONT, fontSize: '10px', color: '#d8c9a8',
+        stroke: '#1b1008', strokeThickness: 2,
+      }).setOrigin(0, 0.5);
+      const txt = this.scene.add.text(RES_COUNT_X, rowY, '0', {
+        fontFamily: FONT, fontSize: '12px', color: '#ffe9b0',
         stroke: '#1b1008', strokeThickness: 3,
-      }).setOrigin(0, 0.5).setPosition(this.sc(RES_ICON + RES_GAP), rowY);
+      }).setOrigin(0, 0.5);
+      this.resLabels[key] = label;
       this.resTexts[key] = txt;
-      this.resGroup.add([ic, txt]);
+      this.resGroup.add([ic, label, txt]);
     });
 
     // ---- Индикатор поселения: две мини-полосы (§E.11 — обязателен) ----

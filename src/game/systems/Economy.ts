@@ -397,7 +397,7 @@ export class Economy extends Phaser.Events.EventEmitter {
   /** Сдача добычи на склад — единственная точка роста ресурсов (§B.5). */
   deposit(kind: ResourceKind, amount: number): void {
     this.resources[kind] += amount;
-    audio.play('pickup');
+    audio.pickupGold();
     this.emit('change');
   }
 
@@ -745,7 +745,14 @@ export class Economy extends Phaser.Events.EventEmitter {
         if (j.progress >= BUILDING_PLANS[j.spot.kind].timeMs) {
           j.building.finishConstruction();
           this.buildJobs.splice(i, 1);
-          if (p) p.workNode = null;
+          if (p) {
+            p.workNode = null;
+            // Одноразовый приказ снимается только после завершения стройки.
+            if (p.order === 'build') {
+              p.order = null;
+              p.orderTarget = null;
+            }
+          }
           const first = j.spot.kind === 'house' && !this.firstHouseBuilt;
           if (first) {
             this.firstHouseBuilt = true;
