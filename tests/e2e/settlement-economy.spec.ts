@@ -2,6 +2,7 @@ import { expect, test, type Page } from '@playwright/test';
 
 type PawnRuntime = {
   kind: string;
+  setPosition(x: number, y: number): unknown;
   prefix: string;
   state: string;
   x: number;
@@ -80,8 +81,17 @@ type HUDRuntime = {
   garrisonText: { text: string };
 };
 
+type PlayerRuntime = {
+  x: number;
+  y: number;
+  speed: number;
+  setPosition(x: number, y: number): unknown;
+  setVelocity(x: number, y: number): unknown;
+};
+
 type GameSceneRuntime = {
   economy: EconomyRuntime;
+  player: PlayerRuntime;
   hud: HUDRuntime;
   elapsed: number;
   hintOverlayPaused: boolean;
@@ -219,6 +229,71 @@ test('phase B: four workers, correct faction animations and live Economy tick', 
   expect(tickCalls).toBeGreaterThan(0);
   expect(pageErrors).toEqual([]);
   expect(consoleErrors.filter(message => /Frame not found|Missing animation/i.test(message))).toEqual([]);
+});
+
+test('phase B: player can walk past a civilian without a blocking pawn collider', async ({ page }) => {
+  await startRun(page);
+  await continueInitialTutorial(page);
+
+  const start = await page.evaluate(() => {
+    const game = (window as RuntimeWindow).__tss!;
+    const scene = game.scene.getScene('Game') as GameSceneRuntime;
+    const economy = scene.economy;
+    const pawn = economy.pawns.find(p => p.kind === 'collector');
+    if (!pawn) throw new Error('Player/pawn movement check needs a collector');
+
+    // Freeze civilian AI so the test measures the player collider contract, not target choice.
+    (economy.pawnAI as unknown as { updateCivilian: () => void }).updateCivilian = () => {};
+    for (const civilian of economy.pawns) {
+      civilian.setPosition(economy.castleX + 220, economy.castleY + 350);
+      const body = (civilian as unknown as { body: { setVelocity(x: number, y: number): void } }).body;
+      body.setVelocity(0, 0);
+    }
+    const crossingPawn = pawn;
+    const targetX = economy.castleX + 220;
+    const targetY = economy.castleY + 350;
+    crossingPawn.setPosition(targetX, targetY);
+    (crossingPawn as unknown as { body: { setVelocity(x: number, y: number): void } }).body.setVelocity(0, 0);
+
+    const runtimeScene = scene as unknown as {
+      spawner: { stopped: boolean };
+      hitstopUntil: number;
+    };
+    runtimeScene.spawner.stopped = true;
+    runtimeScene.hitstopUntil = 0;
+    scene.player.setPosition(targetX - 180, targetY);
+    scene.player.setVelocity(0, 0);
+    return {
+      playerStartX: scene.player.x,
+      pawnX: crossingPawn.x,
+      playerY: scene.player.y,
+      pawnY: crossingPawn.y,
+      playerSpeed: scene.player.speed,
+    };
+  });
+
+  expect(start.pawnX - start.playerStartX).toBe(180);
+  expect(Math.abs(start.playerY - start.pawnY)).toBeLessThan(1);
+  expect(start.playerSpeed).toBeGreaterThan(0);
+
+  await page.keyboard.down('d');
+  await page.waitForTimeout(1_500);
+  await page.keyboard.up('d');
+
+  const result = await page.evaluate(() => {
+    const game = (window as RuntimeWindow).__tss!;
+    const scene = game.scene.getScene('Game') as GameSceneRuntime;
+    const pawn = scene.economy.pawns.find(p => p.kind === 'collector');
+    if (!pawn) throw new Error('Collector disappeared during player traversal');
+    return {
+      playerX: scene.player.x,
+      pawnX: pawn.x,
+      playerPawnDistance: Math.hypot(scene.player.x - pawn.x, scene.player.y - pawn.y),
+    };
+  });
+  // The player should cross the civilian's position, rather than stopping at its physics body.
+  expect(result.playerX).toBeGreaterThan(result.pawnX + 30);
+  expect(result.playerPawnDistance).toBeGreaterThan(30);
 });
 
 test('phases C-D: harvesting delivers resources and depleted veins can recharge', async ({ page }) => {

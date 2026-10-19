@@ -1,15 +1,18 @@
 ## Актуальный статус Phase B–F — 2026-10-19 (PR #17)
 
-> Статусы основаны на исходниках и Playwright-гейтах. CI #145 на актуальном SHA завершился успешно: typecheck/lint, production build, Yandex Games archive validation и все 100 Playwright-тестов прошли. Автоматизированные гейты фаз B–F ниже подтверждены; ручные визуальные, балансировочные и внешние release gates остаются открытыми.
+> Статусы основаны на исходниках и Playwright-гейтах. Последний завершённый CI #146 на SHA `5f2d323db575b21a5b02d21f5858a41d5c8e134c` прошёл полностью: typecheck/lint, production build, Yandex Games archive validation и Playwright 100/100. Ручные визуальные, балансировочные и внешние release gates остаются открытыми; новая регрессия прохода игрока рядом с пешками добавлена и ждёт CI #147.
 
 - [CI #145](https://github.com/AiratGaliev/last-hero-medieval-survival/actions/runs/39199863225), SHA `594c5bd4b897225fe6bb53537a3055da1eb99be5`: **success**, typecheck/lint, production build и Yandex Games archive validation прошли; Playwright **100 passed, 0 failed**. Все jobs/steps завершены успешно.
 - Закрыты автоматизированные гейты carry-priority, освобождения уничтоженной resource target, выбора ближайшего свободного строительного пятна, появления бесплатного жителя за 2 секунды, HUD ресурсов/гарнизона и автоматического ремонта. Это не заменяет ручную визуальную приёмку и измерение игрового pacing.
+
+- [CI #146](https://github.com/AiratGaliev/last-hero-medieval-survival/actions/runs/39200999518), SHA `5f2d323db575b21a5b02d21f5858a41d5c8e134c`: **success**, все steps зелёные; Playwright **100 passed, 0 failed**. Обновление только документации относительно CI #145, поэтому функциональный набор тестов тот же.
+- После #146 добавлен E2E runtime-гейт прохода игрока через область гражданской пешки без блокирующего player↔pawn collider. До результата CI #147 его чекбокс не закрывается.
 
 - [CI #140](https://github.com/AiratGaliev/last-hero-medieval-survival/actions/runs/39163843684), SHA `2a0c69bbe15b7964fdd497444a6742cb8c988903`: typecheck/lint, production build и Yandex archive validation прошли; Playwright **95 passed / 3 failed**. Отказы: Ogre не деактивировался на desktop, carry-priority assertion выполнялась уже после сдачи груза на desktop/mobile.
 - Code fix `10e8ea84f0dbb43830c0a697eb7a8f396736c0ce` добавил frame-delta watchdog для Ogre и перенёс carry-check до сдачи ресурса.
 - [CI #142](https://github.com/AiratGaliev/last-hero-medieval-survival/actions/runs/39195759206), SHA `b0a89a945af0ac25ab64515ac2687cdbeb4a9ef5`: **success**, typecheck/lint, production build и Yandex archive validation прошли; Playwright **98 passed**. Это подтверждает lifecycle Огра, carry-priority и E2E для первого жителя/ремонта.
 - [CI #143](https://github.com/AiratGaliev/last-hero-medieval-survival/actions/runs/39196530062), SHA `f1e4a23c431aa1a356be8ccb81d4ec340a76a34e`: typecheck/lint, production build и archive прошли, browser smoke был в процессе при подготовке следующей правки. Аудит выявил избыточное утверждение `sheepCount === 10`: код делает 10 попыток спавна, но `canPlace()` может пропустить конфликтующие позиции. Тест скорректирован на допустимый диапазон; требуется новый полный прогон.
-- Дополнительные runtime-регрессии проверяют освобождение уничтоженного resource target и движение строителя к ближайшему свободному пятну без преждевременного списания ресурсов. Они остаются открытыми до зелёного CI на текущем SHA.
+- Дополнительные runtime-регрессии освобождения уничтоженного resource target и движения строителя к ближайшему свободному пятну без преждевременного списания ресурсов прошли CI #145 и подтверждены полным зелёным CI #146.
 - Визуальная приёмка карты/теней/коллизий, тайминг первого дома 30–45 сек, казарм к 4–6 минуте, 15-минутный матч desktop/mobile и реальные внешние Yandex Games IAP/ads остаются release gates.
 
 # Дорожная карта: «Последний герой: Средневековое выживание»
