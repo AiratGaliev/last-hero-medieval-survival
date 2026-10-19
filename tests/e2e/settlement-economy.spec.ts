@@ -1169,3 +1169,98 @@ test('phase K: flaming siege arrows use a bounded pool, visible trail and arriva
   expect(report.arrivals).toBe(1);
   expect(pageErrors).toEqual([]);
 });
+
+test('phase J: barracks hiring spends resources immediately and reserves slots while recruiting', async ({ page }) => {
+  await startRun(page);
+
+  const report = await page.evaluate(() => {
+    const game = (window as RuntimeWindow).__tss;
+    if (!game) throw new Error('Phaser runtime is unavailable');
+    const scene = game.scene.getScene('Game') as GameSceneRuntime;
+    const economy = scene.economy as unknown as {
+      resources: { wood: number; ore: number; meat: number };
+      pawns: Array<PawnRuntime & { weapon?: string; cls?: string }>;
+      buildings: BuildingRuntime[];
+      freeSpots(): BuildSpotRuntime[];
+      tryStartBuild(kind: string, pawn: PawnRuntime, spot: BuildSpotRuntime): boolean;
+      canHire(weapon: 'sword' | 'lance'): boolean;
+      hire(weapon: 'sword' | 'lance', building: BuildingRuntime): boolean;
+      hireSlotUse(weapon: 'sword' | 'lance'): number;
+      garrisonLimit(source: string): number;
+      tick(dtMs: number, now: number): void;
+    };
+    const builder = economy.pawns.find((pawn) => pawn.kind === 'builder');
+    const spot = economy.freeSpots().find((candidate) => candidate.kind === 'barracks');
+    if (!builder || !spot) throw new Error('Builder or barracks spot is missing');
+    economy.resources.wood = 1_000;
+    economy.resources.ore = 1_000;
+    economy.resources.meat = 1_000;
+    const started = economy.tryStartBuild('barracks', builder, spot);
+    const barracks = economy.buildings.find((building) => building.kind === 'barracks');
+    if (!started || !barracks) throw new Error('Barracks construction could not start');
+    builder.setPosition(spot.x, spot.y);
+    builder.state = 'work';
+    economy.tick(20_001, scene.time.now + 20_001);
+
+    const completed = barracks.alive && !barracks.underConstruction;
+    const before = { ...economy.resources };
+    const firstAvailable = economy.canHire('sword');
+    const firstHired = economy.hire('sword', barracks);
+    const afterFirst = { ...economy.resources };
+    const slotsAfterFirst = economy.hireSlotUse('sword');
+    const secondAvailable = economy.canHire('lance');
+    const secondHired = economy.hire('lance', barracks);
+    const afterSecond = { ...economy.resources };
+    const slotsAfterSecond = economy.hireSlotUse('lance');
+    const thirdAvailable = economy.canHire('sword');
+    const thirdHired = economy.hire('sword', barracks);
+    const afterThirdAttempt = { ...economy.resources };
+    const limit = economy.garrisonLimit('barracks');
+    economy.tick(10_001, scene.time.now + 30_002);
+    const soldiers = economy.pawns
+      .filter((pawn) => pawn.cls === 'garrison')
+      .map((pawn) => pawn.weapon)
+      .sort();
+    return {
+      completed,
+      limit,
+      firstAvailable,
+      firstHired,
+      firstWoodCost: before.wood - afterFirst.wood,
+      firstOreCost: before.ore - afterFirst.ore,
+      firstMeatCost: before.meat - afterFirst.meat,
+      slotsAfterFirst,
+      secondAvailable,
+      secondHired,
+      secondWoodCost: afterFirst.wood - afterSecond.wood,
+      secondOreCost: afterFirst.ore - afterSecond.ore,
+      secondMeatCost: afterFirst.meat - afterSecond.meat,
+      slotsAfterSecond,
+      thirdAvailable,
+      thirdHired,
+      noCostForRejectedHire: afterThirdAttempt.wood === afterSecond.wood
+        && afterThirdAttempt.ore === afterSecond.ore
+        && afterThirdAttempt.meat === afterSecond.meat,
+      soldiers,
+    };
+  });
+
+  expect(report.completed).toBe(true);
+  expect(report.limit).toBe(2);
+  expect(report.firstAvailable).toBe(true);
+  expect(report.firstHired).toBe(true);
+  expect(report.firstWoodCost).toBe(20);
+  expect(report.firstOreCost).toBe(10);
+  expect(report.firstMeatCost).toBe(5);
+  expect(report.slotsAfterFirst).toBe(1);
+  expect(report.secondAvailable).toBe(true);
+  expect(report.secondHired).toBe(true);
+  expect(report.secondWoodCost).toBe(20);
+  expect(report.secondOreCost).toBe(10);
+  expect(report.secondMeatCost).toBe(5);
+  expect(report.slotsAfterSecond).toBe(2);
+  expect(report.thirdAvailable).toBe(false);
+  expect(report.thirdHired).toBe(false);
+  expect(report.noCostForRejectedHire).toBe(true);
+  expect(report.soldiers).toEqual(['lance', 'sword']);
+});
