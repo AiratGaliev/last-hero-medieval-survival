@@ -1100,9 +1100,9 @@ test('phases E-F: construction uses the approached spot and repair costs are gua
 
 test('phase K: flaming siege arrows use a bounded pool, visible trail and arrival callback', async ({ page }) => {
   const pageErrors: string[] = [];
+  page.on('pageerror', (error) => pageErrors.push(error.message));
   await openApp(page);
   await startGameplay(page);
-  page.on('pageerror', (error) => pageErrors.push(error.message));
 
   const report = await page.evaluate(() => {
     const game = (window as unknown as { __tss?: PhaserRuntime }).__tss;
@@ -1151,10 +1151,11 @@ test('phase K: flaming siege arrows use a bounded pool, visible trail and arriva
       trailVisible: arrow.trailSprites?.every((flame) => flame.active && flame.visible) ?? false,
       animationExists: game.anims.exists('fire-arrow-trail'),
       tinted: arrow.isTinted ?? false,
+      arrivals: 0,
     };
     arrow.setPosition(castle.x, castle.y);
     scene.projectiles.update(16);
-    result['arrivals' as keyof typeof result] = arrivals as never;
+    result.arrivals = arrivals;
     scene.projectiles.clear();
     return result;
   });
@@ -1165,6 +1166,6 @@ test('phase K: flaming siege arrows use a bounded pool, visible trail and arriva
   expect(report.trailVisible).toBe(true);
   expect(report.animationExists).toBe(true);
   expect(report.tinted).toBe(false);
-  expect((report as typeof report & { arrivals: number }).arrivals).toBe(1);
+  expect(report.arrivals).toBe(1);
   expect(pageErrors).toEqual([]);
 });
