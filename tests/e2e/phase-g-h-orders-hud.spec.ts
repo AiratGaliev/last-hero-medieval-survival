@@ -39,6 +39,7 @@ type HUDRuntime = {
   resLabels: Record<string, { text: string }>;
   resTexts: Record<string, { text: string }>;
   goldText: { getBounds(): Bounds };
+  weaponIcons: { values(): Iterable<{ getBounds(): Bounds }> };
 };
 type GameSceneRuntime = {
   economy: EconomyRuntime;
@@ -52,6 +53,7 @@ type GameSceneRuntime = {
   ordersUnlocked(): boolean;
   time: { now: number };
   scale: { width: number; height: number };
+  textures: { exists(key: string): boolean };
   cameras: { main: { x: number; y: number; zoom: number; worldView: { x: number; y: number } } };
   hintOverlayPaused: boolean;
 };
@@ -240,6 +242,9 @@ test('phase G: desktop menu is explicit, closable and BUILD order ends after con
       pawn.setPosition(job.spot.x, job.spot.y);
       pawn.state = 'work';
       economy.tick(100_000, scene.time.now + 100_000);
+      pawn.cooldown = 0;
+      pawn.state = 'idle';
+      ai.updateCivilian(pawn, 16, scene.time.now + 100_016);
     }
     return {
       walksToNearest,
@@ -247,6 +252,7 @@ test('phase G: desktop menu is explicit, closable and BUILD order ends after con
       orderAfterCompletion: pawn.order,
       targetAfterCompletion: pawn.orderTarget,
       pendingJob: economy.buildJobs.some(candidate => candidate.pawn === pawn),
+      autoResumed: pawn.order === null && (pawn.state === 'walk' || pawn.state === 'work' || pawn.carrying !== null),
     };
   });
   expect(result.walksToNearest).toBe(true);
@@ -254,6 +260,7 @@ test('phase G: desktop menu is explicit, closable and BUILD order ends after con
   expect(result.pendingJob).toBe(false);
   expect(result.orderAfterCompletion).toBeNull();
   expect(result.targetAfterCompletion).toBeNull();
+  expect(result.autoResumed).toBe(true);
 });
 
 test('phase G: carry phase deposits first and only then applies BUILD', async ({ page }) => {
@@ -363,6 +370,14 @@ test('phase H: resource HUD labels stock separately from match gold and plays de
     }
     const resourcesBounds = hud.resGroup.getBounds();
     const goldBounds = hud.goldText.getBounds();
+    const weaponBounds = [...hud.weaponIcons.values()].map(icon => icon.getBounds());
+    const overlaps = (a: Bounds, b: Bounds): boolean => (
+      a.x < b.x + b.width && a.x + a.width > b.x
+      && a.y < b.y + b.height && a.y + a.height > b.y
+    );
+    const noWeaponOverlap = weaponBounds.every(bounds => !overlaps(resourcesBounds, bounds));
+    const assetKeysLoaded = scene.textures.exists('res-wood')
+      && scene.textures.exists('res-meat') && scene.textures.exists('res-ore');
     const snapshot = {
       hiddenAtStart,
       visibleAfterDeposit: hud.resGroup.visible,
@@ -374,6 +389,9 @@ test('phase H: resource HUD labels stock separately from match gold and plays de
         width: resourcesBounds.width, height: resourcesBounds.height,
       },
       goldBounds: { x: goldBounds.x, y: goldBounds.y, width: goldBounds.width, height: goldBounds.height },
+      weaponIconCount: weaponBounds.length,
+      noWeaponOverlap,
+      assetKeysLoaded,
       withinViewport: resourcesBounds.x >= 0 && resourcesBounds.y >= 0
         && resourcesBounds.x + resourcesBounds.width <= scene.scale.width
         && resourcesBounds.y + resourcesBounds.height <= scene.scale.height,
@@ -391,6 +409,9 @@ test('phase H: resource HUD labels stock separately from match gold and plays de
   expect(result.values).toEqual(['5', '0', '0']);
   expect(result.soundCalls).toEqual(['pickupGold']);
   expect(result.resourcesBounds.y).toBeGreaterThanOrEqual(result.goldBounds.y + result.goldBounds.height - 2);
+  expect(result.weaponIconCount).toBeGreaterThan(0);
+  expect(result.noWeaponOverlap).toBe(true);
+  expect(result.assetKeysLoaded).toBe(true);
   expect(result.withinViewport).toBe(true);
   expect(result.hiddenAfterReset).toBe(true);
 });
