@@ -143,7 +143,7 @@ export const HIRE_TIME_MS = { sword: 8000, lance: 8000, bow: 10000, staff: 10000
 export const NEW_VILLAGER = { DELAY: 25, wood: 10, meat: 3 } as const;
 
 /** Ремонт: повреждённое 30 дерева/5 с, разрушенное 60/10 (TZ §E.5, §B.4). */
-export const REPAIR = { WOOD: 30, MS: 5000, REBUILD_WOOD: 60, REBUILD_MS: 10000 } as const;
+export const REPAIR = { WOOD: 30, MS: 5000, REBUILD_WOOD: 60, REBUILD_BARRACKS_ORE: 15, REBUILD_MS: 10000 } as const;
 
 /** Радиальное меню приказов (TZ §B.6, §I.6). */
 export const LONGPRESS_MS = 500;
