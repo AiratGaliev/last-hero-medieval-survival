@@ -372,6 +372,8 @@ export const ru = {
   'pawn.titled.healerF': 'монахиня',
   'pawn.arrived': 'В поселение прибыло! {v} присоединяется',
   'pawn.wounded': '{v} ранен и уходит лечиться',
+  'pawn.badgeWounded': 'РАНЕН',
+  'pawn.badgeRetreat': 'ОТХОД',
   'pawn.woundedF': '{v} ранена и уходит лечиться',
   'pawn.bleeding': '{v} истекает кровью — 0:{s}',
   'pawn.bleedingF': '{v} истекает кровью — 0:{s}',
