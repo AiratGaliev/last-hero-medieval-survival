@@ -1031,14 +1031,10 @@ export class GameScene extends Phaser.Scene {
     // ---- Подписки HUD на экономику (обновление по событию, §B.8) ----
     this.economy.on('change', () => {
       this.hud.updateResources(this.economy.resources);
-      const wounded = this.economy.pawns.filter((p) => p.state === 'wounded' || p.state === 'bleeding').length;
-      const retreating = this.economy.garrison.filter((p) => p.state === 'retreat').length;
-      const garrison = t('hud.garrison', { a: this.economy.garrison.length, b: this.economy.totalGarrisonSlots() });
-      const status = wounded + retreating > 0 ? ` · ${t('hud.garrisonStatus', { w: wounded, r: retreating })}` : '';
       this.hud.updateSettlement(
         this.settlement.infrastructureHp / this.settlement.infrastructureMax,
         this.economy.pawns.length / Math.max(1, this.economy.pawnLimit),
-        `${garrison}${status}`,
+        this.garrisonHudLabel(),
       );
     });
     this.economy.on('built', ({ kind, first }) => {
@@ -1412,6 +1408,16 @@ private ordersUnlocked(): boolean {
     });
   }
 
+  /** Короткая строка состояния дружины и раненых для поселкового HUD. */
+  private garrisonHudLabel(): string {
+    const wounded = this.economy.pawns.filter((p) => p.state === 'wounded' || p.state === 'bleeding').length;
+    const retreating = this.economy.garrison.filter((p) => p.state === 'retreat').length;
+    const base = t('hud.garrison', { a: this.economy.garrison.length, b: this.economy.totalGarrisonSlots() });
+    return wounded + retreating > 0
+      ? `${base} · ${t('hud.garrisonStatus', { w: wounded, r: retreating })}`
+      : base;
+  }
+
   /**
    * В dev (?debug) выводит измеренный урон гарнизона за последнее окно и
    * теоретический потолок в 25% от базового DPS героя на отметке 10:00.
@@ -1636,7 +1642,7 @@ private ordersUnlocked(): boolean {
       this.hud.updateSettlement(
         this.settlement.infrastructureHp / this.settlement.infrastructureMax,
         this.economy.pawns.length / Math.max(1, this.economy.pawnLimit),
-        t('hud.garrison', { a: this.economy.garrison.length, b: this.economy.totalGarrisonSlots() }),
+        this.garrisonHudLabel(),
       );
       this.hud.updateSpeedups(
         this.speedup.hasTarget('repair'),
