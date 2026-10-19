@@ -90,6 +90,13 @@ export class GameScene extends Phaser.Scene {
   private readonly garrisonDpsBudget = new GarrisonDpsBudget(GARRISON_DPS_CAP);
   /** Frozen theoretical hero DPS baseline captured at game time 10:00. */
   private heroDpsAtTenMinutes: number | null = null;
+  /** Damage totals since the 10:00 baseline; raw means before the squad cap. */
+  private garrisonRawDamageSinceTen = 0;
+  private garrisonAppliedDamageSinceTen = 0;
+  private garrisonDpsMeasurementStartElapsed: number | null = null;
+  /** QA-only telemetry panel, enabled with ?debug. */
+  private garrisonDebugText: Phaser.GameObjects.Text | null = null;
+  private nextGarrisonDebugUpdateAt = 0;
   /** Замок стоит в центре-севере арены (как декор раньше). */
   private readonly castleX = WORLD.SIZE / 2;
   private readonly castleY = WORLD.SIZE / 2 - 460;
@@ -333,6 +340,11 @@ export class GameScene extends Phaser.Scene {
 
   private resetState(): void {
     this.heroDpsAtTenMinutes = null;
+    this.garrisonRawDamageSinceTen = 0;
+    this.garrisonAppliedDamageSinceTen = 0;
+    this.garrisonDpsMeasurementStartElapsed = null;
+    this.garrisonDebugText = null;
+    this.nextGarrisonDebugUpdateAt = 0;
     this.garrisonDpsBudget.reset();
     this.hintOverlayPaused = false;
     this.houseHintArmed = true;
@@ -1012,6 +1024,18 @@ export class GameScene extends Phaser.Scene {
       diffName: this.diffDef.name.toUpperCase(),
     });
     this.hud.setIcon(startId, WEAPONS[startId].icon, 1, false);
+    if (new URLSearchParams(window.location.search).has('debug')) {
+      this.garrisonDebugText = this.add.text(0, 0, '', {
+        fontFamily: 'monospace',
+        fontSize: '11px',
+        color: '#fff0c2',
+        backgroundColor: '#1a0f08',
+        padding: { x: 6, y: 4 },
+        lineSpacing: 2,
+        wordWrap: { width: 250 },
+      }).setOrigin(0, 0).setScrollFactor(0).setDepth(DEPTH.HUD + 50);
+      this.updateGarrisonDebugText(this.time.now);
+    }
     this.ach = new AchTracker((a) => this.hud.achievementToast(a));
 
     // ---- Подписки HUD на экономику (обновление по событию, §B.8) ----
@@ -1435,8 +1459,12 @@ private ordersUnlocked(): boolean {
     // Все атаки гарнизона после этого момента расходуют общий токен-бакет.
     if (this.elapsed >= 600 && this.heroDpsAtTenMinutes === null) {
       this.heroDpsAtTenMinutes = this.weapons.estimateTheoreticalDps();
+      this.garrisonDpsMeasurementStartElapsed = this.elapsed;
+      this.garrisonRawDamageSinceTen = 0;
+      this.garrisonAppliedDamageSinceTen = 0;
       this.garrisonDpsBudget.reset(time);
     }
+    this.updateGarrisonDebugText(time);
 
     // Движение игрока
     let vx = 0, vy = 0;
@@ -2199,6 +2227,44 @@ private bossDeathSequence(e: Enemy): boolean {
     return true;
   }
 
+  /** Обновляет QA-замер суммарного DPS отряда относительно базового DPS героя на 10:00. */
+  private updateGarrisonDebugText(now: number): void {
+    const panel = this.garrisonDebugText;
+    if (!panel || now < this.nextGarrisonDebugUpdateAt) return;
+    this.nextGarrisonDebugUpdateAt = now + 250;
+
+    const panelWidth = Math.min(250, Math.max(120, this.scale.width - 16));
+    panel.setPosition(Math.max(8, this.scale.width - panelWidth - 8), this.scale.height < 600 ? 86 : 112);
+
+    const heroDps = this.heroDpsAtTenMinutes;
+    const startedAt = this.garrisonDpsMeasurementStartElapsed;
+    if (heroDps === null || startedAt === null) {
+      panel.setText([
+        t('debug.garrison.title'),
+        t('debug.garrison.waiting', { cap: Math.round(GARRISON_DPS_CAP * 100) }),
+      ].join('\n'));
+      return;
+    }
+
+    const seconds = Math.max(0, this.elapsed - startedAt);
+    const rawDps = seconds >= 1 ? this.garrisonRawDamageSinceTen / seconds : 0;
+    const appliedDps = seconds >= 1 ? this.garrisonAppliedDamageSinceTen / seconds : 0;
+    const rawShare = heroDps > 0 ? (rawDps / heroDps * 100).toFixed(1) : '—';
+    const appliedShare = heroDps > 0 ? (appliedDps / heroDps * 100).toFixed(1) : '—';
+
+    panel.setText([
+      t('debug.garrison.title'),
+      t('debug.garrison.hero', { v: heroDps.toFixed(1) }),
+      t('debug.garrison.raw', { v: rawDps.toFixed(1), p: rawShare }),
+      t('debug.garrison.applied', {
+        v: appliedDps.toFixed(1),
+        p: appliedShare,
+        cap: Math.round(GARRISON_DPS_CAP * 100),
+      }),
+      t('debug.garrison.window', { v: seconds.toFixed(1) }),
+    ].join('\n'));
+  }
+
   /** Убийство врага гарнизоном: KILL растёт, комбо игрока — нет (§B.7.1). */
   private damageEnemyByPawn(e: Enemy, dmg: number, weapon: string): void {
     if (!e.active || e.dead) return;
@@ -2206,6 +2272,10 @@ private bossDeathSequence(e: Enemy): boolean {
     const final = this.heroDpsAtTenMinutes === null
       ? rawDamage
       : this.garrisonDpsBudget.apply(rawDamage, this.time.now, this.heroDpsAtTenMinutes);
+    if (this.garrisonDpsMeasurementStartElapsed !== null) {
+      this.garrisonRawDamageSinceTen += rawDamage;
+      this.garrisonAppliedDamageSinceTen += final;
+    }
     if (final <= 0) return;
     this.effects.damage(e.x, e.y - 40 * e.def.scale, final, false);
     const died = e.takeDamage(final);

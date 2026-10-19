@@ -1,6 +1,7 @@
 import Phaser from 'phaser';
 import { DEPTH, SHADOW_SCALE, SHADOW_BOX, SHADOW_SRC, FONT } from '../constants';
 import { FS } from '../systems/Text';
+import { t } from '../../i18n';
 import { PAWNS, FIGHTERS, type PawnKind, type PawnState, type PawnWeapon, type ResourceKind, type PawnDef } from '../data';
 
 // ============ Пешка поселения: гражданские и гарнизон (TZ §B.2) ============
@@ -64,6 +65,9 @@ export class Pawn extends Phaser.Physics.Arcade.Sprite {
   private shadow: Phaser.GameObjects.Image;
   private hpBar: Phaser.GameObjects.Graphics;
   private starBadge: Phaser.GameObjects.Text | null = null;
+  /** Компактная плашка «ОТСТУПАЕТ» / «РАНЕН» для текущего состояния (§B.7.1). */
+  private statusBadge: Phaser.GameObjects.Text | null = null;
+  private statusBadgeState: 'retreat' | 'wounded' | null = null;
   /** Таймер истечения кровью над пешкой (§G.3) — видимый дедлайн. */
   private bleedBadge: Phaser.GameObjects.Text | null = null;
   /** Контур щита таунта (§B.7.1). */
@@ -288,6 +292,38 @@ export class Pawn extends Phaser.Physics.Arcade.Sprite {
   }
 
   /**
+   * Статус гарнизона/пешки, который остаётся видимым во время симуляции.
+   * Плашка удаляется сразу, когда состояние больше не требует внимания.
+   */
+  private updateStatusBadge(): void {
+    const state = this.state === 'retreat' || this.state === 'wounded' ? this.state : null;
+    if (!state) {
+      this.statusBadge?.destroy();
+      this.statusBadge = null;
+      this.statusBadgeState = null;
+      return;
+    }
+
+    const label = t(state === 'retreat' ? 'pawn.status.retreat' : 'pawn.status.wounded');
+    if (!this.statusBadge || !this.statusBadge.active || this.statusBadgeState !== state) {
+      this.statusBadge?.destroy();
+      this.statusBadge = this.scene.add.text(this.x, this.y - 46, label, {
+        fontFamily: FONT,
+        fontSize: `${FS.small}px`,
+        color: state === 'retreat' ? '#ffd76e' : '#ff9d8a',
+        backgroundColor: '#1a0f08',
+        padding: { x: 4, y: 2 },
+        stroke: '#1a0f08',
+        strokeThickness: 3,
+      }).setOrigin(0.5).setDepth(DEPTH.HPBAR + 1);
+      this.statusBadgeState = state;
+    } else if (this.statusBadge.text !== label) {
+      this.statusBadge.setText(label);
+    }
+    this.statusBadge.setPosition(this.x, this.y - 46).setVisible(true);
+  }
+
+  /**
    * Видимый дедлайн истечения кровью (§G.3, гейт §G.11 п.23).
    *
    * Спецификация требует «таймер над пешкой, именная плашка „{имя} истекает
@@ -362,7 +398,10 @@ export class Pawn extends Phaser.Physics.Arcade.Sprite {
     this.shadow.setPosition(this.x, this.y + 8);
     this.setDepth(DEPTH.ENTITY_BASE + this.y);
     if (this.hpBar.visible) this.drawHpBar();
-    if (this.starBadge?.active) this.starBadge.setPosition(this.x, this.y - 46);
+    this.updateStatusBadge();
+    if (this.starBadge?.active) {
+      this.starBadge.setPosition(this.x, this.y - (this.statusBadge?.active ? 64 : 46));
+    }
     if (this.bleedBadge?.active) {
       this.bleedBadge.setPosition(this.x, this.y - 34);
       this.updateBleedBadge();
@@ -376,6 +415,10 @@ export class Pawn extends Phaser.Physics.Arcade.Sprite {
     this.shadow.destroy();
     this.hpBar.destroy();
     this.starBadge?.destroy();
+    this.statusBadge?.destroy();
+    this.bleedBadge?.destroy();
+    this.tauntBadge?.destroy();
+    this.tauntText?.destroy();
     super.destroy(fromScene);
   }
 }

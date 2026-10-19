@@ -363,6 +363,16 @@ export const ru = {
   'pawn.arrived': 'В поселение прибыло! {v} присоединяется',
   'pawn.wounded': '{v} ранен и уходит лечиться',
   'pawn.woundedF': '{v} ранена и уходит лечиться',
+  'pawn.status.retreat': 'ОТСТУПАЕТ',
+  'pawn.status.wounded': 'РАНЕН',
+
+  // ---------- Диагностика боевого баланса (только ?debug) ----------
+  'debug.garrison.title': 'DPS ГАРНИЗОНА',
+  'debug.garrison.waiting': 'База героя в 10:00 · лимит {cap}%',
+  'debug.garrison.hero': 'Герой @10:00: {v} DPS',
+  'debug.garrison.raw': 'Отряд без капа: {v} DPS ({p}%)',
+  'debug.garrison.applied': 'Отряд после капа: {v} DPS ({p}%, лимит {cap}%)',
+  'debug.garrison.window': 'Окно замера: {v} с',
   'pawn.bleeding': '{v} истекает кровью — 0:{s}',
   'pawn.bleedingF': '{v} истекает кровью — 0:{s}',
   'pawn.died': '{v} погиб',

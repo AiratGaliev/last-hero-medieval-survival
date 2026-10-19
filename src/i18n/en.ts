@@ -358,6 +358,16 @@ export const en: Record<TranslationKey, string> = {
   'pawn.arrived': 'A newcomer! {v} joins the settlement',
   'pawn.wounded': '{v} is wounded and seeks healing',
   'pawn.woundedF': '{v} is wounded and seeks healing',
+  'pawn.status.retreat': 'RETREAT',
+  'pawn.status.wounded': 'WOUNDED',
+
+  // ---------- Combat balance diagnostics (only ?debug) ----------
+  'debug.garrison.title': 'GARRISON DPS QA',
+  'debug.garrison.waiting': 'Hero baseline at 10:00 · cap {cap}%',
+  'debug.garrison.hero': 'Hero @10:00: {v} DPS',
+  'debug.garrison.raw': 'Squad raw: {v} DPS ({p}%)',
+  'debug.garrison.applied': 'Squad applied: {v} DPS ({p}%, cap {cap}%)',
+  'debug.garrison.window': 'Measure window: {v}s',
   'pawn.bleeding': '{v} is bleeding out — 0:{s}',
   'pawn.bleedingF': '{v} is bleeding out — 0:{s}',
   'pawn.died': '{v} has died',

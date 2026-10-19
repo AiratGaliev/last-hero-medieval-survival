@@ -2,7 +2,7 @@
 
 - Последний CI на `main`: [#155](https://github.com/AiratGaliev/last-hero-medieval-survival/actions/runs/39244349795), SHA `febae19e8f723fb8ecb73d15e1e1cf63113ea09d`, **success**. Typecheck/lint, production build, Yandex Games archive validation и Browser smoke tests прошли.
 - Phase B–F слиты в `main`; merge CI [#154](https://github.com/AiratGaliev/last-hero-medieval-survival/actions/runs/39214359494) также завершился успешно.
-- Ветка G–H добавляет исправления long-press/desktop input, жизненного цикла команды build, подписей экономических ресурсов и звука сдачи. Целевой Playwright suite добавлен, но эти изменения не считать принятыми до зелёного CI на соответствующем PR.
+- Ветка G–H проверяется в PR #18: CI #170 подтвердил 107 passed, но выявил ошибки ввода из-за неподдерживаемой опции `modifiers` у `page.mouse.click()`. Используется явное `keyboard.down/up('Shift')`; CI #171 на SHA `89fad2c` проходит повторную browser-проверку. Фазы G–H не закрывать до зелёного результата.
 - Реальная мобильная визуальная приёмка, баланс длинного матча и release gates Yandex Games (SDK/IAP/ads Sandbox) остаются отдельными проверками.
 
 # Дорожная карта: «Последний герой: Средневековое выживание»
@@ -498,20 +498,20 @@ emit `change`) → `cooldown` (0.5 сек) → `walk`.
 **Что входит (только то, что есть после фазы E):** мечник и копейщик из казарм.
 Лучник (`archery`) и монах (`monastery`) — фаза M, зданий ещё нет.
 
-**Ожидаемые ассеты (проверить наличие, кадры и интеграцию в гейте):** `units/blue/warrior/{idle,run,attack1,attack2,guard}`
-(8/6/4/4/6 кадров, 192×192) и `units/blue/lancer/{idle,run,attack}`
-(8/6/4 кадра). Оба уже лежат в ассете; в BootScene ключи с префиксом `pawn-`
-не заведены — добавить.
+**Ассеты и анимации:** спрайтшиты уже заведены в `BootScene` под ключами
+`pawn-warrior-*` и `pawn-lancer-*`. Осталось подтвердить соответствие числа кадров
+спецификации (`warrior`: 8/6/4/4/6, `lancer`: 8/6/4) и прохождение runtime-гейта
+без ошибок `Frame not found`; не добавлять дублирующие ключи.
 
 - [x] `src/game/constants.ts` — `AGGRO = { HERO: 600, NPC: 900, PANIC: 220 }`,
       `GARRISON = { RALLY: 700, LEASH: 900, INTERCEPT: 260, TICK_MS: 150,
       PATROL_SWAP: [6000, 10000] }`, `TAUNT = { RADIUS: 150, SHARE: 0.5 }`,
       `RETREAT_HP = 0.35`, `KITE = { NEAR: 180, STEP: 80, MAX_LEASH: 420 }`,
       `GARRISON_DPS_CAP = 0.25`
-- [ ] `src/game/data.ts` — `FIGHTERS = { sword: { hp: 120, dmg: 14, range: 40,
-      period: 1200, speed: 150 }, lance: { hp: 100, dmg: 18, range: 200,
-      charge: 400, telegraph: 480, period: 8000, speed: 170 } }` —
-      **вне** `TIER_MULT` и `hpScale` (TZ §C.3)
+- [x] `src/game/data.ts` — `FIGHTERS` содержит базовые значения `sword` и
+      `lance` из TZ §C.3; `Pawn` инициализирует HP/скорость из `FIGHTERS`,
+      вне множителей сложности героя (`TIER_MULT`/`hpScale`). Runtime-гейт на 13-й
+      минуте остаётся отдельной проверкой
 - [x] `src/game/entities/Enemy.ts` — поле `target: Hero | Pawn | null` и
       `pickTarget()` по таблице §A.5. Пересчёт раз в **400 мс**
       (`this.time.addEvent`), **не** в `update()` каждый кадр — иначе цель
@@ -552,12 +552,14 @@ emit `change`) → `cooldown` (0.5 сек) → `walk`.
       только для юнитов с `class: 'garrison'`
 - [ ] `src/game/systems/Projectiles.ts` — **не трогать**: в этой фазе стрел NPC
       нет (лучник — фаза M). Все ближние атаки контактные
-- [ ] `src/game/scenes/HUD.ts` — счётчик гарнизона «ВОИНЫ 1/2» у замка,
-      обновление по событию `Economy.on('garrison')`; плашки состояний
-      `retreat` / `wounded` над юнитами
-- [ ] **Debug-замер потолка DPS** (обязательно, не «потом»): `?debug` показывает
-      суммарный DPS отряда и DPS героя на 10-й минуте в процентах. Без замера
-      гейт-пункт ниже нечем проверять
+- [x] `src/game/systems/HUD.ts` — счётчик «ВОИНЫ n/limit» у замка обновляется
+      через существующую подписку на `Economy.on('change')`; `src/game/entities/Pawn.ts`
+      показывает локализованные плашки `RETREAT/ОТСТУПАЕТ` и `WOUNDED/РАНЕН`
+      для состояний отступления и ранения.
+- [x] `src/game/scenes/GameScene.ts` — `?debug` показывает DPS героя (база на 10:00),
+      raw DPS отряда до ограничения и фактически применённый DPS/долю от героя после
+      ограничения 25%. Измерение считает фактический временной интервал после снимка;
+      полноценный десятиминутный runtime-гейт ниже пока остаётся открытым.
 
 **Гейт J:**
 - [ ] Без казарм кнопки «НАНЯТЬ» нет; после постройки — есть
