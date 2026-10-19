@@ -441,7 +441,10 @@ export class Economy extends Phaser.Events.EventEmitter {
         target[k as ResourceKind] += v;
       }
     }
-    for (const j of this.repairJobs) target.wood += j.rebuild ? REPAIR.REBUILD_WOOD : REPAIR.WOOD;
+    for (const j of this.repairJobs) {
+      target.wood += j.rebuild ? REPAIR.REBUILD_WOOD : REPAIR.WOOD;
+      if (j.rebuild && j.building.kind === 'barracks') target.ore += REPAIR.REBUILD_BARRACKS_ORE;
+    }
     const planned = target.wood + target.ore + target.meat;
     if (planned <= 0) return this.nearestFreeNode(from);
 
@@ -607,7 +610,11 @@ export class Economy extends Phaser.Events.EventEmitter {
     if (!rebuild && building.hp >= building.maxHp) return false;
     // «Сметливые ремонтники» (§H.16): стоимость ремонта ×0.75
     const wood = Math.round((rebuild ? REPAIR.REBUILD_WOOD : REPAIR.WOOD) * this.tune.repairCost);
-    if (!this.spend({ wood })) return false;
+    const cost: ResourceCost = { wood };
+    if (rebuild && building.kind === 'barracks') {
+      cost.ore = Math.round(REPAIR.REBUILD_BARRACKS_ORE * this.tune.repairCost);
+    }
+    if (!this.spend(cost)) return false;
     building.underConstruction = true;
     if (rebuild) building.setScale(building.scaleX, 0.02);
     this.repairJobs.push({ building, progress: 0, pawn, rebuild });
