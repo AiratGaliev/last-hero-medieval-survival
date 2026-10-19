@@ -349,6 +349,7 @@ export const en: Record<TranslationKey, string> = {
   'resource.meat': 'Meat',
   'resource.ore': 'Ore',
   'hud.garrison': 'WARRIORS {a}/{b}',
+  'hud.garrisonStatus': 'wounded: {w} · retreat: {r}',
   'hud.settlement': 'SETTLEMENT',
   'hud.settlement.infra': 'Buildings',
   'hud.settlement.pop': 'Population',
