@@ -90,6 +90,11 @@ export class GameScene extends Phaser.Scene {
   private readonly garrisonDpsBudget = new GarrisonDpsBudget(GARRISON_DPS_CAP);
   /** Frozen theoretical hero DPS baseline captured at game time 10:00. */
   private heroDpsAtTenMinutes: number | null = null;
+  /** Диагностика потолка урона гарнизона включается только в dev с ?debug. */
+  private dpsDebugText: Phaser.GameObjects.Text | null = null;
+  private lastDpsDebugUpdate = 0;
+  private dpsDebugRawDamage = 0;
+  private dpsDebugAppliedDamage = 0;
   /** Замок стоит в центре-севере арены (как декор раньше). */
   private readonly castleX = WORLD.SIZE / 2;
   private readonly castleY = WORLD.SIZE / 2 - 460;
@@ -334,6 +339,11 @@ export class GameScene extends Phaser.Scene {
   private resetState(): void {
     this.heroDpsAtTenMinutes = null;
     this.garrisonDpsBudget.reset();
+    this.dpsDebugText?.destroy();
+    this.dpsDebugText = null;
+    this.lastDpsDebugUpdate = 0;
+    this.dpsDebugRawDamage = 0;
+    this.dpsDebugAppliedDamage = 0;
     this.hintOverlayPaused = false;
     this.houseHintArmed = true;
     this.pawnsHintArmed = true;
@@ -1016,14 +1026,19 @@ export class GameScene extends Phaser.Scene {
     });
     this.hud.setIcon(startId, WEAPONS[startId].icon, 1, false);
     this.ach = new AchTracker((a) => this.hud.achievementToast(a));
+    this.setupDpsDebug();
 
     // ---- Подписки HUD на экономику (обновление по событию, §B.8) ----
     this.economy.on('change', () => {
       this.hud.updateResources(this.economy.resources);
+      const wounded = this.economy.pawns.filter((p) => p.state === 'wounded' || p.state === 'bleeding').length;
+      const retreating = this.economy.garrison.filter((p) => p.state === 'retreat').length;
+      const garrison = t('hud.garrison', { a: this.economy.garrison.length, b: this.economy.totalGarrisonSlots() });
+      const status = wounded + retreating > 0 ? ` · ${t('hud.garrisonStatus', { w: wounded, r: retreating })}` : '';
       this.hud.updateSettlement(
         this.settlement.infrastructureHp / this.settlement.infrastructureMax,
         this.economy.pawns.length / Math.max(1, this.economy.pawnLimit),
-        t('hud.garrison', { a: this.economy.garrison.length, b: this.economy.totalGarrisonSlots() }),
+        `${garrison}${status}`,
       );
     });
     this.economy.on('built', ({ kind, first }) => {
@@ -1397,6 +1412,43 @@ private ordersUnlocked(): boolean {
     });
   }
 
+  /**
+   * В dev (?debug) выводит измеренный урон гарнизона за последнее окно и
+   * теоретический потолок в 25% от базового DPS героя на отметке 10:00.
+   * В обычной сборке диагностический текст не создаётся.
+   */
+  private setupDpsDebug(): void {
+    if (!import.meta.env.DEV || typeof window === 'undefined'
+      || !new URLSearchParams(window.location.search).has('debug')) return;
+    this.dpsDebugText = this.add.text(8, 82, '', {
+      fontFamily: 'monospace',
+      fontSize: '11px',
+      color: '#baf7ff',
+      backgroundColor: '#111923',
+      padding: { x: 6, y: 4 },
+      lineSpacing: 2,
+    }).setScrollFactor(0).setDepth(90_000);
+    this.lastDpsDebugUpdate = this.time.now;
+  }
+
+  private updateDpsDebug(time: number): void {
+    if (!this.dpsDebugText || time - this.lastDpsDebugUpdate < 1_000) return;
+    const windowMs = Math.max(1, time - this.lastDpsDebugUpdate);
+    const rawDps = this.dpsDebugRawDamage * 1_000 / windowMs;
+    const appliedDps = this.dpsDebugAppliedDamage * 1_000 / windowMs;
+    const heroDps = this.heroDpsAtTenMinutes;
+    const capDps = heroDps === null ? null : heroDps * GARRISON_DPS_CAP;
+    this.dpsDebugText.setText([
+      'DPS QA · window 1s',
+      `hero@10m: ${heroDps === null ? 'not captured' : heroDps.toFixed(1)} /s`,
+      `garrison: ${rawDps.toFixed(1)} → ${appliedDps.toFixed(1)} /s`,
+      `cap: ${capDps === null ? 'not active' : capDps.toFixed(1) + ' /s'} · bank ${this.garrisonDpsBudget.availableDamage.toFixed(1)}`,
+    ].join('\\n'));
+    this.dpsDebugRawDamage = 0;
+    this.dpsDebugAppliedDamage = 0;
+    this.lastDpsDebugUpdate = time;
+  }
+
   // ================= ЦИКЛ =================
 
   update(time: number, delta: number): void {
@@ -1404,6 +1456,7 @@ private ordersUnlocked(): boolean {
     // Если тем же тиком погиб босс, победа уже объявлена и урон не считается.
     if (this.confirmDefeat()) return;
     if (!this.started || this.gameEnded || this.victoryPending || this.hintOverlayPaused) return;
+    this.updateDpsDebug(time);
 
     // Хитстоп: короткая заморозка мира (после убийств элит/взрывов/урона)
     if (time < this.hitstopUntil) {
@@ -2209,6 +2262,8 @@ private bossDeathSequence(e: Enemy): boolean {
     const final = this.heroDpsAtTenMinutes === null
       ? rawDamage
       : this.garrisonDpsBudget.apply(rawDamage, this.time.now, this.heroDpsAtTenMinutes);
+    this.dpsDebugRawDamage += rawDamage;
+    this.dpsDebugAppliedDamage += final;
     if (final <= 0) return;
     this.effects.damage(e.x, e.y - 40 * e.def.scale, final, false);
     const died = e.takeDamage(final);
