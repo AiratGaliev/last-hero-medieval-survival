@@ -633,12 +633,21 @@ export class MetaScene extends Phaser.Scene {
               g.lineStyle(unlocked ? 2 : 1, unlocked ? 0xd9a520 : 0xbfa77a, 1)
                 .strokeRoundedRect(cx - chipW / 2, cy - rowH / 2 + 3, chipW, rowH - 6, 7);
               box.add(g);
+              const faceKey = `face-${e.id}`;
+              const hasPortrait = sec.id === 'enemies' && unlocked && this.textures.exists(faceKey);
+              if (hasPortrait) {
+                // Небольшой портрет делает запись кодекса узнаваемой без
+                // захвата всей карточки; неизвестные существа остаются скрыты.
+                box.add(this.add.image(cx - chipW / 2 + 19, cy, faceKey).setDisplaySize(28, 28));
+              }
               const label = unlocked ? tr(e.nameKey) : '???';
-              const txt = this.add.text(cx, cy, label, {
+              const textX = hasPortrait ? cx + 10 : cx;
+              const textW = chipW - (hasPortrait ? 36 : 10);
+              const txt = this.add.text(textX, cy, label, {
                 fontFamily: FONT, fontSize: '12px', color: unlocked ? '#3b2410' : '#8d8577',
-                align: 'center', wordWrap: { width: chipW - 10 },
+                align: 'center', wordWrap: { width: textW },
               }).setOrigin(0.5);
-              fitTextWidth(txt, chipW - 10, 10, 7);
+              fitTextWidth(txt, textW, 10, 7);
               if (!unlocked) txt.setAlpha(0.55);
               box.add(txt);
             });
