@@ -154,6 +154,27 @@ test('phase G: desktop menu is explicit, closable and BUILD order ends after con
     { key: 'rest', disabled: true },
   ]);
 
+  // Клик по серой заготовке не должен выбирать её или закрывать меню.
+  const disabledPoint = await page.evaluate(() => {
+    const game = (window as RuntimeWindow).__tss!;
+    const scene = game.scene.getScene('Game') as GameSceneRuntime;
+    const pawn = scene.economy.pawns.find(p => p.kind === 'collector')!;
+    const camera = scene.cameras.main;
+    const canvas = document.querySelector('#game canvas');
+    if (!canvas) throw new Error('Game canvas is missing');
+    const rect = canvas.getBoundingClientRect();
+    const worldX = pawn.x;
+    const worldY = pawn.y + 74;
+    const x = camera.x + (worldX - camera.worldView.x) * camera.zoom;
+    const y = camera.y + (worldY - camera.worldView.y) * camera.zoom;
+    return {
+      x: rect.left + x * rect.width / scene.scale.width,
+      y: rect.top + y * rect.height / scene.scale.height,
+    };
+  });
+  await page.mouse.click(disabledPoint.x, disabledPoint.y);
+  await expect.poll(isOpen).toBe(true);
+
   await page.mouse.click(point.x, point.y, { modifiers: ['Shift'] });
   await expect.poll(isOpen).toBe(false);
   await page.mouse.click(point.x, point.y, { modifiers: ['Shift'] });

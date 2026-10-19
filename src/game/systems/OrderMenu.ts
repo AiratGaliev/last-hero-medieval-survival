@@ -90,8 +90,10 @@ export class OrderMenu {
         align: 'center', wordWrap: { width: 60 },
       }).setOrigin(0.5);
       c.add([bg, label]);
+      // Disabled-кнопка ловит hit-test, но не имеет действия: без этого клик
+      // проваливается на veil-подложку и закрывает меню вместо «ничего не делать».
+      bg.setInteractive({ useHandCursor: !e.disabled });
       if (!e.disabled) {
-        bg.setInteractive({ useHandCursor: true });
         bg.on('pointerdown', () => {
           onPick(e.key);
           this.close();
@@ -135,8 +137,10 @@ export class OrderMenu {
         align: 'center', wordWrap: { width: 60 },
       }).setOrigin(0.5);
       c.add([bg, label]);
+      // Disabled-кнопка ловит hit-test, но не имеет действия: без этого клик
+      // проваливается на veil-подложку и закрывает меню вместо «ничего не делать».
+      bg.setInteractive({ useHandCursor: !e.disabled });
       if (!e.disabled) {
-        bg.setInteractive({ useHandCursor: true });
         bg.on('pointerdown', () => {
           onPick(e.key);
           this.close();
