@@ -884,6 +884,21 @@ test('phases E-F: construction uses the approached spot and repair costs are gua
     const woodAfterRebuild = economy.resources.wood;
     const rebuildFinished = economy.finishRepairInstant();
 
+    // Gate L: разрушенные казармы требуют не только дерево, но и руду.
+    barracks.damage(barracks.maxHp + 10, -1);
+    economy.resources.wood = 100;
+    economy.resources.ore = 0;
+    const woodBeforeBarracksNoOre = economy.resources.wood;
+    const barracksRebuildWithoutOre = economy.repair(barracks, builder);
+    const woodAfterBarracksNoOre = economy.resources.wood;
+    economy.resources.ore = 15;
+    const woodBeforeBarracksRebuild = economy.resources.wood;
+    const oreBeforeBarracksRebuild = economy.resources.ore;
+    const barracksRebuildAccepted = economy.repair(barracks, builder);
+    const woodAfterBarracksRebuild = economy.resources.wood;
+    const oreAfterBarracksRebuild = economy.resources.ore;
+    const barracksRebuildFinished = economy.finishRepairInstant();
+
     // Автоматический ремонтник (поведение позднейшей фазы L) чинит повреждённый дом.
     const repairer = economy.pawns.find(p => p.kind === 'repairer');
     if (!repairer) throw new Error('Automatic repair needs the initial repairer');
@@ -1008,6 +1023,15 @@ test('phases E-F: construction uses the approached spot and repair costs are gua
       woodBeforeRebuild,
       woodAfterRebuild,
       rebuildFinished,
+      barracksRebuildWithoutOre,
+      woodBeforeBarracksNoOre,
+      woodAfterBarracksNoOre,
+      barracksRebuildAccepted,
+      woodBeforeBarracksRebuild,
+      woodAfterBarracksRebuild,
+      oreBeforeBarracksRebuild,
+      oreAfterBarracksRebuild,
+      barracksRebuildFinished,
       rebuiltAlpha: house.alpha,
       rebuiltUnderConstruction: house.underConstruction,
       automaticRepairStarted,
@@ -1054,6 +1078,12 @@ test('phases E-F: construction uses the approached spot and repair costs are gua
   expect(report.rebuildAccepted).toBe(true);
   expect(report.woodAfterRebuild).toBe(report.woodBeforeRebuild - 60);
   expect(report.rebuildFinished).toBe(true);
+  expect(report.barracksRebuildWithoutOre).toBe(false);
+  expect(report.woodAfterBarracksNoOre).toBe(report.woodBeforeBarracksNoOre);
+  expect(report.barracksRebuildAccepted).toBe(true);
+  expect(report.woodAfterBarracksRebuild).toBe(report.woodBeforeBarracksRebuild - 60);
+  expect(report.oreAfterBarracksRebuild).toBe(report.oreBeforeBarracksRebuild - 15);
+  expect(report.barracksRebuildFinished).toBe(true);
   expect(report.rebuiltAlpha).toBe(1);
   expect(report.rebuiltUnderConstruction).toBe(false);
   expect(report.automaticRepairStarted).toBe(true);
