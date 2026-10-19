@@ -56,9 +56,11 @@ type GameSceneRuntime = {
   scale: { width: number; height: number };
   textures: { exists(key: string): boolean };
   cameras: { main: {
-    x: number; y: number; zoom: number; worldView: { x: number; y: number };
+    x: number; y: number; zoom: number;
+    worldView: { x: number; y: number; width: number; height: number };
     getWorldPoint(x: number, y: number): { x: number; y: number };
   } };
+  player: { x: number; y: number };
   hintOverlayPaused: boolean;
 };
 type PhaserRuntime = { scene: { getScene(key: string): unknown; isActive(key: string): boolean } };
@@ -98,6 +100,17 @@ async function startRun(page: Page, width = 1280, height = 720): Promise<void> {
     const game = (window as RuntimeWindow).__tss;
     if (!game?.scene.isActive('Game')) return true;
     return !(game.scene.getScene('Game') as GameSceneRuntime).hintOverlayPaused;
+  }), { timeout: 10_000 }).toBe(true);
+
+  // Камера следует за героем с lerp; дождаться её фактической стабилизации,
+  // прежде чем считать экранные координаты NPC для последующих кликов/touch.
+  await expect.poll(() => page.evaluate(() => {
+    const game = (window as RuntimeWindow).__tss;
+    if (!game?.scene.isActive('Game')) return false;
+    const scene = game.scene.getScene('Game') as GameSceneRuntime;
+    const view = scene.cameras.main.worldView;
+    return Math.abs(view.x + view.width / 2 - scene.player.x) < 8
+      && Math.abs(view.y + view.height / 2 - scene.player.y) < 8;
   }), { timeout: 10_000 }).toBe(true);
 }
 

@@ -1482,7 +1482,12 @@ private ordersUnlocked(): boolean {
       // приказная система на тач-свайпе срабатывала бы постоянно.
       const ptr = this.pressState.pointer;
       if (ptr.isDown) {
-        const drift = Math.hypot(ptr.x - this.pressState.screenX, ptr.y - this.pressState.screenY);
+        // Phaser pointer.x/y — логические координаты canvas; пересчитываем в CSS px,
+        // чтобы порог 12 px не менялся при FIT/масштабировании холста.
+        const canvas = this.game.canvas.getBoundingClientRect();
+        const cssDx = (ptr.x - this.pressState.screenX) * canvas.width / Math.max(1, this.scale.width);
+        const cssDy = (ptr.y - this.pressState.screenY) * canvas.height / Math.max(1, this.scale.height);
+        const drift = Math.hypot(cssDx, cssDy);
         if (drift > 12) {
           this.orderMenu.hideRing();
           this.pressState = null;
