@@ -15,8 +15,8 @@
     "typecheck": "tsc --noEmit",
     "db:push": "exit 0",
     "check": "npm run typecheck && npm run lint",
-    "test:e2e": "playwright test",
-    "test:e2e:ui": "playwright test --ui"
+    "test:e2e": "playwright test --workers=1",
+    "test:e2e:ui": "playwright test --ui --workers=1"
   },
   "dependencies": {
     "phaser": "^4.2.1"
