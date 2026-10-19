@@ -88,7 +88,7 @@ export class BootScene extends Phaser.Scene {
     }).setOrigin(0.5);
     const bar = this.add.rectangle(bx + 2, by + 1, 10, barH - 4, 0xe8c170).setOrigin(0, 0.5);
     this.add.text(width / 2, by + 40, t('boot.loading'), {
-      fontFamily: FONT, fontSize: '10px', color: '#cbb389',
+      fontFamily: FONT, fontSize: '12px', color: '#cbb389',
     }).setOrigin(0.5);
 
     this.load.on('progress', (v: number) => {
@@ -341,6 +341,9 @@ export class BootScene extends Phaser.Scene {
     // 9-slice версии (склеены из тайлов ассета) — все панели/кнопки строятся
     // из них; сырые крупные текстуры (paper/banner/bigbutton) не грузим.
     this.load.image('btn-small-blue', asset('tiny-swords', 'ui/buttons/smallbluesquarebutton-regular.png'));
+    // Круглые кнопки — для радиального меню приказов (systems/OrderMenu.ts)
+    this.load.image('btn-small-blue-round', asset('tiny-swords', 'ui/buttons/smallblueroundbutton-regular.png'));
+    this.load.image('btn-small-red-round', asset('tiny-swords', 'ui/buttons/smallredroundbutton-regular.png'));
     // Мечи логотипа: два ряда из сетки 3×5 в ui/swords, вырезаны скриптом
     // scripts/prepare-assets.mjs. Сама сетка не грузится — она в три раза
     // тяжелее и нужна только на этапе подготовки ассетов.
@@ -408,6 +411,21 @@ export class BootScene extends Phaser.Scene {
     smallBar.add('bar-small-cap-l', 0, 49, 22, 15, 19);
     smallBar.add('bar-small-mid', 0, 128, 22, 64, 19);
     smallBar.add('bar-small-cap-r', 0, 256, 22, 15, 19);
+
+    // Ленты: три детали в ряд (левый хвост, растягиваемая середина, правый
+    // хвост). Нine-slice тут не годится: хвосты ленты содержат изгибы, и
+    // Phaser рисует углы девятислайса в натуральную величину — лента
+    // «разъезжалась» и выглядела смятой. Собираем ленту из трёх картинок,
+    // как полосу в systems/Bar.ts.
+    //
+    // Границы деталей заданы scripts/make-ribbons.mjs: 98 | 48 | 97.
+    for (const key of ['ribbon-blue', 'ribbon-yellow', 'ribbon-purple', 'ribbon-red']) {
+      const tex = this.textures.get(key);
+      if (!tex) continue;
+      tex.add('ribbon-l', 0, 0, 0, 98, 128);
+      tex.add('ribbon-m', 0, 98, 0, 48, 128);
+      tex.add('ribbon-r', 0, 146, 0, 97, 128);
+    }
   }
 
   private sheet(animKey: string, textureKey: string, count: number, rate = 10): void {

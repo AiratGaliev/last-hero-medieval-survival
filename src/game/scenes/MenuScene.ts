@@ -4,13 +4,15 @@ import { makeCornerFrame, type CornerFrame } from '../systems/Corners';
 import { FONT } from '../constants';
 import { HEROES, WEAPONS, PASSIVES, DIFFICULTIES, EVOLUTIONS, type HeroId, type DifficultyId } from '../data';
 import { audio } from '../systems/Audio';
-import { makePanel, makeButton, fitTextWidth } from '../systems/Ui';
+import { makePanel, makeButton, makeChip, makeRibbon, fitTextWidth } from '../systems/Ui';
+import { shrinkToHeight, FONT_FLOOR, FS } from '../systems/Text';
 import { loadShop } from '../shop';
 import { ACHIEVEMENTS, loadUnlocked, loadMeta } from '../achievements';
 import { t, num, clock, type TranslationKey, type TranslateParams } from '../../i18n';
 import { topScores } from '../../platform/leaderboard';
 import { notifyReady } from '../../platform/lifecycle';
 import { loadText, saveText, removeKey } from '../storage';
+import { resetSafeInsets, safeInsets } from '../safeArea';
 import { isAuthorized, offerAuth, displayName } from '../../platform/player';
 import { isOnYandex } from '../../platform/sdk';
 import { placementAvailable, showPlacementRewarded, showStickyBanner, rewardedAvailable } from '../../platform/ads';
@@ -74,8 +76,22 @@ interface DiffChip {
 const HERO_ORDER: HeroId[] = ['warrior', 'archer', 'lancer', 'monk'];
 const DIFF_ORDER: DifficultyId[] = ['normal', 'nightmare'];
 
-/** Размер файла портрета в ui/avatars: 256×256, персонаж лежит в рамке HeroDef.portrait.box */
+/** Кегль второго слова названия в компактном логотипе. */
+const LOGO_SUB = 15;
+
+/**
+ * Размер файла портрета в ui/avatars: 256×256, персонаж лежит в рамке HeroDef.portrait.box
+ */
 const PORTRAIT_SIZE = 256;
+
+/**
+ * Глубина оверлеев меню.
+ *
+ * Логотип игры нарисован с глубиной 1, поэтому оверлеи (рекорды,
+ * достижения, «Как играть») должны лежать выше — иначе название игры
+ * перекрывало заголовок окна, а затемнение не гасило меню.
+ */
+const MENU_OVERLAY_DEPTH = 9000;
 
 /**
  * Три части меча как отдельные фреймы той же текстуры: рукоять с гардой,
@@ -154,20 +170,48 @@ export class MenuScene extends Phaser.Scene {
     this.preChipTexts = [null, null, null, null];
     this.consRowEls = [];
 
-    // Мобильная раскладка: контент позиционируется на виртуальном полотне 460×800,
-    // затем камера уменьшает его до реального размера экрана — ничего не обрезается.
-    const mobile = realW < 760;
-    this.menuZoom = mobile ? Math.min(realW / 460, realH / 800) : 1;
-    this.vw = mobile ? 460 : realW;
-    this.vh = mobile ? 800 : realH;
+    // Мобильная раскладка: контент позиционируется на виртуальном полотне,
+    // затем камера уменьшает его до реального размера экрана — ничего не
+    // обрезается.
+    //
+    // Полотно берётся по ВИДИМОЙ области камеры, а не по фиксированным
+    // 460×800: на высоком телефоне (390×844) старая сетка оставляла снизу
+    // почти 200 пустых виртуальных пикселей, и меню упиралось в логотип.
+    // Теперь полотно ровно по экрану, а зум подбирается так, чтобы ширина
+    // укладывалась в проектную.
+    //
+    // На широком экране полотно 1280×720: при 1920×1080 зум камеры
+    // становится 1.5, и меню занимает экран целиком, а не жмётся в
+    // углу, как раньше.
+    const narrow = realW < 760 || realH / realW > 1.15;
+    // «Мобильная» раскладка: две колонки карточек, чипы пре-рана в два
+    // ряда, кнопки навигации в два ряда.
+    const mobile = narrow;
+    const designW = narrow ? 460 : 1280;
+    const designH = narrow ? 800 : 720;
+    this.menuZoom = Math.min(realW / designW, realH / designH);
+    this.vw = realW / this.menuZoom;
+    this.vh = realH / this.menuZoom;
     // centerOn центрирует виртуальное полотно (с учётом origin 0.5 камеры)
     this.cameras.main.setZoom(this.menuZoom);
     this.cameras.main.centerOn(this.vw / 2, this.vh / 2);
     const width = this.vw;
     const height = this.vh;
-    // Полотно фона — с запасом, чтобы при зуме < 1 закрыть весь экран
-    const coverW = this.vw / this.menuZoom + 240;
-    const coverH = this.vh / this.menuZoom + 240;
+    // Меню занимает весь экран, включая зоны выреза и жестовой полосы.
+    // Переводим CSS inset в виртуальные координаты, чтобы верхние награды и
+    // нижняя навигация оставались нажимаемыми в полноэкранном режиме.
+    const insets = safeInsets();
+    const safeTop = insets.top / this.menuZoom;
+    const safeBottom = insets.bottom / this.menuZoom;
+    const safeLeft = insets.left / this.menuZoom;
+    const safeRight = insets.right / this.menuZoom;
+    const utilityY = safeTop + 28;
+    const accountY = mobile ? utilityY + 46 : utilityY;
+    // Полотно фона — с запасом, чтобы при зуме < 1 закрыть весь экран.
+    // Виртуальное полотно совпадает с видимой областью камеры, поэтому
+    // запас нужен только на округление.
+    const coverW = this.vw + 240;
+    const coverH = this.vh + 240;
 
     // Сохранённый герой + сложность — только при первом запуске сцены;
     // при ресайзе (scene.restart) сохраняем выбор игрока текущей сессии
@@ -218,24 +262,49 @@ export class MenuScene extends Phaser.Scene {
     void sheep; void goblin;
 
     // ---------- Сетка карточек героя ----------
-    // Считается до логотипа: над карточками теперь два меча, и им нужно
-    // знать, сколько места сверху осталось. Блок упирается в подпись
-    // «выбери героя» сверху, а снизу — в кнопки и строку версии, поэтому
-    // сначала находим потолок для cardsY, а потом решаем, сдвигать ли блок
-    // вниз за счёт запаса внизу экрана.
+    // Раскладка считается СНИЗУ ВВЕРХ: строка версии, навигация, кнопка
+    // «Играть», ряд пре-рана и чипы сложности прижаты к низу экрана, и
+    // только блок карточек с логотипом занимает остаток. Так меню
+    // одинаково помещается и на 360×640, и на 1920×1080: раньше нижние
+    // кнопки считались от карточек сверху и на невысоких экранах уезжали
+    // за край вместе со строкой версии.
     const cols = width < 760 ? 2 : 4;
     const rows = Math.ceil(HERO_ORDER.length / cols);
     const gap = 14;
     const cardW = Math.min(width < 760 ? 205 : 225, (width - 36 - (cols - 1) * gap) / cols);
-    const cardH = width < 760 ? 146 : 214;
-    const blockH = rows * cardH + (rows - 1) * gap;
-    // От низа карточек до низа экрана: 28 до чипов сложности, ряд пре-рана
-    // (контракт/указ/расходники/вызов), кнопка «Играть» и навигация.
-    const navStack = mobile ? 34 + 58 + 90 : 34 + 58 + 44;
-    const maxCardsY = height - 18 - navStack - 77 - blockH / 2;
-    const cardsY = Math.min(height * 0.55, maxCardsY);
-    const heroTop = cardsY - blockH / 2;
-    const heroBottom = cardsY + blockH / 2;
+
+    // ---- Нижняя группа: считаем снизу вверх ----
+    //
+    // На телефоне высоты не хватает на четыре секции с воздухом, поэтому
+    // кнопки и промежутки там плотнее: на 360×640 иначе карточки героя
+    // наезжали на логотип. Тач-гейт (44 px) соблюдается везде.
+    const navRows = mobile ? 2 : 1;
+    const navH = mobile ? 38 : 42;
+    const navGap = 8;
+    const navBlockH = navRows * navH + (navRows - 1) * navGap;
+    const versionH = 24;
+    const playH = mobile ? 52 : 58;
+    const diffH = mobile ? 44 : 48;
+    const preH = mobile ? 42 * 2 + 10 : 42;
+    const gapPlay = mobile ? 14 : 16;
+    const gapPre = mobile ? 12 : 14;
+    const gapDiff = mobile ? 14 : 18;
+    const gapChips = mobile ? 32 : 36;
+
+    const versionY = height - safeBottom - 12;
+    const navBottom = versionY - versionH / 2 - 6;
+    const navTop = navBottom - navBlockH;
+    const playBottom = navTop - gapPlay;
+    const playY = playBottom - playH / 2;
+    // Ряд пре-рана стоит НАД кнопкой «Играть», поэтому от её низа отступаем
+    // на всю высоту кнопки, а не на один зазор.
+    const preBottom = playBottom - playH - gapPre;
+    const preTop = preBottom - preH;
+    const diffBottom = preTop - gapDiff;
+    const chipsY = diffBottom - diffH / 2;
+    // Зазор до карточек: плашка сложности и рамка выделения карточки —
+    // два тёмных контура, и в 26 px они сливались в одну полосу.
+    const heroBottom = chipsY - gapChips;
 
     // ---------- Логотип: два меча с названием ----------
     // Меч разложен на три части, как и в паке: рукоять с гардой и
@@ -245,56 +314,122 @@ export class MenuScene extends Phaser.Scene {
     // слову: у «СРЕДНЕКОВОЕ» меч длиннее, чем у «ВЫЖИВАНИЕ».
     const TEX = { h: 128, hilt: 88, blade: 128, tip: 45, inset: 12 };
     const FONT_MAX = 40;
-    const titleTop = Math.max(30, height * 0.05);
+    // На телефоне сверху живут чипы дара дня и сундука — логотип начинается
+    // ниже них, иначе плашка наезжала на первый меч с названием.
+    // На телефоне под логотипом сначала стоит второй ряд утилит: так
+    // авторизация не перекрывает мечи и не сталкивается с ежедневными чипами.
+    const titleTop = Math.max(mobile ? utilityY + 68 : utilityY + 22, height * 0.05);
     const swordGap = mobile ? 0 : 8;
-    const roomH = heroTop - 34 - titleTop - 10 - swordGap;
+    // Плашка «выбери героя» стоит между логотипом и карточками, поэтому
+    // место под неё резервируется ДО расчёта логотипа: раньше логотип
+    // съедал этот зазор, ужимался до нечитаемого кегля и налезал на плашку.
+    const heroLabelBand = mobile ? 34 : 56;
 
     // Обводка — как у надписей на кнопках (systems/Ui.ts) по толщине,
     // обводка белая, а заливка берётся цвета самого меча
+    const strokeOf = (size: number): number => Math.max(4, Math.round(size / 4));
     const wordStyle = (size: number, color: string): Phaser.Types.GameObjects.Text.TextStyle => ({
       fontFamily: FONT,
       fontSize: `${size}px`,
       color,
       stroke: '#ffffff',
-      strokeThickness: Math.max(4, size / 4),
+      strokeThickness: strokeOf(size),
     });
 
     const top = t('common.titleTop');
     const bottom = t('common.titleBottom');
     // Замеры на живом тексте: ширина и высота строки зависят от шрифта, и
-    // выводить их из начертания — значит угадывать
-    const probe = this.add.text(0, 0, top, wordStyle(FONT_MAX, '#000')).setVisible(false);
-    const kTop = probe.width / FONT_MAX;    // ширина слова на единицу кегля
+    // выводить их из начертания — значит угадывать.
+    //
+    // Замер БЕЗ обводки: обводка добавляется к готовой строке одинаковым
+    // числом пикселей с каждой стороны и на ширину влияет слабо, а вот в
+    // высоту строки вмешивается сильно — и раньше именно из-за этого
+    // логотип на телефоне получался вдвое мельче нужного.
+    const probe = this.add.text(0, 0, 'M', {
+      fontFamily: FONT, fontSize: `${FONT_MAX}px`,
+    }).setVisible(false);
     const lineH = probe.height / FONT_MAX;  // высота строки на единицу кегля
+    probe.setText(top);
+    const kTop = probe.width / FONT_MAX;    // ширина слова на единицу кегля
     probe.setText(bottom);
     const kBottom = probe.width / FONT_MAX;
     probe.destroy();
 
     // Кегль по размеру самого длинного слова: и длина меча, и его высота
-    // линейны по кеглю, поэтому перебор дешёвый и предсказуемый
-    const swordWidth = (k: number, font: number): number => {
-      const sc = (2 * lineH * font) / TEX.h;
-      return k * font + (TEX.hilt + TEX.tip + 2 * TEX.inset) * sc;
-    };
-    let logoFont = FONT_MAX;
-    while (logoFont > 9 && (
-      4 * lineH * logoFont + swordGap > roomH
-      || swordWidth(Math.max(kTop, kBottom), logoFont) > width - 24
-    )) logoFont--;
+    // линейны по кеглю, поэтому перебор дешёвый и предсказуемый.
+    //
+    // Порядок расчёта: сначала логотип (с минимальным кеглем, иначе на
+    // невысоком экране он превращался в нечитаемую полоску), затем под
+    // оставшуюся высоту делят плашка подписи и карточки героя.
+    const swordScale = (font: number): number => (2 * lineH * font) / TEX.h;
+    const swordWidth = (k: number, font: number): number =>
+      k * font + 2 * strokeOf(font) + (TEX.hilt + TEX.tip + 2 * TEX.inset) * swordScale(font);
+    const LOGO_MIN = 18;
+    const cardsCap = rows * (width < 760 ? 162 : 214) + (rows - 1) * gap;
+    const logoRoom = heroBottom - titleTop - heroLabelBand - cardsCap;
 
-    const scale = (2 * lineH * logoFont) / TEX.h;   // вертикальный масштаб меча
+    // Компактный вариант логотипа — на невысоких экранах (360×640).
+    //
+    // Два меча с названием занимают четыре строки кегля. На маленьком экране
+    // под них не остаётся места, и логотип ужимался до нечитаемой полоски,
+    // а карточки героя наезжали на него. В компакте меч остаётся один, а
+    // второе слово становится обычной строкой: логотип узнаётся, высота
+    // падает почти вдвое.
+    const twoSwordHeight = (font: number): number => 4 * lineH * font + swordGap;
+    // Компакт: один меч (две строки кегля) + строка-подпись + поле снизу.
+    const oneSwordHeight = (font: number): number => 2 * lineH * font + LOGO_SUB * lineH * 1.5 + 10;
+    let logoFont = FONT_MAX;
+    let compactLogo = false;
+    while (logoFont > LOGO_MIN && (
+      twoSwordHeight(logoFont) > logoRoom
+      || swordWidth(Math.max(kTop, kBottom), logoFont) > width - 40
+    )) logoFont--;
+    if (twoSwordHeight(logoFont) > logoRoom) {
+      compactLogo = true;
+      const subWidth = kBottom * LOGO_SUB;
+      logoFont = FONT_MAX;
+      while (logoFont > LOGO_MIN && (
+        oneSwordHeight(logoFont) > logoRoom
+        || swordWidth(kTop, logoFont) > width - 40
+        || subWidth > width - 40
+      )) logoFont--;
+    }
+
+    // Высота карточек: всё, что осталось между подписью и чипами.
+    const logoBottom = titleTop + (compactLogo
+      ? oneSwordHeight(logoFont)
+      : twoSwordHeight(logoFont));
+    const cardsTop = logoBottom + heroLabelBand;
+    const cardH = Math.round(Phaser.Math.Clamp(
+      (heroBottom - cardsTop - (rows - 1) * gap) / rows,
+      // Нижняя граница карточки на телефоне намеренно скромная: на 360×640
+      // под четыре блока места физически не хватает, и карточка должна
+      // ужаться, а не наехать на логотип.
+      width < 760 ? 112 : 200,
+      width < 760 ? 162 : 214,
+    ));
+    const blockH = rows * cardH + (rows - 1) * gap;
+    const cardsY = Math.min(height * 0.55, heroBottom - blockH / 2);
+    const heroTop = cardsY - blockH / 2;
+
+    const scale = swordScale(logoFont);   // вертикальный масштаб меча
     const swordH = TEX.h * scale;
     const hiltW = TEX.hilt * scale;
     const tipW = TEX.tip * scale;
     const cyA = titleTop + swordH / 2;
-    const cyB = titleTop + swordH + swordGap + swordH / 2;
+    // В компакте второй строкой идёт простая подпись, а не второй меч.
+    const cyB = compactLogo
+      ? titleTop + swordH + LOGO_SUB * lineH * 1.4 + 3
+      : titleTop + swordH + swordGap + swordH / 2;
 
     // Надписи создаются первыми: их ширина задаёт длину клинка. Depth 1 —
     // чтобы клинок, который добавится следом, их не накрыл.
     const txtTop = this.add.text(width / 2, cyA, top, wordStyle(logoFont, '#3c849c'))
       .setOrigin(0.5).setDepth(1);
-    const txtBottom = this.add.text(width / 2, cyB, bottom, wordStyle(logoFont, '#a85454'))
-      .setOrigin(0.5).setDepth(1);
+    const txtBottom = compactLogo
+      ? this.add.text(width / 2, cyB, '', wordStyle(LOGO_SUB, '#a85454')).setOrigin(0.5).setDepth(1)
+      : this.add.text(width / 2, cyB, bottom, wordStyle(logoFont, '#a85454'))
+        .setOrigin(0.5).setDepth(1);
 
     for (const key of ['sword-blue', 'sword-red']) swordParts(this, key);
     const drawSword = (key: string, cy: number, bladeW: number, flip: boolean): number => {
@@ -316,33 +451,55 @@ export class MenuScene extends Phaser.Scene {
 
     const bladePad = 2 * TEX.inset * scale;
     const bladeCxA = drawSword('sword-blue', cyA, txtTop.width + bladePad, false);
-    const bladeCxB = drawSword('sword-red', cyB, txtBottom.width + bladePad, true);
     txtTop.setPosition(width / 2 + bladeCxA, cyA);
-    txtBottom.setPosition(width / 2 + bladeCxB, cyB);
+    if (compactLogo) {
+      txtBottom.setText(bottom);
+    } else {
+      const bladeCxB = drawSword('sword-red', cyB, txtBottom.width + bladePad, true);
+      txtBottom.setPosition(width / 2 + bladeCxB, cyB);
+    }
 
     // Кошелёк в углу — видно мета-золото до захода в лавку;
     // на подложке-пергаменте, чтобы облака не мешали чтению
     const wallet = loadShop().balance;
     if (wallet > 0) {
       const wtxt = num(wallet);
-      const chipW = 52 + wtxt.length * 10;
+      const chipW = 62 + wtxt.length * 10;
       const chipX = width - 20 - chipW;
       const chipCY = cyA;   // по центру верхнего меча
-      const walletChip = this.add.graphics();
-      walletChip.fillStyle(0xf7e7c3, 0.95).fillRoundedRect(chipX, chipCY - 15, chipW, 30, 9);
-      walletChip.lineStyle(2, 0xc9a25e, 1).strokeRoundedRect(chipX, chipCY - 15, chipW, 30, 9);
-      this.add.image(chipX + 16, chipCY - 1, 'icon-coin').setDisplaySize(18, 18);
-      this.add.text(chipX + 30, chipCY - 1, wtxt, {
+      const walletChip = makeChip(this, chipX + chipW / 2, chipCY, chipW, 32, '', {
+        fontSize: 12,
+      });
+      // Монета слева, сумма справа — как в игровых счётчиках
+      const coin = this.add.image(chipX + 16, chipCY, 'icon-coin').setDisplaySize(18, 18);
+      const sum = this.add.text(chipX + 30, chipCY, wtxt, {
         fontFamily: FONT, fontSize: '14px', color: '#7a4e0e',
       }).setOrigin(0, 0.5);
+      walletChip.container.add([coin, sum]);
     }
 
     // ---------- Выбор героя ----------
-    const label = this.add.text(width / 2, heroTop - 34, t('menu.chooseHero'), {
-      fontFamily: FONT, fontSize: '14px', color: '#3b2410',
-      stroke: '#ffe9c0', strokeThickness: 4,
-    }).setOrigin(0.5).setAlpha(0.9);
-    void label;
+    // Подсказка выбора героя. Ставится на пергаментную плашку: раньше тёмный
+    // текст с кремовой обводкой лежал прямо на траве и читался как
+    // светлая полоска, а не как подпись.
+    const heroLabelY = logoBottom + heroLabelBand / 2;
+    const heroLabel = t('menu.chooseHero');
+    const heroLabelH = mobile ? 22 : 26;
+    const heroLabelW = Math.min(width - 24, heroLabel.length * 8 + 40);
+    const heroLabelBg = makePanel(this, width / 2, heroLabelY, 'paper', heroLabelW, heroLabelH);
+    heroLabelBg.setAlpha(0.92).setDepth(2);
+    this.add.text(width / 2, heroLabelY, heroLabel, {
+      fontFamily: FONT, fontSize: mobile ? '13px' : '14px', color: '#3b2410',
+    }).setOrigin(0.5).setAlpha(0.98).setDepth(3);
+    if (!mobile) {
+      // Подсказка про клавиатуру лежит прямо на траве, поэтому у неё
+      // светлый текст с тёмной обводкой, а не тёмный «как на пергаменте»:
+      // тёмно-коричневый по зелёной траве почти не читался.
+      this.add.text(width / 2, heroLabelY + 22, t('menu.keyboardHint'), {
+        fontFamily: FONT, fontSize: '11px', color: '#ffe9c0',
+        stroke: '#1b1008', strokeThickness: 3,
+      }).setOrigin(0.5).setDepth(3);
+    }
 
     HERO_ORDER.forEach((id, i) => {
       const col = i % cols;
@@ -353,24 +510,18 @@ export class MenuScene extends Phaser.Scene {
     });
 
     // ---------- Выбор сложности ----------
-    const chipsY = heroBottom + 28;
-    const chipW = Math.min(200, (width - 90) / 2);
+    const chipW = Math.min(210, (width - 40) / 2);
     DIFF_ORDER.forEach((id, i) => {
       const x = width / 2 + (i === 0 ? -chipW / 2 - 8 : chipW / 2 + 8);
-      this.createDiffChip(x, chipsY, chipW, 40, id);
+      this.createDiffChip(x, chipsY, chipW, diffH, id);
     });
 
     // ---------- Пре-ран ряд: контракт / указ / расходники / вызов дня ----------
-    const preY = chipsY + 38;
-    this.createPreRow(width, preY, mobile);
+    this.createPreRow(width, preTop, mobile);
 
     // ---------- Кнопки ----------
-    const btnY = Math.min(height * 0.85, preY + 48);
-    makeButton(this, width / 2, btnY, Math.min(320, width - 80), 58, t('menu.play'), () => {
-      audio.unlock();
-      saveText('tss-hero', this.selectedHero);
-      saveText('tss-diff', this.selectedDiff);
-      this.startRun();
+    makeButton(this, width / 2, playY, Math.min(320, width - 80), playH, t('menu.play'), () => {
+      this.startSelectedRun();
     }, 'blue', mobile ? 20 : 24);
 
     // Навигация по мета-экранам — всё внутри Phaser. «Лавка торговца»
@@ -383,24 +534,24 @@ export class MenuScene extends Phaser.Scene {
       [t('menu.chronicle'), () => this.showChronicle()],
       [t('meta.tab'), () => this.openOverlayScene('Meta')],
     ];
-    const navY = btnY + 58;
+    const navY = navBottom - navH / 2;
     if (mobile) {
       // Два ряда по три: шесть кнопок мета-навигации
       const w3 = Math.min(150, (width - 60 - 24) / 3);
       navItems.slice(0, 3).forEach(([lbl, action], i) => {
         const x = width / 2 - (3 * w3 + 24) / 2 + i * (w3 + 12) + w3 / 2;
-        makeButton(this, x, navY, w3, 42, lbl, action, 'red', 11);
+        makeButton(this, x, navY, w3, navH, lbl, action, 'red', 12);
       });
       navItems.slice(3).forEach(([lbl, action], i) => {
         const x = width / 2 - (3 * w3 + 24) / 2 + i * (w3 + 12) + w3 / 2;
-        makeButton(this, x, navY + 48, w3, 42, lbl, action, 'red', 11);
+        makeButton(this, x, navY - navH - navGap, w3, navH, lbl, action, 'red', 12);
       });
     } else {
       const gapN = 8;
       const bw = Math.min(160, (width - 80 - 5 * gapN) / 6);
       navItems.forEach(([lbl, action], i) => {
         const x = width / 2 - (6 * bw + 5 * gapN) / 2 + i * (bw + gapN) + bw / 2;
-        makeButton(this, x, navY, bw, 44, lbl, action, 'red', 11);
+        makeButton(this, x, navY, bw, navH, lbl, action, 'red', 12);
       });
     }
 
@@ -408,28 +559,47 @@ export class MenuScene extends Phaser.Scene {
     // Общий зал рекордов доступен только авторизованным: setScore требует
     // входа. Площадка запрещает показывать окно входа без повода, поэтому
     // это явная кнопка — и заодно видно, под каким именем игрок записан.
-    this.addAccountChip(width, height);
+    this.addAccountChip(width, mobile, accountY, safeRight);
 
     // Чип дара дня (§H.7): виден, пока дар за сегодня не забран.
     // На мобильных прижат к верхнему левому углу, на десктопе — в ряд кошелька.
     if (bonusAvailable()) {
-      this.createBonusChip(96, mobile ? 24 : cyA);
+      this.createBonusChip(96 + safeLeft, mobile ? utilityY : cyA);
     }
     // Ежедневный сундук (R7 §J.3): 2 ролика в день — золото/жетоны.
     // Показывается только на Яндексе (rewarded недоступен гостям) и пока
     // лимит дня не исчерпан; встаёт рядом с чипом дара.
     if (rewardedAvailable() && dailyChestLeft() > 0) {
       const chipX = bonusAvailable() ? 262 : 96;
-      this.createChestChip(chipX, mobile ? 24 : cyA);
+      this.createChestChip(chipX + safeLeft, mobile ? utilityY : cyA);
     }
 
-    this.add.text(width / 2, height - 12, t('menu.version'), {
-      fontFamily: FONT, fontSize: '11px', color: '#3b2410',
-    }).setOrigin(0.5).setAlpha(0.8);
+    this.add.text(width / 2, versionY, t('menu.version'), {
+      fontFamily: FONT, fontSize: '12px', color: '#ffe9c0',
+      stroke: '#1b1008', strokeThickness: 3,
+    }).setOrigin(0.5).setAlpha(0.85);
 
     this.refreshSelection();
     this.scale.on('resize', this.layout, this);
-    this.events.once('shutdown', () => this.scale.off('resize', this.layout, this));
+    const kb = this.input.keyboard;
+    const keyBindings: Array<[string, () => void]> = [
+      ['keydown-LEFT', () => this.cycleHero(-1)],
+      ['keydown-A', () => this.cycleHero(-1)],
+      ['keydown-RIGHT', () => this.cycleHero(1)],
+      ['keydown-D', () => this.cycleHero(1)],
+      ['keydown-ONE', () => this.chooseHeroByIndex(0)],
+      ['keydown-TWO', () => this.chooseHeroByIndex(1)],
+      ['keydown-THREE', () => this.chooseHeroByIndex(2)],
+      ['keydown-FOUR', () => this.chooseHeroByIndex(3)],
+      ['keydown-ENTER', () => this.startSelectedRun()],
+      ['keydown-SPACE', () => this.startSelectedRun()],
+      ['keydown-ESC', () => { if (this.overlay) this.closeOverlay(); }],
+    ];
+    for (const [event, handler] of keyBindings) kb?.on(event, handler);
+    this.events.once('shutdown', () => {
+      this.scale.off('resize', this.layout, this);
+      for (const [event, handler] of keyBindings) kb?.off(event, handler);
+    });
 
     // Стики-баннер (§J.5): меню — вне рана, баннер уместен
     showStickyBanner();
@@ -448,19 +618,20 @@ export class MenuScene extends Phaser.Scene {
    * Плашка аккаунта: гость видит кнопку входа, авторизованный — своё имя.
    * Вне Яндекса (и в режиме песочницы без SDK) плашка не показывается.
    */
-  private addAccountChip(width: number, height: number): void {
+  private addAccountChip(width: number, mobile: boolean, y: number, safeRight: number): void {
     if (!isOnYandex()) return;
 
     const signedIn = isAuthorized();
     const label = signedIn
       ? t('common.signedIn', { v: displayName('') })
       : t('common.signIn');
-    const chipW = Math.min(300, width - 40);
+    const chipW = Math.min(mobile ? 220 : 280, width - safeRight - 40);
     const chipH = 30;
-    // Над заголовком меню, но ниже логотипа: на низких экранах ужимается
-    const chipY = Math.max(16, Math.min(height * 0.06, height - 200));
+    // Справа от заголовка на широком экране, отдельной строкой под
+    // ежедневными чипами на телефоне. Хит-зона оставляет отступ от safe area.
+    const chipX = width - safeRight - 20 - chipW / 2;
 
-    makeButton(this, width / 2, chipY, chipW, chipH, label, () => {
+    makeButton(this, chipX, y, chipW, chipH, label, () => {
       void this.signIn();
     }, signedIn ? 'blue' : 'red', 11);
   }
@@ -502,29 +673,56 @@ export class MenuScene extends Phaser.Scene {
     // Файл портрета 256×256, персонаж занимает рамку portrait.box, остальное —
     // прозрачные поля. Поэтому origin ставится в центр рамки, а масштаб
     // считается от неё: пустое поле не «съедает» место на карточке.
-    const portraitSize = Math.min(cardH * (cardW < 215 ? 0.34 : 0.40), cardW * 0.62);
+    const narrow = cardW < 215;
+    const portraitSize = Math.min(cardH * (narrow ? 0.30 : 0.36), cardW * 0.58);
     const box = hero.portrait.box;
-    const portrait = this.add.image(0, -cardH * 0.27, `avatar-${hero.id}`)
+    const portrait = this.add.image(0, -cardH * 0.29, `avatar-${hero.id}`)
       .setOrigin((box.x + box.w / 2) / PORTRAIT_SIZE, (box.y + box.h / 2) / PORTRAIT_SIZE)
       .setScale(portraitSize / Math.max(box.w, box.h));
     container.add(portrait);
 
-    const name = this.add.text(0, cardH * 0.05, hero.name, {
-      fontFamily: FONT, fontSize: '17px', color: '#3b2410',
+    const name = this.add.text(0, cardH * 0.06, hero.name, {
+      fontFamily: FONT, fontSize: narrow ? '16px' : '18px', color: '#3b2410',
     }).setOrigin(0.5);
+    fitTextWidth(name, cardW - 24, narrow ? 16 : 18);
     container.add(name);
 
-    const title = this.add.text(0, cardH * 0.17, hero.title, {
-      fontFamily: FONT, fontSize: '11px', color: '#8a5b12',
+    const title = this.add.text(0, cardH * 0.185, hero.title, {
+      fontFamily: FONT, fontSize: '12px', color: '#8a5b12',
     }).setOrigin(0.5);
+    fitTextWidth(title, cardW - 24, 12);
     container.add(title);
 
-    const traits = hero.traits.map((t) => `• ${t}`).join('\n');
-    const narrow = cardW < 215;
-    const body = this.add.text(0, cardH * (narrow ? 0.23 : 0.25), traits, {
-      fontFamily: FONT, fontSize: narrow ? '10px' : '11px', color: '#4a3517',
-      align: 'center', lineSpacing: narrow ? 2 : 3, wordWrap: { width: cardW - 26 },
+    // Черты характера: блок снизу карточки.
+    //
+    // Сначала пробуем уместить обе характеристики В ОДНУ строку через
+    // разделитель («+10% HP · старт: Меч»): на низкой карточке (360×640,
+    // где карточка ужимается примерно до 114 px) две строки не влезают даже
+    // минимальным кеглем, и нижняя ложилась прямо на рамку пергамента.
+    // Если в одну строку не влезает — остаётся список с буллетами.
+    const traitFont = narrow ? 12 : 13;
+    const probe = this.add.text(0, 0, '', {
+      fontFamily: FONT, fontSize: `${traitFont}px`, wordWrap: { width: cardW - 24 },
+    }).setVisible(false);
+    const joined = hero.traits.join(' · ');
+    probe.setText(joined);
+    let traitSize = traitFont;
+    while (traitSize > FONT_FLOOR && probe.getWrappedText().length > 1) {
+      traitSize -= 1;
+      probe.setFontSize(`${traitSize}px`);
+    }
+    const traitsFitOneLine = probe.getWrappedText().length === 1;
+    probe.destroy();
+    const traits = traitsFitOneLine ? joined : hero.traits.map((tr) => `• ${tr}`).join('\n');
+    const bodyTop = traitsFitOneLine ? cardH * 0.28 : cardH * 0.26;
+    const bodyRoom = cardH / 2 - bodyTop - 4;
+    const body = this.add.text(0, bodyTop, traits, {
+      fontFamily: FONT, fontSize: `${traitSize}px`, color: '#4a3517',
+      align: 'center', lineSpacing: narrow ? 1 : 3, wordWrap: { width: cardW - 24 },
     }).setOrigin(0.5, 0);
+    // Минимум здесь — FONT_FLOOR, а не FS.micro: на самых низких карточках
+    // блок из двух строк иначе не помещался даже при 11 px.
+    shrinkToHeight(body, bodyRoom, traitSize, FONT_FLOOR);
     container.add(body);
 
     // Рамка выделения: четыре угла, повёрнутых по сторонам. Единственный
@@ -568,14 +766,26 @@ export class MenuScene extends Phaser.Scene {
     }).setOrigin(0.5);
     container.add(icon);
 
-    const name = this.add.text(-w / 2 + 34, -7, def.name.toUpperCase(), {
+    // Подписи чипа ужимаются под его ширину: длинный слоган «Кошмар»
+    // («урна, ожерелье, они ×1.5») иначе обрезался краем пергамента.
+    //
+    // Слоган держим В ОДНОЙ строке: кегль уменьшается, а не переносится.
+    // С переносом «классическое приключение» разбивалось на две строки,
+    // третья уезжала за нижний край плашки, и на телефоне подпись
+    // превращалась в лесенку поверх рамки выделения.
+    const textW = w - 44;
+    const nameY = -h * 0.22;
+    const name = this.add.text(-w / 2 + 34, nameY, def.name.toUpperCase(), {
       fontFamily: FONT, fontSize: '13px', color: isNightmare ? '#7a1010' : '#3b2410',
     }).setOrigin(0, 0.5);
+    fitTextWidth(name, textW, 13);
     container.add(name);
 
-    const tag = this.add.text(-w / 2 + 34, 7, def.tagline, {
-      fontFamily: FONT, fontSize: '8px', color: '#8a5b12',
+    const tagY = h * 0.16;
+    const tag = this.add.text(-w / 2 + 34, tagY, def.tagline, {
+      fontFamily: FONT, fontSize: '12px', color: '#8a5b12',
     }).setOrigin(0, 0.5);
+    fitTextWidth(tag, textW, 12);
     container.add(tag);
 
     // Углы рамки — те же, что у карточки героя (см. systems/Corners.ts):
@@ -611,6 +821,34 @@ export class MenuScene extends Phaser.Scene {
     this.refreshSelection();
   }
 
+  /** Клавиатура: A/D или стрелки меняют героя, 1–4 выбирают напрямую. */
+  private cycleHero(direction: -1 | 1): void {
+    if (!this.canHandleMenuInput()) return;
+    const current = HERO_ORDER.indexOf(this.selectedHero);
+    const next = (current + direction + HERO_ORDER.length) % HERO_ORDER.length;
+    this.chooseHeroByIndex(next);
+  }
+
+  private chooseHeroByIndex(index: number): void {
+    if (!this.canHandleMenuInput()) return;
+    const heroId = HERO_ORDER[index];
+    if (!heroId || heroId === this.selectedHero) return;
+    audio.play('click');
+    this.selectHero(heroId);
+  }
+
+  private canHandleMenuInput(): boolean {
+    return !this.overlay && !this.scene.isActive('Shop') && !this.scene.isActive('Meta');
+  }
+
+  private startSelectedRun(): void {
+    if (!this.canHandleMenuInput()) return;
+    audio.unlock();
+    saveText('tss-hero', this.selectedHero);
+    saveText('tss-diff', this.selectedDiff);
+    this.startRun();
+  }
+
   private refreshSelection(): void {
     for (const c of this.heroCards) {
       const selected = c.heroId === this.selectedHero;
@@ -634,6 +872,7 @@ export class MenuScene extends Phaser.Scene {
   }
 
   private layout(): void {
+    resetSafeInsets();
     this.scene.restart();
   }
 
@@ -641,18 +880,34 @@ export class MenuScene extends Phaser.Scene {
   // Общий каркас оверлеев (затемнение + блокировщик кликов)
   // ================================================================
 
+  /**
+   * Добавляет объект поверх оверлея.
+   *
+   * Оверлеи лежат в контейнере с глубиной MENU_OVERLAY_DEPTH, а кнопки и
+   * зоны клика создаются прямо в сцене — без глубины они оказывались
+   * ПОД логотипом меню (тот нарисован с глубиной 1) и поверх пергамента
+   * оверлея: логотип «СРЕДНЕВЕКОВОЕ ВЫЖИВАНИЕ» перекрывал заголовок
+   * «ЗАЛ СЛАВЫ», а кнопка «НАЗАД» проваливалась под панель.
+   */
+  private addExtra<T extends Phaser.GameObjects.GameObject>(obj: T): T {
+    const withDepth = obj as unknown as { setDepth(d: number): Phaser.GameObjects.GameObject };
+    withDepth.setDepth(MENU_OVERLAY_DEPTH + 1);
+    this.overlayExtras.push(obj);
+    return obj;
+  }
+
   private beginOverlay(): void {
     this.closeOverlay();
     const width = this.vw;
     const height = this.vh;
     const cover = Math.max(width / this.menuZoom, height / this.menuZoom) + 160;
-    this.overlay = this.add.container(0, 0);
-    const dim = this.add.rectangle(width / 2, height / 2, cover, cover, 0x0a0a12, 0.72);
+    this.overlay = this.add.container(0, 0).setDepth(MENU_OVERLAY_DEPTH);
+    const dim = this.add.rectangle(width / 2, height / 2, cover, cover, 0x0a0a12, 0.88);
     this.overlay.add(dim);
     // Блокировщик: меню под оверлеем не должно реагировать на клики
     const blocker = this.add.rectangle(width / 2, height / 2, cover, cover, 0x000000, 0.001)
       .setInteractive({ useHandCursor: false });
-    this.overlayExtras.push(blocker);
+    this.addExtra(blocker);
   }
 
   private backButton(y?: number): void {
@@ -660,7 +915,54 @@ export class MenuScene extends Phaser.Scene {
     const height = this.vh;
     const by = Math.min(y ?? height / 2 + Math.min(300, height * 0.36), height - 38);
     const b = makeButton(this, width / 2, by, 170, 54, t('common.back'), () => this.closeOverlay(), 'red', 16);
-    this.overlayExtras.push(b.img, b.txt, b.hit);
+    this.addExtra(b.img);
+    this.addExtra(b.txt);
+    this.addExtra(b.hit);
+  }
+
+  /**
+   * Высота шапки оверлея (лента + отступы) — теми же величинами, что рисует
+   * `overlayTitle`. Нужна там, где панель обтягивается вокруг контента:
+   * сначала меряем блоки, потом решаем, сколько пергамента нужно.
+   */
+  private overlayTitleHeight(): number {
+    const font = Phaser.Math.Clamp(Math.round(this.vw * 0.036), 20, 28);
+    return Math.round(font * 1.55) + 30;
+  }
+
+  /**
+   * Заголовок оверлея на ленте из пака.
+   *
+   * Восемь окон меню подписывались голым текстом прямо на пергаменте, а
+   * «Лавка», «Хроника», пауза, LevelUp и преемственность держались на ленте.
+   * Из-за этого оверлеи меню читались как черновики, а не как готовая
+   * игра. Здесь один общий помощник — и все окна выглядят одинаково.
+   *
+   * @param top верх пергаментной панели
+   * @param variant цвет ленты: у нейтральных окон красный, у наград — жёлтый
+   */
+  private overlayTitle(
+    top: number,
+    label: string,
+    variant: 'red' | 'yellow' | 'blue' = 'red',
+  ): number {
+    const width = this.vw;
+    const font = Phaser.Math.Clamp(Math.round(this.vw * 0.036), 20, 28);
+    const ribbonH = Math.round(font * 1.55);
+    const y = top + ribbonH / 2 + 14;
+    // Всё обязано попасть В контейнер оверлея: объекты, созданные через
+    // this.add(), лежат на глубине 0 и оказываются под логотипом меню и под
+    // затемнением — лента выцветала, а пергамент уезжал под логотип.
+    const ribbon = makeRibbon(this, width / 2, y,
+      Math.min(width - 40, label.length * font * 0.62 + 90),
+      `ribbon-${variant}` as const, ribbonH);
+    const title = this.add.text(width / 2, y, label, {
+      fontFamily: FONT, fontSize: `${font}px`, color: '#ffe9c0',
+      stroke: '#1b1008', strokeThickness: Math.max(4, Math.round(font / 5)),
+    }).setOrigin(0.5);
+    this.overlay?.add([ribbon, title]);
+    // Нижняя граница шапки — от неё дальше раскладывается содержимое.
+    return top + ribbonH + 30;
   }
 
   private closeOverlay(): void {
@@ -684,12 +986,15 @@ export class MenuScene extends Phaser.Scene {
     const width = this.vw;
     const height = this.vh;
     const paperW = Math.min(560, width - 50);
-    const paperH = Math.min(paperW * 1.24, height - 40);
-    const paper = makePanel(this, width / 2, height / 2, 'paper', paperW, paperH);
-    const top = height / 2 - paperH / 2;
-    const header = this.add.text(width / 2, top + 34, t('howto.title'), {
-      fontFamily: FONT, fontSize: '26px', color: '#3b2410',
-    }).setOrigin(0.5);
+    const innerW = paperW - 56;
+
+    // ---------- Проход 1: измерение ----------
+    // Высота пергамента считается ПОСЛЕ того, как известна высота текста.
+    // Раньше панель бралась из `paperW * 1.24`, и на телефоне (виртуальное
+    // полотно 460 px, а текст переносится в три-четыре строки) рецепты
+    // эволюций вылезали за нижний край пергамента и подрезались кнопкой
+    // «Назад». Теперь контент меряется первым, панель обтягивается вокруг
+    // него, а лишние строки рецептов просто не рисуются.
     const lines = [
       t('howto.hero'),
       t('howto.move'),
@@ -697,24 +1002,63 @@ export class MenuScene extends Phaser.Scene {
       t('howto.auto'),
       t('howto.loot'),
     ];
-    const body = this.add.text(width / 2, top + 64, lines.join('\n'), {
+    const body = this.add.text(width / 2, 0, lines.join('\n'), {
       fontFamily: FONT, fontSize: '14px', color: '#57431f', align: 'center', lineSpacing: 6,
+      wordWrap: { width: innerW },
     }).setOrigin(0.5, 0);
-    this.overlay?.add([paper, header, body]);
 
-    // ===== Раздел «Эволюции оружия» с рецептами =====
-    const evoTitle = this.add.text(width / 2, top + 172, t('howto.evoTitle'), {
-      fontFamily: FONT, fontSize: '16px', color: '#9a6a08',
-    }).setOrigin(0.5);
-    const evoHint = this.add.text(width / 2, top + 194,
-      t('howto.evoRecipe'), {
-      fontFamily: FONT, fontSize: '11px', color: '#8a5b12',
-    }).setOrigin(0.5);
-    this.overlay?.add([evoTitle, evoHint]);
+    const footer = this.add.text(width / 2, 0, [
+      t('howto.goal1'),
+      t('howto.goal2'),
+      t('howto.goal3'),
+    ].join('\n'), {
+      fontFamily: FONT, fontSize: '13px', color: '#57431f', align: 'center', lineSpacing: 6,
+      wordWrap: { width: innerW },
+    }).setOrigin(0.5, 0);
 
-    const recipeY0 = top + 222;
+    const headH = this.overlayTitleHeight();
+    const evoBlockH = 50;              // заголовок раздела + подпись под ним
     const recipeGap = 26;
-    Object.values(EVOLUTIONS).forEach((evo, i) => {
+    const evoTop = headH + body.height + 18;
+    const recipeTop = evoTop + evoBlockH;
+    const maxH = Math.max(240, height - 40);
+
+    // Сколько строк рецептов влезает между началом списка и подвалом.
+    const roomForRecipes = maxH - (recipeTop + 14 + footer.height + 24);
+    const recipeCap = Math.max(0, Math.floor(roomForRecipes / recipeGap));
+    const showEvo = recipeCap >= 2;
+    const shownEvos = showEvo
+      ? Object.values(EVOLUTIONS).slice(0, Math.min(recipeCap, Object.keys(EVOLUTIONS).length))
+      : [];
+
+    const usedH = (showEvo ? recipeTop + shownEvos.length * recipeGap + 14 : evoTop + 20)
+      + footer.height + 24;
+    const paperH = Math.min(maxH, Math.max(280, usedH));
+    const top = (height - paperH) / 2;
+
+    // ---------- Проход 2: отрисовка ----------
+    const paper = makePanel(this, width / 2, height / 2, 'paper', paperW, paperH);
+    // Пергамент уходит в контейнер оверлея ПЕРВЫМ: порядок добавления — это
+    // порядок отрисовки. Если добавить панель после ленты, она накроет и
+    // заголовок, и ленту.
+    this.overlay?.add(paper);
+    this.overlayTitle(top, t('howto.title'), 'blue');
+
+    body.setY(top + headH);
+    this.overlay?.add(body);
+
+    if (showEvo) {
+      const evoTitleY = top + evoTop;
+      const evoTitle = this.add.text(width / 2, evoTitleY, t('howto.evoTitle'), {
+        fontFamily: FONT, fontSize: '16px', color: '#9a6a08',
+      }).setOrigin(0.5);
+      const evoHint = this.add.text(width / 2, evoTitleY + 22, t('howto.evoRecipe'), {
+        fontFamily: FONT, fontSize: '12px', color: '#8a5b12',
+      }).setOrigin(0.5);
+      this.overlay?.add([evoTitle, evoHint]);
+
+      const recipeY0 = top + recipeTop;
+      shownEvos.forEach((evo, i) => {
       const y = recipeY0 + i * recipeGap;
       const cx = width / 2;
       // [оружие] + [пассивка] → ★ Имя
@@ -735,39 +1079,36 @@ export class MenuScene extends Phaser.Scene {
       const wIcon = this.add.image(cx - half + iconW / 2, y, WEAPONS[evo.weapon].icon)
         .setDisplaySize(iconW, iconW);
       const wName = this.add.text(wTextX, y, WEAPONS[evo.weapon].name, {
-        fontFamily: FONT, fontSize: '11px', color: '#57431f',
+        fontFamily: FONT, fontSize: '12px', color: '#57431f',
       }).setOrigin(0, 0.5);
       fitTextWidth(wName, wColW, 11, 8);
       const plus = this.add.text(plusX, y, '+', {
-        fontFamily: FONT, fontSize: '11px', color: '#8a5b12',
+        fontFamily: FONT, fontSize: '12px', color: '#8a5b12',
       }).setOrigin(0.5);
       const pIcon = this.add.image(pIconX + iconW / 2, y, PASSIVES[evo.partner].icon)
         .setDisplaySize(iconW, iconW);
       const pName = this.add.text(pTextX, y, PASSIVES[evo.partner].name, {
-        fontFamily: FONT, fontSize: '11px', color: '#57431f',
+        fontFamily: FONT, fontSize: '12px', color: '#57431f',
       }).setOrigin(0, 0.5);
       fitTextWidth(pName, pColW, 11, 8);
       const arrow = this.add.text(arrowX, y, '→', {
         fontFamily: FONT, fontSize: '12px', color: '#9a6a08',
       }).setOrigin(0.5);
       const evoName = this.add.text(evoX, y, `★ ${evo.name}`, {
-        fontFamily: FONT, fontSize: '11px', color: '#9a6a08',
+        fontFamily: FONT, fontSize: '12px', color: '#9a6a08',
         stroke: '#f7e7c3', strokeThickness: 2,
       }).setOrigin(0, 0.5);
       fitTextWidth(evoName, evoColW, 11, 8);
       this.overlay?.add([wIcon, wName, plus, pIcon, pName, arrow, evoName]);
-    });
+      });
+    }
 
-    const footerY = recipeY0 + 7 * recipeGap + 14;
-    const footer = this.add.text(width / 2, footerY, [
-      t('howto.goal1'),
-      t('howto.goal2'),
-      t('howto.goal3'),
-    ].join('\n'), {
-      fontFamily: FONT, fontSize: '13px', color: '#57431f', align: 'center', lineSpacing: 6,
-    }).setOrigin(0.5, 0);
-    this.overlay?.add([footer]);
-    this.backButton();
+    footer.setY(top + (showEvo ? recipeTop + shownEvos.length * recipeGap + 14 : evoTop + 20));
+    this.overlay?.add(footer);
+    // Кнопка — ПОД пергаментом, а не поверх него. Раньше её Y считался от
+    // центра экрана, и на телефоне (где панель высокая) она ложилась прямо
+    // на подвал с правилами, обрезая последнюю строку.
+    this.backButton(Math.min(height - 38, top + paperH + 38));
   }
 
   // ================================================================
@@ -778,12 +1119,12 @@ export class MenuScene extends Phaser.Scene {
     this.beginOverlay();
     const width = this.vw;
     const height = this.vh;
-    const container = this.add.container(0, 0);
+    const container = this.add.container(0, 0).setDepth(MENU_OVERLAY_DEPTH);
     // Переносим затемнение из каркасного контейнера в новый (для guard-проверки active)
     this.overlay?.destroy(true);
     this.overlay = container;
     const cover = Math.max(width / this.menuZoom, height / this.menuZoom) + 160;
-    const dim = this.add.rectangle(width / 2, height / 2, cover, cover, 0x0a0a12, 0.72);
+    const dim = this.add.rectangle(width / 2, height / 2, cover, cover, 0x0a0a12, 0.88);
     container.add(dim);
 
     const paperW = Math.min(600, width - 50);
@@ -791,25 +1132,30 @@ export class MenuScene extends Phaser.Scene {
     // Подвал: подсказка об источнике + формула подсчёта очков.
     // Строки таблицы не должны заезжать на него — считаем вместимость.
     const footerTop = top_ => top_ + paperH - 92;
-    const rowsTop = top_ => top_ + 136;
+    const rowsTop = top_ => top_ + this.overlayTitleHeight() + 34;
     const rowCapFor = (t: number): number =>
       Math.max(3, Math.floor((footerTop(t) - rowsTop(t) - 8) / 26));
     const cx = width / 2;
     const cy = height / 2;
-    const paper = makePanel(this, cx, cy, 'paperSpecial', paperW, paperH);
+    // Пергамент — тот же кремовый, что у остальных окон меню.
+    //
+    // Раньше здесь стоял «особый пергамент» — тёмно-синий лист с золотыми
+    // уголками, единственное тёмное пятно во всём интерфейсе. Таблица
+    // рекордов выглядела как вклеенная выписка из чужого документа, а
+    // текст на ней приходилось писать светлым по тёмному — в остальных
+    // окнах он тёмный по кремовому.
+    const paper = makePanel(this, cx, cy, 'paper', paperW, paperH);
     container.add(paper);
     const top = cy - paperH / 2;
     const footerTopAbs = footerTop(top);
     const rowsTopAbs = rowsTop(top);
     const rowCap = rowCapFor(top);
 
-    container.add(this.add.text(cx, top + 38, t('records.title'), {
-      fontFamily: FONT, fontSize: '24px', color: '#ffe9c0',
-      stroke: '#1b1008', strokeThickness: 5,
-    }).setOrigin(0.5));
+    // Заголовок — на ленте, как у «Достижений» и «Хроники»
+    const headerBottom = this.overlayTitle(top, t('records.title'), 'yellow');
 
-    const loading = this.add.text(cx, cy, t('records.loading'), {
-      fontFamily: FONT, fontSize: '15px', color: '#cbb389',
+    const loading = this.add.text(cx, headerBottom + 40, t('records.loading'), {
+      fontFamily: FONT, fontSize: '15px', color: '#8a6d3b',
     }).setOrigin(0.5);
     container.add(loading);
 
@@ -821,33 +1167,39 @@ export class MenuScene extends Phaser.Scene {
     const colKills = right - 40;
 
     const headerStyle: Phaser.Types.GameObjects.Text.TextStyle = {
-      fontFamily: FONT, fontSize: '10px', color: '#cbb389',
+      fontFamily: FONT, fontSize: '12px', color: '#8a6d3b',
     };
-    container.add(this.add.text(left, top + 100, '#', { ...headerStyle }).setOrigin(0, 0.5));
-    container.add(this.add.text(colName, top + 100, t('records.colHero'), { ...headerStyle }).setOrigin(0, 0.5));
-    container.add(this.add.text(colScore, top + 100, t('records.colScore'), { ...headerStyle }).setOrigin(1, 0.5));
-    container.add(this.add.text(colKills, top + 100, t('records.colKills'), { ...headerStyle }).setOrigin(1, 0.5));
-    container.add(this.add.text(right, top + 100, t('records.colTime'), { ...headerStyle }).setOrigin(1, 0.5));
+    const headerY = headerBottom + 22;
+    container.add(this.add.text(left, headerY, '#', { ...headerStyle }).setOrigin(0, 0.5));
+    container.add(this.add.text(colName, headerY, t('records.colHero'), { ...headerStyle }).setOrigin(0, 0.5));
+    container.add(this.add.text(colScore, headerY, t('records.colScore'), { ...headerStyle }).setOrigin(1, 0.5));
+    container.add(this.add.text(colKills, headerY, t('records.colKills'), { ...headerStyle }).setOrigin(1, 0.5));
+    container.add(this.add.text(right, headerY, t('records.colTime'), { ...headerStyle }).setOrigin(1, 0.5));
     const hr = this.add.graphics();
-    hr.lineStyle(1, 0x8a6d3b, 0.6).lineBetween(left, top + 114, right, top + 114);
+    hr.lineStyle(1, 0xc9a25e, 0.9).lineBetween(left, headerY + 14, right, headerY + 14);
     container.add(hr);
 
     // ---------- Фильтр: все заезды / только победы ----------
-    const chipY = top + 76;
-    const chipW = 96;
+    // Чипы — из того же пергамента, что и остальные окна. Раньше это были
+    // тёмные прямоугольники: единственное место, где материал интерфейса
+    // менялся на глазах у игрока.
+    const chipY = headerBottom - 4;
+    const chipW = 110;
+    const chipH = 28;
     const chips: Array<{ key: 'all' | 'win'; label: string }> = [
       { key: 'all', label: t('records.filterAll') },
       { key: 'win', label: t('records.filterWins') },
     ];
-    const chipEls: Array<{ bg: Phaser.GameObjects.Rectangle; txt: Phaser.GameObjects.Text }> = [];
+    const chipEls: Array<{ bg: Phaser.GameObjects.NineSlice; txt: Phaser.GameObjects.Text }> = [];
     chips.forEach((c, i) => {
-      const x = cx + (i === 0 ? -chipW - 4 : 4) + chipW / 2;
-      const bg = this.add.rectangle(x, chipY, chipW, 24, 0x3b2410, 1)
-        .setStrokeStyle(2, this.recordsFilter === c.key ? 0xffd76e : 0x8a6d3b, 1);
+      const x = cx + (i === 0 ? -chipW - 10 : 10) + chipW / 2;
+      const active0 = this.recordsFilter === c.key;
+      const bg = makePanel(this, x, chipY, 'paper', chipW, chipH);
+      bg.setTint(active0 ? 0xffe9a0 : 0xffffff);
       const txt = this.add.text(x, chipY, c.label, {
-        fontFamily: FONT, fontSize: '11px', color: this.recordsFilter === c.key ? '#ffd76e' : '#cbb389',
+        fontFamily: FONT, fontSize: '12px', color: active0 ? '#7a4e0e' : '#8a6d3b',
       }).setOrigin(0.5);
-      const hit = this.add.zone(x, chipY, chipW + 8, 30).setInteractive({ useHandCursor: true });
+      const hit = this.add.zone(x, chipY, chipW + 8, 34).setInteractive({ useHandCursor: true });
       hit.on('pointerdown', () => {
         if (this.recordsFilter === c.key) return;
         audio.play('click');
@@ -856,8 +1208,8 @@ export class MenuScene extends Phaser.Scene {
         // Перекрасить чипы
         chipEls.forEach((els, j) => {
           const active = this.recordsFilter === chips[j].key;
-          els.txt.setColor(active ? '#ffd76e' : '#cbb389');
-          els.bg.setStrokeStyle(2, active ? 0xffd76e : 0x8a6d3b, 1);
+          els.txt.setColor(active ? '#7a4e0e' : '#8a6d3b');
+          els.bg.setTint(active ? 0xffe9a0 : 0xffffff);
         });
       });
       container.add([bg, txt, hit]);
@@ -882,14 +1234,16 @@ export class MenuScene extends Phaser.Scene {
 
     // Подсказка об источнике данных: локальный рейтинг vs общий зал Яндекса
     container.add(this.add.text(cx, footerTopAbs + 6, this.recordsOnline ? t('records.onlineHint') : t('records.localHint'), {
-      fontFamily: FONT, fontSize: '9px', color: '#8a7a5c', align: 'center',
+      fontFamily: FONT, fontSize: '12px', color: '#8a6d3b', align: 'center',
+      wordWrap: { width: paperW - 60 },
     }).setOrigin(0.5).setScrollFactor(0));
 
     container.add(this.add.text(cx, footerTopAbs + 34, [
       t('records.formula1'),
       t('records.formula2'),
     ].join('\n'), {
-      fontFamily: FONT, fontSize: '10px', color: '#cbb389', align: 'center', lineSpacing: 6,
+      fontFamily: FONT, fontSize: '12px', color: '#8a6d3b', align: 'center', lineSpacing: 6,
+      wordWrap: { width: paperW - 60 },
     }).setOrigin(0.5));
 
     this.backButton(top + paperH + 42);
@@ -912,14 +1266,16 @@ export class MenuScene extends Phaser.Scene {
       const empty = this.add.text(cx, cy + 20, this.recordsFilter === 'win'
         ? t('records.emptyWin')
         : t('records.emptyAll'), {
-        fontFamily: FONT, fontSize: '15px', color: '#cbb389', align: 'center', lineSpacing: 8,
+        fontFamily: FONT, fontSize: '15px', color: '#8a6d3b', align: 'center', lineSpacing: 8,
       }).setOrigin(0.5);
       container.add(empty);
       this.recordsListEls.push(empty);
       return;
     }
+    // Палитра строк — как на остальных пергаментах: тёмно-коричневый
+    // текст, золото для первого места и очков.
     const style: Phaser.Types.GameObjects.Text.TextStyle = {
-      fontFamily: FONT, fontSize: '13px', color: '#ffe9c0',
+      fontFamily: FONT, fontSize: '13px', color: '#3b2410',
     };
     // Имя занимает всё свободное место до колонки «СЧЁТ»
     const nameMaxW = Math.max(60, colScore - colName - 30);
@@ -927,19 +1283,21 @@ export class MenuScene extends Phaser.Scene {
     const shownRows = rows.slice(0, rowCap);
     shownRows.forEach((r, i) => {
       const y = rowsTop + i * 26;
-      const medal = i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : `${i + 1}.`;
+      // Медали эмодзи в пиксельном шрифте не рисуются — вместо них номер
+      // в рамке, и он одинаково читается в любой локали.
+      const medal = `${i + 1}.`;
       // Длинные имена ужимаем под колонку, а не обрезаем по 13 символов
       const nameText = this.add.text(colName, y, `${r.name}${r.victory ? ' ★' : ''}`, {
-        ...style, color: i === 0 ? '#ffd76e' : '#ffe9c0',
+        ...style, color: i === 0 ? '#9a6a08' : '#3b2410',
       }).setOrigin(0, 0.5);
       fitTextWidth(nameText, nameMaxW, 13);
       const els: Phaser.GameObjects.GameObject[] = [
         this.add.text(left, y, medal, {
-          ...style, color: i < 3 ? '#ffd76e' : '#cbb389',
+          ...style, color: i < 3 ? '#9a6a08' : '#8a6d3b',
         }).setOrigin(0, 0.5),
         nameText,
         this.add.text(colScore, y, num(r.score), {
-          ...style, color: '#ffd76e',
+          ...style, color: '#9a6a08',
         }).setOrigin(1, 0.5),
         this.add.text(colKills, y, `${r.kills}`, { ...style }).setOrigin(1, 0.5),
       ];
@@ -969,19 +1327,17 @@ export class MenuScene extends Phaser.Scene {
     this.overlay?.add(paper);
     const top = cy - paperH / 2;
 
-    this.overlay?.add(this.add.text(cx, top + 38, t('ach.title'), {
-      fontFamily: FONT, fontSize: '26px', color: '#3b2410',
-    }).setOrigin(0.5));
-    this.overlay?.add(this.add.text(cx, top + 64, `${count} / ${total}`, {
+    const head = this.overlayTitle(top, t('ach.title'), 'yellow');
+    this.overlay?.add(this.add.text(cx, head, `${count} / ${total}`, {
       fontFamily: FONT, fontSize: '15px', color: '#8a5b12',
     }).setOrigin(0.5));
 
     // Полоса прогресса
     const barW = paperW - 130;
     const bar = this.add.graphics();
-    bar.fillStyle(0x3b2a1a, 1).fillRoundedRect(cx - barW / 2, top + 82, barW, 12, 6);
+    bar.fillStyle(0x3b2a1a, 1).fillRoundedRect(cx - barW / 2, head + 18, barW, 12, 6);
     if (count > 0) {
-      bar.fillStyle(0xd9a520, 1).fillRoundedRect(cx - barW / 2 + 2, top + 84, Math.max(8, (barW - 4) * (count / total)), 8, 4);
+      bar.fillStyle(0xd9a520, 1).fillRoundedRect(cx - barW / 2 + 2, head + 20, Math.max(8, (barW - 4) * (count / total)), 8, 4);
     }
     this.overlay?.add(bar);
 
@@ -991,16 +1347,17 @@ export class MenuScene extends Phaser.Scene {
     const cellGap = 12;
     const cols = paperW >= 560 ? 4 : 3;
     const rows = Math.ceil(ACHIEVEMENTS.length / cols);
-    const gridTop = top + 112;
-    const hintH = 34;
+    const gridTop = head + 48;
+    const hintH = 30;
     const footerH = ACHIEVEMENTS.length > 0 && unlocked.size === ACHIEVEMENTS.length ? 30 : 0;
     const gridRoom = top + paperH - gridTop - hintH - footerH - 14;
     const cellH = Math.max(64, Math.min(104, (gridRoom - (rows - 1) * cellGap) / rows));
     const cellW = (paperW - 56 - (cols - 1) * cellGap) / cols;
-    const small = width < 500;
 
-    this.achDesc = this.add.text(cx, top + paperH - hintH - 6, t('ach.hint'), {
-      fontFamily: FONT, fontSize: '11px', color: '#57431f', align: 'center',
+    // Подсказка стоит ВНУТРИ пергамента: раньше она ставилась на самый
+    // нижний край панели и на телефоне обрезалась краем.
+    this.achDesc = this.add.text(cx, top + paperH - hintH / 2 - 4, t('ach.hint'), {
+      fontFamily: FONT, fontSize: '12px', color: '#57431f', align: 'center',
       wordWrap: { width: paperW - 70 }, lineSpacing: 5,
     }).setOrigin(0.5);
     this.overlay?.add(this.achDesc);
@@ -1023,20 +1380,21 @@ export class MenuScene extends Phaser.Scene {
       }
       cell.add(g);
 
-      const iconSize = Math.max(22, Math.min(34, cellH * 0.32));
-      const icon = this.add.image(0, -cellH * 0.28, a.icon).setDisplaySize(iconSize, iconSize);
+      // Название достижения. Кегль не ниже FS.micro: на 9 px «Церем кровь»
+      // и «Кузнец судьбы» читались как серые пятна, а не как названия.
+      const achFont = FS.micro;
+      const iconSize = Math.max(20, Math.min(30, cellH * 0.28));
+      const icon = this.add.image(0, -cellH * 0.26, a.icon).setDisplaySize(iconSize, iconSize);
       if (!has) icon.setTint(0x8d8577);
       cell.add(icon);
 
-      const achFont = small ? 9 : cellH < 78 ? 9 : 10;
-      const achText = this.add.text(0, cellH * 0.26, a.name, {
+      const achText = this.add.text(0, cellH * 0.06, a.name, {
         fontFamily: FONT, fontSize: `${achFont}px`,
         color: has ? '#3b2410' : '#8d8577', align: 'center',
         wordWrap: { width: cellW - 12 }, lineSpacing: 2,
       }).setOrigin(0.5);
-      // Название не должно обрезаться по краю ячейки
-      if (achText.height <= achFont * 2.4) fitTextWidth(achText, cellW - 12, achFont, 7);
-      else achText.setWordWrapWidth(cellW - 12);
+      // Две строки максимум, дальше кегль ужимается до порога читаемости.
+      shrinkToHeight(achText, cellH * 0.46, achFont, FONT_FLOOR);
       cell.add(achText);
 
       cell.setSize(cellW, cellH);
@@ -1048,7 +1406,7 @@ export class MenuScene extends Phaser.Scene {
       };
       cell.on('pointerover', showDesc);
       cell.on('pointerdown', showDesc);
-      this.overlayExtras.push(cell);
+      this.addExtra(cell);
     });
 
     if (count === total && count > 0) {
@@ -1080,9 +1438,7 @@ export class MenuScene extends Phaser.Scene {
     this.overlay?.add(paper);
     const top = cy - paperH / 2;
 
-    this.overlay?.add(this.add.text(cx, top + 38, t('chron.title'), {
-      fontFamily: FONT, fontSize: '26px', color: '#3b2410',
-    }).setOrigin(0.5));
+    const head = this.overlayTitle(top, t('chron.title'), 'yellow');
 
     if (meta.matches === 0 && meta.kills === 0) {
       this.overlay?.add(this.add.text(cx, cy + 10, [
@@ -1091,15 +1447,16 @@ export class MenuScene extends Phaser.Scene {
         t('chron.empty3'),
       ].join('\n'), {
         fontFamily: FONT, fontSize: '14px', color: '#57431f', align: 'center', lineSpacing: 10,
+        wordWrap: { width: paperW - 60 },
       }).setOrigin(0.5));
     } else {
       const winRate = meta.matches > 0 ? Math.round((meta.victories / meta.matches) * 100) : 0;
       if (meta.matches > 0) {
         const chip = this.add.graphics();
-        chip.fillStyle(0xdff0d8, 1).fillRoundedRect(cx - 74, top + 56, 148, 26, 13);
-        chip.lineStyle(2, 0x5b8a51, 1).strokeRoundedRect(cx - 74, top + 56, 148, 26, 13);
+        chip.fillStyle(0xdff0d8, 1).fillRoundedRect(cx - 74, head, 148, 26, 13);
+        chip.lineStyle(2, 0x5b8a51, 1).strokeRoundedRect(cx - 74, head, 148, 26, 13);
         this.overlay?.add(chip);
-        this.overlay?.add(this.add.text(cx, top + 69, t('chron.winRate', { v: winRate }), {
+        this.overlay?.add(this.add.text(cx, head + 13, t('chron.winRate', { v: winRate }), {
           fontFamily: FONT, fontSize: '12px', color: '#2e5d28',
         }).setOrigin(0.5));
       }
@@ -1136,7 +1493,7 @@ export class MenuScene extends Phaser.Scene {
         this.overlay?.add(g);
         g.setPosition(x, y);
         this.overlay?.add(this.add.text(x, y - 14, lbl, {
-          fontFamily: FONT, fontSize: '9px', color: '#8a5b12',
+          fontFamily: FONT, fontSize: '12px', color: '#8a5b12',
         }).setOrigin(0.5));
         this.overlay?.add(this.add.text(x, y + 9, val, {
           fontFamily: FONT, fontSize: '17px', color: '#3b2410',
@@ -1144,7 +1501,7 @@ export class MenuScene extends Phaser.Scene {
       });
 
       this.overlay?.add(this.add.text(cx, top + paperH - 26, t('chron.footer'), {
-        fontFamily: FONT, fontSize: '10px', color: '#8a5b12',
+        fontFamily: FONT, fontSize: '12px', color: '#8a5b12',
       }).setOrigin(0.5));
     }
 
@@ -1170,28 +1527,22 @@ export class MenuScene extends Phaser.Scene {
   /** Чип дара дня у верхнего левого угла: лёгкий пульс, клик — оверлей. */
   private createBonusChip(x: number, y: number): void {
     const streak = loadMetaState().dailyBonus.streak;
-    const chip = this.add.container(x, y);
-    const g = this.add.graphics();
-    g.fillStyle(0xf7e7c3, 0.95).fillRoundedRect(-75, -20, 150, 40, 10);
-    g.lineStyle(2, 0xc9a25e, 1).strokeRoundedRect(-75, -20, 150, 40, 10);
-    chip.add(g);
-    chip.add(this.add.text(0, -8, t('bonus.title'), {
-      fontFamily: FONT, fontSize: '12px', color: '#7a4e0e',
-    }).setOrigin(0.5));
-    chip.add(this.add.text(0, 9, t('bonus.streak', { v: streak }), {
-      fontFamily: FONT, fontSize: '9px', color: '#8a5b12',
-    }).setOrigin(0.5));
+    const chip = makeChip(this, x, y, 150, 40, t('bonus.title'), {
+      fontSize: 12,
+      subFontSize: 11,
+      sub: t('bonus.streak', { v: streak }),
+    });
     // Хит-зона 156×48 ≥ MIN_TOUCH: сама плашка 150×40 чуть меньше тач-гейта
-    chip.setSize(156, 48);
-    chip.setInteractive({ useHandCursor: true });
-    chip.on('pointerdown', () => {
+    chip.container.setSize(156, 48);
+    chip.container.setInteractive({ useHandCursor: true });
+    chip.container.on('pointerdown', () => {
       audio.play('click');
       this.showBonusOverlay();
     });
     this.tweens.add({
-      targets: chip, scale: { from: 1, to: 1.06 }, duration: 850, yoyo: true, repeat: -1, ease: 'Sine.easeInOut',
+      targets: chip.container, scale: { from: 1, to: 1.06 }, duration: 850, yoyo: true, repeat: -1, ease: 'Sine.easeInOut',
     });
-    this.bonusChip = chip;
+    this.bonusChip = chip.container;
   }
 
   /** После забора дара чип исчезает (вернётся при следующем рестарте меню). */
@@ -1209,27 +1560,21 @@ export class MenuScene extends Phaser.Scene {
   private createChestChip(x: number, y: number): void {
     this.chestChipPos = { x, y };
     const left = dailyChestLeft();
-    const chip = this.add.container(x, y);
-    const g = this.add.graphics();
-    g.fillStyle(0xf3d9a4, 0.95).fillRoundedRect(-80, -20, 160, 40, 10);
-    g.lineStyle(2, 0xb98a3a, 1).strokeRoundedRect(-80, -20, 160, 40, 10);
-    chip.add(g);
-    chip.add(this.add.text(0, -8, t('chest.title'), {
-      fontFamily: FONT, fontSize: '12px', color: '#6e4a08',
-    }).setOrigin(0.5));
-    chip.add(this.add.text(0, 9, t('chest.left', { v: left }), {
-      fontFamily: FONT, fontSize: '9px', color: '#8a5b12',
-    }).setOrigin(0.5));
-    chip.setSize(166, 48); // ≥ MIN_TOUCH с учётом полей (§I.6)
-    chip.setInteractive({ useHandCursor: true });
-    chip.on('pointerdown', () => {
+    const chip = makeChip(this, x, y, 160, 40, t('chest.title'), {
+      fontSize: 12,
+      subFontSize: 11,
+      sub: t('chest.left', { v: left }),
+    });
+    chip.container.setSize(166, 48); // ≥ MIN_TOUCH с учётом полей (§I.6)
+    chip.container.setInteractive({ useHandCursor: true });
+    chip.container.on('pointerdown', () => {
       audio.play('click');
       void this.openDailyChest();
     });
     this.tweens.add({
-      targets: chip, scale: { from: 1, to: 1.05 }, duration: 1000, yoyo: true, repeat: -1, ease: 'Sine.easeInOut',
+      targets: chip.container, scale: { from: 1, to: 1.05 }, duration: 1000, yoyo: true, repeat: -1, ease: 'Sine.easeInOut',
     });
-    this.chestChip = chip;
+    this.chestChip = chip.container;
   }
 
   /** R7: ролик → награда сундука (золото кошелька / жетоны). */
@@ -1261,12 +1606,31 @@ export class MenuScene extends Phaser.Scene {
     track('daily_chest_claim', { kind: reward.kind, amount: reward.amount });
   }
 
-  /** Ряд из четырёх чипов пре-рана под чипами сложности. */
-  private createPreRow(width: number, preY: number, mobile: boolean): void {
+  /**
+   * Ряд из четырёх чипов пре-рана под чипами сложности.
+   *
+   * На телефоне четыре чипа в один ряд не помещаются: подписи вроде
+   * «Контракт: Без контракта» в 90 px превращались в кашу. Поэтому на
+   * узком экране чипы раскладываются в два ряда по два, и подпись получает
+   * вдвое больше места.
+   *
+   * ⚠️ `preTop` — это ВЕРХ блока, а не его середина: строки раскладываются
+   * от него вниз. Раньше считалось от середины, и второй ряд уезжал под
+   * кнопку «Играть» — на телефоне она закрывала половину плашек.
+   */
+  private createPreRow(width: number, preTop: number, mobile: boolean): number {
     const gap = 10;
-    const chipW = Math.min(mobile ? 118 : 178, (width - 60 - 3 * gap) / 4);
+    const perRow = mobile ? 2 : 4;
+    const chipW = Math.min(mobile ? 200 : 190, (width - 24 - (perRow - 1) * gap) / perRow);
     this.preChipW = chipW;
-    this.preChipFont = mobile ? 8 : 10;
+    // Кегль подписи чипа: на телефоне строка должна оставаться читаемой,
+    // поэтому 12 px, а не 8 — раньше подпись превращалась в кашу.
+    this.preChipFont = 12;
+    // Высота плашки держит ДВЕ строки подписи. Длинные подписи
+    // («Откроется после 3 го матча») в одну строку не влезали и вылезали
+    // за верхний край чипа.
+    const chipH = mobile ? 42 : 42;
+    const rowH = chipH + gap;
 
     const ukazLocked = !ordersUnlocked();
     const challengeLocked = matchesPlayed() < 3;
@@ -1286,25 +1650,25 @@ export class MenuScene extends Phaser.Scene {
     ];
 
     chips.forEach((c, i) => {
-      const x = width / 2 - (4 * chipW + 3 * gap) / 2 + i * (chipW + gap) + chipW / 2;
-      const bg = this.add.graphics();
-      bg.fillStyle(0xf7e7c3, 0.95).fillRoundedRect(x - chipW / 2, preY - 16, chipW, 32, 9);
-      bg.lineStyle(2, 0xc9a25e, 1).strokeRoundedRect(x - chipW / 2, preY - 16, chipW, 32, 9);
-      if (!c.enabled) bg.setAlpha(0.72);
-      const txt = this.add.text(x, preY, c.label, {
-        fontFamily: FONT, fontSize: `${this.preChipFont}px`,
-        color: c.enabled ? '#3b2410' : '#8d8577', align: 'center',
-        wordWrap: { width: chipW - 10 },
-      }).setOrigin(0.5);
-      fitTextWidth(txt, chipW - 10, this.preChipFont, 7);
-      const hit = this.add.zone(x, preY, chipW + 8, 44).setInteractive({ useHandCursor: c.enabled });
-      hit.on('pointerdown', () => {
+      const col = i % perRow;
+      const row = Math.floor(i / perRow);
+      const x = width / 2 - (perRow * chipW + (perRow - 1) * gap) / 2 + col * (chipW + gap) + chipW / 2;
+      const y = preTop + row * rowH + chipH / 2;
+      const chip = makeChip(this, x, y, chipW, chipH, c.label, {
+        fontSize: this.preChipFont,
+        disabled: !c.enabled,
+      });
+      chip.container.setSize(chipW + 8, chipH + 6);
+      chip.container.setInteractive({ useHandCursor: c.enabled });
+      chip.container.on('pointerdown', () => {
         if (!c.enabled) return;
         audio.play('click');
         c.action();
       });
-      this.preChipTexts[i] = txt;
+      this.preChipTexts[i] = chip.container.list[1] as Phaser.GameObjects.Text;
     });
+
+    return Math.ceil(chips.length / perRow) * rowH - gap;
   }
 
   /** Обновляет подписи чипов пре-рана после выбора в оверлеях. */
@@ -1321,7 +1685,7 @@ export class MenuScene extends Phaser.Scene {
       const txt = this.preChipTexts[i];
       if (!txt || label === null) return;
       txt.setText(label);
-      fitTextWidth(txt, this.preChipW - 10, this.preChipFont, 7);
+      fitTextWidth(txt, this.preChipW - 14, this.preChipFont);
     });
   }
 
@@ -1352,12 +1716,10 @@ export class MenuScene extends Phaser.Scene {
     this.overlay?.add(makePanel(this, cx, cy, 'paper', paperW, paperH));
     const top = cy - paperH / 2;
 
-    this.overlay?.add(this.add.text(cx, top + 36, t('contract.title'), {
-      fontFamily: FONT, fontSize: '24px', color: '#3b2410',
-    }).setOrigin(0.5));
+    const head = this.overlayTitle(top, t('contract.title'), 'red');
 
     const rowW = paperW - 48;
-    const rowsTop = top + 70;
+    const rowsTop = head - 12;
 
     const drawRow = (i: number, name: string, desc: string, mult: string, id: string | null): void => {
       const rowCy = rowsTop + i * rowH + rowH / 2;
@@ -1372,10 +1734,10 @@ export class MenuScene extends Phaser.Scene {
         fontFamily: FONT, fontSize: '12px', color: '#3b2410',
       }).setOrigin(0, 0.5));
       this.overlay?.add(this.add.text(cx - rowW / 2 + 14, rowCy + 10, desc, {
-        fontFamily: FONT, fontSize: '9px', color: '#8a5b12',
+        fontFamily: FONT, fontSize: '12px', color: '#8a5b12',
       }).setOrigin(0, 0.5));
       this.overlay?.add(this.add.text(cx + rowW / 2 - 14, rowCy, mult, {
-        fontFamily: FONT, fontSize: '11px', color: '#9a6a08',
+        fontFamily: FONT, fontSize: '12px', color: '#9a6a08',
       }).setOrigin(1, 0.5));
       const zone = this.add.zone(cx, rowCy, rowW, rowH).setInteractive({ useHandCursor: true });
       zone.on('pointerdown', () => {
@@ -1389,7 +1751,7 @@ export class MenuScene extends Phaser.Scene {
         this.closeOverlay();
         this.refreshPreChips();
       });
-      this.overlayExtras.push(zone);
+      this.addExtra(zone);
     };
 
     drawRow(0, t('contract.none'), '', '', null);
@@ -1413,13 +1775,11 @@ export class MenuScene extends Phaser.Scene {
     this.overlay?.add(makePanel(this, cx, cy, 'paper', paperW, paperH));
     const top = cy - paperH / 2;
 
-    this.overlay?.add(this.add.text(cx, top + 36, t('ukaz.title'), {
-      fontFamily: FONT, fontSize: '24px', color: '#3b2410',
-    }).setOrigin(0.5));
+    const head = this.overlayTitle(top, t('ukaz.title'), 'red');
 
     const id = loadText('tss-ukaz-pick');
     const order = ORDERS.find((o) => o.id === id);
-    this.overlay?.add(this.add.text(cx, top + 88, t('ukaz.pick', {
+    this.overlay?.add(this.add.text(cx, head + 18, t('ukaz.pick', {
       v: order ? this.tr(order.nameKey) : t('ukaz.none'),
     }), {
       fontFamily: FONT, fontSize: '14px', color: '#3b2410', align: 'center',
@@ -1430,7 +1790,7 @@ export class MenuScene extends Phaser.Scene {
         this.tr(order.descKey),
         this.tr('ukaz.premium', { v: Math.round(order.gloryPremium * 100) }),
       ].join('   '), {
-        fontFamily: FONT, fontSize: '10px', color: '#8a5b12', align: 'center',
+        fontFamily: FONT, fontSize: '12px', color: '#8a5b12', align: 'center',
         wordWrap: { width: paperW - 60 },
       }).setOrigin(0.5));
     }
@@ -1439,7 +1799,7 @@ export class MenuScene extends Phaser.Scene {
       this.closeOverlay();
       this.openOverlayScene('Meta');
     }, 'blue', 12);
-    this.overlayExtras.push(open.img, open.txt, open.hit);
+    this.addExtra(open.img); this.addExtra(open.txt); this.addExtra(open.hit);
 
     this.backButton(top + paperH + 42);
   }
@@ -1461,7 +1821,7 @@ export class MenuScene extends Phaser.Scene {
       fontFamily: FONT, fontSize: '24px', color: '#3b2410',
     }).setOrigin(0.5));
     this.overlay?.add(this.add.text(cx, top + 62, t('consumable.limit'), {
-      fontFamily: FONT, fontSize: '10px', color: '#8a5b12',
+      fontFamily: FONT, fontSize: '12px', color: '#8a5b12',
     }).setOrigin(0.5));
 
     this.renderConsumableRows(cx, top + 86, paperW - 48);
@@ -1491,7 +1851,7 @@ export class MenuScene extends Phaser.Scene {
         fontFamily: FONT, fontSize: '12px', color: '#3b2410',
       }).setOrigin(0, 0.5));
       els.push(this.add.text(cx - rowW / 2 + 14, y + 9, this.tr(c.descKey), {
-        fontFamily: FONT, fontSize: '9px', color: '#8a5b12',
+        fontFamily: FONT, fontSize: '12px', color: '#8a5b12',
       }).setOrigin(0, 0.5));
       els.push(this.add.text(cx + rowW / 2 - 128, y - 11, `×${stock}`, {
         fontFamily: FONT, fontSize: '12px', color: '#57431f',
@@ -1568,11 +1928,9 @@ export class MenuScene extends Phaser.Scene {
     this.overlay?.add(makePanel(this, cx, cy, 'paper', paperW, paperH));
     const top = cy - paperH / 2;
 
-    this.overlay?.add(this.add.text(cx, top + 36, t('challenge.title'), {
-      fontFamily: FONT, fontSize: '24px', color: '#3b2410',
-    }).setOrigin(0.5));
-    this.overlay?.add(this.add.text(cx, top + 64, t('challenge.mods'), {
-      fontFamily: FONT, fontSize: '11px', color: '#8a5b12',
+    const head = this.overlayTitle(top, t('challenge.title'), 'red');
+    this.overlay?.add(this.add.text(cx, head, t('challenge.mods'), {
+      fontFamily: FONT, fontSize: '12px', color: '#8a5b12',
     }).setOrigin(0.5));
 
     const ch = challengeForToday(salt);
@@ -1584,17 +1942,17 @@ export class MenuScene extends Phaser.Scene {
         fontFamily: FONT, fontSize: '14px', color: '#7a1010',
       }).setOrigin(0.5));
       this.overlay?.add(this.add.text(cx, y + 20, this.tr(def.descKey), {
-        fontFamily: FONT, fontSize: '10px', color: '#57431f', align: 'center',
+        fontFamily: FONT, fontSize: '12px', color: '#57431f', align: 'center',
         wordWrap: { width: paperW - 70 },
       }).setOrigin(0.5));
     });
 
     this.overlay?.add(this.add.text(cx, top + 232, t('challenge.reward'), {
-      fontFamily: FONT, fontSize: '9px', color: '#8a5b12', align: 'center',
+      fontFamily: FONT, fontSize: '12px', color: '#8a5b12', align: 'center',
     }).setOrigin(0.5));
     if (challengeVictoryToday()) {
       this.overlay?.add(this.add.text(cx, top + 252, t('challenge.done'), {
-        fontFamily: FONT, fontSize: '10px', color: '#2e7d32',
+        fontFamily: FONT, fontSize: '12px', color: '#2e7d32',
       }).setOrigin(0.5));
     }
 
@@ -1606,7 +1964,7 @@ export class MenuScene extends Phaser.Scene {
           if (res.rewarded && this.overlay) this.showChallengeOverlay(`ad${Date.now()}`);
         })();
       }, 'red', 10);
-      this.overlayExtras.push(reroll.img, reroll.txt, reroll.hit);
+      this.addExtra(reroll.img); this.addExtra(reroll.txt); this.addExtra(reroll.hit);
     }
     const start = makeButton(this, cx + 100, btnY, 180, 44, t('challenge.start'), () => {
       saveRunConfig({
@@ -1621,7 +1979,7 @@ export class MenuScene extends Phaser.Scene {
       track('challenge_start', { mods: ch.mods, rerolled: salt !== '' });
       this.scene.start('Game', { hero: this.selectedHero, diff: this.selectedDiff });
     }, 'blue', 12);
-    this.overlayExtras.push(start.img, start.txt, start.hit);
+    this.addExtra(start.img); this.addExtra(start.txt); this.addExtra(start.hit);
 
     this.backButton(top + paperH + 42);
   }
@@ -1648,7 +2006,7 @@ export class MenuScene extends Phaser.Scene {
       t('bonus.day', { v: todayIdx + 1 }),
       t('bonus.streak', { v: streak }),
     ].join('   '), {
-      fontFamily: FONT, fontSize: '11px', color: '#8a5b12',
+      fontFamily: FONT, fontSize: '12px', color: '#8a5b12',
     }).setOrigin(0.5));
 
     const kindKeys: Record<DailyBonusKind, TranslationKey> = {
@@ -1690,12 +2048,12 @@ export class MenuScene extends Phaser.Scene {
     const claim = makeButton(this, cx - 90, btnY, 160, 48, t('bonus.claim'), () => {
       this.claimBonus(false);
     }, 'blue', 13);
-    this.overlayExtras.push(claim.img, claim.txt, claim.hit);
+    this.addExtra(claim.img); this.addExtra(claim.txt); this.addExtra(claim.hit);
     if (placementAvailable('bonus-x2')) {
       const x2 = makeButton(this, cx + 90, btnY, 160, 48, t('bonus.claimX2'), () => {
         void this.claimBonusWithAd();
       }, 'red', 13);
-      this.overlayExtras.push(x2.img, x2.txt, x2.hit);
+      this.addExtra(x2.img); this.addExtra(x2.txt); this.addExtra(x2.hit);
     }
 
     this.backButton(top + paperH + 42);
@@ -1760,11 +2118,11 @@ export class MenuScene extends Phaser.Scene {
       fontFamily: FONT, fontSize: '22px', color: '#3b2410',
     }).setOrigin(0.5));
     this.overlay?.add(this.add.text(cx, top + 60, t('blessing.pick'), {
-      fontFamily: FONT, fontSize: '11px', color: '#8a5b12',
+      fontFamily: FONT, fontSize: '12px', color: '#8a5b12',
     }).setOrigin(0.5));
     this.overlay?.add(this.add.text(cx, top + 82,
       t('meta.blessingTokens', { v: loadMetaState().blessingTokens }), {
-      fontFamily: FONT, fontSize: '11px', color: '#9a6a08',
+      fontFamily: FONT, fontSize: '12px', color: '#9a6a08',
     }).setOrigin(0.5));
 
     const options = rollBlessings(String(Date.now()));
@@ -1786,7 +2144,7 @@ export class MenuScene extends Phaser.Scene {
         fontFamily: FONT, fontSize: '13px', color: affordable ? '#3b2410' : '#8d8577',
       }).setOrigin(0, 0.5));
       this.overlay?.add(this.add.text(cx - rowW / 2 + 14, rowCy + 10, this.tr(def.descKey), {
-        fontFamily: FONT, fontSize: '9px', color: '#8a5b12',
+        fontFamily: FONT, fontSize: '12px', color: '#8a5b12',
       }).setOrigin(0, 0.5));
 
       const zone = this.add.zone(cx, rowCy, rowW, rowH).setInteractive({ useHandCursor: affordable });
@@ -1800,7 +2158,7 @@ export class MenuScene extends Phaser.Scene {
         this.closeOverlay();
         go();
       });
-      this.overlayExtras.push(zone);
+      this.addExtra(zone);
     });
 
     // «+1 жетон за ролик» (R4) и «Пропустить»
@@ -1817,12 +2175,12 @@ export class MenuScene extends Phaser.Scene {
           }
         })();
       }, 'red', 10);
-      this.overlayExtras.push(adBtn.img, adBtn.txt, adBtn.hit);
+      this.addExtra(adBtn.img); this.addExtra(adBtn.txt); this.addExtra(adBtn.hit);
     }
     const skip = makeButton(this, cx + 98, footY, 150, 44, t('common.back'), () => {
       this.closeOverlay();
       go();
     }, 'blue', 11);
-    this.overlayExtras.push(skip.img, skip.txt, skip.hit);
+    this.addExtra(skip.img); this.addExtra(skip.txt); this.addExtra(skip.hit);
   }
 }

@@ -1,7 +1,7 @@
 import Phaser from 'phaser';
 import { Cursor } from '../systems/Cursor';
 import { FONT } from '../constants';
-import { makePanel, makeButton, fitTextWidth, type Button } from '../systems/Ui';
+import { makePanel, makeRibbon, makeButton, fitTextWidth, type Button } from '../systems/Ui';
 import { audio } from '../systems/Audio';
 import { t, num, clock, type TranslationKey } from '../../i18n';
 import { submitScore, LEADERBOARD_DAILY, LEADERBOARD_ENDLESS } from '../../platform/leaderboard';
@@ -108,6 +108,16 @@ interface X2Layout {
 const X2_H = 44;
 const X2_FONT = 13;
 
+/**
+ * Глубина затемнения внутри сцены итогов.
+ *
+ * Вся сцена лежит на нулевой глубине, и порядок отрисовки задаётся порядком
+ * добавления. Затемнение с минусовой глубиной гасит ИГРОВУЮ сцену (сцены
+ * рисуются по порядку запуска, а не по глубине), но остаётся под лентой,
+ * панелью и кнопками самого окна.
+ */
+const DEPTH_LOW = -1;
+
 type SaveState = 'idle' | 'saving' | 'saved' | 'error';
 
 /** Что удалось показать игрок�� после сохранения. */
@@ -184,8 +194,12 @@ export class GameOverScene extends Phaser.Scene {
     // дня, авто-сабмит вторичных бордов) — рестарт сцены их не повторяет
     this.handleMatchOnce(s);
 
+    // Затемнение ложится под весь контент окна (см. DEPTH_LOW ниже), но
+    // ВЫШЕ игровой сцены: сцены рисуются по порядку запуска, поэтому
+    // отрицательной глубины достаточно, чтобы гасить мир и HUD, и при этом
+    // не гасить собственные заголовок, панель и кнопки.
     this.add.rectangle(width / 2, height / 2, width + 40, height + 40, 0x0a0a12, 0.78)
-      .setScrollFactor(0);
+      .setScrollFactor(0).setDepth(DEPTH_LOW);
 
     // ---------- Бюджет высоты ----------
     // Шапка и низ получают фиксированную долю экрана, тело — остаток.
@@ -275,33 +289,37 @@ export class GameOverScene extends Phaser.Scene {
     const inputY = fy - inputH / 2;
     const bodyBottom = Math.max(40, inputY - inputH / 2 - 12);
 
-    // Шапка. Баннер рисуем только там, где он помещается в натуральную
-    // величину: слайсы banner9 — 68 px сверху и 111 px снизу, всего 179.
-    // На меньшей высоте торцы сжимаются, и завитки превращаются в рваную
-    // бумагу. В компактном ландшафте (высота < 520) баннера нет вовсе:
-    // 200 px там — это половина экрана.
-    // ⚠️ Прежний порог «< 239» оказался ловушкой: при 1280×578 баннер съедал
-    // 200 px, телу оставалось ~140 px, и блоки мета-итогов (слава/задания/
-    // волны), хроника, урон по оружию и достижения молча не помещались.
-    // Ниже 620 px баннер убираем целиком — итоги важнее декора.
-    const bannerH = compact || height < 620 ? 0 : 200;
+    // Шапка — ЛЕНТА из пака, на любой высоте экрана.
+    //
+    // Раньше здесь стоял девятислайс-баннер `banner9` высотой 200 px. На
+    // скриншотах он рисовался РАЗОРВАННЫМ: между тайлами видны чёрные
+    // дыры, а завитки по нижнему краю отрываются и висят отдельно. Слайсы
+    // баннера (68 сверху, 111 снизу, всего 179) не помещались в 200 px, и
+    // Phaser рисовал торцы поверх середины — тот же дефект, что был с
+    // лентами до перехода на три отдельных куска.
+    //
+    // Держать сломанный ассет ради «большой шапки» смысла нет: лента
+    // рисуется корректно на любой высоте (ею оформлены «Лавка», «Хроника»,
+    // LevelUp, пауза и преемственность) и даёт тот же узнаваемый заголовок.
+    // Заодно шапка перестала съедать 200 px, которые уходили телу итогов.
     const titleSize = compact ? 22 : Phaser.Math.Clamp(height * 0.045, 28, 38);
+    // Высота ленты считается от кегля заголовка, чтобы надпись не
+    // наезжала на изгибы по краям.
+    const ribbonH = Math.round(titleSize * 1.55);
+    const ribbonW = Math.min(width - 40, Math.max(240, width * 0.46));
+    const ribbonY = ribbonH / 2 + 8;
+    makeRibbon(this, width / 2, ribbonY, ribbonW, 'ribbon-red', ribbonH)
+      .setScrollFactor(0).setDepth(1);
 
-    let headerBottom = 6;
-    if (bannerH > 0) {
-      const banner = makePanel(this, width / 2, 8 + bannerH / 2, 'banner', Math.min(400, width - 60), bannerH);
-      banner.setScrollFactor(0);
-      this.tweens.add({ targets: banner, scale: { from: 0.6, to: 1 }, duration: 320, ease: 'Back.easeOut' });
-      headerBottom = 8 + bannerH;
-    }
-
-    const title = this.add.text(width / 2, headerBottom + 8, s.victory ? t('over.win') : t('over.lose'), {
+    // Origin по вертикали в центре: заголовок центрируется ВНУТРИ ленты.
+    // С origin «верх» приходилось вручную вычитать половину высоты, и при
+    // смене кегля надпись съезжала.
+    this.add.text(width / 2, ribbonY, s.victory ? t('over.win') : t('over.lose'), {
       fontFamily: FONT, fontSize: `${titleSize}px`,
       color: s.victory ? '#ffd700' : '#ff6b5e',
-      stroke: '#5a0808', strokeThickness: 9,
-    }).setOrigin(0.5, 0).setScrollFactor(0);
-    headerBottom = title.y + title.height + (compact ? 6 : 8);
-
+      stroke: '#1b1008', strokeThickness: Math.max(5, Math.round(titleSize / 4)),
+    }).setOrigin(0.5, 0.5).setScrollFactor(0).setDepth(2);
+    let headerBottom = ribbonY + ribbonH / 2 + (compact ? 6 : 8);
     // Бейдж идеальной победы (§E.7, слой 3): босс убит + замок цел + ≥3 пешек
     if (s.ideal) {
       const badge = this.add.text(width / 2, headerBottom + 2, t('over.idealVictory'), {
@@ -418,14 +436,13 @@ export class GameOverScene extends Phaser.Scene {
     const twoCol = width >= 470 && !compact;
 
     const statStyle: Phaser.Types.GameObjects.Text.TextStyle = {
-      fontFamily: FONT, fontSize: `${statFont}px`, color: '#ffe9b0',
+      fontFamily: FONT, fontSize: `${statFont}px`, color: '#3b2410',
       align: 'center', lineSpacing: statSpacing,
-      stroke: '#1b1008', strokeThickness: 5,
     };
 
     if (twoCol) {
       if (heroLine) {
-        body.add(this.add.text(cx, y, heroLine, { ...statStyle, color: '#ffd76e' }).setOrigin(0.5, 0));
+        body.add(this.add.text(cx, y, heroLine, { ...statStyle, color: '#9a6a08' }).setOrigin(0.5, 0));
         y += statFont + 10;
       }
       const colW = Math.min(240, width * 0.42);
@@ -435,7 +452,7 @@ export class GameOverScene extends Phaser.Scene {
       pairs.forEach((pair, i) => {
         const ry = y + i * rowH;
         body.add(this.add.text(cx - colW / 2, ry, pair[0], statStyle).setOrigin(0.5, 0));
-        body.add(this.add.text(cx + colW / 2, ry, pair[1], { ...statStyle, color: '#ffd76e' }).setOrigin(0.5, 0));
+        body.add(this.add.text(cx + colW / 2, ry, pair[1], { ...statStyle, color: '#9a6a08' }).setOrigin(0.5, 0));
       });
       y += pairs.length * rowH + 10;
     } else {
@@ -454,8 +471,7 @@ export class GameOverScene extends Phaser.Scene {
       // сравнение со строкой «КОШМАР» не срабатывало в английской сборке.
       const mark = s.difficultyId === 'nightmare' ? ' ☠' : '';
       body.add(this.add.text(cx, y, `${t('over.difficulty', { v: s.difficulty.toUpperCase() })}${mark}`, {
-        fontFamily: FONT, fontSize: compact ? '11px' : '13px', color: '#cbb389',
-        stroke: '#1b1008', strokeThickness: 4,
+        fontFamily: FONT, fontSize: compact ? '11px' : '13px', color: '#6b4a1e',
       }).setOrigin(0.5, 0));
       y += compact ? 18 : 22;
     }
@@ -464,8 +480,7 @@ export class GameOverScene extends Phaser.Scene {
     const st = s.settlement;
     if (st && top + y + 20 <= bottom) {
       body.add(this.add.text(cx, y, `${t('over.statsSettlement', { v: num(st.defence) })}   ${t('over.statsPopulation', { v: num(st.population) })}`, {
-        fontFamily: FONT, fontSize: compact ? '11px' : '13px', color: '#9fd8ff',
-        stroke: '#1b1008', strokeThickness: 4,
+        fontFamily: FONT, fontSize: compact ? '11px' : '13px', color: '#3b6ea5',
       }).setOrigin(0.5, 0));
       y += compact ? 18 : 22;
     }
@@ -496,21 +511,18 @@ export class GameOverScene extends Phaser.Scene {
 
       if (bottom - top - y >= needFull) {
         body.add(this.add.text(cx, y, t('over.newAch'), {
-          fontFamily: FONT, fontSize: '11px', color: '#ffd76e',
-          stroke: '#1b1008', strokeThickness: 4,
+          fontFamily: FONT, fontSize: '12px', color: '#9a6a08',
         }).setOrigin(0.5, 0));
         body.add(this.add.text(cx, y + 16, items, {
-          fontFamily: FONT, fontSize: '12px', color: '#ffe9b0',
+          fontFamily: FONT, fontSize: '12px', color: '#3b2410',
           align: 'center', wordWrap: { width: wrap },
-          stroke: '#1b1008', strokeThickness: 4,
         }).setOrigin(0.5, 0));
       } else {
         // Не влезает — одна строка с числом и первыми названиями
         const names = ach.slice(0, 2).map((a) => a.name).join(', ');
         const more = ach.length > 2 ? ` +${ach.length - 2}` : '';
         body.add(this.add.text(cx, y + 2, `${t('over.newAch')} ${ach.length} · ${names}${more}`, {
-          fontFamily: FONT, fontSize: '11px', color: '#ffd76e',
-          stroke: '#1b1008', strokeThickness: 4,
+          fontFamily: FONT, fontSize: '12px', color: '#9a6a08',
           wordWrap: { width: wrap },
           align: 'center',
         }).setOrigin(0.5, 0));
@@ -521,6 +533,31 @@ export class GameOverScene extends Phaser.Scene {
     // при запасе — по центру.
     const regionH = Math.max(40, bottom - top - pad);
     body.y = top + pad + Math.max(0, (regionH - y) / 2);
+
+    // Подложка под итоги — обычный кремовый пергамент, как строки «Лавки».
+    //
+    // Раньше здесь стоял «особый пергамент» (`special-paper-clipping`) —
+    // тёмно-синий лист с золотыми уголками. Он был единственным тёмным
+    // пятном в игре: «Лавка» и «Хроника» держались на кремовой бумаге, а
+    // итоги матча выглядели как вклеенная выписка из чужого документа.
+    // Текст на нём тоже приходилось делать светлым с тёмной обводкой —
+    // золотой «Опыт: +1» на синем фоне читался плохо. Теперь материал и
+    // текст взяты из палитры остальных окон.
+    if (y > 30) {
+      const sheetW = Math.min(520, width - 40);
+      // Поле пергамента под его декоративную рамку (~45 px сверху и снизу).
+      //
+      // Раньше лист был шире содержимого всего на 18 px, и последняя строка
+      // хроники («Идеальная победа: да.») ложилась прямо на тёмную кайму —
+      // визуально обрезалась. Поле теперь не меньше рамки и никогда не
+      // выходит за пределы отведённой области.
+      const inset = Math.min(52, Math.max(18, (regionH - y) / 2));
+      const sheetH = Math.min(regionH, y + 2 * inset);
+      const sheet = makePanel(this, cx, y / 2, 'paper', sheetW, sheetH)
+        .setScrollFactor(0)
+        .setAlpha(0.96);
+      body.addAt(sheet, 0);
+    }
   }
 
   /**
@@ -544,14 +581,14 @@ export class GameOverScene extends Phaser.Scene {
       let text = t('over.glory', { v: num(m.glory.total) });
       if (m.glory.base >= m.glory.cap) text += ` · ${t('over.gloryCap', { v: num(m.glory.cap) })}`;
       if (m.glory.bonus > 0) text += ` · ${t('over.gloryIdeal', { v: num(m.glory.bonus) })}`;
-      lines.push({ text, color: '#ffd700' });
+      lines.push({ text, color: '#9a6a08' });
     }
 
     // Задания дня: сколько закрыто всего и какие выполнились сейчас (§H.17)
     const doneNow = m.questsCompletedNow ?? [];
     if (doneNow.length > 0) {
       const list = doneNow.map((q) => t(q.descKey as TranslationKey)).join(' · ');
-      lines.push({ text: `${t('over.questsDone', { v: num(m.questsDone) })}: ${list}`, color: '#ffe9b0' });
+      lines.push({ text: `${t('over.questsDone', { v: num(m.questsDone) })}: ${list}`, color: '#3b2410' });
     }
 
     // Пропуск «Хроника» и цепочки достижений — по числу (§J, §H.12)
@@ -560,18 +597,17 @@ export class GameOverScene extends Phaser.Scene {
     if ((m.chainUnlocks ?? []).length > 0) {
       passParts.push(t('over.chainsUp', { v: num(m.chainUnlocks.length) }));
     }
-    if (passParts.length > 0) lines.push({ text: passParts.join('   '), color: '#ffe9b0' });
+    if (passParts.length > 0) lines.push({ text: passParts.join('   '), color: '#3b2410' });
 
     // Победа в вызове дня (§H.8) и волны бесконечного режима (§H.7)
-    if (m.challenge && s.victory) lines.push({ text: t('over.challengeWin'), color: '#ffd700' });
-    if (m.endless) lines.push({ text: t('endless.result', { v: num(m.endlessWave) }), color: '#ffe9b0' });
+    if (m.challenge && s.victory) lines.push({ text: t('over.challengeWin'), color: '#9a6a08' });
+    if (m.endless) lines.push({ text: t('endless.result', { v: num(m.endlessWave) }), color: '#3b2410' });
 
     const wrap = Math.min(520, Math.max(160, width - 50));
     let y = cursor;
     for (const line of lines) {
       const txt = this.add.text(cx, y, line.text, {
         fontFamily: FONT, fontSize: `${fs}px`, color: line.color,
-        stroke: '#1b1008', strokeThickness: 4,
         align: 'center', wordWrap: { width: wrap }, lineSpacing: 2,
       }).setOrigin(0.5, 0);
       if (txt.height > avail - (y - cursor)) {
@@ -605,8 +641,7 @@ export class GameOverScene extends Phaser.Scene {
         .map((w) => `${w.name} ${this.fmtDmg(w.dmg)}⚡${w.kills}`)
         .join(' • ');
       body.add(this.add.text(cx, cursor, top, {
-        fontFamily: FONT, fontSize: '10px', color: '#ffd76e',
-        stroke: '#1b1008', strokeThickness: 3,
+        fontFamily: FONT, fontSize: '12px', color: '#9a6a08',
       }).setOrigin(0.5, 0)
         .setWordWrapWidth(Math.min(460, width - 40)));
       return cursor + 28;
@@ -614,8 +649,7 @@ export class GameOverScene extends Phaser.Scene {
 
     // Полный режим: заголовок + строки с полосами урона
     body.add(this.add.text(cx, cursor, t('over.damageTitle'), {
-      fontFamily: FONT, fontSize: '11px', color: '#cbb389',
-      stroke: '#1b1008', strokeThickness: 4,
+      fontFamily: FONT, fontSize: '12px', color: '#6b4a1e',
     }).setOrigin(0.5, 0));
     cursor += HEAD;
 
@@ -637,8 +671,7 @@ export class GameOverScene extends Phaser.Scene {
       body.add(icon);
       const nameW = barMax - 16;
       const nameText = this.add.text(cx - rowW / 2 + 26, y, w.name, {
-        fontFamily: FONT, fontSize: '10px', color: w.evolved ? '#ffd76e' : '#ffe9b0',
-        stroke: '#1b1008', strokeThickness: 3,
+        fontFamily: FONT, fontSize: '12px', color: w.evolved ? '#9a6a08' : '#3b2410',
       }).setOrigin(0, 0.5);
       // Название не должно наезжать на полосу урона и числа
       fitTextWidth(nameText, nameW, 10, 7);
@@ -652,8 +685,7 @@ export class GameOverScene extends Phaser.Scene {
       ).setOrigin(0, 0.5));
       this.tweens.add({ targets: bar, width: Math.max(4, Math.round(barMax * (w.dmg / maxDmg))), duration: 500, delay: 150 + i * 70, ease: 'Cubic.easeOut' });
       body.add(this.add.text(cx + rowW / 2, y, `${this.fmtDmg(w.dmg)}  ⚔${w.kills}`, {
-        fontFamily: FONT, fontSize: '10px', color: '#ffd76e',
-        stroke: '#1b1008', strokeThickness: 3,
+        fontFamily: FONT, fontSize: '12px', color: '#9a6a08',
       }).setOrigin(1, 0.5));
     });
     return cursor + HEAD + shown.length * ROW + 10;
@@ -707,12 +739,10 @@ export class GameOverScene extends Phaser.Scene {
     if (avail < need) return cursor;
 
     body.add(this.add.text(cx, cursor, t('over.chronicleTitle'), {
-      fontFamily: FONT, fontSize: '11px', color: '#cbb389',
-      stroke: '#1b1008', strokeThickness: 4,
+      fontFamily: FONT, fontSize: '12px', color: '#6b4a1e',
     }).setOrigin(0.5, 0));
     body.add(this.add.text(cx, cursor + 16, text, {
-      fontFamily: FONT, fontSize: compact ? '10px' : '12px', color: '#ffe9b0',
-      stroke: '#1b1008', strokeThickness: 4,
+      fontFamily: FONT, fontSize: compact ? '10px' : '12px', color: '#3b2410',
       align: 'center', wordWrap: { width: wrap }, lineSpacing: 4,
     }).setOrigin(0.5, 0));
     return cursor + need;
@@ -739,8 +769,7 @@ export class GameOverScene extends Phaser.Scene {
     }
     if (!line) return cursor;
     body.add(this.add.text(width / 2, cursor, `${t('over.nearMiss')} ${line}`, {
-      fontFamily: FONT, fontSize: compact ? '10px' : '12px', color: '#ffd76e',
-      stroke: '#1b1008', strokeThickness: 4,
+      fontFamily: FONT, fontSize: compact ? '10px' : '12px', color: '#9a6a08',
       align: 'center', wordWrap: { width: Math.min(500, width - 60) },
     }).setOrigin(0.5, 0));
     return cursor + (compact ? 20 : 24);
@@ -779,9 +808,13 @@ export class GameOverScene extends Phaser.Scene {
     el.style.width = `${Math.min(340, width - 80)}px`;
     el.style.height = `${h - 6}px`;
     el.style.boxSizing = 'border-box';
-    el.style.background = '#fff8e7';
-    el.style.border = '3px solid #8a5b12';
-    el.style.borderRadius = '10px';
+    // Поле ввода — часть пергамента, а не белый прямоугольник из другого
+    // интерфейса: та же бумага, та же рамка, тот же шрифт. Раньше фон был
+    // заметно светлее бумаги, и на экране итогов поле выглядело вклеенным.
+    el.style.background = '#f6e7c9';
+    el.style.border = '3px solid #a9722a';
+    el.style.borderRadius = '8px';
+    el.style.boxShadow = 'inset 0 2px 0 rgba(59, 36, 16, 0.18)';
     el.style.color = '#3b2410';
     el.style.fontFamily = FONT;
     el.style.fontSize = '16px';
@@ -850,7 +883,7 @@ export class GameOverScene extends Phaser.Scene {
 
     if (this.saveState === 'error') {
       this.saveMsg = this.add.text(width / 2, this.saveY - 32, t('over.saveFailed'), {
-        fontFamily: FONT, fontSize: '10px', color: '#ff8a7a',
+        fontFamily: FONT, fontSize: '12px', color: '#ff8a7a',
         stroke: '#1b1008', strokeThickness: 3,
         align: 'center', wordWrap: { width: width - 60 },
       }).setOrigin(0.5).setScrollFactor(0);
@@ -896,7 +929,7 @@ export class GameOverScene extends Phaser.Scene {
       this.saveBtn?.setLabel(t('over.retry'));
       this.saveMsg?.destroy();
       this.saveMsg = this.add.text(this.scale.width / 2, this.saveY - 32, t('over.saveFailed'), {
-        fontFamily: FONT, fontSize: '10px', color: '#ff8a7a',
+        fontFamily: FONT, fontSize: '12px', color: '#ff8a7a',
         stroke: '#1b1008', strokeThickness: 3,
         align: 'center', wordWrap: { width: this.scale.width - 60 },
       }).setOrigin(0.5).setScrollFactor(0);

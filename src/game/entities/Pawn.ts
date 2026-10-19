@@ -1,5 +1,6 @@
 import Phaser from 'phaser';
-import { DEPTH, SHADOW_SCALE, SHADOW_BOX, SHADOW_SRC } from '../constants';
+import { DEPTH, SHADOW_SCALE, SHADOW_BOX, SHADOW_SRC, FONT } from '../constants';
+import { FS } from '../systems/Text';
 import { PAWNS, FIGHTERS, type PawnKind, type PawnState, type PawnWeapon, type ResourceKind, type PawnDef } from '../data';
 
 // ============ Пешка поселения: гражданские и гарнизон (TZ §B.2) ============
@@ -278,7 +279,7 @@ export class Pawn extends Phaser.Physics.Arcade.Sprite {
     } else {
       if (!this.starBadge || !this.starBadge.active) {
         this.starBadge = this.scene.add.text(this.x, this.y - 46, '★', {
-          fontFamily: 'sans-serif', fontSize: '11px', color: '#ffd76e',
+          fontFamily: FONT, fontSize: `${FS.small}px`, color: '#ffd76e',
         }).setOrigin(0.5).setDepth(DEPTH.HPBAR);
       }
       this.starBadge.setText('★'.repeat(this.veteranStars));
@@ -303,7 +304,7 @@ export class Pawn extends Phaser.Physics.Arcade.Sprite {
     }
     if (!this.bleedBadge || !this.bleedBadge.active) {
       this.bleedBadge = this.scene.add.text(this.x, this.y - 34, '', {
-        fontFamily: 'sans-serif', fontSize: '10px', color: '#ff6655',
+        fontFamily: FONT, fontSize: `${FS.small}px`, color: '#ff6655',
         stroke: '#1a0f08', strokeThickness: 3,
       }).setOrigin(0.5).setDepth(DEPTH.HPBAR);
     }
@@ -321,7 +322,7 @@ export class Pawn extends Phaser.Physics.Arcade.Sprite {
     if (!this.tauntBadge || !this.tauntBadge.active) {
       this.tauntBadge = this.scene.add.graphics().setDepth(DEPTH.FX);
       this.tauntText = this.scene.add.text(this.x, this.y - 58, '−50%', {
-        fontFamily: 'sans-serif', fontSize: '11px', color: '#8fd0ff',
+        fontFamily: FONT, fontSize: `${FS.small}px`, color: '#8fd0ff',
         stroke: '#1a0f08', strokeThickness: 3,
       }).setOrigin(0.5).setDepth(DEPTH.FX);
     }

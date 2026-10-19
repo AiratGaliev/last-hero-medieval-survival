@@ -277,6 +277,11 @@ export class GameScene extends Phaser.Scene {
     });
     // Стики-баннер (§J.5) показывается только вне рана — в бою гасим
     hideStickyBanner();
+    // Зум камеры ДО сборки мира: от него зависят и HUD, и слой подсказок —
+    // они компенсируют зум обратным масштабом (см. systems/HUD.ts и
+    // systems/Hints.ts). Раньше зум выставлялся после buildWorld(), и
+    // подсказки на телефоне рисовались в полтора раза мельче.
+    this.resizeZoom();
     this.buildWorld();
     this.buildPlayer();
     // «Первый урок» (§H.16): +1 стартовый уровень героя (единственный
@@ -290,9 +295,8 @@ export class GameScene extends Phaser.Scene {
     if (heroTint !== null) this.player.setTint(heroTint);
     // «Вторые ворота» (§H.16): щит героя на 5 сек в начале матча
     if (this.fx.heroShieldMs > 0) this.player.iframesUntil = this.time.now + this.fx.heroShieldMs;
-    // Зум камеры ДО создания HUD: HUD читает зум при постройке и
-    // компенсирует его (иначе первый кадр рисует HUD не на месте).
-    this.resizeZoom();
+    // Зум камеры выставлен выше (до сборки мира) — HUD и подсказки
+    // компенсируют его обратным масштабом.
     this.scale.on('resize', this.resizeZoom, this);
     this.buildSystems();
     this.recomputeStats();
@@ -2657,8 +2661,20 @@ private bossDeathSequence(e: Enemy): boolean {
     this.overlayOpen = true;
     gameplayStop();
     audio.play('levelup');
+    // Убираем подсказки перед запуском оверлея.
+    //
+    // Раньше здесь ничего не сбрасывалось, и обучающий баннер («Двигайся и
+    // атакуй») оставался висеть ПОД карточками выбора. Он и сам по себе
+    // держался на пергаменте, и сквозь затемнение LevelUp просвечивал
+    // серыми полосами в промежутках между карточками — на скриншоте это
+    // читалось как мусор в вёрстке. На паузе и в игре-овере подсказки
+    // сбрасывались, а на этом экране забыли.
+    this.hints.reset();
     this.scene.pause();
     this.scene.launch('LevelUp', {
+      // Заголовок окна опускается ниже верхней полосы HUD: полоса босса
+      // стоит ровно на той же высоте, и лента ложилась прямо на неё.
+      topInset: this.hud.overlayTopInset(),
       getChoices: () => this.generateChoices(),
       onChoose: (card: UpgradeCard) => {
         this.applyCard(card);
@@ -2826,6 +2842,9 @@ private bossDeathSequence(e: Enemy): boolean {
     this.overlayOpen = true;
     gameplayStop();
     this.scene.pause();
+    // Подсказки FTUE гасим: их слой лежит выше мира, и текст «Нажми, чтобы
+    // продолжить» просвечивал сквозь панель паузы.
+    this.hints.reset();
     // Снаряжение для панели паузы: оружия и пассивки с уровнями
     const loadout = {
       weapons: this.weapons.ownedIds().map((id) => ({
@@ -2841,6 +2860,8 @@ private bossDeathSequence(e: Enemy): boolean {
       stats: { kills: this.kills, elapsed: this.elapsed, gold: this.gold, level: this.level },
     };
     this.scene.launch('Pause', {
+      // Окно не должно наезжать на верхнюю полосу HUD (полосу босса).
+      topInset: this.hud.overlayTopInset(),
       onResume: () => {
         this.scene.resume();
         this.overlayOpen = false;
@@ -2950,6 +2971,9 @@ private bossDeathSequence(e: Enemy): boolean {
     // HUD матча прячем: сцена ставится на паузу, но продолжает рисоваться,
     // и полосы с тостами светились поверх затемнения экрана результата.
     this.hud.setVisible(false);
+    // Подсказки FTUE тоже гасим: их слой лежит выше игрового мира, и
+    // текст «Нажми, чтобы продолжить» просвечивал сквозь экран итогов.
+    this.hints.reset();
 
     const settlementScore = this.settlement.settlementScore();
     const ideal = this.settlement.isIdealVictory(victory);

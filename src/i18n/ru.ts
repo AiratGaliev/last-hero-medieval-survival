@@ -14,6 +14,9 @@ export const ru = {
   'common.signInFailed': 'вход не завершён',
   'common.you': 'Вы',
   'common.back': 'НАЗАД',
+  // Универсальная пара «да/нет» для опасных диалогов (сдача, сброс)
+  'common.confirm': 'ДА',
+  'common.cancel': 'ОТМЕНА',
   // Название игры: в меню оно разложено по двум мечам (см. MenuScene)
   'common.gameTitle': 'Последний герой: Средневековое выживание',
   'common.titleTop': 'ПОСЛЕДНИЙ ГЕРОЙ',
@@ -27,6 +30,7 @@ export const ru = {
 
   // ---------- Главное меню ----------
   'menu.chooseHero': '— ВЫБЕРИ ГЕРОЯ —',
+  'menu.keyboardHint': 'A / D — ГЕРОЙ   1–4 — ВЫБОР   ENTER — ИГРАТЬ',
   'menu.play': 'ИГРАТЬ',
   'menu.howTo': 'КАК ИГРАТЬ',
   'menu.records': 'РЕКОРДЫ',
@@ -152,7 +156,7 @@ export const ru = {
   'hud.level': 'УР. {v}',
   'hud.levelProgress': 'УР. {v}   {a} / {b} ОП',
   'hud.levelMax': 'УР. {v} — МАКС',
-  'hud.score': 'СЧЁТ {v}',
+  'hud.score': 'СЧЁТ: {v}',
   'hud.kills': 'УБИЙСТВ: {v}',
   'hud.bossName': 'ОГР-РАЗРУШИТЕЛЬ',
   'hud.bossIncoming': '⚔ БОСС!',

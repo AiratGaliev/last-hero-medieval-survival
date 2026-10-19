@@ -12,6 +12,9 @@ export const en: Record<TranslationKey, string> = {
   'common.signInFailed': 'sign-in was not completed',
   'common.you': 'You',
   'common.back': 'BACK',
+  // Generic confirm/cancel pair — destructive dialogs (surrender, resets)
+  'common.confirm': 'YES',
+  'common.cancel': 'CANCEL',
   // Game title: split across the two swords in the menu (see MenuScene)
   'common.gameTitle': 'The Last Hero: Medieval Survival',
   'common.titleTop': 'THE LAST HERO',
@@ -25,6 +28,7 @@ export const en: Record<TranslationKey, string> = {
 
   // ---------- Main menu ----------
   'menu.chooseHero': '— CHOOSE YOUR HERO —',
+  'menu.keyboardHint': 'A / D — HERO   1–4 — PICK   ENTER — PLAY',
   'menu.play': 'PLAY',
   'menu.howTo': 'HOW TO PLAY',
   'menu.records': 'HALL OF FAME',
@@ -150,7 +154,7 @@ export const en: Record<TranslationKey, string> = {
   'hud.level': 'LV. {v}',
   'hud.levelProgress': 'LV. {v}   {a} / {b} XP',
   'hud.levelMax': 'LV. {v} — MAX',
-  'hud.score': 'SCORE {v}',
+  'hud.score': 'SCORE: {v}',
   'hud.kills': 'KILLS: {v}',
   'hud.bossName': 'OGRE BREAKER',
   'hud.bossIncoming': '⚔ BOSS!',

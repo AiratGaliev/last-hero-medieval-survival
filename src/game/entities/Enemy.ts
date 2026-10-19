@@ -181,6 +181,29 @@ export class Enemy extends Phaser.Physics.Arcade.Sprite {
     });
   }
 
+  /**
+   * Разворот спрайта по направлению движения — значение для `setFlipX`.
+   *
+   *  Весь пак Tiny Swords (`units/*` и `enemies/*`) нарисован «вправо»: правое
+   *  плечо/нос/щит/морда смотрят вправо, дуги замаха уходят вправо. Проверено
+   *  покадрово по всем десяти листам существ (goblin/thief/gnoll/skull/shaman/
+   *  pig-rider/bomb-fish/bear/minotaur/ogre-boss); контрольный признак —
+   *  `units/blue/lancer/lancer-right-attack.png`, где острие копья справа.
+   *  Поэтому флип только при движении влево — ровно как у героя
+   *  (GameScene) и пешек (PawnAI).
+   *
+   *  Раньше здесь стояло `facesRight ? vx < 0 : vx > 0` при `facesRight`
+   *  лишь у `bear`. Для остальных девяти срабатывала ветка `vx > 0`, т.е.
+   *  разворот ровно при движении вправо: существо пятилось спиной. Заметил
+   *  игрок, а не тест — правило TZ §C.2 было написано по неверной посылке.
+   *
+   *  `facesRight: false` в `EnemyDef` — явный выход для будущего листа,
+   *  нарисованного влево.
+   */
+  private faceDir(vx: number): boolean {
+    return this.def.facesRight === false ? vx > 0 : vx < 0;
+  }
+
   // ================= ВЫБОР ЦЕЛИ (TZ §A.5) =================
 
   /** Герой в 600 px → герой; иначе гарнизон в 900 px; иначе гражданский;
@@ -213,7 +236,7 @@ export class Enemy extends Phaser.Physics.Arcade.Sprite {
       const vx = (dx / d) * this.speed, vy = (dy / d) * this.speed;
       body.setVelocity(vx + this.knockX, vy + this.knockY);
       if (Math.abs(body.velocity.x) > 8) {
-        this.setFlipX(this.def.facesRight ? body.velocity.x < 0 : body.velocity.x > 0);
+        this.setFlipX(this.faceDir(body.velocity.x));
       }
       if (!this.lastAnim || this.lastAnim === `${this.kind}-idle`) this.playMove(true);
       return;
@@ -229,7 +252,7 @@ export class Enemy extends Phaser.Physics.Arcade.Sprite {
       const vx = (dx / dist) * this.speed, vy = (dy / dist) * this.speed;
       body.setVelocity(vx + this.knockX, vy + this.knockY);
       if (Math.abs(body.velocity.x) > 8) {
-        this.setFlipX(this.def.facesRight ? body.velocity.x < 0 : body.velocity.x > 0);
+        this.setFlipX(this.faceDir(body.velocity.x));
       }
       if (!this.lastAnim || this.lastAnim === `${this.kind}-idle`) this.playMove(true);
     } else {
@@ -246,7 +269,7 @@ export class Enemy extends Phaser.Physics.Arcade.Sprite {
         return;
       }
       body.setVelocity(0, 0);
-      this.setFlipX(this.def.facesRight ? dx < 0 : dx > 0);
+      this.setFlipX(this.faceDir(dx));
       // Пробившийся внутрь осады враг РАНИТ пешек, которых достиг (§E.4).
       // Без этого ветка SIEGE_WOUND_CAP (1/1/2/2/3) и весь второй канал убыли
       // населения (§E.3.1) были мёртвым кодом.
@@ -656,7 +679,7 @@ export class Enemy extends Phaser.Physics.Arcade.Sprite {
 
     // Поворот по направлению движения (с учётом ориентации спрайта)
     if (Math.abs(body.velocity.x) > 8) {
-      this.setFlipX(this.def.facesRight ? body.velocity.x < 0 : body.velocity.x > 0);
+      this.setFlipX(this.faceDir(body.velocity.x));
     }
 
     // Цикл движения: run/idle — только когда не играет однократная анимация

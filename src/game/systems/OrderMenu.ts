@@ -79,11 +79,14 @@ export class OrderMenu {
       const ix = wx + Math.cos(a) * R;
       const iy = wy + Math.sin(a) * R;
       const c = this.scene.add.container(ix, iy);
-      const color = e.disabled ? 0x6b5a3f : 0x3b6ea5;
-      const bg = this.scene.add.circle(0, 0, 34, color, e.disabled ? 0.7 : 0.95)
-        .setStrokeStyle(2, e.disabled ? 0x4a4136 : 0x9fc1e8);
+      // Круглая кнопка из набора Tiny Swords вместо нарисованного круга:
+      // радиальное меню — часть интерфейса, и оно должно выглядеть так же,
+      // как остальные кнопки игры.
+      const bg = this.scene.add.image(0, 0, e.disabled ? 'btn-small-red-round' : 'btn-small-blue-round')
+        .setDisplaySize(68, 68);
+      if (e.disabled) bg.setTint(0x8a8078);
       const label = this.scene.add.text(0, 0, e.label, {
-        fontFamily: FONT, fontSize: '10px', color: e.disabled ? '#a99a80' : '#ffffff',
+        fontFamily: FONT, fontSize: '12px', color: e.disabled ? '#e0d8c8' : '#ffffff',
         align: 'center', wordWrap: { width: 60 },
       }).setOrigin(0.5);
       c.add([bg, label]);
@@ -124,11 +127,11 @@ export class OrderMenu {
       const ix = wx + Math.cos(a) * R;
       const iy = wy + Math.sin(a) * R;
       const c = this.scene.add.container(ix, iy);
-      const color = e.disabled ? 0x6b5a3f : 0x3b6ea5;
-      const bg = this.scene.add.circle(0, 0, 34, color, e.disabled ? 0.7 : 0.95)
-        .setStrokeStyle(2, e.disabled ? 0x4a4136 : 0x9fc1e8);
+      const bg = this.scene.add.image(0, 0, e.disabled ? 'btn-small-red-round' : 'btn-small-blue-round')
+        .setDisplaySize(68, 68);
+      if (e.disabled) bg.setTint(0x8a8078);
       const label = this.scene.add.text(0, 0, e.label, {
-        fontFamily: FONT, fontSize: '10px', color: e.disabled ? '#a99a80' : '#ffffff',
+        fontFamily: FONT, fontSize: '12px', color: e.disabled ? '#e0d8c8' : '#ffffff',
         align: 'center', wordWrap: { width: 60 },
       }).setOrigin(0.5);
       c.add([bg, label]);
@@ -150,7 +153,7 @@ export class OrderMenu {
     const rbg = this.scene.add.rectangle(0, 0, 96, 26, 0x5a4327, 0.95)
       .setStrokeStyle(2, 0xd8c9a8).setInteractive({ useHandCursor: true });
     const rtxt = this.scene.add.text(0, 0, t('order.reset'), {
-      fontFamily: FONT, fontSize: '10px', color: '#ffe9b0',
+      fontFamily: FONT, fontSize: '12px', color: '#ffe9b0',
     }).setOrigin(0.5);
     rbg.on('pointerdown', () => {
       if (this.pawn) { this.pawn.order = null; this.pawn.orderTarget = null; }

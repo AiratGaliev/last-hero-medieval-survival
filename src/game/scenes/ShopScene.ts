@@ -2,7 +2,7 @@ import Phaser from 'phaser';
 import { FONT } from '../constants';
 import { audio } from '../systems/Audio';
 import { Cursor } from '../systems/Cursor';
-import { makeButton, makePanel, makeRibbon, fitTextWidth, type Button } from '../systems/Ui';
+import { makeButton, makePanel, makeRibbon, resizePanel, fitTextWidth, type Button } from '../systems/Ui';
 import { t, num, type TranslationKey } from '../../i18n';
 import { track } from '../../platform/analytics';
 import { fetchCatalog, purchaseSku, showcaseVisible, SKUS, type CatalogProduct } from '../../platform/payments';
@@ -189,6 +189,10 @@ export class ShopScene extends Phaser.Scene {
   private titleText: Phaser.GameObjects.Text | null = null;
   private crownText: Phaser.GameObjects.Text | null = null;
   private backBtn: Button | null = null;
+  /** Каркас панели: подгоняется под содержимое вкладки (см. fitShellToContent). */
+  private paper: Phaser.GameObjects.NineSlice | null = null;
+  private blocker: Phaser.GameObjects.Zone | null = null;
+  private ribbon: Phaser.GameObjects.Container | null = null;
   private tabButtons: Button[] = [];
   private contentButtons: Button[] = [];
   private contentBox: Phaser.GameObjects.Container | null = null;
@@ -235,12 +239,13 @@ export class ShopScene extends Phaser.Scene {
     dim.on('pointerdown', () => this.close());
 
     // ---------- Панель + невидимый блокиратор над ней (клик по бумаге гасится) ----------
-    makePanel(this, this.px, this.py, 'paper', this.pw, this.ph)
+    this.paper = makePanel(this, this.px, this.py, 'paper', this.pw, this.ph)
       .setDepth(101).setScrollFactor(0);
-    this.add.zone(this.px, this.py, this.pw, this.ph).setInteractive().setDepth(102);
+    this.blocker = this.add.zone(this.px, this.py, this.pw, this.ph)
+      .setInteractive().setDepth(102);
 
     // ---------- Заголовок вкладки — текст меняется вместе со вкладкой ----------
-    makeRibbon(this, this.px, top + 26, Math.min(400, this.pw - 80), 'ribbon-yellow', 50)
+    this.ribbon = makeRibbon(this, this.px, top + 26, Math.min(400, this.pw - 80), 'ribbon-yellow', 50)
       .setDepth(103).setScrollFactor(0);
     this.titleText = this.add.text(this.px, top + 26, t(TAB_TITLES[this.tab]), {
       fontFamily: FONT, fontSize: compact ? '18px' : '21px', color: '#ffe9c0',
@@ -248,7 +253,7 @@ export class ShopScene extends Phaser.Scene {
     }).setOrigin(0.5).setDepth(104).setScrollFactor(0);
 
     // ---------- Баланс крон в шапке — обновляется при каждой перерисовке ----------
-    this.crownText = this.add.text(this.px, top + 56, '', {
+    this.crownText = this.add.text(this.px, top + 64, '', {
       fontFamily: FONT, fontSize: '12px', color: '#6b4a1e', align: 'center',
     }).setOrigin(0.5).setDepth(104).setScrollFactor(0);
 
@@ -420,6 +425,48 @@ export class ShopScene extends Phaser.Scene {
       case 'pass': this.renderPassTab(box); break;
       case 'crowns': this.renderCrownsTab(box); break;
     }
+
+    // Панель подгоняется под содержимое вкладки. Раньше высота была
+    // фиксированной (92 % экрана), и на вкладке из пяти товаров под списком
+    // оставалось до 200 px пустой бумаги — витрина выглядела недоделанной.
+    // Пересборка контента после подгонки нужна один раз: строки стоят от
+    // верхнего края панели, который сдвинулся.
+    if (this.fitShellToContent()) this.renderTab();
+  }
+
+  /**
+   * Подгоняет высоту пергамента под фактическое содержимое вкладки.
+   *
+   * Возвращает true, если высота изменилась и содержимое нужно пересобрать.
+   */
+  private fitShellToContent(): boolean {
+    if (!this.contentBox || !this.paper) return false;
+    const maxH = Math.min(680, Math.floor(this.scale.height * 0.92));
+    const minH = Math.min(340, maxH);
+    const bounds = this.contentBox.getBounds();
+    // Нижний резерв: 20 px поля пергамента + место под кнопку «Назад».
+    const needed = Math.ceil(bounds.y + bounds.height) - (this.py - this.ph / 2) + 92;
+    const ph = Phaser.Math.Clamp(needed, minH, maxH);
+    if (Math.abs(ph - this.ph) < 2) return false;
+
+    this.ph = ph;
+    const top = this.py - ph / 2;
+    resizePanel(this.paper, this.pw, ph);
+    this.paper.setPosition(this.px, this.py);
+    this.blocker?.setPosition(this.px, this.py).setSize(this.pw, ph);
+    this.ribbon?.setPosition(this.px, top + 26);
+    this.titleText?.setPosition(this.px, top + 26);
+    this.crownText?.setPosition(this.px, top + 64);
+    // Кнопка «Назад» создаётся после первой отрисовки вкладки, поэтому на
+    // первом проходе её ещё нет — её положение поправит следующий проход.
+    if (this.backBtn) {
+      const backY = this.py + ph / 2 - 30;
+      this.backBtn.img.setPosition(this.px, backY);
+      this.backBtn.txt.setPosition(this.px, backY);
+      this.backBtn.hit.setPosition(this.px, backY);
+    }
+    this.renderTabs();
+    return true;
   }
 
   // ================================================================
@@ -428,7 +475,7 @@ export class ShopScene extends Phaser.Scene {
 
   private sectionTitle(box: Phaser.GameObjects.Container, cy: number, label: string): void {
     box.add(this.add.text(this.px - this.contentWidth() / 2 + 6, cy, label.toUpperCase(), {
-      fontFamily: FONT, fontSize: '11px', color: '#9a6a08',
+      fontFamily: FONT, fontSize: '12px', color: '#9a6a08',
       stroke: '#f7e7c3', strokeThickness: 3,
     }).setOrigin(0, 0.5));
   }
@@ -439,6 +486,14 @@ export class ShopScene extends Phaser.Scene {
     return this.add.text(x, y, s, {
       fontFamily: FONT, fontSize: `${size}px`, color,
     }).setOrigin(originX, 0.5);
+  }
+
+  /** Ширина строки в указанном кегле: замер на живой текстовой метке. */
+  private measure(s: string, size: number): number {
+    const probe = this.add.text(0, 0, s, { fontFamily: FONT, fontSize: `${size}px` });
+    const w = probe.width;
+    probe.destroy();
+    return w;
   }
 
   /**
@@ -506,14 +561,20 @@ export class ShopScene extends Phaser.Scene {
     const st = loadShop();
     const cw = this.contentWidth();
 
-    // Кошелёк
+    // Кошелёк. Плашка подгоняется под содержимое: раньше она была фиксированной
+// ширины 180 px, и при короткой сумме («0») монета с цифрой жались в левый
+// край, а справа оставалась пустая бумага.
     const chipY = this.contentTop() + 16;
+    const amount = num(st.balance);
+    const amountW = this.measure(amount, 15);
+    const chipW = Math.min(this.contentWidth(), amountW + 62);
+    const chipX = this.px - chipW / 2;
     const g = this.add.graphics();
-    g.fillStyle(0xf7e7c3, 1).fillRoundedRect(this.px - 90, chipY - 15, 180, 30, 9);
-    g.lineStyle(2, 0xc9a25e, 1).strokeRoundedRect(this.px - 90, chipY - 15, 180, 30, 9);
+    g.fillStyle(0xf7e7c3, 1).fillRoundedRect(chipX, chipY - 15, chipW, 30, 9);
+    g.lineStyle(2, 0xc9a25e, 1).strokeRoundedRect(chipX, chipY - 15, chipW, 30, 9);
     box.add(g);
-    box.add(this.add.image(this.px - 66, chipY, 'icon-coin').setDisplaySize(20, 20));
-    box.add(this.label(this.px + 12, chipY, num(st.balance), 15, '#7a4e0e'));
+    box.add(this.add.image(chipX + 17, chipY, 'icon-coin').setDisplaySize(20, 20));
+    box.add(this.label(chipX + 31 + amountW / 2, chipY, amount, 15, '#7a4e0e'));
 
     const items: ShopTabItem[] = SHOP_UPGRADES.map((u) => ({
       h: 56,
@@ -543,12 +604,15 @@ export class ShopScene extends Phaser.Scene {
     const name = this.label(textX, -10, u.name, dense ? 12 : 13, '#3b2410', 0);
     fitTextWidth(name, w - (dense ? 150 : 190), dense ? 12 : 13);
     row.add(name);
-    const desc = this.label(textX, 10, u.desc, dense ? 8 : 9, '#8a5b12', 0);
-    fitTextWidth(desc, w - (dense ? 150 : 190), dense ? 8 : 9, 7);
+    const desc = this.label(textX, 10, u.desc, dense ? 11 : 12, '#8a5b12', 0);
+    fitTextWidth(desc, w - (dense ? 150 : 190), dense ? 11 : 12, 7);
     row.add(desc);
 
-    const dots = this.label(w / 2 - (dense ? 100 : 120), -11, '●'.repeat(lvl) + '○'.repeat(3 - lvl), 10, '#b0803a');
-    row.add(dots);
+    // Уровень улучшения. Раньше here стояли точки «●●○» — в пиксельном
+    // шрифте на 10 px круг «○» неотличим от цифры «0», и покупатель видел
+    // «100» вместо уровня. Теперь это подпись «УР. N».
+    const lvlTag = this.label(w / 2 - (dense ? 104 : 124), -11, t('hud.level', { v: lvl }), 12, '#b0803a');
+    row.add(lvlTag);
 
     if (maxed) {
       row.add(this.label(w / 2 - 52, 1, t('shop.max'), 12, '#2e7d32'));
@@ -649,7 +713,7 @@ export class ShopScene extends Phaser.Scene {
       this, this.px + cw / 2 - (isCompact ? 55 : 66), titleY,
       isCompact ? 94 : 116, 34, refreshLabel,
       () => { void this.refreshDailyOffers(); },
-      'blue', isCompact ? 8 : 10,
+      'blue', isCompact ? 11 : 12,
       { disabled: !canRefresh, hitW: isCompact ? 104 : 124, hitH: 44, stopPropagation: true },
     );
     box.add([refreshButton.img, refreshButton.txt, refreshButton.hit]);
@@ -663,7 +727,7 @@ export class ShopScene extends Phaser.Scene {
         return def ? skinLabel(def) : id;
       });
       box.add(this.add.text(this.px, top + 31, labels.join(' · '), {
-        fontFamily: FONT, fontSize: '8px', color: '#6b4a1e',
+        fontFamily: FONT, fontSize: '12px', color: '#6b4a1e',
         align: 'center', wordWrap: { width: cw - 12 },
       }).setOrigin(0.5, 0.5));
       return top + 50;
@@ -754,7 +818,7 @@ export class ShopScene extends Phaser.Scene {
       } else {
         // Витрина скрыта: скин виден, цена — нет (§J.6.4)
         const locked = this.add.text(w / 2 - 12, 0, t('store.locked'), {
-          fontFamily: FONT, fontSize: '9px', color: '#8a5b12',
+          fontFamily: FONT, fontSize: '12px', color: '#8a5b12',
           align: 'right', wordWrap: { width: 130 },
         }).setOrigin(1, 0.5);
         row.add(locked);
@@ -840,7 +904,7 @@ export class ShopScene extends Phaser.Scene {
     g.fillStyle(0x3f9b46, 1).fillRoundedRect(-44, -16, 88, 32, 8);
     g.lineStyle(2, 0x2e7d32, 1).strokeRoundedRect(-44, -16, 88, 32, 8);
     const txt = this.add.text(0, 0, label, {
-      fontFamily: FONT, fontSize: '11px', color: '#ffffff',
+      fontFamily: FONT, fontSize: '12px', color: '#ffffff',
     }).setOrigin(0.5);
     fitTextWidth(txt, 78, 11, 8);
     c.add([g, txt]);
@@ -1135,8 +1199,8 @@ export class ShopScene extends Phaser.Scene {
     const name = this.label(-w / 2 + 14, -10, t(def.nameKey as TranslationKey), 12, '#3b2410', 0);
     fitTextWidth(name, nameMax, 12);
     row.add(name);
-    const desc = this.label(-w / 2 + 14, 9, t(def.descKey as TranslationKey), dense ? 8 : 9, '#8a5b12', 0);
-    fitTextWidth(desc, nameMax, dense ? 8 : 9, 7);
+    const desc = this.label(-w / 2 + 14, 9, t(def.descKey as TranslationKey), dense ? 11 : 12, '#8a5b12', 0);
+    fitTextWidth(desc, nameMax, dense ? 11 : 12, 7);
     row.add(desc);
 
     const pickW = dense ? 108 : 128;

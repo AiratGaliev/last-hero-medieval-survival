@@ -61,6 +61,13 @@ export class StatBar {
 
   private width: number;
   private ghostFrac = 1;
+  /**
+   * Множитель размера деталей полосы.
+   *
+   * Полосы в HUD масштабируются под экран (см. systems/HUD.ts): на большом
+   * мониторе иначе 19-пиксельная полоса HP превращается в ниточку.
+   */
+  private factor = 1;
 
   constructor(
     private scene: Phaser.Scene,
@@ -132,16 +139,46 @@ export class StatBar {
 
   private get innerLeft(): number {
     const geom = BAR_GEOM[this.size];
-    return -this.width / 2 + geom.cap + geom.inset;
+    return -this.width / 2 + geom.cap * this.factor + geom.inset * this.factor;
   }
 
   private get innerWidth(): number {
     const geom = BAR_GEOM[this.size];
-    return this.width - geom.cap * 2 - geom.inset * 2;
+    return this.width - geom.cap * 2 * this.factor - geom.inset * 2 * this.factor;
   }
 
   private get innerHeight(): number {
-    return BAR_GEOM[this.size].height - BAR_GEOM[this.size].inset * 2;
+    const geom = BAR_GEOM[this.size];
+    return (geom.height - geom.inset * 2) * this.factor;
+  }
+
+  /**
+   * Меняет множитель размера деталей полосы (высота, торцы, заливка).
+   *
+   * Ширина полосы при этом не меняется: её задаёт setWidth.
+   */
+  setFactor(f: number): void {
+    const next = Math.max(0.5, f);
+    if (Math.abs(next - this.factor) < 0.001) return;
+    // Доля заполнения считается по СТАРОЙ геометрии: innerWidth уже зависит
+    // от нового множителя, и после подмены порядка значение заполнения
+    // «переезжало» в ноль (полоса HP выглядела пустой).
+    const oldInner = this.innerWidth;
+    const frac = oldInner > 0 ? this.fill.displayWidth / oldInner : 1;
+    this.factor = next;
+    this.applyFrame();
+    this.setFraction(Math.min(1, frac));
+  }
+
+  /** Перекладывает детали рамки под текущую ширину и множитель. */
+  private applyFrame(): void {
+    const geom = BAR_GEOM[this.size];
+    const cap = geom.cap * this.factor;
+    const h = geom.height * this.factor;
+    this.frame[0].setPosition(-this.width / 2 + cap / 2, 0).setDisplaySize(cap, h);
+    this.frame[1].setDisplaySize(this.width - cap * 2, h);
+    this.frame[2].setPosition(this.width / 2 - cap / 2, 0).setDisplaySize(cap, h);
+    if (this.label) this.label.setY(-h / 2 - 9 * this.factor);
   }
 
   /** Доля заполнения 0…1. Цвет и призрак пересчитываются автоматически. */
@@ -180,14 +217,12 @@ export class StatBar {
   /** Меняет ширину полосы (например, при повороте экрана). */
   setWidth(w: number): void {
     const geom = BAR_GEOM[this.size];
-    const next = Math.max(geom.cap * 2 + 16, w);
+    const next = Math.max(geom.cap * 2 * this.factor + 16, w);
     if (next === this.width) return;
     const frac = this.innerWidth > 0 ? this.fill.displayWidth / this.innerWidth : 1;
     this.width = next;
 
-    this.frame[0].setPosition(-next / 2 + geom.cap / 2, 0);
-    this.frame[1].setDisplaySize(next - geom.cap * 2, geom.height);
-    this.frame[2].setPosition(next / 2 - geom.cap / 2, 0);
+    this.applyFrame();
     this.setFraction(frac);
   }
 

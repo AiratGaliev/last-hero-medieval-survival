@@ -1,8 +1,10 @@
 import Phaser from 'phaser';
 import { Cursor } from '../systems/Cursor';
-import { FONT } from '../constants';
+import { DEPTH, FONT } from '../constants';
 import { audio } from '../systems/Audio';
-import { makeButton, makePanel } from '../systems/Ui';
+import { makeButton, makePanel, makeRibbon, OverlayLayer } from '../systems/Ui';
+import { StatBar, FILL } from '../systems/Bar';
+import { outlineFor } from '../systems/Text';
 import { t } from '../../i18n';
 
 // ============ Пауза: меню + панель снаряжения (оружия/бонусы) ============
@@ -26,11 +28,26 @@ interface PauseData {
   onResume: () => void;
   onToggleMute: () => boolean;
   loadout?: LoadoutData;
+  /**
+   * Нижняя граница верхней полосы HUD (полоса босса) в экранных пикселях.
+   * Окно открывается поверх живой сцены, и её верхняя полоса стоит ровно на
+   * той же высоте, что и лента-заголовок.
+   */
+  topInset?: number;
 }
 
 export class PauseScene extends Phaser.Scene {
   private payload!: PauseData;
-  private muteLabel!: Phaser.GameObjects.Text;
+  /**
+   * Звуковой переключатель — кнопка, а не строчка текста.
+   *
+   * Раньше это был голый Text с подписью «звук вкл»: выглядел как подпись,
+   * а не как элемент управления, и на телефоне не давал ощущения, что его
+   * можно нажать. Теперь это та же кнопка пака, что и остальные.
+   */
+  private muteBtn!: ReturnType<typeof makeButton>;
+  /** Слой окна: всё содержимое выше HUD и его затемнения. */
+  private ui!: OverlayLayer;
 
   constructor() {
     super('Pause');
@@ -46,45 +63,62 @@ export class PauseScene extends Phaser.Scene {
     this.payload = payload;
     const { width, height } = this.scale;
     const compact = height < 560;
+    this.ui = new OverlayLayer(this, DEPTH.OVERLAY + 2);
 
-    this.add.rectangle(width / 2, height / 2, width + 40, height + 40, 0x0a0a12, 0.7)
-      .setScrollFactor(0);
+    this.ui.rectangle(width / 2, height / 2, width + 40, height + 40, 0x0a0a12, 0.7);
 
-    const title = this.add.text(width / 2, compact ? height * 0.1 : height * 0.11, t('pause.title'), {
-      fontFamily: FONT, fontSize: compact ? '32px' : '40px', color: '#ffe9b0',
-      stroke: '#5a2d05', strokeThickness: 9,
-    }).setOrigin(0.5).setScrollFactor(0);
+    // Заголовок — на ленте из пака, как в «Лавке», «Хронике», LevelUp и
+    // окне преемственности. Раньше он висел голым обведённым текстом на
+    // тёмном поле и выглядел как чужеродная вставка.
+    const titleFont = compact ? 30 : 40;
+    const ribbonH = Math.round(titleFont * 1.55);
+    // Лента не наезжает на верхнюю полосу HUD: полоса босса с именем стоит
+    // на той же высоте, и «ПАУЗА» ложилась прямо на неё.
+    const titleY = Math.max(
+      compact ? height * 0.1 : height * 0.11,
+      (payload.topInset ?? 0) + ribbonH / 2 + 12,
+    );
+    const ribbonW = Math.min(width - 40, Math.max(260, width * 0.34));
+    this.ui.add(makeRibbon(this, width / 2, titleY, ribbonW, 'ribbon-blue', ribbonH));
+
+    const title = this.ui.text(width / 2, titleY, t('pause.title'), {
+      fontFamily: FONT, fontSize: `${titleFont}px`, color: '#ffe9c0',
+      stroke: '#1b1008', strokeThickness: outlineFor(titleFont),
+    }).setOrigin(0.5);
     this.tweens.add({ targets: title, scale: { from: 0.7, to: 1 }, duration: 260, ease: 'Back.easeOut' });
+    const headerBottom = titleY + ribbonH / 2 + 8;
+
+    // Переключатель звука — сразу под лентой, а не под рядом кнопок.
+    //
+    // Раньше он стоял ПОД кнопками, и на телефоне налезал на кнопки
+    // ускорений HUD: «звук вкл» перекрывал «нечего ускорить». Здесь место
+    // зарезервировано лентой, и нижняя часть экрана остаётся свободной.
+    const soundY = titleY + ribbonH / 2 + 30;
+    this.buildSoundToggle(width / 2, soundY);
 
     // ---------- Панель снаряжения ----------
     const lo = payload.loadout;
-    const wide = width >= 980;
     if (lo && !compact) {
       const panelW = Math.min(470, width - 60);
       const rows = Math.max(lo.weapons.length, lo.passives.length, 1);
       const panelH = Math.min(430, 128 + rows * 28 + 44);
-      const panelY = compact ? height * 0.5 : height * 0.47;
-      const panelX = wide ? width / 2 - 130 : width / 2;
-      this.buildLoadoutPanel(panelX, panelY, panelW, panelH, lo);
-      // Кнопки справа от панели на широких экранах, иначе под панелью
-      if (wide) {
-        const bx = width / 2 + panelW / 2 + 90;
-        this.menuBtn(bx, height * 0.34, t('pause.resume'), 'blue', 250, 58, () => this.resume());
-        this.menuBtn(bx, height * 0.50, t('pause.restart'), 'red', 250, 58, () => this.restart());
-        this.menuBtn(bx, height * 0.66, t('pause.toMenu'), 'blue', 250, 50, () => this.toMenu());
-        this.buildSoundToggle(bx, height * 0.80);
-      } else {
-        this.menuBtn(width / 2, height * 0.78, t('pause.resume'), 'blue', 300, 56, () => this.resume());
-        this.menuBtn(width / 2, height * 0.875, t('pause.restart'), 'red', 240, 46, () => this.restart());
-        this.menuBtn(width / 2 + 96, height - 32, t('pause.toMenu'), 'blue', 180, 40, () => this.toMenu());
-        this.buildSoundToggle(width / 2 - 118, height - 32);
-      }
+      // На широком экране панель стоит по центру сверху, а кнопки — в ряд под
+      // ней. Раньше панель и кнопки стояли рядом, и между ними зияла пустота.
+      const by = height - (compact ? 120 : 96);
+      // Панель центрируется между шапкой и кнопками, но не наезжает на шапку:
+      // после сдвига ленты вниз (полоса босса) высокая панель могла залезть
+      // под заголовок.
+      const panelY = Math.max(headerBottom + panelH / 2 + 12, (headerBottom + (by - 40)) / 2);
+      this.buildLoadoutPanel(width / 2, panelY, panelW, panelH, lo);
+      const bw = Math.min(240, (width - 80) / 3 - 16);
+      this.menuBtn(width / 2 - (bw + 16), by, t('pause.resume'), 'blue', bw, 58, () => this.resume());
+      this.menuBtn(width / 2, by, t('pause.restart'), 'red', bw, 58, () => this.restart());
+      this.menuBtn(width / 2 + (bw + 16), by, t('pause.toMenu'), 'blue', bw, 58, () => this.toMenu());
     } else {
       // Компактный ландшафт / без данных — прежняя вертикальная раскладка
       this.menuBtn(width / 2, height * 0.42, t('pause.resume'), 'blue', 300, 66, () => this.resume());
       this.menuBtn(width / 2, height * 0.58, t('pause.restart'), 'red', 300, 66, () => this.restart());
       this.menuBtn(width / 2, height * 0.74, t('pause.toMenu'), 'blue', 220, 54, () => this.toMenu());
-      this.buildSoundToggle(width / 2, height * 0.87);
     }
 
     // Esc — продолжить
@@ -119,75 +153,105 @@ export class PauseScene extends Phaser.Scene {
   // ================================================================
 
   private buildLoadoutPanel(cx: number, cy: number, w: number, h: number, lo: LoadoutData): void {
-    const paper = makePanel(this, cx, cy, 'paper', w, h);
-    paper.setScrollFactor(0);
+    this.ui.add(makePanel(this, cx, cy, 'paper', w, h));
     const top = cy - h / 2;
 
     // Герой + HP
-    this.add.text(cx, top + 26, `${lo.hero.name.toUpperCase()}  ·  ${t('hud.level', { v: lo.stats.level })}`, {
+    this.ui.text(cx, top + 26, `${lo.hero.name.toUpperCase()}  ·  ${t('hud.level', { v: lo.stats.level })}`, {
       fontFamily: FONT, fontSize: '15px', color: '#3b2410',
-    }).setOrigin(0.5).setScrollFactor(0);
+    }).setOrigin(0.5);
     const hpFrac = Phaser.Math.Clamp(lo.hero.hp / Math.max(1, lo.hero.maxHp), 0, 1);
     const barW = Math.min(200, w - 80);
-    this.add.rectangle(cx, top + 46, barW, 12, 0xc9a25e, 1).setOrigin(0.5).setScrollFactor(0);
-    this.add.rectangle(cx - (barW - 4) / 2, top + 46, (barW - 4) * hpFrac, 8, hpFrac > 0.5 ? 0x53b44a : hpFrac > 0.25 ? 0xe0a030 : 0xd03028)
-      .setOrigin(0, 0.5).setScrollFactor(0);
-    this.add.text(cx, top + 46, `${lo.hero.hp}/${lo.hero.maxHp}`, {
-      fontFamily: FONT, fontSize: '9px', color: '#ffffff', stroke: '#3b2410', strokeThickness: 3,
-    }).setOrigin(0.5).setScrollFactor(0);
+    // Полоса HP — из набора ui/bars, как в бою, а не зелёный прямоугольник.
+    const hpBar = new StatBar(this, cx, top + 48, barW, 'small', {
+      fill: FILL.green,
+      fillLow: FILL.yellow,
+      fillCritical: FILL.red,
+    });
+    hpBar.setFraction(hpFrac);
+    this.ui.add(hpBar.root);
+    this.ui.text(cx, top + 48, `${lo.hero.hp}/${lo.hero.maxHp}`, {
+      fontFamily: FONT, fontSize: '12px', color: '#ffffff', stroke: '#3b2410', strokeThickness: 3,
+    }).setOrigin(0.5);
 
     // Колонки
     const colW = (w - 60) / 2;
     const colL = cx - colW / 2 - 8;
     const colR = cx + colW / 2 + 8;
-    this.add.text(colL, top + 78, t('pause.weapons'), {
-      fontFamily: FONT, fontSize: '11px', color: '#8a5b12',
-    }).setOrigin(0.5).setScrollFactor(0);
-    this.add.text(colR, top + 78, t('pause.bonuses'), {
-      fontFamily: FONT, fontSize: '11px', color: '#8a5b12',
-    }).setOrigin(0.5).setScrollFactor(0);
+    this.ui.text(colL, top + 78, t('pause.weapons'), {
+      fontFamily: FONT, fontSize: '12px', color: '#8a5b12',
+    }).setOrigin(0.5);
+    this.ui.text(colR, top + 78, t('pause.bonuses'), {
+      fontFamily: FONT, fontSize: '12px', color: '#8a5b12',
+    }).setOrigin(0.5);
 
     const entry = (x: number, y: number, e: LoadoutEntry, maxed: boolean) => {
-      const ic = this.add.image(x - colW / 2 + 14, y, e.icon).setDisplaySize(22, 22).setScrollFactor(0);
-      const nameTxt = this.add.text(x - colW / 2 + 32, y, e.name, {
-        fontFamily: FONT, fontSize: '10px', color: e.evolved ? '#9a6a08' : '#3b2410',
-      }).setOrigin(0, 0.5).setScrollFactor(0);
+      const ic = this.ui.image(x - colW / 2 + 14, y, e.icon).setDisplaySize(22, 22);
+      const nameTxt = this.ui.text(x - colW / 2 + 32, y, e.name, {
+        fontFamily: FONT, fontSize: '12px', color: e.evolved ? '#9a6a08' : '#3b2410',
+      }).setOrigin(0, 0.5);
       if (e.evolved) {
         ic.setTint(0xffe9a0);
         nameTxt.setText(`★ ${e.name}`);
       }
-      this.add.text(x + colW / 2 - 10, y, e.evolved ? '★' : `${e.level}/5`, {
-        fontFamily: FONT, fontSize: e.evolved ? 12 : 10,
+      this.ui.text(x + colW / 2 - 10, y, e.evolved ? '★' : `${e.level}/5`, {
+        fontFamily: FONT, fontSize: e.evolved ? 12 : 11,
         color: e.evolved ? '#b8860b' : maxed ? '#2e7d32' : '#b0803a',
         stroke: e.evolved ? '#ffe9b0' : maxed ? '#dcecc9' : '#f7e7c3', strokeThickness: 3,
-      }).setOrigin(1, 0.5).setScrollFactor(0);
+      }).setOrigin(1, 0.5);
     };
     lo.weapons.slice(0, 7).forEach((e, i) => entry(colL, top + 100 + i * 28, e, e.level >= 5));
     lo.passives.slice(0, 8).forEach((e, i) => entry(colR, top + 100 + i * 28, e, e.level >= 5));
 
-    // Статистика матча внизу панели
+    // Статистика матча внизу панели.
+    // Значки — из набора, а не эмодзи: в пиксельном шрифте нет глифов
+    // ⏱/🪙, и на экране оставался пустой квадрат вместо часов и монеты.
+    // Часов в наборе нет, поэтому время идёт текстом, а убийствам и золоту
+    // достаются настоящие иконки.
     const mm = Math.floor(lo.stats.elapsed / 60);
     const ss = Math.floor(lo.stats.elapsed % 60).toString().padStart(2, '0');
-    this.add.text(cx, top + h - 24, `⏱ ${mm}:${ss}   ⚔ ${lo.stats.kills}   🪙 ${lo.stats.gold}`, {
+    const statY = top + h - 24;
+    const ICON = 13;
+    const GAP = 14;
+    const probe = this.ui.text(0, 0, '0000000', {
       fontFamily: FONT, fontSize: '12px', color: '#7a4e0e',
-    }).setOrigin(0.5).setScrollFactor(0);
+    }).setVisible(false);
+    const digits = probe.width;
+    probe.destroy();
+    // Часы без значка: время и так читается, лишний глиф только шумит.
+    const rows: Array<[string | null, string]> = [
+      [null, `${mm}:${ss}`],
+      ['icon-knives', `${lo.stats.kills}`],
+      ['icon-coin', `${lo.stats.gold}`],
+    ];
+    let sx = cx - (rows.length * (ICON + 5 + digits) + GAP + digits) / 2 + digits / 2;
+    for (const [icon, value] of rows) {
+      if (icon) {
+        this.ui.image(sx - digits / 2 - 5 - ICON / 2, statY, icon).setDisplaySize(ICON, ICON);
+      }
+      this.ui.text(sx, statY, value, {
+        fontFamily: FONT, fontSize: '12px', color: '#7a4e0e',
+      }).setOrigin(0.5);
+      sx += digits + GAP + (icon ? ICON + 5 : 0);
+    }
   }
 
+  /**
+   * Переключатель звука — кнопка пака с подписью состояния.
+   *
+   * Значок динамика (🔇) в пиксельном шрифте не рисовался — в наборе
+   * нет эмодзи, и на экране оставался пустой квадрат. Поэтому состояние
+   * передаётся словами, а сам переключатель сделан той же кнопкой, что и
+   * остальные: раньше это была строчка текста, и в неё нельзя было
+   * целиться на телефоне.
+   */
   private buildSoundToggle(x: number, y: number): void {
-    this.muteLabel = this.add.text(x, y, '', {
-      fontFamily: FONT, fontSize: '13px', color: '#cbb389',
-    }).setOrigin(1, 0.5).setScrollFactor(0).setInteractive({ useHandCursor: true });
-    this.muteLabel.on('pointerdown', () => {
+    const b = makeButton(this, x, y, 190, 38, '', () => {
       this.payload.onToggleMute();
       this.updateMuteLabel();
-    });
-    const icon = this.add.text(x + 6, y, '🔇', {
-      fontFamily: FONT, fontSize: '16px', color: '#cbb389',
-    }).setOrigin(0.5).setScrollFactor(0).setInteractive({ useHandCursor: true });
-    icon.on('pointerdown', () => {
-      this.payload.onToggleMute();
-      this.updateMuteLabel();
-    });
+    }, 'blue', 13, { hitW: 200, hitH: 46 });
+    this.ui.addAll([b.img, b.txt, b.hit]);
+    this.muteBtn = b;
     this.updateMuteLabel();
   }
 
@@ -197,10 +261,11 @@ export class PauseScene extends Phaser.Scene {
   };
 
   private updateMuteLabel(): void {
-    this.muteLabel.setText(audio.muted ? t('hud.soundOff') : t('hud.soundOn'));
+    this.muteBtn?.setLabel(audio.muted ? t('hud.soundOff') : t('hud.soundOn'));
   }
 
   private menuBtn(x: number, y: number, label: string, variant: 'blue' | 'red', w: number, h: number, onClick: () => void): void {
-    makeButton(this, x, y, w, h, label, onClick, variant, w > 250 ? 20 : 16);
+    const b = makeButton(this, x, y, w, h, label, onClick, variant, w > 250 ? 20 : 16);
+    this.ui.addAll([b.img, b.txt, b.hit]);
   }
 }

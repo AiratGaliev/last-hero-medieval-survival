@@ -7,6 +7,7 @@ import './styles.css';
 import Phaser from 'phaser';
 import type { createGame as CreateGame } from './game/config';
 import { audio } from './game/systems/Audio';
+import { installTextDefaults } from './game/systems/Text';
 import { initSdk, isOnYandex, getSdk } from './platform/sdk';
 import { initPayments } from './platform/payments';
 import { initAnalytics, exportBuffer } from './platform/analytics';
@@ -29,14 +30,32 @@ declare global {
 
 /**
  * Ждём загрузку пиксельного шрифта: Phaser рисует им весь UI, и без этого
- * первый кадр уезжает на системный шрифт. Не блокируем запуск дольше 1.2 с.
+ * первый кадр уезжает на системный шрифт. Не блокируем запуск дольше 2.5 с.
+ *
+ * Шрифт нарезан на три подмножества (латиница, кириллица, латиница-расширение),
+ * и `document.fonts.load(font)` без образца текста подгружает только то
+ * подмножество, в которое попал пробел, — то есть латиницу. Кириллица
+ * оставалась незагруженной: Phaser мерял русские строки системным
+ * моноширинным шрифтом (уже, чем пиксельный), и подписи вылезали за
+ * кнопки, а логотип не влезал в экран телефона. Поэтому образец текста
+ * должен покрывать все три диапазона.
  */
+const FONT_SAMPLE =
+  'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789' +
+  'АБВГДЕЖЗИЙКЛМНОПРСТУФХЦЧШЩЪЫЬЭЮЯабвгдежзийклмнопрстуфхцчшщъыьэюя' +
+  'ĀāĂăŚśŹźŽžŸ€«»—…№';
+
 async function waitForFont(): Promise<void> {
   try {
-    await Promise.race([
-      document.fonts.load('16px "Pixelify Sans"'),
-      new Promise((resolve) => setTimeout(resolve, 1200)),
-    ]);
+    if (typeof document !== 'undefined' && document.fonts) {
+      await Promise.race([
+        Promise.all([
+          document.fonts.load('16px "Pixelify Sans"', FONT_SAMPLE),
+          document.fonts.load('700 16px "Pixelify Sans"', FONT_SAMPLE),
+        ]).then(() => document.fonts.ready),
+        new Promise((resolve) => setTimeout(resolve, 2500)),
+      ]);
+    }
   } catch {
     // document.fonts недоступен — Phaser откатится на fallback из FONT
   }
@@ -162,6 +181,11 @@ const boot = async (): Promise<void> => {
   if (isOnYandex()) await loadPlayer();
 
   await waitForFont();
+
+  // Правила типографики (шрифт игры, целый кегль, двойная растеризация)
+  // включаются до создания сцен: иначе первые экраны нарисовались бы
+  // системным шрифтом и остались бы такими до перезапуска.
+  installTextDefaults();
 
   const { createGame } = await import('./game/config');
   start(createGame);

@@ -61,3 +61,13 @@ tool-results/
 /upload/
 /bun.lock
 /test-results/
+
+# Локальный инструментарий разработчика (18 скриптов QA и отладки в tools/).
+# Папка НЕ нужна ни игре, ни сборке, ни CI: `npm run check`, `build`, `build:yg`
+# и `test:e2e` её не зовут. Скрипты запускаются вручную из корня:
+#   node tools/audit-ui.mjs          сверка текстур с загрузками BootScene
+#   node tools/check-layout.mjs      наложения блоков окна преемственности
+#   node tools/probe-enemy-facing.mjs ориентация существ против движения
+# Правило ESLint для tools/**/*.mjs в eslint.config.js остаётся: без папки глоб
+# просто ничего не находит, с ней — файлы линтуются.
+/tools/

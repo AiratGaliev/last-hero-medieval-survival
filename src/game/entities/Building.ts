@@ -1,5 +1,5 @@
 import Phaser from 'phaser';
-import { DEPTH, SIEGE } from '../constants';
+import { DEPTH, SIEGE, FONT } from '../constants';
 import { BUILDING_PLANS, type BuildingKind } from '../data';
 
 // ============ Построенное сооружение (TZ §B.4, §E.4, §G) ============
@@ -211,7 +211,7 @@ export class Building extends Phaser.GameObjects.Image {
     if (!this.plan.slots) return;
     if (!this.slotLabel || !this.slotLabel.active) {
       this.slotLabel = this.scene_.add.text(this.x, this.y - 70 * this.scaleX, '0/10', {
-        fontFamily: 'monospace', fontSize: '13px', color: '#ffe9b0',
+        fontFamily: FONT, fontSize: '13px', color: '#ffe9b0',
         stroke: '#1a0f08', strokeThickness: 3,
       }).setOrigin(0.5).setDepth(DEPTH.HPBAR);
     }

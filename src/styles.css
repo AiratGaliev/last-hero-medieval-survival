@@ -85,12 +85,20 @@ body {
 /* Канвас Phaser. В режиме Scale.RESIZE он сам подстраивается под контейнер,
    но на всякий случай фиксируем блочную раскладку без полей-отступов.
    !important обязателен: Phaser выставляет useHandCursor инлайновым
-   стилем, и без этого системная стрелка перебивала бы нашу. */
+   стилем, и без этого системная стрелка перебивала бы нашу.
+
+   image-rendering: pixelated — игра пиксельная (Tiny Swords, pixelArt
+   в Phaser), а браузер по умолчанию сглаживает канвас при выводе на
+   экран с devicePixelRatio > 1. На телефоне (DPR 2–3) весь интерфейс
+   и подписи превращались в мыло. Ближайший сосед сохраняет пиксельную
+   сетку: глифы шрифта и спрайты остаются чёткими. */
 #game canvas {
   display: block;
   width: 100%;
   height: 100%;
   cursor: var(--cursor-default) !important;
+  image-rendering: pixelated;
+  image-rendering: crisp-edges;
 }
 
 /* Состояния курсора переключает systems/Cursor.ts */

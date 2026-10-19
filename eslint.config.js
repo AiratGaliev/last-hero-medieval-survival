@@ -46,10 +46,13 @@ export default tseslint.config(
 
   // ---------- Playwright-диагностика с кодом в двух контекстах ----------
   {
-    // shop-probe.mjs исполняется в Node, но колбэки page.evaluate/addInitScript
-    // сериализуются и выполняются браузером. Объявляем оба набора globals
-    // только для этого диагностического скрипта, не ослабляя lint приложения.
-    files: ['shop-probe.mjs'],
+    // Скрипты QA исполняются в Node, но колбэки page.evaluate сериализуются
+    // и выполняются браузером. Объявляем оба набора globals, не ослабляя
+    // lint приложения.
+    // `tools/` лежит вне git (см. .gitignore) и нужен только локально.
+    // Глоб без папки ничего не находит и ошибкой не считается — проверено,
+    // `npm run lint` зелёный и при наличии папки, и без неё.
+    files: ['shop-probe.mjs', 'tools/**/*.mjs'],
     languageOptions: {
       globals: {
         ...globals.node,

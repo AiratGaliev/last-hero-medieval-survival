@@ -329,7 +329,14 @@ export interface EnemyDef {
   groundY: number;
   /** Высота головы от центра кадра — по ней рисуется HP-бар крупных */
   headOffset?: number;
-  /** true — спрайт смотрит вправо (пещерные существа); остальные смотрят влево */
+  /**
+   * Ориентация листа: `false` — спрайт нарисован лицом влево.
+   *
+   *  По умолчанию (поле не задано) все существа считаются смотрящими вправо —
+   *  так нарисован весь пак Tiny Swords, включая `enemies/*`. Ставить `true`
+   *  смысла нет; флаг оставлен как явная точка отказа для будущего листа,
+   *  нарисованного влево (Enemy.faceDir).
+   */
   facesRight?: boolean;
   hp: number;
   speed: number;
@@ -398,9 +405,10 @@ export const ENEMIES: Record<EnemyKind, EnemyDef> = {
     explodeDmg: 24, explodeRadius: 150,
   },
   bear: {
-    // Пещерный медведь (элита 5:00). Единственный из пула смотрит ВПРАВО
+    // Пещерный медведь (элита 5:00). `facesRight` не нужен: лист, как и все
+    // остальные существа, нарисован вправо (дефолт Enemy.faceDir)
     kind: 'bear', name: t('enemy.bear.name'), frameW: 256, scale: 1.1,
-    body: { cx: 131, cy: 150, r: 34 }, groundY: 178, headOffset: 49, facesRight: true,
+    body: { cx: 131, cy: 150, r: 34 }, groundY: 178, headOffset: 49,
     hp: 400, speed: 84, damage: 24, xp: 25, gem: 'gem-red', isElite: true,
   },
   minotaur: {

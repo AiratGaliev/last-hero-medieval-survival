@@ -1,11 +1,12 @@
 import Phaser from 'phaser';
 import { Cursor } from '../systems/Cursor';
-import { FONT } from '../constants';
-import { makeRibbon } from '../systems/Ui';
+import { DEPTH, FONT } from '../constants';
+import { makeRibbon, OverlayLayer } from '../systems/Ui';
 import { makeCornerFrame, type CornerFrame } from '../systems/Corners';
 import type { UpgradeCard } from '../data';
 import { audio } from '../systems/Audio';
 import { makePanel } from '../systems/Ui';
+import { outlineFor, shrinkToHeight, FONT_FLOOR } from '../systems/Text';
 import { t } from '../../i18n';
 
 // ============ Выбор улучшения при левел-апе ============
@@ -13,6 +14,14 @@ import { t } from '../../i18n';
 interface LevelUpData {
   getChoices: () => UpgradeCard[];
   onChoose: (card: UpgradeCard) => boolean; // true = готово
+  /**
+   * Нижняя граница верхней полосы HUD (полоса босса) в экранных пикселях.
+   *
+   * Окно открывается поверх живой сцены, и её верхняя полоса стоит ровно на
+   * той же высоте, что и заголовок окна. Без этого поля лента «НОВЫЙ
+   * УРОВЕНЬ!» ложилась прямо на имя босса и на его полосу здоровья.
+   */
+  topInset?: number;
 }
 
 interface CardUi {
@@ -40,8 +49,13 @@ export class LevelUpScene extends Phaser.Scene {
   private vw = 0;
   private vh = 0;
   private overlayZoom = 1;
+  /** Слой окна выше HUD (см. systems/Ui.ts OverlayLayer). */
+  private ui!: OverlayLayer;
   /** Клавиатурная навигация: подсвеченная карточка (−1 = ничего) */
   private hoverIdx = -1;
+  /** Центр ленты-заголовка и её высота: от них считается блок карточек. */
+  private titleY = 0;
+  private ribbonH = 0;
 
   constructor() {
     super('LevelUp');
@@ -74,19 +88,45 @@ export class LevelUpScene extends Phaser.Scene {
     const width = this.vw;
     const height = this.vh;
 
-    // Затемнение — на весь видимый экран
-    this.add.rectangle(width / 2, height / 2, width / this.overlayZoom + 80, height / this.overlayZoom + 80, 0x0a0a12, 0.72);
+    // Затемнение — на весь видимый экран.
+    //
+    // Слой лежит ВЫШЕ HUD (DEPTH.HUD): окно левел-апа запускается поверх
+    // игровой сцены, и раньше затемнение ложилось под счётчики, полосу
+    // опыта и иконки оружия — они светились сквозь «выбор карты».
+    this.ui = new OverlayLayer(this, DEPTH.OVERLAY + 2);
+    this.ui.rectangle(width / 2, height / 2, width / this.overlayZoom + 80, height / this.overlayZoom + 80, 0x0a0a12, 0.72);
 
     // Заголовок на ленте. Лента не даёт заголовку висеть в пустом
     // тёмном поле и повторяет стиль остальных экранов.
-    const ribbonW = Math.min(width - 48, 400);
-    const ribbonH = Math.min(52, height * 0.09);
-    const ribbon = makeRibbon(this, width / 2, height * 0.1, ribbonW, 'ribbon-yellow', ribbonH)
-      .setDepth(1);
-    const title = this.add.text(width / 2, height * 0.1, t('levelup.title'), {
-      fontFamily: FONT, fontSize: Math.min(30, height * 0.046) + 'px', color: '#5a2d05',
-      stroke: '#ffe9b0', strokeThickness: 5,
-    }).setOrigin(0.5).setDepth(2);
+    //
+    // Высота ленты считается от кегля заголовка: лента из пака — это
+    // баннер с изгибами по краям, и надпись должна помещаться в её
+    // «живую» часть, а не наезжать на изгибы.
+    const titleFont = Math.round(Math.min(30, Math.max(20, height * 0.046)));
+    const ribbonH = Math.round(titleFont * 2.3);
+    // Заголовок не наезжает на верхнюю полосу HUD: полоса босса с именем
+    // стоит на той же высоте, и лента ложилась прямо на неё. Сцена передаёт
+    // её нижнюю границу; если полосы нет — заголовок идёт по обычной
+    // десятой части высоты.
+    const titleY = Math.max(height * 0.1, (payload.topInset ?? 0) + ribbonH / 2 + 12);
+    this.titleY = titleY;
+    this.ribbonH = ribbonH;
+    // ВАЖНО: порядок добавления. В контейнере слоя `setDepth` не сортирует
+    // детей — Phaser рисует их в порядке добавления. Лента идёт ПЕРВОЙ,
+    // иначе она ложится поверх заголовка и закрывает его целиком.
+    const probe = this.ui.text(width / 2, 0, t('levelup.title'), {
+      fontFamily: FONT, fontSize: `${titleFont}px`, color: '#5a2d05',
+      stroke: '#ffe9b0', strokeThickness: outlineFor(titleFont),
+    }).setOrigin(0.5).setVisible(false);
+    const ribbonW = Math.min(width - 40, Math.max(220, probe.width + 90));
+    probe.destroy();
+    const ribbon = this.ui.add(
+      makeRibbon(this, width / 2, titleY, ribbonW, 'ribbon-yellow', ribbonH),
+    );
+    const title = this.ui.text(width / 2, titleY, t('levelup.title'), {
+      fontFamily: FONT, fontSize: `${titleFont}px`, color: '#5a2d05',
+      stroke: '#ffe9b0', strokeThickness: outlineFor(titleFont),
+    }).setOrigin(0.5);
     this.tweens.add({
       targets: title,
       scale: { from: 0.6, to: 1 },
@@ -108,11 +148,12 @@ export class LevelUpScene extends Phaser.Scene {
       ease: 'Back.easeOut',
     });
 
-    this.panel = this.add.container(0, 0);
+    this.panel = this.ui.group(0, 0);
     this.renderCards();
 
-    this.add.text(width / 2, height - 18, t('levelup.hint'), {
+    this.ui.text(width / 2, height - 18, t('levelup.hint'), {
       fontFamily: FONT, fontSize: '13px', color: '#cbb389',
+      stroke: '#1b1008', strokeThickness: 3,
     }).setOrigin(0.5);
 
     // Клавиатурная навигация: 1/2/3 — мгновенный выбор, стрелки — подсветка,
@@ -159,23 +200,37 @@ export class LevelUpScene extends Phaser.Scene {
 
     const cardW = vertical ? Math.min(300, width - 48) : Math.min(280, (width - 80) / 3);
     const gap = vertical ? 20 : 24;
-    const cardH = vertical ? cardW * 0.66 : cardW * 0.82;
-    const totalH = vertical ? choices.length * (cardH + gap) : cardH;
-    // Сдвиг вниз, чтобы карточки не наезжали на заголовок
-    // (44 = запас под glow-рамку эволюционной карточки +12px)
-    const vShift = vertical ? 44 : 0;
+    // Блок карточек начинается ПОД лентой-заголовком: лента опускается ниже
+    // полосы босса, и на телефоне старая привязка к середине экрана уводила
+    // первую карточку прямо под ленту.
+    const blockTop = this.titleY + this.ribbonH / 2 + 24;
+    const blockRoom = height - blockTop - 20;
+    const wantedH = vertical ? cardW * 0.66 : cardW * 0.82;
+    const cardH = Math.round(Math.min(
+      wantedH,
+      Math.max(120, (blockRoom - (choices.length - 1) * gap) / choices.length),
+    ));
+    const totalH = choices.length * cardH + (choices.length - 1) * gap;
 
     choices.forEach((card, i) => {
       const x = vertical
         ? width / 2
         : width / 2 - (choices.length * (cardW + gap) - gap) / 2 + i * (cardW + gap) + cardW / 2;
       const y = vertical
-        ? height * 0.5 - totalH / 2 + vShift + i * (cardH + gap) + cardH / 2
+        ? blockTop + totalH / 2 - (totalH - cardH) / 2 + i * (cardH + gap)
         : height * 0.52;
 
-      const container = this.add.container(x, y);
+      const container = this.ui.group(x, y);
       const isEvo = card.kind === 'weapon-evolve';
-      const paper = makePanel(this, 0, 0, isEvo ? 'paper' : card.kind === 'weapon-new' || card.kind === 'passive' ? 'paper' : 'paperSpecial', cardW, cardH);
+      // ВСЕ карточки — кремовый пергамент, как строки «Лавки».
+      //
+      // Раньше карточки лечения и золота брали `paperSpecial` — тёмно-синий
+      // лист, и в одном ряду оказывались две разные фактуры. На скриншоте
+      // это читалось как чужеродная тёмная плита, а её тёмная кромка
+      // вылезала из-под соседней карточки отдельной тёмной полосой.
+      // Отличие карточек теперь держит тонировка эволюции и угловая рамка,
+      // а не смена материала.
+      const paper = makePanel(this, 0, 0, 'paper', cardW, cardH);
       container.add(paper);
 
       // Эволюция: пульсирующее золотое сияние за карточкой + искры
@@ -216,8 +271,8 @@ export class LevelUpScene extends Phaser.Scene {
         }
       }
 
-      const icon = this.add.image(0, -cardH * 0.32, card.icon)
-        .setDisplaySize(58, 58);
+      const icon = this.add.image(0, -cardH * 0.30, card.icon)
+        .setDisplaySize(Math.min(72, cardH * 0.32), Math.min(72, cardH * 0.32));
       if (isEvo) icon.setTint(0xffe9a0);
       container.add(icon);
       // Эволюция: иконка «дышит» золотом
@@ -232,21 +287,30 @@ export class LevelUpScene extends Phaser.Scene {
         });
       }
 
-      const title = this.add.text(0, -cardH * 0.08, card.title, {
-        fontFamily: FONT, fontSize: '15px', color: '#3b2410',
+      // Раскладка карточки — по полосам, а не «как получится»: полосы
+      // считаются от высоты карточки, поэтому одинаково работают и на
+      // узкой карточке телефона, и на широкой десктопной.
+      const nameY = -cardH * 0.05;
+      const subY = cardH * 0.10;
+      const descTop = cardH * 0.18;
+      const innerBottom = cardH / 2 - 8;
+      const dotsMinY = cardH * 0.40;
+
+      const title = this.add.text(0, nameY, card.title, {
+        fontFamily: FONT, fontSize: '16px', color: '#3b2410',
         align: 'center', wordWrap: { width: cardW - 50 },
       }).setOrigin(0.5, 0.5);
       container.add(title);
 
-      const subtitle = this.add.text(0, cardH * 0.08, card.subtitle, {
+      const subtitle = this.add.text(0, subY, card.subtitle, {
         fontFamily: FONT, fontSize: isEvo ? '13px' : '12px',
         color: isEvo ? '#9a6a08' : '#8a5b12',
         align: 'center',
       }).setOrigin(0.5, 0.5);
       container.add(subtitle);
 
-      const desc = this.add.text(0, cardH * 0.22, card.desc, {
-        fontFamily: FONT, fontSize: '11px', color: '#57431f',
+      const desc = this.add.text(0, descTop, card.desc, {
+        fontFamily: FONT, fontSize: '12px', color: '#57431f',
         align: 'center', wordWrap: { width: cardW - 56 },
       }).setOrigin(0.5, 0);
       container.add(desc);
@@ -257,7 +321,20 @@ export class LevelUpScene extends Phaser.Scene {
         : card.levelTo !== undefined && card.levelTo <= 5 && card.kind !== 'heal' && card.kind !== 'gold'
           ? '●'.repeat(card.levelTo) + '○'.repeat(Math.max(0, 5 - card.levelTo))
           : '';
-      const levelDots = this.add.text(0, cardH * 0.38, dots, {
+
+      // Описание и точки уровня делят нижнюю часть карточки.
+      //
+      // Точки стоят на своей высоте, описание занимает всё, что осталось
+      // до них, и ужимается до порога читаемости. Раньше описание получало
+      // фиксированный запас и на невысокой карточке («Бросок сокола по
+      // направлению атаки») наезжало на точки.
+      let dotsY = Math.min(Math.max(dotsMinY, innerBottom - 12), innerBottom);
+      if (dots) shrinkToHeight(desc, Math.max(18, dotsY - descTop - 8), 12, FONT_FLOOR);
+      dotsY = Math.min(
+        Math.max(dotsY, descTop + desc.height + 8),
+        Math.max(dotsMinY, innerBottom - 12),
+      );
+      const levelDots = this.add.text(0, dotsY, dots, {
         fontFamily: FONT, fontSize: '12px', color: isEvo ? '#9a6a08' : '#b0803a',
       }).setOrigin(0.5);
       container.add(levelDots);

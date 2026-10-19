@@ -2,6 +2,7 @@ import Phaser from 'phaser';
 import { FONT } from '../constants';
 import { CURSOR_DATA } from './Cursor';
 import { audio } from './Audio';
+import { fitTextWidth as fitWidthText, shrinkToHeight, FS } from './Text';
 
 // ============ Фабрика UI-элементов на NineSlice ============
 // Ассеты Tiny Swords — 9-тайловые сетки, склеенные в бесшовные текстуры
@@ -37,6 +38,123 @@ export const BUTTON_STATES: Record<
 
 export type NineKey = keyof typeof NINE_SLICE;
 
+export interface ChipOpts {
+  /** Цвет основной подписи. */
+  color?: string;
+  /** Цвет второй строки. */
+  subColor?: string;
+  /** Кегль основной подписи. */
+  fontSize?: number;
+  /** Кегль второй строки. */
+  subFontSize?: number;
+  /** Вторая строка (мелкая подпись под основной). */
+  sub?: string;
+  /** Чип выключен: подпись приглушена, клик не срабатывает. */
+  disabled?: boolean;
+  /** Прозрачность выключенного чипа. */
+  disabledAlpha?: number;
+}
+
+export interface Chip {
+  container: Phaser.GameObjects.Container;
+  /** Основная подпись. */
+  setLabel(text: string): void;
+  /** Вторая строка. */
+  setSub(text: string): void;
+  /** Включает/выключает чип (серый + без клика). */
+  setEnabled(on: boolean): void;
+  destroy(): void;
+}
+
+/**
+ * Плашка-чип на настоящем ассете ui/papers.
+ *
+ * Раньше такие плашки рисовались кодом (Graphics + fillRoundedRect) — они
+ * выглядели как чужеродные скруглённые прямоугольники среди пергаментных
+ * панелей. Теперь это тот же nine-slice пергамента, что и карточки
+ * героя: единый стиль на всех экранах.
+ */
+export function makeChip(
+  scene: Phaser.Scene,
+  x: number,
+  y: number,
+  w: number,
+  h: number,
+  label: string,
+  opts: ChipOpts = {},
+): Chip {
+  const container = scene.add.container(x, y);
+  const paper = makePanel(scene, 0, 0, 'paper', w, h);
+  container.add(paper);
+
+  const fontSize = opts.fontSize ?? FS.small;
+  const subFontSize = opts.subFontSize ?? FS.micro;
+  const hasSub = opts.sub !== undefined;
+  // Подпись может занять две строки — тогда она центрируется по вертикали,
+  // а кегль ужимается, чтобы текст не вылез за пергамент.
+  //
+  // Резерв по высоте берётся от краёв плашки (минус 6 px на поля), а не
+  // «высота минус 8»: у чипа пре-рана подпись вроде «Откроется после
+  // 3 го матча» переносилась на вторую строку и вылезала за верхний край.
+  const mainRoom = hasSub ? h * 0.52 : h - 12;
+  const main = scene.add.text(0, hasSub ? -h * 0.17 : 0, label, {
+    fontFamily: FONT,
+    fontSize: `${fontSize}px`,
+    color: opts.color ?? '#3b2410',
+    align: 'center',
+    wordWrap: { width: w - 16 },
+  }).setOrigin(0.5);
+  shrinkToHeight(main, mainRoom, fontSize);
+  container.add(main);
+
+  let sub: Phaser.GameObjects.Text | null = null;
+  if (hasSub) {
+    sub = scene.add.text(0, h * 0.22, opts.sub ?? '', {
+      fontFamily: FONT,
+      fontSize: `${subFontSize}px`,
+      color: opts.subColor ?? '#8a5b12',
+      align: 'center',
+      wordWrap: { width: w - 14 },
+    }).setOrigin(0.5);
+    shrinkToHeight(sub, h * 0.3, subFontSize);
+    container.add(sub);
+  }
+
+  let enabled = !opts.disabled;
+  const apply = (): void => {
+    // Недоступный чип гаснет тёплым коричневым, а не холодным серым.
+    // Серый #8d8577 на кремовой бумаге при 72 % прозрачности выглядел как
+    // выцветшая надпись: подпись «После 10 го матча» и «Откроется после
+    // 3 го матча» на телефоне было не прочитать — а именно они объясняют,
+    // почему функция недоступна.
+    const alpha = enabled ? 1 : (opts.disabledAlpha ?? 0.82);
+    paper.setAlpha(alpha);
+    main.setAlpha(alpha);
+    sub?.setAlpha(alpha);
+    main.setColor(enabled ? (opts.color ?? '#3b2410') : '#9a8460');
+  };
+  apply();
+
+  return {
+    container,
+    setLabel(text: string): void {
+      main.setText(text);
+      shrinkToHeight(main, mainRoom, fontSize);
+    },
+    setSub(text: string): void {
+      sub?.setText(text);
+      if (sub) shrinkToHeight(sub, h * 0.3, subFontSize);
+    },
+    setEnabled(on: boolean): void {
+      enabled = on;
+      apply();
+    },
+    destroy(): void {
+      container.destroy(true);
+    },
+  };
+}
+
 export interface Slices {
   key: string;
   left: number;
@@ -66,50 +184,139 @@ function fitSlices(cfg: Slices, w: number, h: number): Slices {
   };
 }
 
-/** Панель (бумага/баннер/стол) на NineSlice */
+/**
+ * Минимальная высота, на которой пергамент ещё читается как пергамент.
+ *
+ * Срезы по вертикали — 44 и 45 px, всего 89. Ниже этого Phaser рисует
+ * верхний торец и нижний торец, а «пустоты» между ними не остаётся: лента
+ * событий в HUD превращалась в тёмную полосу из двух рамок без бумаги
+ * между ними. Поэтому низкие элементы рисуются в натуральную высоту и
+ * просто сжимаются по вертикали — получается ровная пергаментная лента
+ * с тонкой тёмной каймой.
+ */
+const PAPER_MIN_H = 96;
+
+/** Панель (пергамент/лента/стол) на NineSlice. */
 export function makePanel(
   scene: Phaser.Scene, x: number, y: number, kind: NineKey, w: number, h: number,
 ): Phaser.GameObjects.NineSlice {
-  const cfg = fitSlices(NINE_SLICE[kind], w, h);
-  return scene.add.nineslice(
-    x, y, cfg.key, undefined, w, h, cfg.left, cfg.right, cfg.top, cfg.bottom,
+  // Низкие панели (лента событий, плашка тоста) рисуем в натуральную высоту
+  // и сжимаем: срезы остаются родными, а лента не выглядит пустой рамкой.
+  const cfg = fitSlices(NINE_SLICE[kind], w, Math.max(h, PAPER_MIN_H));
+  const panel = scene.add.nineslice(
+    x, y, cfg.key, undefined, w, Math.max(h, PAPER_MIN_H), cfg.left, cfg.right, cfg.top, cfg.bottom,
     true, true,
   );
+  if (h < PAPER_MIN_H) panel.setDisplaySize(w, h);
+  return panel;
 }
 
+/** Соответствие «текстура девятислайса → его слайсы». */
+const SLICES_BY_TEXTURE: Record<string, Slices> = Object.fromEntries(
+  Object.values(NINE_SLICE).map((s) => [s.key, s]),
+);
+
 /**
- * Подгоняет текст под ширину кнопки. Иначе длинный текст вылезает за
- * девятислайс: русское «СОХРАНИТЬ РЕКОРД» шире английского «SAVE SCORE»
- * и в кнопку 260 px не влезало. Уменьшаем кегль, а не масштаб — так
- * сохраняется читаемая пиксельная сетка.
+ * Меняет размер панели, пересчитав слайсы под новый размер.
+ *
+ * У Phaser NineSlice.setSize меняет только габариты, но не слайсы — панель
+ * после ресайза оставалась бы со старыми срезами и «схлопывалась».
  */
-function fitWidth(
-  txt: Phaser.GameObjects.Text,
-  maxW: number,
-  fontSize: number,
-  minSize = 9,
+export function resizePanel(
+  panel: Phaser.GameObjects.NineSlice, w: number, h: number,
 ): void {
-  if (txt.width <= maxW || txt.width === 0) return;
-  const fitted = Math.max(minSize, Math.floor(fontSize * (maxW / txt.width)));
-  if (fitted < fontSize) {
-    txt.setStyle({ fontSize: `${fitted}px`, strokeThickness: Math.max(3, fitted / 4) });
-  }
-  // Крайний случай: даже минимальный кегль не влезает — сжимаем по ширине
-  if (txt.width > maxW) txt.setScale(maxW / txt.width);
+  const base = SLICES_BY_TEXTURE[panel.texture.key] ?? NINE_SLICE.paper;
+  const drawH = Math.max(h, PAPER_MIN_H);
+  const cfg = fitSlices(base, w, drawH);
+  panel.setSlices(w, drawH, cfg.left, cfg.right, cfg.top, cfg.bottom);
+  panel.setDisplaySize(w, h);
 }
 
 /**
  * Подгоняет готовый Phaser-текст под ширину: уменьшает кегль, а если не
  * помогло — сжимает по ширине. Нужен там, где подпись нельзя обрезать
  * (имена в таблице рекордов, названия достижений), но и не влезает.
+ *
+ * Реализация вынесена в systems/Text.ts: правила подгонки должны быть
+ * одни и те же для всех экранов.
  */
 export function fitTextWidth(
   txt: Phaser.GameObjects.Text,
   maxW: number,
   fontSize: number,
-  minSize = 8,
+  minSize: number = FS.micro,
 ): void {
-  fitWidth(txt, maxW, fontSize, minSize);
+  fitWidthText(txt, maxW, fontSize, minSize);
+}
+
+/**
+ * Слой модального окна.
+ *
+ * Оверлеи (пауза, левел-ап, итоги матча) запускаются ПОВЕРХ игровой сцены,
+ * у которой HUD лежит на глубине DEPTH.HUD (9000). Затемнение же создавалось
+ * через `this.add.rectangle` без глубины — то есть на нулевой, под миром и
+ * под HUD. Результат: затемнение гасило только землю, а счётчики, полоса
+ * опыта, иконки оружия и лента событий светились поверх «паузы» и поверх
+ * затемнения левел-апа. Слой собирает содержимое окна в контейнер выше HUD
+ * и держит правильный порядок.
+ *
+ * Координаты остаются экранными: контейнер в нуле, `scrollFactor(0)`.
+ */
+export class OverlayLayer {
+  readonly container: Phaser.GameObjects.Container;
+  private scene: Phaser.Scene;
+
+  constructor(scene: Phaser.Scene, depth: number) {
+    this.scene = scene;
+    this.container = scene.add.container(0, 0).setScrollFactor(0).setDepth(depth);
+  }
+
+  /**
+   * Кладёт объект в слой и возвращает ЕГО, а не контейнер.
+   *
+   * В Phaser 4 `Container.add()` возвращает сам контейнер (ради цепочек
+   * вида `container.add(a).add(b)`), поэтому возвращаемое значение
+   * приходится отдавать вручную — иначе вызывающий код получает не текст,
+   * а контейнер, и `.setOrigin()` уезжает на сам слой.
+   */
+  add<T extends Phaser.GameObjects.GameObject>(obj: T): T {
+    this.container.add(obj);
+    return obj;
+  }
+
+  /** Несколько объектов разом; наружу отдаётся контейнер для цепочек. */
+  addAll(objects: Phaser.GameObjects.GameObject[]): this {
+    this.container.add(objects);
+    return this;
+  }
+
+  text(x: number, y: number, content: string | string[], style?: Phaser.Types.GameObjects.Text.TextStyle): Phaser.GameObjects.Text {
+    return this.add(this.scene.add.text(x, y, content, style));
+  }
+
+  rectangle(x: number, y: number, w: number, h: number, color?: number, alpha?: number): Phaser.GameObjects.Rectangle {
+    return this.add(this.scene.add.rectangle(x, y, w, h, color, alpha));
+  }
+
+  zone(x: number, y: number, w: number, h: number): Phaser.GameObjects.Zone {
+    return this.add(this.scene.add.zone(x, y, w, h));
+  }
+
+  group(x: number, y: number): Phaser.GameObjects.Container {
+    return this.add(this.scene.add.container(x, y));
+  }
+
+  image(x: number, y: number, key: string): Phaser.GameObjects.Image {
+    return this.add(this.scene.add.image(x, y, key));
+  }
+
+  graphics(): Phaser.GameObjects.Graphics {
+    return this.add(this.scene.add.graphics());
+  }
+
+  destroy(): void {
+    this.container.destroy(true);
+  }
 }
 
 export interface ButtonOpts {
@@ -147,8 +354,17 @@ export interface Button {
  * Лента-заголовок: растягивается по ширине, но только за счёт середины —
  * хвосты остаются натуральной ширины и не растягиваются.
  *
- * Собрана скриптом scripts/make-ribbons.mjs из ui/ribbons/bigribbons.png.
+ * Собрана скриптом scripts/make-ribbons.mjs из ui/ribbons/bigribbons.png:
+ * 98 | 48 | 97 — левый хвост, середина, правый хвост.
+ *
+ * Раньше лента собиралась nine-slice'ом, и это было неверно: Phaser рисует
+ * углы девятислайса в натуральную величину, а хвосты ленты содержат
+ * изгибы — лента «разъезжалась» и выглядела смятой. Теперь это три
+ * картинки: хвосты масштабируются пропорционально высоте, тянется только
+ * середина.
  */
+export const RIBBON_SRC = { w: 243, h: 128, tailL: 98, mid: 48, tailR: 97 } as const;
+
 export function makeRibbon(
   scene: Phaser.Scene,
   x: number,
@@ -156,15 +372,18 @@ export function makeRibbon(
   width: number,
   key: 'ribbon-blue' | 'ribbon-yellow' | 'ribbon-purple' | 'ribbon-red',
   height = 60,
-): Phaser.GameObjects.NineSlice {
-  const src = scene.textures.get(key).getSourceImage() as HTMLImageElement;
-  // Слайс не может превышать половину элемента: иначе углы NineSlice
-  // рисуются в натуральную величину и вылезают за его границы.
-  const tail = Math.max(
-    2,
-    Math.min(Math.round(src.width * 0.4), Math.floor(width / 2), Math.floor(height / 2)),
-  );
-  return scene.add.nineslice(x, y, key, undefined, width, height, tail, tail, tail, tail);
+): Phaser.GameObjects.Container {
+  const k = height / RIBBON_SRC.h;
+  const lw = Math.round(RIBBON_SRC.tailL * k);
+  const rw = Math.round(RIBBON_SRC.tailR * k);
+  const midW = Math.max(8, width - lw - rw);
+  const box = scene.add.container(x, y);
+  box.add([
+    scene.add.image(-width / 2 + lw / 2, 0, key, 'ribbon-l').setDisplaySize(lw, height),
+    scene.add.image(0, 0, key, 'ribbon-m').setDisplaySize(midW, height),
+    scene.add.image(width / 2 - rw / 2, 0, key, 'ribbon-r').setDisplaySize(rw, height),
+  ]);
+  return box;
 }
 
 export function makeButton(
@@ -191,10 +410,13 @@ export function makeButton(
     fontSize: `${fontSize}px`,
     color: '#ffffff',
     stroke: '#2a1608',
-    strokeThickness: Math.max(4, fontSize / 4),
+    strokeThickness: Math.max(4, Math.round(fontSize / 4)),
   }).setOrigin(0.5);
 
-  fitWidth(txt, w - 28, fontSize);
+  // Подпись не должна вылезать за девятислайс: русское «СОХРАНИТЬ РЕКОРД»
+  // шире английского «SAVE SCORE» и в кнопку 260 px не влезало. Уменьшаем
+  // кегль, а не масштаб — так сохраняется читаемая пиксельная сетка.
+  fitWidthText(txt, w - 28, fontSize);
 
   const hit = scene.add
     .zone(x, y, opts.hitW ?? w + 36, opts.hitH ?? h + 30)
@@ -326,8 +548,8 @@ export function makeButton(
     },
     setLabel(text: string): void {
       txt.setText(text);
-      fitWidth(txt, w - 28, fontSize);
-      // fitWidth мог сжать подпись по ширине — база пересчитывается, и
+      fitWidthText(txt, w - 28, fontSize);
+      // fitTextWidth мог сжать подпись по ширине — база пересчитывается, и
       // текущее состояние (наведение/нажатие) возвращается на новый масштаб
       baseTxt.x = txt.scaleX;
       baseTxt.y = txt.scaleY;

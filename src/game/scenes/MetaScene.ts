@@ -2,7 +2,7 @@ import Phaser from 'phaser';
 import { Cursor } from '../systems/Cursor';
 import { FONT } from '../constants';
 import { audio } from '../systems/Audio';
-import { makeButton, makePanel, makeRibbon, fitTextWidth, type Button } from '../systems/Ui';
+import { makeButton, makePanel, makeRibbon, resizePanel, fitTextWidth, type Button } from '../systems/Ui';
 import { t, num, type TranslationKey, type TranslateParams } from '../../i18n';
 import { loadText, saveText, removeKey } from '../storage';
 import { track } from '../../platform/analytics';
@@ -113,6 +113,12 @@ export class MetaScene extends Phaser.Scene {
   private py = 0;
 
   private statusText: Phaser.GameObjects.Text | null = null;
+  /** Каркас панели: подгоняется под содержимое вкладки (см. fitShellToContent). */
+  private paper: Phaser.GameObjects.NineSlice | null = null;
+  private blocker: Phaser.GameObjects.Zone | null = null;
+  private ribbon: Phaser.GameObjects.Container | null = null;
+  private titleText: Phaser.GameObjects.Text | null = null;
+  private backBtn: Button | null = null;
   private tabBox: Phaser.GameObjects.Container | null = null;
   private tabButtons: Button[] = [];
   private contentButtons: Button[] = [];
@@ -160,12 +166,13 @@ export class MetaScene extends Phaser.Scene {
     // доходит до затемнения (input.topOnly).
     const paper = makePanel(this, this.px, this.py, 'paper', this.pw, this.ph);
     paper.setDepth(101).setScrollFactor(0);
-    this.add.zone(this.px, this.py, this.pw, this.ph).setInteractive().setDepth(102);
+    this.paper = paper;
+    this.blocker = this.add.zone(this.px, this.py, this.pw, this.ph).setInteractive().setDepth(102);
 
     // ---------- Заголовок ----------
-    makeRibbon(this, this.px, top + 26, Math.min(430, this.pw - 80), 'ribbon-yellow', 50)
+    this.ribbon = makeRibbon(this, this.px, top + 26, Math.min(430, this.pw - 80), 'ribbon-yellow', 50)
       .setDepth(103).setScrollFactor(0);
-    this.add.text(this.px, top + 26, t('meta.title'), {
+    this.titleText = this.add.text(this.px, top + 26, t('meta.title'), {
       fontFamily: FONT, fontSize: '21px', color: '#ffe9c0',
       stroke: '#1b1008', strokeThickness: 5,
     }).setOrigin(0.5).setDepth(104).setScrollFactor(0);
@@ -177,8 +184,8 @@ export class MetaScene extends Phaser.Scene {
     parts.push(t('meta.glory', { v: num(st.glory) }));
     parts.push(t('meta.crowns', { v: num(st.crowns) }));
     parts.push(t('meta.matches', { v: num(st.matchesPlayed) }));
-    this.statusText = this.add.text(this.px, top + 56, parts.join('   '), {
-      fontFamily: FONT, fontSize: '11px', color: '#6b4a1e', align: 'center',
+    this.statusText = this.add.text(this.px, top + 64, parts.join('   '), {
+      fontFamily: FONT, fontSize: '12px', color: '#6b4a1e', align: 'center',
     }).setOrigin(0.5).setDepth(104).setScrollFactor(0);
 
     this.renderTabs();
@@ -190,6 +197,7 @@ export class MetaScene extends Phaser.Scene {
     back.img.setDepth(104).setScrollFactor(0);
     back.txt.setDepth(104).setScrollFactor(0);
     back.hit.setDepth(104);
+    this.backBtn = back;
 
     // Esc — закрыть оверлей
     const kb = this.input.keyboard;
@@ -297,6 +305,45 @@ export class MetaScene extends Phaser.Scene {
       case 'pass': this.renderPass(box, x0, x1, y0, y1); break;
       case 'more': this.renderMore(box, x0, x1, y0, y1); break;
     }
+
+    // Пергамент подгоняется под содержимое вкладки. Раньше высота была
+    // фиксированной (92 % экрана), и на пустой вкладке игрок видел огромный
+    // лист пергамента с одной строчкой посредине.
+    if (this.fitShellToContent()) this.renderTab();
+  }
+
+  /**
+   * Подгоняет высоту пергамента под фактическое содержимое вкладки.
+   *
+   * Возвращает true, если высота изменилась и содержимое нужно пересобрать:
+   * блоки вкладок стоят от верхнего края панели, который сдвинулся.
+   */
+  private fitShellToContent(): boolean {
+    if (!this.tabBox || !this.paper) return false;
+    const maxH = Math.min(this.scale.height * 0.92, 900);
+    const minH = Math.min(360, maxH);
+    const bounds = this.tabBox.getBounds();
+    // Резерв снизу: поле пергамента + кнопка «Назад» + зазор.
+    const needed = Math.ceil(bounds.y + bounds.height) - (this.py - this.ph / 2) + 96;
+    const ph = Phaser.Math.Clamp(needed, minH, maxH);
+    if (Math.abs(ph - this.ph) < 2) return false;
+
+    this.ph = ph;
+    const top = this.py - ph / 2;
+    resizePanel(this.paper, this.pw, ph);
+    this.paper.setPosition(this.px, this.py);
+    this.blocker?.setPosition(this.px, this.py).setSize(this.pw, ph);
+    this.ribbon?.setPosition(this.px, top + 26);
+    this.titleText?.setPosition(this.px, top + 26);
+    this.statusText?.setPosition(this.px, top + 64);
+    if (this.backBtn) {
+      const backY = this.py + ph / 2 - 32;
+      this.backBtn.img.setPosition(this.px, backY);
+      this.backBtn.txt.setPosition(this.px, backY);
+      this.backBtn.hit.setPosition(this.px, backY);
+    }
+    this.renderTabs();
+    return true;
   }
 
   private refreshStatus(): void {
@@ -397,7 +444,7 @@ export class MetaScene extends Phaser.Scene {
       fontFamily: FONT, fontSize: '12px', color: '#3b2410',
     }).setOrigin(0, 0.5));
     box.add(this.add.text(textX, cy + 9, tr(node.descKey), {
-      fontFamily: FONT, fontSize: '9px', color: '#8a5b12',
+      fontFamily: FONT, fontSize: '12px', color: '#8a5b12',
     }).setOrigin(0, 0.5));
 
     const btnX = x1 - 100;
@@ -447,11 +494,11 @@ export class MetaScene extends Phaser.Scene {
       box.add(this.add.text(x0 + 16, cy + 1, t('quest.progress', {
         a: num(Math.min(prog, q.goal)), b: num(q.goal),
       }), {
-        fontFamily: FONT, fontSize: '10px', color: '#57431f',
+        fontFamily: FONT, fontSize: '12px', color: '#57431f',
       }).setOrigin(0, 0.5));
 
       box.add(this.add.text(x0 + 16, cy + 17, tr('quest.reward', { v: num(q.reward) }), {
-        fontFamily: FONT, fontSize: '10px', color: '#9a6a08',
+        fontFamily: FONT, fontSize: '12px', color: '#9a6a08',
       }).setOrigin(0, 0.5));
 
       if (done) {
@@ -510,12 +557,12 @@ export class MetaScene extends Phaser.Scene {
         fontFamily: FONT, fontSize: '12px', color: '#3b2410',
       }).setOrigin(0, 0.5));
       box.add(this.add.text(x0 + 16, cy + 9, tr(o.descKey), {
-        fontFamily: FONT, fontSize: '9px', color: '#8a5b12',
+        fontFamily: FONT, fontSize: '12px', color: '#8a5b12',
       }).setOrigin(0, 0.5));
 
       const prem = Math.round(o.gloryPremium * 100);
       box.add(this.add.text(x1 - 92, cy - 9, tr('ukaz.premium', { v: prem }), {
-        fontFamily: FONT, fontSize: '11px', color: '#9a6a08',
+        fontFamily: FONT, fontSize: '12px', color: '#9a6a08',
       }).setOrigin(0.5));
       box.add(this.add.text(x1 - 92, cy + 9, isActive ? '✓' : ' ', {
         fontFamily: FONT, fontSize: '13px', color: '#2e7d32',
@@ -556,7 +603,7 @@ export class MetaScene extends Phaser.Scene {
         box.add(this.add.text(this.px, cy + 10, [
           t('codex.milestone50'), t('codex.milestone75'), t('codex.milestone100'),
         ].join('  ·  '), {
-          fontFamily: FONT, fontSize: '9px', color: '#9a6a08',
+          fontFamily: FONT, fontSize: '12px', color: '#9a6a08',
         }).setOrigin(0.5));
       },
     });
@@ -588,7 +635,7 @@ export class MetaScene extends Phaser.Scene {
               box.add(g);
               const label = unlocked ? tr(e.nameKey) : '???';
               const txt = this.add.text(cx, cy, label, {
-                fontFamily: FONT, fontSize: '10px', color: unlocked ? '#3b2410' : '#8d8577',
+                fontFamily: FONT, fontSize: '12px', color: unlocked ? '#3b2410' : '#8d8577',
                 align: 'center', wordWrap: { width: chipW - 10 },
               }).setOrigin(0.5);
               fitTextWidth(txt, chipW - 10, 10, 7);
@@ -620,7 +667,7 @@ export class MetaScene extends Phaser.Scene {
             fontFamily: FONT, fontSize: '12px', color: '#3b2410',
           }).setOrigin(0, 0.5));
           box.add(this.add.text(x0 + 14, cy + 4, `${val} ${t('chain.tier0')}·${c.tiers[0]}`, {
-            fontFamily: FONT, fontSize: '8px', color: '#8a5b12',
+            fontFamily: FONT, fontSize: '12px', color: '#8a5b12',
           }).setOrigin(0, 0.5));
 
           const cellW = 116;
@@ -631,15 +678,15 @@ export class MetaScene extends Phaser.Scene {
             const claimed = chainClaimed(c.id, tier);
             const ready = val >= goal && !claimed;
             box.add(this.add.text(cx, cy - 13, tierNames[tier], {
-              fontFamily: FONT, fontSize: '8px', color: claimed ? '#2e7d32' : '#8a5b12',
+              fontFamily: FONT, fontSize: '12px', color: claimed ? '#2e7d32' : '#8a5b12',
             }).setOrigin(0.5));
             box.add(this.add.text(cx, cy, `${Math.min(val, goal)}/${goal}`, {
-              fontFamily: FONT, fontSize: '10px', color: ready ? '#9a6a08' : '#57431f',
+              fontFamily: FONT, fontSize: '12px', color: ready ? '#9a6a08' : '#57431f',
             }).setOrigin(0.5));
 
             if (claimed) {
               box.add(this.add.text(cx, cy + 14, t('chain.claimed'), {
-                fontFamily: FONT, fontSize: '9px', color: '#2e7d32',
+                fontFamily: FONT, fontSize: '12px', color: '#2e7d32',
                 stroke: '#dcecc9', strokeThickness: 2,
               }).setOrigin(0.5));
             } else {
@@ -666,7 +713,7 @@ export class MetaScene extends Phaser.Scene {
           `${t('chain.tier1')}: ${tr('chain.reward.silver')}`,
           `${t('chain.tier2')}: ${tr('chain.reward.gold')}`,
         ].join('   '), {
-          fontFamily: FONT, fontSize: '9px', color: '#8a5b12', align: 'center',
+          fontFamily: FONT, fontSize: '12px', color: '#8a5b12', align: 'center',
         }).setOrigin(0.5));
       },
     });
@@ -691,7 +738,7 @@ export class MetaScene extends Phaser.Scene {
     cy += 24;
     const premLabel = st.pass.premium ? t('pass.premiumOn') : t('pass.premiumOff');
     box.add(this.add.text(this.px, cy, `${t('pass.premium')}: ${premLabel}`, {
-      fontFamily: FONT, fontSize: '11px',
+      fontFamily: FONT, fontSize: '12px',
       color: st.pass.premium ? '#2e7d32' : '#8a5b12',
       stroke: st.pass.premium ? '#dcecc9' : '#f7e7c3', strokeThickness: 3,
     }).setOrigin(0.5));
@@ -710,7 +757,7 @@ export class MetaScene extends Phaser.Scene {
     box.add(this.add.text(this.px, cy, level >= PASS.LEVELS
       ? `${num(st.pass.xp)} XP`
       : `${num(xpInto)} / ${num(PASS.XP_PER_LEVEL)} XP`, {
-      fontFamily: FONT, fontSize: '9px', color: '#ffffff', stroke: '#3b2410', strokeThickness: 3,
+      fontFamily: FONT, fontSize: '12px', color: '#ffffff', stroke: '#3b2410', strokeThickness: 3,
     }).setOrigin(0.5));
 
     // Покупка пропуска: только при открытой витрине (5-й матч, §J.6.4)
@@ -724,7 +771,7 @@ export class MetaScene extends Phaser.Scene {
         this.contentButtons.push(buyPassBtn);
       } else {
         box.add(this.add.text(this.px, cy, t('store.locked'), {
-          fontFamily: FONT, fontSize: '10px', color: '#8a5b12',
+          fontFamily: FONT, fontSize: '12px', color: '#8a5b12',
         }).setOrigin(0.5));
       }
     }
@@ -732,11 +779,11 @@ export class MetaScene extends Phaser.Scene {
     // Ближайшие награды: уровень+1..+3, бесплатный и премиум-трек
     cy += 26;
     box.add(this.add.text(x0 + 12, cy, t('pass.free'), {
-      fontFamily: FONT, fontSize: '10px', color: '#8a5b12',
+      fontFamily: FONT, fontSize: '12px', color: '#8a5b12',
     }).setOrigin(0, 0.5));
     if (st.pass.premium) {
       box.add(this.add.text(x1 - 12, cy, t('pass.premium'), {
-        fontFamily: FONT, fontSize: '10px', color: '#9a6a08',
+        fontFamily: FONT, fontSize: '12px', color: '#9a6a08',
       }).setOrigin(1, 0.5));
     }
 
@@ -746,19 +793,19 @@ export class MetaScene extends Phaser.Scene {
         draw: (rcy, rrowH) => {
           this.rowCard(box, rcy, rrowH - 4, w);
           box.add(this.add.text(x0 + 16, rcy, tr('pass.level', { v: lv }), {
-            fontFamily: FONT, fontSize: '10px', color: '#8a5b12',
+            fontFamily: FONT, fontSize: '12px', color: '#8a5b12',
           }).setOrigin(0, 0.5));
           const fr = passReward(lv, false);
           if (fr) {
             box.add(this.add.text(x0 + 120, rcy, passRewardText(fr), {
-              fontFamily: FONT, fontSize: '11px', color: '#3b2410',
+              fontFamily: FONT, fontSize: '12px', color: '#3b2410',
             }).setOrigin(0, 0.5));
           }
           if (st.pass.premium) {
             const pr = passReward(lv, true);
             if (pr) {
               box.add(this.add.text(x1 - 16, rcy, passRewardText(pr), {
-                fontFamily: FONT, fontSize: '11px', color: '#9a6a08',
+                fontFamily: FONT, fontSize: '12px', color: '#9a6a08',
               }).setOrigin(1, 0.5));
             }
           }
@@ -796,14 +843,14 @@ export class MetaScene extends Phaser.Scene {
           fontFamily: FONT, fontSize: '13px', color: '#3b2410',
         }).setOrigin(0, 0.5));
         box.add(this.add.text(x0 + 16, cy + 3, tr(sd.modDescKey), {
-          fontFamily: FONT, fontSize: '9px', color: '#8a5b12',
+          fontFamily: FONT, fontSize: '12px', color: '#8a5b12',
         }).setOrigin(0, 0.5));
         box.add(this.add.text(x1 - 16, cy - 2, t('season.progress', { v: st.season.runs }), {
-          fontFamily: FONT, fontSize: '10px', color: '#9a6a08',
+          fontFamily: FONT, fontSize: '12px', color: '#9a6a08',
         }).setOrigin(1, 0.5));
         box.add(this.add.text(x1 - 16, cy + 13,
           `${Math.min(st.season.claimed, SEASON_STEPS.length)}/${SEASON_STEPS.length}`, {
-          fontFamily: FONT, fontSize: '9px', color: '#8a5b12',
+          fontFamily: FONT, fontSize: '12px', color: '#8a5b12',
         }).setOrigin(1, 0.5));
       },
     });
@@ -820,12 +867,12 @@ export class MetaScene extends Phaser.Scene {
           t('weekly.stage', { v: Math.min(st.weekly.stage, WEEKLY_STAGES.length) }),
           t('weekly.progress', { a: num(st.weekly.progress), b: num(stageGoal) }),
         ].join('   '), {
-          fontFamily: FONT, fontSize: '9px', color: '#8a5b12',
+          fontFamily: FONT, fontSize: '12px', color: '#8a5b12',
         }).setOrigin(0, 0.5));
 
         if (st.weekly.claimed) {
           box.add(this.add.text(x1 - 92, cy, t('weekly.claimed'), {
-            fontFamily: FONT, fontSize: '10px', color: '#2e7d32',
+            fontFamily: FONT, fontSize: '12px', color: '#2e7d32',
             stroke: '#dcecc9', strokeThickness: 2,
           }).setOrigin(0.5));
         } else {
@@ -851,7 +898,7 @@ export class MetaScene extends Phaser.Scene {
           t('bonus.title'),
           t('bonus.streak', { v: st.dailyBonus.streak }),
         ].join('   '), {
-          fontFamily: FONT, fontSize: '11px', color: '#3b2410',
+          fontFamily: FONT, fontSize: '12px', color: '#3b2410',
         }).setOrigin(0, 0.5));
         const btn = makeButton(this, x1 - 110, cy, 172, 40, t('bonus.claim'), () => {
           this.showBonusOverlay();
@@ -888,7 +935,7 @@ export class MetaScene extends Phaser.Scene {
         lines.push(t('meta.tokens', { v: st.speedupTokens }));
         lines.push(t('meta.blessingTokens', { v: st.blessingTokens }));
         box.add(this.add.text(this.px, cy, lines.join('   '), {
-          fontFamily: FONT, fontSize: '10px', color: '#57431f', align: 'center',
+          fontFamily: FONT, fontSize: '12px', color: '#57431f', align: 'center',
         }).setOrigin(0.5));
       },
     });
@@ -899,7 +946,7 @@ export class MetaScene extends Phaser.Scene {
   /** Короткое сообщение поверх вкладки (лимит конвертации и т.п.). */
   private flashNote(text: string): void {
     const note = this.add.text(this.px, this.contentBottom() - 4, text, {
-      fontFamily: FONT, fontSize: '11px', color: '#ffe9b0',
+      fontFamily: FONT, fontSize: '12px', color: '#ffe9b0',
       stroke: '#1b1008', strokeThickness: 4, align: 'center',
     }).setOrigin(0.5).setDepth(200);
     this.tweens.add({
@@ -939,7 +986,7 @@ export class MetaScene extends Phaser.Scene {
       t('bonus.day', { v: (st.dailyBonus.streak % 7) + 1 }),
       t('bonus.streak', { v: st.dailyBonus.streak }),
     ].join('   '), {
-      fontFamily: FONT, fontSize: '11px', color: '#8a5b12',
+      fontFamily: FONT, fontSize: '12px', color: '#8a5b12',
     }).setOrigin(0.5));
 
     // Кружки недели: подсвечен текущий день стрика (streak % 7)

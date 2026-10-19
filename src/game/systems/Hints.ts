@@ -1,7 +1,9 @@
 import Phaser from 'phaser';
+import { DEPTH, FONT } from '../constants';
 import { t } from '../../i18n';
 import { track } from '../../platform/analytics';
 import { loadJson, saveJson } from '../storage';
+import { makePanel, resizePanel } from './Ui';
 
 // ============ Движок подсказок FTUE (TZ §I.1) ============
 //
@@ -96,7 +98,22 @@ export class Hints {
   private shown = new Set<HintId>();
   // A new run's first hint must not inherit an artificial 20-second startup wait.
   private lastShownAt = -COOLDOWN_MS;
-  private current: { id: HintId; ui: HintUi; text: Phaser.GameObjects.Text; bg: Phaser.GameObjects.Rectangle } | null = null;
+  /**
+   * Слой подсказок с обратным зумом камеры.
+   *
+   * Игровая камера на телефоне отдалена (зум 0.55), и подсказка,
+   * созданная прямо в сцене, рисовалась вместе с миром — то есть
+   * 16-пиксельный текст превращался в 9 пикселей и не читался. Слой
+   * компенсирует зум, как это делает HUD (systems/HUD.ts), и подсказка
+   * всегда одного размера с экраном.
+   */
+  private layer!: Phaser.GameObjects.Container;
+  private current: {
+    id: HintId;
+    ui: HintUi;
+    text: Phaser.GameObjects.Text;
+    bg: Phaser.GameObjects.NineSlice;
+  } | null = null;
   private readonly onOverlayChange?: (paused: boolean) => void;
   private readonly resizeHandler = (): void => this.relayoutCurrent();
   /**
@@ -111,6 +128,8 @@ export class Hints {
   constructor(scene: Phaser.Scene, onOverlayChange?: (paused: boolean) => void) {
     this.scene = scene;
     this.onOverlayChange = onOverlayChange;
+    this.layer = scene.add.container(0, 0).setScrollFactor(0).setDepth(DEPTH.OVERLAY);
+    this.applyZoom();
     const st = loadJson<HintState>('hints') ?? { shown: [] };
     for (const id of st.shown) if (HINT_BY_ID.has(id)) this.shown.add(id);
     this.enabled = st.enabled !== false;
@@ -122,9 +141,22 @@ export class Hints {
       for (const extra of this.extra) extra?.destroy();
       this.current = null;
       this.extra = [];
+      this.layer.destroy(true);
       scene.scale.off('resize', this.resizeHandler);
       this.save();
     });
+  }
+
+  /**
+   * Компенсирует зум игровой камеры: содержимое слоя задаётся в экранных
+   * координатах и рисуется в них же при любом зуме.
+   */
+  private applyZoom(): void {
+    const z = this.scene.cameras.main.zoom || 1;
+    const W = this.scene.scale.width;
+    const H = this.scene.scale.height;
+    this.layer.setScale(1 / z);
+    this.layer.setPosition((W / 2) * (1 - 1 / z), (H / 2) * (1 - 1 / z));
   }
 
   /** §I.1 п.4: «Все подсказки отключаемы» — переключатель «Обучение: вкл/выкл». */
@@ -173,6 +205,10 @@ export class Hints {
     this.lastShownAt = this.scene.time.now;
     this.save();
 
+    // Зум камеры мог измениться после создания подсказок (сцена собирает
+    // их до resizeZoom), поэтому компенсацию обновляем каждый раз.
+    this.applyZoom();
+
     const w = this.scene.scale.width;
     const h = this.scene.scale.height;
     const text = t(`hint.${id}` as `hint.${typeof id}`);
@@ -188,20 +224,25 @@ export class Hints {
     const displayText = def.ui === 'overlay'
       ? `${text}\n\n${t('hint.tapToContinue')}`
       : text;
-    const bg = this.scene.add.rectangle(layout.x, layout.y, layout.width, layout.panelHeight, 0x1a0f08, 0.92)
-      .setStrokeStyle(1, 0x8a6d3b)
+    // Подсказка — не «чёрный прямоугольник», а пергамент из набора
+    // Tiny Swords: тот же материал, что у панелей и карточек. Ширина
+    // подстраивается под текст, чтобы панель не была пустой.
+    const label = this.scene.add.text(layout.x, layout.y, displayText, {
+      fontFamily: FONT,
+      fontSize: def.ui === 'overlay' ? '16px' : '14px',
+      color: '#3b2410',
+      align: 'center',
+      wordWrap: { width: layout.textWidth },
+    }).setOrigin(0.5).setDepth(9601);
+    const panelW = Math.max(160, Math.min(layout.width, label.width + 40));
+    const panelH = Math.max(def.ui === 'overlay' ? 120 : 44, label.height + 24);
+    const panel = makePanel(this.scene, layout.x, layout.y, 'paper', panelW, panelH)
       .setScrollFactor(0)
       .setDepth(9600)
       .setInteractive({ useHandCursor: true });
-    const label = this.scene.add.text(layout.x, layout.y, displayText, {
-      fontFamily: 'monospace',
-      fontSize: def.ui === 'overlay' ? '15px' : '13px',
-      color: '#ffe9b0',
-      align: 'center',
-      wordWrap: { width: layout.textWidth },
-    }).setOrigin(0.5).setScrollFactor(0).setDepth(9601);
-    bg.on('pointerdown', () => this.hide(true));
-    this.current = { id, ui: def.ui, text: label, bg };
+    this.layer.add([dim, panel, label].filter(Boolean) as Phaser.GameObjects.GameObject[]);
+    panel.on('pointerdown', () => this.hide(true));
+    this.current = { id, ui: def.ui, text: label, bg: panel };
     if (dim) dim.on('pointerdown', () => this.hide(true));
     this.extra.push(dim);
     if (def.ui === 'overlay') this.onOverlayChange?.(true);
@@ -217,13 +258,17 @@ export class Hints {
     const h = this.scene.scale.height;
     const def = HINT_BY_ID.get(current.id);
     const layout = getHintLayout(w, h, current.ui, def?.anchor);
+    this.applyZoom();
     const dim = this.extra[0];
     if (dim && current.ui === 'overlay') {
       dim.setPosition(w / 2, h / 2).setSize(w + 8, h + 8);
     }
-    current.bg.setPosition(layout.x, layout.y).setSize(layout.width, layout.panelHeight);
     current.text.setPosition(layout.x, layout.y);
     current.text.setStyle({ wordWrap: { width: layout.textWidth } });
+    const panelW = Math.max(160, Math.min(layout.width, current.text.width + 40));
+    const panelH = Math.max(current.ui === 'overlay' ? 120 : 44, current.text.height + 24);
+    current.bg.setPosition(layout.x, layout.y);
+    resizePanel(current.bg, panelW, panelH);
   }
 
   private hide(byUser = false): void {

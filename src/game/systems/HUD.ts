@@ -3,7 +3,8 @@ import { DEPTH, FONT, GAME_DURATION, COMBO, MAX_LEVEL } from '../constants';
 import type { AchievementDef } from '../achievements';
 import { audio } from './Audio';
 import { hudBottomInset, safeInsets, resetSafeInsets } from '../safeArea';
-import { makePanel } from './Ui';
+import { makePanel, makeButton, type Button } from './Ui';
+import { FS, outlineFor } from './Text';
 import { num, t } from '../../i18n';
 import { StatBar, FILL } from './Bar';
 
@@ -46,15 +47,45 @@ export interface HudOpts {
 /** Сторона кнопки паузы в экранных пикселях. */
 const PAUSE_SIZE = 42;
 /**
+ * Сторона слота иконки оружия/пассивки в экранных пикселях.
+ *
+ * Слот и кнопка паузы — соседи в одном ряду, поэтому держат одну величину.
+ */
+const SLOT_SIZE = 34;
+/**
+ * Шаг между слотами иконок: зазор плюс сторона слота. Должен совпадать с
+ * величиной, которой `setIcon` ставит первый слот, иначе ряд «разъезжается».
+ */
+const SLOT_STEP = 40;
+/**
  * Горизонтальный запас справа под кнопку паузы: половина кнопки плюс
  * поле до края экрана. Всё, что выравнивается вправо в HUD, смещается
  * на эту величину, чтобы не наезжать на кнопку.
  */
 const PAUSE_RESERVE = 70;
 
+/**
+ * Высота кнопок ускорения в экранных пикселях.
+ *
+ * Держится в одном месте с `bottomStack()`: раньше высота задавалась прямо
+ * в вызове, а столбец считался от неё — кнопки наезжали на ленту событий.
+ */
+const SPEEDUP_H = 30;
+
 export class HUD {
   private scene: Phaser.Scene;
   private scoreMult = 1;
+  /**
+   * Масштаб HUD под размер экрана.
+   *
+   * Интерфейс задуман под 1280×720. На 1920×1080 он превращался в пыль:
+   * таймер 18 px на полутораметровом мониторе не читается, а полоса HP
+   * выглядит ниточкой. Ниже единицы HUD не уменьшается — на телефоне он
+   * и так упирается в края экрана.
+   */
+  private s = 1;
+  /** Тексты HUD: базовый кегль и толщина обводки для пересчёта при ресайзе. */
+  private textSizes = new Map<Phaser.GameObjects.Text, { base: number; stroke: number }>();
   /** Корневой контейнер HUD с компенсацией зума камеры */
   private root!: Phaser.GameObjects.Container;
   /** Полосы собраны из настоящих ассетов ui/bars (см. systems/Bar.ts) */
@@ -80,9 +111,8 @@ export class HUD {
   private pauseBaseScale = 1;
   private weaponIcons = new Map<string, WeaponIcon>();
   private bossGroup!: Phaser.GameObjects.Container;
-  private bossFill!: Phaser.GameObjects.Rectangle;
-  private bossBg!: Phaser.GameObjects.Rectangle;
-  private bossInner!: Phaser.GameObjects.Rectangle;
+  /** Полоса босса собрана из ассета ui/bars (крупная деталь) */
+  private bossBar!: StatBar;
   private bossText!: Phaser.GameObjects.Text;
   private bossHpText!: Phaser.GameObjects.Text;
   /** Ширина полосы босса — не шире экрана (на мобильных 420px обрезалось) */
@@ -91,7 +121,7 @@ export class HUD {
   // Серия убийств (комбо): счётчик + полоса затухания окна
   private comboText!: Phaser.GameObjects.Text;
   private comboBarBg!: Phaser.GameObjects.Rectangle;
-  private comboBar!: Phaser.GameObjects.Rectangle;
+  private comboBar!: Phaser.GameObjects.Image;
   private comboShown = -1;
   private comboBaseY = 78;
 
@@ -112,16 +142,67 @@ export class HUD {
   private resTexts: Record<string, Phaser.GameObjects.Text> = {};
   private resVisible = false;
   private settleGroup!: Phaser.GameObjects.Container;
-  private settleInfraBar!: Phaser.GameObjects.Rectangle;
-  private settlePopBar!: Phaser.GameObjects.Rectangle;
+  private settleInfraBar!: Phaser.GameObjects.Image;
+  private settlePopBar!: Phaser.GameObjects.Image;
   private garrisonText!: Phaser.GameObjects.Text;
   private feedItems: Array<Phaser.GameObjects.Container> = [];
   private speedupBtns: Record<string, Phaser.GameObjects.Container> = {};
-  /** Фон кнопки ускорения — гасится, когда ускорять нечего (§G.8). */
-  private speedupBg: Record<string, Phaser.GameObjects.Rectangle> = {};
+  /** Кнопки ускорения — собраны из ассетов (nine-slice), см. systems/Ui.ts */
+  private speedupButtons: Record<string, Button> = {};
   private speedupHandlers: { repair: () => void; heal: () => void } = { repair: () => {}, heal: () => {} };
 
   private resizeHandler = () => { resetSafeInsets(); this.layout(); };
+
+  /**
+   * Масштаб HUD для экрана.
+   *
+   * Ориентир — 1280×720. Снизу ограничение единицей (на телефоне HUD уже
+   * упирается в края), сверху — полутора: на 4K-мониторе увеличивать
+   * интерфейс бессмысленно.
+   */
+  private static scaleFor(w: number, h: number): number {
+    return Phaser.Math.Clamp(Math.min(w / 1280, h / 720), 1, 1.5);
+  }
+
+  /** Число в экранных пикселях с учётом масштаба HUD. */
+  private sc(v: number): number {
+    return Math.round(v * this.s);
+  }
+
+  /**
+   * Создаёт текст HUD и запоминает его базовый кегль: при смене размера
+   * экрана масштаб меняется, и кегли пересчитываются.
+   */
+  private mkText(
+    content: string,
+    base: number,
+    style: Phaser.Types.GameObjects.Text.TextStyle,
+  ): Phaser.GameObjects.Text {
+    const stroke = style.strokeThickness ?? 0;
+    const txt = this.scene.add.text(0, 0, content, {
+      ...style,
+      fontSize: `${this.sc(base)}px`,
+    });
+    this.textSizes.set(txt, { base, stroke });
+    return txt;
+  }
+
+  /**
+   * Пересчитывает кегли всех текстов HUD под текущий масштаб.
+   *
+   * Обводка растёт вместе с кеглем, но не должна превышать треть глифа:
+   * иначе на большом мониторе «×14» превращалось в сплошное тёмное пятно.
+   */
+  private applyTextSizes(): void {
+    for (const [txt, info] of this.textSizes) {
+      const size = this.sc(info.base);
+      const scaled = Math.round((info.stroke * size) / Math.max(1, info.base));
+      const stroke = Math.min(Math.max(2, scaled), Math.max(2, Math.round(size / 3)));
+      if (txt.style.fontSize !== `${size}px` || txt.style.strokeThickness !== stroke) {
+        txt.setStyle({ fontSize: `${size}px`, strokeThickness: stroke });
+      }
+    }
+  }
 
   constructor(scene: Phaser.Scene, onPause: () => void, opts: HudOpts = {}) {
     this.scene = scene;
@@ -133,24 +214,26 @@ export class HUD {
 
   private build(onPause: () => void, opts: HudOpts): void {
     const W = this.scene.scale.width;
+    const H = this.scene.scale.height;
     // scrollFactor(0) обязателен: иначе контейнер «уезжает» вместе с миром при скролле камеры
     this.root = this.scene.add.container(0, 0).setScrollFactor(0).setDepth(DEPTH.HUD);
+    this.s = HUD.scaleFor(W, H);
 
     // Полоса опыта на всю ширину экрана: рамка из ui/bars + синяя заливка
     this.xpBar = new StatBar(this.scene, W / 2, 9, W, 'small', { fill: FILL.blue });
     this.root.add(this.xpBar.root);
-    this.xpLabel = this.scene.add.text(0, 0, t('hud.level', { v: 1 }), {
-      fontFamily: FONT, fontSize: '10px', color: '#ffffff',
+    this.xpLabel = this.mkText(t('hud.level', { v: 1 }), 12, {
+      fontFamily: FONT, color: '#ffffff',
       stroke: '#1b1008', strokeThickness: 3,
     }).setOrigin(0.5);
 
-    this.timerText = this.scene.add.text(0, 0, '00:00', {
-      fontFamily: FONT, fontSize: '18px', color: '#ffe9b0',
+    this.timerText = this.mkText('00:00', 18, {
+      fontFamily: FONT, color: '#ffe9b0',
       stroke: '#1b1008', strokeThickness: 5,
     }).setOrigin(0, 0.5);
 
-    this.statsText = this.scene.add.text(0, 0, '', {
-      fontFamily: FONT, fontSize: '10px', color: '#d8c9a8',
+    this.statsText = this.mkText('', 12, {
+      fontFamily: FONT, color: '#d8c9a8',
       stroke: '#1b1008', strokeThickness: 3,
     });
 
@@ -163,26 +246,26 @@ export class HUD {
       fillCritical: FILL.red,
     });
     this.root.add(this.hpBar.root);
-    this.hpText = this.scene.add.text(0, 0, '', {
-      fontFamily: FONT, fontSize: '10px', color: '#ffffff',
+    this.hpText = this.mkText('', 12, {
+      fontFamily: FONT, color: '#ffffff',
       stroke: '#1b1008', strokeThickness: 3,
     }).setOrigin(0, 0.5);
 
     this.goldIcon = this.scene.add.image(0, 0, 'icon-coin').setDisplaySize(14, 14);
-    this.goldText = this.scene.add.text(0, 0, '0', {
-      fontFamily: FONT, fontSize: '12px', color: '#ffd76e',
+    this.goldText = this.mkText('0', 12, {
+      fontFamily: FONT, color: '#ffd76e',
       stroke: '#1b1008', strokeThickness: 3,
     }).setOrigin(0, 0.5);
 
-    this.scoreText = this.scene.add.text(0, 0, t('hud.score', { v: 0 }), {
-      fontFamily: FONT, fontSize: '11px', color: '#ffd76e',
+    this.scoreText = this.mkText(t('hud.score', { v: 0 }), 12, {
+      fontFamily: FONT, color: '#ffd76e',
       stroke: '#1b1008', strokeThickness: 3,
     }).setOrigin(1, 0);
 
     // Тег сложности («Кошмар ×1.6»)
     if ((opts.scoreMult ?? 1) > 1) {
-      this.diffTag = this.scene.add.text(0, 0, `${opts.diffName ?? ''} ×${opts.scoreMult}`, {
-        fontFamily: FONT, fontSize: '10px', color: '#ff8866',
+      this.diffTag = this.mkText(`${opts.diffName ?? ''} ×${opts.scoreMult}`, 12, {
+        fontFamily: FONT, color: '#ff8866',
         stroke: '#1b1008', strokeThickness: 3,
       }).setOrigin(1, 0);
     }
@@ -193,8 +276,8 @@ export class HUD {
     // она выходила в натуральный размер текстуры — на 390 px это был
     // квадрат в четверть экрана.
     this.pauseBg = this.scene.add.image(0, 0, 'btn-small-blue').setDisplaySize(PAUSE_SIZE, PAUSE_SIZE);
-    this.pauseTxt = this.scene.add.text(0, 0, 'II', {
-      fontFamily: FONT, fontSize: '16px', color: '#ffffff',
+    this.pauseTxt = this.mkText('II', 16, {
+      fontFamily: FONT, color: '#ffffff',
       stroke: '#2a1608', strokeThickness: 5,
     }).setOrigin(0.5);
     this.pauseHit = this.scene.add.zone(0, 0, PAUSE_SIZE + 16, PAUSE_SIZE + 16)
@@ -220,21 +303,20 @@ export class HUD {
       onPause();
     });
 
-    // Босс-бар (ширина подгоняется под экран в layout())
+    // Босс-бар: собран из настоящей полосы ui/bars (крупная деталь),
+    // а не из плоских прямоугольников. Ширина подгоняется под экран в layout().
     this.bossGroup = this.scene.add.container(0, 0).setVisible(false);
-    const barW = 420;
-    this.bossBg = this.scene.add.rectangle(0, 0, barW, 18, 0x1b1008, 0.92).setOrigin(0.5);
-    this.bossInner = this.scene.add.rectangle(0, 0, barW - 6, 12, 0x50120f).setOrigin(0.5);
-    this.bossFill = this.scene.add.rectangle(-(barW - 6) / 2, 0, barW - 6, 12, 0xd03028).setOrigin(0, 0.5);
-    this.bossHpText = this.scene.add.text(0, 0, '', {
-      fontFamily: FONT, fontSize: '10px', color: '#ffd9c0',
+    this.bossBar = new StatBar(this.scene, 0, 0, 420, 'big', { fill: FILL.red });
+    this.bossGroup.add(this.bossBar.root);
+    this.bossHpText = this.mkText('', 12, {
+      fontFamily: FONT, color: '#ffd9c0',
       stroke: '#1b1008', strokeThickness: 4,
     }).setOrigin(0.5);
-    this.bossText = this.scene.add.text(0, -16, t('hud.bossName'), {
-      fontFamily: FONT, fontSize: '10px', color: '#ff9a8a',
+    this.bossText = this.mkText(t('hud.bossName'), 12, {
+      fontFamily: FONT, color: '#ff9a8a',
       stroke: '#1b1008', strokeThickness: 4,
     }).setOrigin(0.5);
-    this.bossGroup.add([this.bossBg, this.bossInner, this.bossFill, this.bossText, this.bossHpText]);
+    this.bossGroup.add([this.bossText, this.bossHpText]);
 
     // Виньетка низкого HP (пульсирующие красные края экрана)
     for (let i = 0; i < 4; i++) {
@@ -243,18 +325,18 @@ export class HUD {
       this.vignetteRects.push(r);
     }
 
-    this.announceText = this.scene.add.text(0, 0, '', {
-      fontFamily: FONT, fontSize: '20px', color: '#ffffff',
-      stroke: '#7a1010', strokeThickness: 7,
+    this.announceText = this.mkText('', 20, {
+      fontFamily: FONT, color: '#ffffff',
+      stroke: '#7a1010', strokeThickness: outlineFor(20),
     }).setOrigin(0.5).setAlpha(0);
 
     // Комбо-счётчик серии убийств (топ-справа, под счётом)
-    this.comboText = this.scene.add.text(0, 0, '', {
-      fontFamily: FONT, fontSize: '20px', color: '#ffd76e',
-      stroke: '#7a1010', strokeThickness: 6,
+    this.comboText = this.mkText('', 20, {
+      fontFamily: FONT, color: '#ffd76e',
+      stroke: '#7a1010', strokeThickness: outlineFor(20),
     }).setOrigin(1, 0.5).setVisible(false);
     this.comboBarBg = this.scene.add.rectangle(0, 0, 68, 6, 0x1b1008, 0.85).setOrigin(1, 0.5).setVisible(false);
-    this.comboBar = this.scene.add.rectangle(0, 0, 64, 3, 0xffd76e).setOrigin(1, 0.5).setVisible(false);
+    this.comboBar = this.scene.add.image(0, 0, FILL.yellow).setOrigin(1, 0.5).setVisible(false);
 
     // Стрелки-индикаторы за экраном (сундук/босс)
     // Сундук оставляем золотым (родной цвет спрайта), врага красим
@@ -263,32 +345,44 @@ export class HUD {
     this.indEnemy = this.makeIndicator(0xff5040);
 
     // ---- Блок РЕСУРСЫ (дерево/мясо/руда) — скрыт, пока всё по нулям (§B.8) ----
+    //
+    // Число стоит СПРАВА от значка. Раньше текст создавался в той же точке,
+    // что и иконка, и цифра рисовалась поверх картинки — количество ресурсов
+    // было не прочитать вовсе.
     this.resGroup = this.scene.add.container(0, 0).setVisible(false);
+    const RES_ICON = 15;
+    const RES_GAP = 5;
     const resDefs: Array<[string, string, number]> = [
       ['wood', 'res-wood', 0xffffff], ['meat', 'res-meat', 0xffffff], ['ore', 'res-ore', 0xfff0b0],
     ];
     resDefs.forEach(([key, tex, tint], i) => {
-      const ic = this.scene.add.image(0, i * 20, tex).setDisplaySize(15, 15).setOrigin(0, 0.5);
+      const rowY = i * 20;
+      const ic = this.scene.add.image(0, rowY, tex).setDisplaySize(RES_ICON, RES_ICON).setOrigin(0, 0.5);
       if (tint !== 0xffffff) ic.setTint(tint);
-      const txt = this.scene.add.text(20, i * 20, '0', {
-        fontFamily: FONT, fontSize: '11px', color: '#ffe9b0',
+      const txt = this.mkText('0', 12, {
+        fontFamily: FONT, color: '#ffe9b0',
         stroke: '#1b1008', strokeThickness: 3,
-      }).setOrigin(0, 0.5);
+      }).setOrigin(0, 0.5).setPosition(this.sc(RES_ICON + RES_GAP), rowY);
       this.resTexts[key] = txt;
       this.resGroup.add([ic, txt]);
     });
 
     // ---- Индикатор поселения: две мини-полосы (§E.11 — обязателен) ----
+    //
+    // Подпись гарнизона уходит вправо от полос, а не в ту же точку: раньше
+    // «Гарнизон 2/4» рисовалось поверх обеих мини-полос.
     this.settleGroup = this.scene.add.container(0, 0);
+    const SETTLE_BAR_W = 100;
+    const SETTLE_GAP = 20;
     const castleIc = this.scene.add.image(0, 0, 'castle').setDisplaySize(16, 13).setOrigin(0, 0.5);
-    const barBgI = this.scene.add.rectangle(20, -4, 100, 5, 0x1b1008, 0.85).setOrigin(0, 0.5);
-    const barBgP = this.scene.add.rectangle(20, 4, 100, 5, 0x1b1008, 0.85).setOrigin(0, 0.5);
-    this.settleInfraBar = this.scene.add.rectangle(20, -4, 100, 5, 0xd0a050).setOrigin(0, 0.5);
-    this.settlePopBar = this.scene.add.rectangle(20, 4, 100, 5, 0x6db44a).setOrigin(0, 0.5);
-    this.garrisonText = this.scene.add.text(0, 14, '', {
-      fontFamily: FONT, fontSize: '9px', color: '#d8c9a8',
+    const barBgI = this.scene.add.rectangle(SETTLE_GAP, -4, SETTLE_BAR_W, 5, 0x1b1008, 0.85).setOrigin(0, 0.5);
+    const barBgP = this.scene.add.rectangle(SETTLE_GAP, 4, SETTLE_BAR_W, 5, 0x1b1008, 0.85).setOrigin(0, 0.5);
+    this.settleInfraBar = this.scene.add.image(SETTLE_GAP, -4, FILL.yellow).setOrigin(0, 0.5);
+    this.settlePopBar = this.scene.add.image(SETTLE_GAP, 4, FILL.green).setOrigin(0, 0.5);
+    this.garrisonText = this.mkText('', 12, {
+      fontFamily: FONT, color: '#d8c9a8',
       stroke: '#1b1008', strokeThickness: 3,
-    }).setOrigin(0, 0.5);
+    }).setOrigin(0, 0.5).setPosition(this.sc(SETTLE_GAP + SETTLE_BAR_W + 6), 0);
     this.settleGroup.add([castleIc, barBgI, barBgP, this.settleInfraBar, this.settlePopBar, this.garrisonText]);
 
     // Порядок добавления = порядок отрисовки (снизу вверх):
@@ -310,6 +404,7 @@ export class HUD {
     this.root.add(base);
 
     this.layout();
+    void H;
   }
 
   private camZoom(): number {
@@ -319,46 +414,64 @@ export class HUD {
   layout(): void {
     const W = this.scene.scale.width;
     const H = this.scene.scale.height;
-    this.xpBar.setWidth(W);
+    // Масштаб HUD пересчитывается при ресайзе: окно могло развернуться
+    // с телефона на десктоп, и интерфейс обязан вырасти вместе с ним.
+    this.s = HUD.scaleFor(W, H);
+    this.applyTextSizes();
     const sa = safeInsets();
-    this.xpBar.setPosition(W / 2, 9 + sa.top);
-    this.xpLabel.setPosition(W / 2, 9 + sa.top);
-    this.timerText.setPosition(12 + sa.left, 32 + sa.top);
-    // HP-бар: под таймером; полоса 150px + сердце + текст
-    this.hpIcon.setPosition(19 + sa.left, 55 + sa.top);
-    this.hpBar.setPosition(30 + 154 / 2 + sa.left, 55 + sa.top);
-    this.hpText.setPosition(30 + 154 + 6 + sa.left, 55 + sa.top);
-    this.statsText.setPosition(12 + sa.left, 78 + sa.top);
-    this.goldIcon.setPosition(12 + sa.left, 98 + sa.top);
-    this.goldText.setPosition(30 + sa.left, 98 + sa.top);
-    // Блок РЕСУРСЫ: под золотом матча (левый столбец, §B.8)
-    this.resGroup.setPosition(12 + sa.left, 120 + sa.top);
-    // Индикатор поселения: под ресурсами
-    this.settleGroup.setPosition(12 + sa.left, 184 + sa.top);
+    const S = this.s;
+
+    // Полоса опыта — во всю ширину экрана, остальные элементы — в углах.
+    this.xpBar.setFactor(S);
+    this.xpBar.setWidth(W);
+    this.xpBar.setPosition(W / 2, this.sc(9) + sa.top);
+    this.xpLabel.setPosition(W / 2, this.sc(9) + sa.top);
+
+    this.timerText.setPosition(this.sc(12) + sa.left, this.sc(32) + sa.top);
+    // HP-бар: под таймером; полоса 154 px + сердце + текст
+    const hpW = this.sc(154);
+    this.hpIcon.setDisplaySize(this.sc(15), this.sc(15));
+    this.hpIcon.setPosition(this.sc(19) + sa.left, this.sc(55) + sa.top);
+    this.hpBar.setFactor(S);
+    this.hpBar.setPosition(this.sc(30) + hpW / 2 + sa.left, this.sc(55) + sa.top);
+    this.hpText.setPosition(this.sc(30) + hpW + this.sc(6) + sa.left, this.sc(55) + sa.top);
+    this.statsText.setPosition(this.sc(12) + sa.left, this.sc(78) + sa.top);
+    this.goldIcon.setDisplaySize(this.sc(14), this.sc(14));
+    this.goldIcon.setPosition(this.sc(12) + sa.left, this.sc(98) + sa.top);
+    this.goldText.setPosition(this.sc(30) + sa.left, this.sc(98) + sa.top);
+    // Блок РЕСУРСЫ: под золотом матча (левый столбец, §B.8).
+    // Группа масштабируется целиком: значки и цифры растут вместе с HUD.
+    this.resGroup.setScale(S).setPosition(this.sc(12) + sa.left, this.sc(120) + sa.top);
+    // Индикатор поселения: под ресурсами, а без них — сразу под золотом.
+    // Тот же ряд нужен босс-бару на узком экране, поэтому он считается здесь.
+    const settleY = this.resVisible ? this.sc(186) : this.sc(124);
+    this.settleGroup.setScale(S).setPosition(this.sc(12) + sa.left, settleY + sa.top);
     // Правый верхний угол занят кнопкой паузы: весь блок (счёт, метка
     // сложности, серия) заканчивается левее неё, иначе цифры ложились
     // прямо на кнопку.
-    const rEdge = W - PAUSE_RESERVE;
-    this.scoreText.setPosition(rEdge - sa.right, 34 + sa.top);
-    this.diffTag?.setPosition(rEdge - sa.right, 54 + sa.top);
+    const rEdge = W - this.sc(PAUSE_RESERVE);
+    this.scoreText.setPosition(rEdge - sa.right, this.sc(34) + sa.top);
+    this.diffTag?.setPosition(rEdge - sa.right, this.sc(54) + sa.top);
     // Комбо: под счётом, выравнивание вправо
-    this.comboBaseY = 78 + sa.top;
+    this.comboBaseY = this.sc(78) + sa.top;
     this.comboText.setPosition(rEdge - sa.right, this.comboBaseY);
-    this.comboBarBg.setPosition(rEdge - sa.right, this.comboBaseY + 16);
-    this.comboBar.setPosition(rEdge - sa.right - 2, this.comboBaseY + 16);
+    this.comboBarBg.setPosition(rEdge - sa.right, this.comboBaseY + this.sc(16));
+    this.comboBar.setPosition(rEdge - sa.right - this.sc(2), this.comboBaseY + this.sc(16));
     // Анонс: на низких экранах опускаем ниже, чтобы не наезжать на босс-бар
-    this.announceText.setPosition(W / 2, H < 600 ? Math.max(126, H * 0.3) : H * 0.22);
-    // Босс-бар: на узких экранах опускаем под строку золота — иначе
-    // перекрывает счётчик убийств (x=12, y=62)
-    this.bossGroup.setPosition(W / 2, W < 620 ? 112 : 64);
+    this.announceText.setPosition(W / 2, H < 600 ? Math.max(this.sc(126), H * 0.3) : H * 0.22);
+    // Босс-бар. На узком экране он не влезает рядом с левой колонкой и
+    // накрывал счётчик убийств, золото и индикатор поселения, поэтому
+    // уводится ПОД всю колонку (ниже индикатора поселения).
+    this.bossGroup.setPosition(W / 2, W < 700 ? settleY + sa.top + this.sc(34) : this.sc(64));
     // Полоса босса не шире экрана: на мобильных (<430px) фиксированные 420px
     // обрезались краями экрана
-    this.bossBarW = Math.min(420, W - 24);
-    this.bossBg.setSize(this.bossBarW, 18);
-    this.bossInner.setSize(this.bossBarW - 6, 12);
-    this.bossFill.setPosition(-(this.bossBarW - 6) / 2, 0);
+    this.bossBarW = Math.min(this.sc(420), W - 24);
+    this.bossBar.setFactor(S * 0.62);
+    this.bossBar.setWidth(this.bossBarW);
+    this.bossBar.setPosition(0, 0);
+    this.bossText.setPosition(0, -this.sc(22));
     // Виньетка: красные полосы по краям
-    const e = 26;
+    const e = this.sc(26);
     const [top, bottom, left, right] = this.vignetteRects;
     top?.setPosition(0, 0).setSize(W, e);
     bottom?.setPosition(0, H - e).setSize(W, e);
@@ -366,19 +479,30 @@ export class HUD {
     right?.setPosition(W - e, 0).setSize(e, H);
     // Иконки оружия: слева направо снизу, с переносом на новый ряд —
     // на мобильных 16 иконок (7 оружий + 9 пассивок) не помещаются в один ряд
-    const perRow = Math.max(1, Math.floor((W - 24) / 40));
-    let ix = 12;
-    let iy = H - hudBottomInset();
+    const step = this.sc(SLOT_STEP);
+    const perRow = Math.max(1, Math.floor((W - this.sc(24)) / step));
+    const slot = this.sc(SLOT_SIZE);
+    const icoSize = this.sc(26);
+    let ix = this.sc(12);
+    let iconsY = this.bottomStack().iconsY;
     let inRow = 0;
     for (const c of this.weaponIcons.values()) {
-      c.setPosition(ix, iy);
+      c.setPosition(ix, iconsY);
+      // Слот и иконка тоже должны расти вместе с HUD, иначе на большом
+      // экране ряд из шестнадцати значков вырождается в горсть точек.
+      const bg = c.list[0] as Phaser.GameObjects.Image | undefined;
+      if (bg) bg.setDisplaySize(slot, slot);
+      const ic = c.list[1] as Phaser.GameObjects.Image | undefined;
+      if (ic) ic.setDisplaySize(icoSize, icoSize);
+      const lvl = c.list[2] as Phaser.GameObjects.Text | undefined;
+      if (lvl) lvl.setPosition(slot - 3, slot / 2 - 2);
       inRow++;
       if (inRow >= perRow) {
         inRow = 0;
-        ix = 12;
-        iy -= 44;
+        ix = this.sc(12);
+        iconsY -= this.sc(SLOT_STEP + 4);
       } else {
-        ix += 40;
+        ix += step;
       }
     }
     // Компенсация зума игровой камеры: инверсная трансформация корня,
@@ -389,11 +513,15 @@ export class HUD {
     // Кнопка паузы: экранные координаты, компенсацию зума делает root.
     // Масштаб фона не трогаем — он задан через setDisplaySize при создании,
     // и любой setScale здесь вернул бы натуральный размер текстуры.
-    const bx = W - 46;
-    const by = 96;
+    const pauseSize = this.sc(PAUSE_SIZE);
+    this.pauseBg.setDisplaySize(pauseSize, pauseSize);
+    this.pauseBaseScale = this.pauseBg.scaleX;
+    const bx = W - this.sc(46);
+    const by = this.sc(96);
     this.pauseBg.setPosition(bx, by);
     this.pauseTxt.setPosition(bx, by).setScale(1);
     this.pauseHit.setPosition(bx, by).setScale(1);
+    this.pauseHit.setSize(pauseSize + 16, pauseSize + 16);
   }
 
   update(s: HudState): void {
@@ -452,7 +580,9 @@ export class HUD {
   updateResources(res: { wood: number; ore: number; meat: number }): void {
     const any = res.wood > 0 || res.ore > 0 || res.meat > 0;
     this.resGroup.setVisible(any);
-    this.settleGroup.setPosition(12 + safeInsets().left, (any ? 184 : 122) + safeInsets().top);
+    // Положение блока — дело layout(): он учитывает масштаб HUD и безопасные
+    // зоны. Раньше updateResources переставлял его «сырыми» координатами
+    // поверх расчёта, и на большом мониторе блок уезжал с левой колонки.
     if (!any && !this.resVisible) return;
     this.resVisible = any;
     this.resTexts.wood.setText(`${res.wood}`);
@@ -462,25 +592,53 @@ export class HUD {
 
   /** Две полосы поселения + счётчик гарнизона (§E.11). */
   updateSettlement(infraFrac: number, popFrac: number, garrison: string): void {
-    this.settleInfraBar.width = Math.max(2, 100 * Phaser.Math.Clamp(infraFrac, 0, 1));
-    this.settlePopBar.width = Math.max(2, 100 * Phaser.Math.Clamp(popFrac, 0, 1));
-    this.settleInfraBar.setFillStyle(infraFrac > 0.5 ? 0xd0a050 : infraFrac > 0.25 ? 0xe0a030 : 0xd03028);
-    this.settlePopBar.setFillStyle(popFrac > 0.5 ? 0x6db44a : popFrac > 0.25 ? 0xe0a030 : 0xd03028);
+    const w = this.sc(100);
+    const h = this.sc(5);
+    this.settleInfraBar.setDisplaySize(Math.max(2, w * Phaser.Math.Clamp(infraFrac, 0, 1)), h);
+    this.settlePopBar.setDisplaySize(Math.max(2, w * Phaser.Math.Clamp(popFrac, 0, 1)), h);
+    this.settleInfraBar.setTexture(infraFrac > 0.5 ? FILL.yellow : infraFrac > 0.25 ? 'bar-fill-yellow' : FILL.red);
+    this.settlePopBar.setTexture(popFrac > 0.5 ? FILL.green : popFrac > 0.25 ? FILL.yellow : FILL.red);
     if (this.garrisonText.text !== garrison) this.garrisonText.setText(garrison);
+  }
+
+  /**
+ * Нижний ряд HUD: иконки оружия, кнопки ускорений и лента событий.
+ *
+ * Раньше все трое жили в одной полосе у нижней кромки и накладывались друг
+ * на друга: лента событий пересекала кнопки ускорений, а те — ряд иконок.
+ * Теперь это столбец, который считается снизу вверх от одного края:
+ * ряд иконок лежит на экране, над ним кнопки, над ними — лента.
+ */
+private bottomStack(): { iconsY: number; speedupY: number; feedY: number } {
+    const H = this.scene.scale.height;
+    const slot = this.sc(SLOT_SIZE);
+    const btnH = this.sc(SPEEDUP_H);
+    const iconsY = H - hudBottomInset(this.sc(4)) - slot / 2;
+    const speedupY = iconsY - slot / 2 - this.sc(8) - btnH / 2;
+    const feedY = speedupY - btnH / 2 - this.sc(20);
+    return { iconsY, speedupY, feedY };
   }
 
   /** Лента поселения: именные события, 3 последних по 6 сек (§H.2). */
   feed(text: string, color = '#ffe9b0'): void {
     const W = this.scene.scale.width;
-    const H = this.scene.scale.height;
-    const c = this.scene.add.container(14, H - 120);
-    const bg = this.scene.add.rectangle(0, 0, Math.min(300, W - 28), 22, 0x1b1008, 0.78).setOrigin(0, 0.5);
-    const label = this.scene.add.text(8, 0, text, {
-      fontFamily: FONT, fontSize: '10px', color,
-      stroke: '#1b1008', strokeThickness: 3,
-      wordWrap: { width: Math.min(284, W - 44) },
+    const w = Math.min(this.sc(300), W - this.sc(24));
+    const c = this.scene.add.container(this.sc(14), this.bottomStack().feedY);
+    // Подложка ленты — пергамент из набора, а не чёрный прямоугольник:
+    // события поселения читаются поверх живой сцены, и тёмная плашка
+    // выбивалась из общей стилистики. Цвет события переносит полоска
+    // слева: подпись остаётся тёмной и читаемой на пергаменте.
+    const bg = makePanel(this.scene, w / 2, 0, 'paper', w, this.sc(24));
+    bg.setAlpha(0.94);
+    const accent = this.scene.add.rectangle(
+      this.sc(6), 0, this.sc(4), this.sc(12), Phaser.Display.Color.HexStringToColor(color).color,
+      1,
+    ).setOrigin(0.5);
+    const label = this.scene.add.text(this.sc(12), 0, text, {
+      fontFamily: FONT, fontSize: `${this.sc(12)}px`, color: '#3b2410',
+      wordWrap: { width: w - this.sc(20) },
     }).setOrigin(0, 0.5);
-    c.add([bg, label]);
+    c.add([bg, accent, label]);
     this.root.add(c);
     this.feedItems.push(c);
     // Старые записи выталкиваются вверх и гаснут
@@ -511,39 +669,45 @@ export class HUD {
  * меняет подпись на причину отказа.
  */
   updateSpeedups(repairTarget: boolean, healTarget: boolean): void {
-    const H = this.scene.scale.height;
+    const W = this.scene.scale.width;
+    const bw = this.sc(148);
+    const bh = this.sc(SPEEDUP_H);
+    const rowY = this.bottomStack().speedupY;
+    // Кнопки стоят в ряд над иконками оружия. Раньше они были столбиком и
+    // на телефоне наезжали на ряд иконок и на ленту событий.
     const defs: Array<[string, string, boolean, number, string]> = [
       ['repair', t('speedup.repair'), repairTarget, 0, t('speedup.noTarget')],
-      ['heal', t('speedup.heal'), healTarget, 46, t('speedup.noTarget')],
+      ['heal', t('speedup.heal'), healTarget, 1, t('speedup.noTarget')],
     ];
-    for (const [key, label, enabled, dy, why] of defs) {
+    for (const [key, label, enabled, col, why] of defs) {
       let c = this.speedupBtns[key];
       if (!c) {
+        // Кнопка — тот же nine-slice, что и в меню: в HUD кнопки раньше
+        // рисовались голыми прямоугольниками и выглядели инородно.
+        const btn = makeButton(
+          this.scene, 0, 0, bw, bh, label,
+          () => this.speedupHandlers[key as 'repair' | 'heal'](),
+          'red', this.sc(12),
+        );
         c = this.scene.add.container(0, 0);
-        const bg = this.scene.add.rectangle(0, 0, 148, 30, 0x1b1008, 0.9).setOrigin(1, 0.5)
-          .setStrokeStyle(1, 0x8a6d3b).setInteractive({ useHandCursor: true });
-        const txt = this.scene.add.text(-8, 0, label, {
-          fontFamily: FONT, fontSize: '10px', color: '#ffe9b0',
-        }).setOrigin(1, 0.5);
-        c.add([bg, txt]);
-        this.speedupBg[key] = bg;
-        bg.on('pointerdown', () => this.speedupHandlers[key as 'repair' | 'heal']());
-        c.setSize(148, 30);
+        c.add([btn.img, btn.txt]);
         this.speedupBtns[key] = c;
+        this.speedupButtons[key] = btn;
         this.root.add(c);
       }
-      const list = c.list as Phaser.GameObjects.GameObject[];
-      const txt = list[1] as Phaser.GameObjects.Text;
-      const bgs = this.speedupBg[key];
-      if (bgs) {
-        bgs.setStrokeStyle(1, enabled ? 0x8a6d3b : 0x4a4038);
-        bgs.setFillStyle(enabled ? 0x1b1008 : 0x14100b, 0.75);
-        txt.setColor(enabled ? '#ffe9b0' : '#6f6558');
-        txt.setText(enabled ? label : why);
-        bgs.input!.enabled = enabled;
-        bgs.input!.cursor = enabled ? 'pointer' : 'default';
+      const btn = this.speedupButtons[key];
+      if (btn) {
+        btn.setLabel(enabled ? label : why);
+        btn.setEnabled(enabled);
+        // Недоступная кнопка гаснет прозрачностью, а подпись остаётся
+        // светлой: серый текст поверх красной плашки при 55 % прозрачности
+        // сливался в бурое пятно, и причину отказа было не прочитать.
+        btn.txt.setColor('#ffffff');
       }
-      c.setPosition(this.scene.scale.width - 14, H - hudBottomInset() - 60 - dy);
+      // Правый край — по ЦЕНТРУ кнопки. Контейнер создаётся в нуле, а
+      // раньше его ставили в точку у самого края экрана: половина кнопки
+      // (74 px) уезжала за границу, и подпись обрезалась.
+      c.setPosition(W - this.sc(14) - bw / 2 - col * (bw + this.sc(8)), rowY);
     }
   }
 
@@ -556,8 +720,10 @@ export class HUD {
     const icon = this.weaponIcons.get(weaponId);
     if (!icon || icon.evoReady) return;
     icon.evoReady = true;
-    const bg = icon.list[0] as Phaser.GameObjects.Rectangle | undefined;
-    if (bg && bg.type === 'Rectangle') bg.setStrokeStyle(3, 0xffd700, 1);
+    // Подложка слота — Image из ассета, а не Graphics: «золотая рамка» на
+    // ней делается тонировкой. Пульс по прозрачности контейнера остаётся.
+    const bg = icon.list[0] as Phaser.GameObjects.Image | undefined;
+    if (bg && bg.type === 'Image') bg.setTint(0xffd700);
     this.scene.tweens.add({
       targets: icon, alpha: { from: 1, to: 0.65 },
       duration: 850, yoyo: true, repeat: -1, ease: 'Sine.easeInOut',
@@ -571,8 +737,12 @@ export class HUD {
     icon.evoReady = false;
     this.scene.tweens.killTweensOf(icon);
     icon.setAlpha(1);
-    const bg = icon.list[0] as Phaser.GameObjects.Rectangle | undefined;
-    if (bg && bg.type === 'Rectangle') bg.setStrokeStyle(0);
+    const bg = icon.list[0] as Phaser.GameObjects.Image | undefined;
+    // Возвращаем обычный цвет слота, а не снимаем тонировку: setIcon
+    // красит подложку по уровню (5+ — золотая).
+    const lvl = icon.list[2] as Phaser.GameObjects.Text | undefined;
+    const evolved = lvl?.text === '★';
+    if (bg && bg.type === 'Image') bg.setTint(evolved ? 0xffd76e : 0x9aa7b8);
   }
 
   updateCombo(combo: number, windowFrac: number): void {
@@ -593,10 +763,15 @@ export class HUD {
       this.scene.tweens.add({ targets: this.comboText, scale: 1, duration: 140, ease: 'Back.easeOut' });
       this.comboShown = combo;
     }
-    this.comboBar.width = Math.max(0, 64 * Phaser.Math.Clamp(windowFrac, 0, 1));
-    // Цвет: чем ближе к сбросу — тем краснее
+    // Полоса окна серии: заливка из набора полос (bar-fill-*), а не
+    // прямоугольник — так индикатор выглядит частью интерфейса.
     const frac = Phaser.Math.Clamp(windowFrac, 0, 1);
-    this.comboBar.setFillStyle(frac > 0.4 ? 0xffd76e : frac > 0.18 ? 0xe0a030 : 0xd03028);
+    this.comboBar.setDisplaySize(
+      Math.max(0, this.sc(64) * frac),
+      this.sc(3),
+    );
+    // Цвет: чем ближе к сбросу — тем краснее
+    this.comboBar.setTexture(frac > 0.4 ? FILL.yellow : frac > 0.18 ? 'bar-fill-yellow' : FILL.red);
   }
 
   /** Серия сброшена: короткая красная вспышка ×N */
@@ -760,7 +935,7 @@ export class HUD {
 
   updateBossBar(frac: number, hp?: number, maxHp?: number): void {
     const f = Phaser.Math.Clamp(frac, 0, 1);
-    this.bossFill.setSize(Math.max(0, (this.bossBarW - 6) * f), 12);
+    this.bossBar.setFraction(f);
     if (hp !== undefined && maxHp !== undefined) {
       const text = num(Math.max(0, Math.ceil(hp))) + ' / ' + num(Math.round(maxHp));
       if (this.bossHpText.text !== text) this.bossHpText.setText(text);
@@ -785,6 +960,19 @@ export class HUD {
     this.bossGroup.setVisible(false);
   }
 
+  /**
+   * Нижняя граница верхней полосы HUD в экранных пикселях.
+   *
+   * Окна (левел-ап, пауза) запускаются поверх сцены и гасят её затемнением,
+   * но полоса босса с именем стоит ровно там, где у окна заголовок: лента
+   * «НОВЫЙ УРОВЕНЬ!» ложилась прямо на имя босса и на его полосу. Сцена
+   * спрашивает HUD, где кончается верхняя полоса, и опускает заголовок ниже.
+   */
+  overlayTopInset(): number {
+    if (!this.bossGroup.visible) return this.sc(46);
+    return this.bossGroup.y + this.sc(34);
+  }
+
   /** Тост-уведомление о достижении (очередь, выезжает справа) */
   achievementToast(a: AchievementDef): void {
     audio.play('ach');
@@ -803,7 +991,7 @@ export class HUD {
     const paper = makePanel(this.scene, 0, 0, 'paper', 250, 58);
     const icon = this.scene.add.image(-95, 0, a.icon).setDisplaySize(38, 38);
     const label = this.scene.add.text(-68, -14, t('ach.toast'), {
-      fontFamily: FONT, fontSize: '9px', color: '#8a5b12',
+      fontFamily: FONT, fontSize: '12px', color: '#8a5b12',
     }).setOrigin(0, 0.5);
     const name = this.scene.add.text(-68, 7, a.name, {
       fontFamily: FONT, fontSize: '13px', color: '#3b2410',
@@ -827,17 +1015,25 @@ export class HUD {
   setIcon(id: string, iconKey: string, level: number, isPassive: boolean): void {
     let c = this.weaponIcons.get(id);
     const H = this.scene.scale.height;
+    const slot = this.sc(SLOT_SIZE);
     if (!c) {
       c = this.scene.add.container(
         12 + this.weaponIcons.size * 40,
         H - hudBottomInset(),
       );
-      const bg = this.scene.add.rectangle(0, 0, 34, 34, 0x1b1008, 0.75).setOrigin(0, 0.5);
-      const ic = this.scene.add.image(4, -3, iconKey).setOrigin(0, 0).setDisplaySize(26, 26);
-      const lvl = this.scene.add.text(30, 10, '1', {
-        fontFamily: FONT, fontSize: '8px', color: '#ffd76e',
+      // Подложка слота — настоящий ассет ui/buttons (маленькая квадратная
+      // кнопка пака), а не залитый прямоугольник: иконки оружия и пассивок
+      // стоят в одном ряду с кнопкой паузы и должны быть из того же
+      // набора графики, что и она.
+      const bg = this.scene.add.image(0, 0, 'btn-small-blue')
+        .setDisplaySize(slot, slot).setOrigin(0, 0.5).setTint(0x9aa7b8);
+      const ic = this.scene.add.image(4, -3, iconKey).setOrigin(0, 0)
+        .setDisplaySize(this.sc(26), this.sc(26));
+      const lvl = this.mkText('1', FS.small, {
+        fontFamily: FONT, color: '#ffd76e',
         stroke: '#1b1008', strokeThickness: 3,
       }).setOrigin(1, 1);
+      lvl.setPosition(slot - 3, slot / 2 - 2);
       c.add([bg, ic, lvl]);
       this.root.add(c);
       this.weaponIcons.set(id, c);
@@ -847,23 +1043,25 @@ export class HUD {
     }
     const lvlText = c.list[2] as Phaser.GameObjects.Text;
     const ic = c.list[1] as Phaser.GameObjects.Image;
+    const bg = c.list[0] as Phaser.GameObjects.Image;
     if (level >= 6) {
-      // Эволюция: звезда вместо цифры, золотая рамка и свечение иконки
-      lvlText.setText('★').setFontSize(11);
+      // Эволюция: звезда вместо цифры, золотая подложка и свечение иконки.
+      // Кегль не трогаем — mkText уже задал FS.small и пересчитает его сам
+      // при ресайзе; ручной setFontSize здесь ломал бы размер при смене окна.
+      lvlText.setText('★');
       ic.setTint(0xffe9a0);
-      const bg = c.list[0] as Phaser.GameObjects.Rectangle;
-      bg.setFillStyle(0x8a6a18, 0.92);
-      bg.setStrokeStyle(2, 0xffd76e, 0.9);
+      bg.clearTint().setTint(0xffd76e);
       // Появление: пульс золотой вспышки
       this.scene.tweens.add({
         targets: c, scale: { from: 1.6, to: 1 }, duration: 340, ease: 'Back.easeOut',
       });
     } else {
-      lvlText.setText(level > 0 ? `${level}` : '').setFontSize(8);
-      // Подсветка максимума
-      const bg = c.list[0] as Phaser.GameObjects.Rectangle;
-      bg.setStrokeStyle(0, 0xffffff, 0);
-      bg.setFillStyle(level >= 5 ? 0x6b4d12 : 0x1b1008, 0.8);
+      // Уровень 1..5 — цифра. Раньше она ставилась кеглем 8 px, минуя общий
+      // минимум кириллицы: цифра превращалась в пиксельную кашу и не
+      // читалась. Теперь это FS.small, масштабируется вместе с HUD.
+      lvlText.setText(level > 0 ? `${level}` : '');
+      ic.clearTint();
+      bg.clearTint().setTint(level >= 5 ? 0xffd76e : 0x9aa7b8);
     }
   }
 

@@ -1,8 +1,10 @@
 import Phaser from 'phaser';
-import { FONT } from '../constants';
+import { FONT, DEPTH } from '../constants';
 import { BUILDING_PLANS, type ResourceCost } from '../data';
 import { showPlacementRewarded, placementAvailable } from '../../platform/ads';
-import { makePanel } from '../systems/Ui';
+import { makePanel, makeRibbon, makeButton, type Button } from '../systems/Ui';
+import { shrinkToHeight, FS } from '../systems/Text';
+import { successionLayout, RIBBON_KEY } from './successionLayout';
 import { t, num } from '../../i18n';
 
 // ============ Экран преемственности героя (TZ §F.5) ============
@@ -12,6 +14,12 @@ import { t, num } from '../../i18n';
 // ресурсы (новый воин из здания) → реклама/золото матча с выбором типа.
 // Кроны нигде не принимаются (§J.9). Первая преемственность аккаунта
 // бесплатна — бейдж «ПЕРВЫЙ РАЗ — БЕСПЛАТНО» (§F.4).
+//
+// Разметка повторяет «Лавку» и «Хронику»: затемнение с гасящим клик блокером,
+// пергаментная панель по габаритам экрана, лента-заголовок и пересборка
+// сцены при ресайзе. Раньше окно было собрано из плоских прямоугольников
+// (`add.rectangle` + заливка цветом), жило без ленты и без обработки
+// поворота экрана — на телефоне при смене ориентации оно разъезжалось.
 
 interface SuccessionOption {
   weapon: string;
@@ -34,13 +42,29 @@ interface SuccessionData {
   onSurrender: () => void;
 }
 
+/** Глубина оверлея. Панель и её содержимое лежат выше затемнения. */
+const D = {
+  dim: DEPTH.OVERLAY - 1,
+  panel: DEPTH.OVERLAY,
+  ribbon: DEPTH.OVERLAY + 1,
+  content: DEPTH.OVERLAY + 2,
+} as const;
+
+/** Пункт выбора типа воина: карточка пергамента с рамкой выбора. */
+interface OptionCard {
+  container: Phaser.GameObjects.Container;
+  setSelected(on: boolean): void;
+  destroy(): void;
+}
+
 export class SuccessionScene extends Phaser.Scene {
   private data_: SuccessionData | null = null;
   /** Выбранный тип воина для платных веток. */
   private picked: string = 'sword';
   private adUsed = false;
   private surrendered = false;
-  private confirmText: Phaser.GameObjects.Text | null = null;
+  /** Карточки выбора типа — нужны для перерисовки рамки выбора. */
+  private cards = new Map<string, OptionCard>();
 
   constructor() {
     super('Succession');
@@ -49,120 +73,212 @@ export class SuccessionScene extends Phaser.Scene {
   create(data: SuccessionData): void {
     this.data_ = data;
     this.surrendered = false;
+    this.cards.clear();
     // ⚠️ Выбор сбрасывается на первый ДОСТУПНЫЙ тип (§F.5). Раньше оставался
     // дефолт 'sword', и при одном лишь монастыре серый «мечник» оставался
     // помеченным как выбранный — красная обводка на недоступном варианте,
     // и ветка 2/3 отдавала мечника из казарм, которых нет.
     this.picked = data.options.find((o) => o.available)?.weapon ?? 'sword';
+
     const W = this.scale.width;
     const H = this.scale.height;
+    // Вся арифметика раскладки живёт в successionLayout.ts — модуль намеренно
+    // свободен от Phaser, чтобы раскладку можно было прогнать без браузера
+    // (локальный tools/check-layout.mjs). Здесь сцена только расставляет
+    // объекты по готовым координатам.
+    const L = successionLayout(W, H, {
+      living: data.livingCount > 0,
+      options: data.options.length,
+    });
+    const { cx, panelW, panelH } = L;
 
-    this.add.rectangle(W / 2, H / 2, W + 8, H + 8, 0x07070d, 0.88);
+    // ---------- Затемнение: клик мимо панели сдаётся (тач-мисс §I.6) ----------
+    this.add
+      .rectangle(cx, H / 2, W + 40, H + 40, 0x07070d, 0.88)
+      .setDepth(D.dim).setScrollFactor(0).setInteractive()
+      .on('pointerdown', () => this.requestSurrender());
 
-    const panelW = Math.min(560, W - 32);
-    const panelH = Math.min(560, H - 60);
-    const panel = makePanel(this, W / 2, H / 2, 'paper', panelW, panelH);
-    void panel;
+    // ---------- Панель ----------
+    makePanel(this, cx, H / 2, 'paper', panelW, panelH).setDepth(D.panel).setScrollFactor(0);
+    // Невидимый блокер: клик по пергаменту гасится и не доходит до затемнения.
+    this.add.zone(cx, H / 2, panelW, panelH).setDepth(D.panel + 1).setInteractive();
 
-    let y = H / 2 - panelH / 2 + 40;
-    this.add.text(W / 2, y, t('succession.title'), {
-      fontFamily: FONT, fontSize: '22px', color: '#8c1d18',
-      stroke: '#ffe9c0', strokeThickness: 3,
-    }).setOrigin(0.5);
-    y += 26;
-    this.add.text(W / 2, y, t('succession.subtitle'), {
-      fontFamily: FONT, fontSize: '12px', color: '#5a4327',
-    }).setOrigin(0.5);
+    // ---------- Лента-заголовок + подпись ----------
+    makeRibbon(this, cx, L.ribbonY, L.ribbonW, RIBBON_KEY, L.ribbonH)
+      .setDepth(D.ribbon).setScrollFactor(0);
+    this.add.text(cx, L.ribbonY, t('succession.title'), {
+      fontFamily: FONT, fontSize: `${L.titleFont}px`, color: '#ffe9c0',
+      stroke: '#1b1008', strokeThickness: 4,
+    }).setOrigin(0.5).setDepth(D.ribbon + 1).setScrollFactor(0);
 
-    // ---- Ветка 1: живой воин на поле ----
-    y += 46;
-    if (data.livingCount > 0) {
-      const btn = this.makeButton(W / 2, y, t('succession.takeCommand'), 0x3b6ea5, () => {
-        if (this.data_?.onTakeWarrior()) this.scene.stop();
+    // Подзаголовок: живой воин / никто. Показываем, только если есть смысл.
+    const subtitle = data.livingCount > 0
+      ? t('succession.subtitle')
+      : t('succession.newWarrior');
+    const sub = this.add.text(cx, L.subtitleY, subtitle, {
+      fontFamily: FONT, fontSize: `${FS.small}px`, color: '#5a4327', align: 'center',
+    }).setOrigin(0.5).setDepth(D.ribbon + 1).setScrollFactor(0);
+    shrinkToHeight(sub, 34, FS.small);
+
+    const { btnH, btnFont, halfW } = L;
+
+    // ---- Сдаться (тач-мисс не должен терять матч, §I.6) ----
+    this.addBtn(cx, L.surrenderY, L.surrenderW, btnH,
+      t('succession.surrender'), 'red', btnFont, () => this.requestSurrender());
+
+    // ---- Платные ветки: реклама / золото (первая преемственность — бесплатна)
+    const free = data.firstFree;
+    const freeLabel = free ? ` — ${t('pawn.firstFree')}` : '';
+    this.addBtn(cx - halfW / 2 - 7, L.branchY, halfW, btnH,
+      t('succession.watchAd'), 'blue', btnFont, () => void this.takeAd(),
+      free || !placementAvailable('succession'));
+    this.addBtn(cx + halfW / 2 + 7, L.branchY, halfW, btnH,
+      t('succession.payGold', { v: num(data.goldCost) }), 'blue', btnFont, () => {
+        if (this.data_?.onTakeGold(this.picked)) this.scene.stop();
+        else this.flash('speedup.poor');
       });
-      void btn;
-      this.add.text(W / 2, y - 22, t('succession.warriorOnField', { v: data.livingCount }), {
-        fontFamily: FONT, fontSize: '11px', color: '#3b6ea5',
-      }).setOrigin(0.5);
-      y += 58;
+
+    // ---- Ветка 1: живой воин на поле (только если такие есть) ----
+    if (data.livingCount > 0) {
+      this.addBtn(cx - halfW / 2 - 7, L.warriorY, halfW, btnH,
+        t('succession.takeCommand'), 'blue', btnFont, () => {
+          if (this.data_?.onTakeWarrior()) this.scene.stop();
+        });
+      // Вторая кнопка в этой строке — новый воин за ресурсы.
+      this.addBtn(cx + halfW / 2 + 7, L.warriorY, halfW, btnH,
+        (free ? t('succession.reason.free').toUpperCase() + freeLabel
+          : `${t('succession.reason.resources').toUpperCase()} (${costText(data.resourceCost)})`),
+        'blue', btnFont, () => {
+          if (!this.data_) return;
+          if (this.data_.onTakeResources(this.picked)) this.scene.stop();
+          else this.flash('building.cannot');
+        });
+      this.add.text(cx - halfW / 2 - 7, L.warriorY + btnH / 2 + L.captionH / 2,
+        t('succession.warriorOnField', { v: data.livingCount }), {
+          fontFamily: FONT, fontSize: `${FS.micro}px`, color: '#3b6ea5', align: 'center',
+        }).setOrigin(0.5).setDepth(D.content).setScrollFactor(0);
     }
 
     // ---- Выбор типа воина (серые = нет здания, §F.5) ----
-    this.add.text(W / 2, y, t('succession.newWarrior'), {
-      fontFamily: FONT, fontSize: '12px', color: '#5a4327',
-    }).setOrigin(0.5);
-    y += 30;
-    const bw = Math.min(104, (panelW - 40) / (data.options.length || 1) - 8);
+    // При нуле доступных типов (новый аккаунт без построек) сетка не
+    // рисуется вовсе — и не резервирует место.
     data.options.forEach((opt, i) => {
-      const x = W / 2 + (i - (data.options.length - 1) / 2) * (bw + 10);
-      const c = this.add.container(x, y);
-      const bg = this.add.rectangle(0, 0, bw, 64, opt.available ? 0xd8c9a8 : 0x9a917e, 0.95)
-        .setStrokeStyle(2, this.picked === opt.weapon ? 0x8c1d18 : 0x5a4327);
-      const name = this.add.text(0, -18, t(`hire.${opt.weapon}` as Parameters<typeof t>[0]), {
-        fontFamily: FONT, fontSize: '11px', color: opt.available ? '#2a1608' : '#6b6155',
-      }).setOrigin(0.5);
-      const cost = this.add.text(0, 12, opt.available ? '' : t('succession.noBuilding'), {
-        fontFamily: FONT, fontSize: '9px', color: opt.available ? '#5a4327' : '#6b6155',
-        align: 'center', wordWrap: { width: bw - 8 },
-      }).setOrigin(0.5);
-      c.add([bg, name, cost]);
-      if (opt.available) {
-        bg.setInteractive({ useHandCursor: true });
-        bg.on('pointerdown', () => {
-          this.picked = opt.weapon;
-          bg.setStrokeStyle(2, 0x8c1d18);
-          this.refreshSelection();
-        });
-      }
-      c.setName(`opt-${opt.weapon}`);
+      const x = L.cardXs[i];
+      if (x === undefined) return;
+      const card = this.makeOptionCard(x, L.gridY, L.cardW, L.cardH, opt);
+      this.cards.set(opt.weapon, card);
     });
-    y += 56;
 
-    // ---- Платные ветки: реклама / золото (первая преемственность — бесплатна) ----
-    const free = data.firstFree;
-    const freeLabel = free ? ` — ${t('pawn.firstFree')}` : '';
-    const btnResources = this.makeButton(W / 2 - 110, y,
-      free ? t('succession.reason.free').toUpperCase() + freeLabel
-        : `${t('succession.reason.resources').toUpperCase()} (${costText(data.resourceCost)})`,
-      free ? 0x4a8a3d : 0x3b6ea5, () => {
-        if (!this.data_) return;
-        if (this.data_.onTakeResources(this.picked)) this.scene.stop();
-        else this.flash('building.cannot');
+    // ---- Esc — сдаться (то же, что мимо панели) ----
+    const kb = this.input.keyboard;
+    kb?.on('keydown-ESC', this.requestSurrender, this);
+    this.scale.on('resize', this.rebuild, this);
+    this.events.once('shutdown', () => {
+      this.scale.off('resize', this.rebuild, this);
+      kb?.off('keydown-ESC', this.requestSurrender, this);
+    });
+  }
+
+  /** Пересборка под новые габариты: поворот экрана на телефоне. */
+  private rebuild(): void {
+    if (this.data_) this.scene.restart(this.data_);
+  }
+
+  // ================================================================
+  // Элементы: кнопка и карточка выбора — на настоящих ассетах пака
+  // ================================================================
+
+  /**
+   * Кнопка через общую фабрику Ui.makeButton.
+   *
+   * Раньше здесь был `add.rectangle` с заливкой цветом и подписью поверх —
+   * серый брусок без состояния нажатия, без тени, без рамки в стиле пака.
+   * Теперь это тот же nine-slice, что у «Лавки» и «Хроники», с теми же
+   * состояниями наведения/нажатия/недоступности.
+   */
+  private addBtn(
+    x: number, y: number, w: number, h: number,
+    label: string,
+    variant: 'blue' | 'red',
+    fontSize: number,
+    onClick: () => void,
+    disabled = false,
+  ): Button {
+    const b = makeButton(this, x, y, w, h, label, onClick, variant, fontSize, { disabled });
+    b.img.setDepth(D.content).setScrollFactor(0);
+    b.txt.setDepth(D.content + 1).setScrollFactor(0);
+    b.hit.setDepth(D.content + 2).setScrollFactor(0);
+    return b;
+  }
+
+  /**
+   * Карточка типа воина на пергаменте.
+   *
+   * Раньше это был серый прямоугольник с обводкой — единственное место в
+   * игре, где UI был нарисован кодом. Теперь карточка собрана из того же
+   * nine-slice, что и остальные панели; выбранный вариант помечается
+   * золотой тонировкой и подписью-галочкой, а не сменой цвета заливки.
+   */
+  private makeOptionCard(
+    x: number, y: number, w: number, h: number, opt: SuccessionOption,
+  ): OptionCard {
+    const c = this.add.container(x, y);
+    const paper = makePanel(this, 0, 0, opt.available ? 'paper' : 'paperSpecial', w, h);
+    if (!opt.available) paper.setAlpha(0.72);
+    const hitZone = this.add.zone(0, 0, w, h).setInteractive({ useHandCursor: true });
+
+    const name = this.add.text(0, opt.available ? -7 : 0, t(`hire.${opt.weapon}` as Parameters<typeof t>[0]), {
+      fontFamily: FONT, fontSize: `${FS.small}px`,
+      color: opt.available ? '#2a1608' : '#6b6155',
+      align: 'center', wordWrap: { width: w - 14 },
+    }).setOrigin(0.5);
+    shrinkToHeight(name, opt.available ? h * 0.42 : h * 0.66, FS.small);
+
+    const cost = this.add.text(0, h * 0.22, opt.available ? '' : t('succession.noBuilding'), {
+      fontFamily: FONT, fontSize: `${FS.micro}px`, color: '#6b6155',
+      align: 'center', wordWrap: { width: w - 12 },
+    }).setOrigin(0.5);
+    shrinkToHeight(cost, h * 0.28, FS.micro);
+
+    // Метка выбора — золотая тонировка карточки плюс галочка. Раньше
+    // выбранный вариант отличался только цветом обводки, а на серой
+    // заливке («нет здания») этой обводки было почти не видно.
+    const mark = this.add.text(w / 2 - 6, h / 2 - 8, '', {
+      fontFamily: FONT, fontSize: `${FS.small}px`, color: '#9a6a08',
+    }).setOrigin(0.5).setVisible(false);
+
+    c.add([paper, hitZone, name, cost, mark]);
+    c.setName(`opt-${opt.weapon}`);
+
+    const setSelected = (on: boolean): void => {
+      paper.setTint(on ? 0xffe9a0 : 0xffffff);
+      mark.setText('★');
+      mark.setVisible(on);
+      name.setColor(on ? '#9a6a08' : (opt.available ? '#2a1608' : '#6b6155'));
+    };
+
+    if (opt.available) {
+      hitZone.on('pointerdown', () => {
+        this.picked = opt.weapon;
+        this.refreshSelection();
       });
-    void btnResources;
-    y += 52;
-    // Ролик предлагается только со второй смерти (§I.4): при первом бесплатном
-    // показе кнопку рекламы глушим — ценность ролика игрок ещё не осознал
-    this.makeButton(W / 2 - 110, y, t('succession.watchAd'), 0x3b6ea5, () => this.takeAd(),
-      free || !placementAvailable('succession'));
-    this.makeButton(W / 2 + 110, y, t('succession.payGold', { v: num(data.goldCost) }), 0x8a6d1d, () => {
-      if (this.data_?.onTakeGold(this.picked)) this.scene.stop();
-      else this.flash('speedup.poor');
-    });
+    }
+    setSelected(this.picked === opt.weapon);
 
-    // ---- Сдаться (с подтверждением — тач-мисс не должен терять матч, §I.6) ----
-    y += 62;
-    this.makeButton(W / 2, y, t('succession.surrender'), 0x8c1d18, () => {
-      if (this.surrendered) {
-        this.data_?.onSurrender();
-        this.scene.stop();
-        return;
-      }
-      this.surrendered = true;
-      this.confirmText = this.add.text(W / 2, y + 26, t('succession.surrenderConfirm'), {
-        fontFamily: FONT, fontSize: '10px', color: '#8c1d18',
-      }).setOrigin(0.5);
-    });
+    return {
+      container: c,
+      setSelected,
+      destroy(): void { c.destroy(true); },
+    };
   }
 
   private refreshSelection(): void {
-    for (const opt of this.data_?.options ?? []) {
-      const c = this.children.list.find((g) => g.name === `opt-${opt.weapon}`) as Phaser.GameObjects.Container | undefined;
-      const bg = c?.list[0] as Phaser.GameObjects.Rectangle | undefined;
-      if (bg) bg.setStrokeStyle(2, this.picked === opt.weapon ? 0x8c1d18 : 0x5a4327);
-    }
-    if (this.confirmText) this.confirmText.destroy();
+    for (const [id, card] of this.cards) card.setSelected(id === this.picked);
   }
+
+  // ================================================================
+  // Действия
+  // ================================================================
 
   private async takeAd(): Promise<void> {
     if (!this.data_ || this.adUsed) return;
@@ -175,34 +291,71 @@ export class SuccessionScene extends Phaser.Scene {
     }
   }
 
+  /**
+   * Сдаться — с подтверждением.
+   *
+   * Тouch-мисс не должен терять матч (§I.6): первое нажатие (и Esc, и клик
+   * мимо панели) только спрашивает подтверждение, второе сдаёт.
+   */
+  private requestSurrender(): void {
+    if (this.surrendered) {
+      this.data_?.onSurrender();
+      this.scene.stop();
+      return;
+    }
+    this.surrendered = true;
+    const W = this.scale.width;
+    const H = this.scale.height;
+    const bw = Math.min(280, W - 60);
+    const bx = W / 2;
+    const by = H / 2 + Math.min(120, H * 0.18);
+    const label = t('succession.surrenderConfirm');
+
+    // Подтверждение — та же пара кнопок, что и везде: «да» и «отмена».
+    // Раньше это была одна мигающая надпись, и тач-мисс по ней ничего
+    // не делал — игрок не понимал, что матч уже сдан.
+    makePanel(this, bx, by, 'paper', bw + 24, 86).setDepth(DEPTH.OVERLAY + 9).setScrollFactor(0);
+    this.add.zone(bx, by, bw + 24, 86).setDepth(DEPTH.OVERLAY + 9).setInteractive();
+    const msg = this.add.text(bx, by - 18, label, {
+      fontFamily: FONT, fontSize: `${FS.body}px`, color: '#8c1d18', align: 'center',
+    }).setOrigin(0.5).setDepth(DEPTH.OVERLAY + 10).setScrollFactor(0)
+      .setName('surrender-confirm');
+    shrinkToHeight(msg, 24, FS.body);
+
+    const half = Math.floor((bw - 16) / 2);
+    const yes = makeButton(this, bx - half / 2 - 4, by + 20, half, 38,
+      t('common.confirm'), () => {
+        this.data_?.onSurrender();
+        this.scene.stop();
+      }, 'red', FS.small);
+    const no = makeButton(this, bx + half / 2 + 4, by + 20, half, 38,
+      t('common.cancel'), () => this.cancelSurrender(), 'blue', FS.small);
+    for (const b of [yes, no]) {
+      b.img.setDepth(DEPTH.OVERLAY + 11).setScrollFactor(0);
+      b.txt.setDepth(DEPTH.OVERLAY + 12).setScrollFactor(0);
+      b.hit.setDepth(DEPTH.OVERLAY + 13).setScrollFactor(0);
+    }
+  }
+
+  /** Отмена сдачи: окно возвращается к выбору, матч продолжается. */
+  private cancelSurrender(): void {
+    this.surrendered = false;
+    for (const name of ['surrender-confirm']) {
+      const obj = this.children.list.find((g) => g.name === name);
+      obj?.destroy();
+    }
+  }
+
   private flash(key: string): void {
     this.cameras.main.flash(140, 190, 40, 30, false);
     this.add.text(this.scale.width / 2, this.scale.height / 2 + 200, t(key as Parameters<typeof t>[0]), {
-      fontFamily: FONT, fontSize: '11px', color: '#8c1d18',
-    }).setOrigin(0.5).setDepth(10)
-      .setAlpha(1)
+      fontFamily: FONT, fontSize: `${FS.body}px`, color: '#8c1d18',
+      stroke: '#ffe9c0', strokeThickness: 3,
+    }).setOrigin(0.5).setDepth(DEPTH.OVERLAY + 10).setScrollFactor(0)
       .setName('flash-msg');
     this.time.delayedCall(1400, () => {
       this.children.list.filter((g) => g.name === 'flash-msg').forEach((g) => g.destroy());
     });
-  }
-
-  private makeButton(x: number, y: number, label: string, color: number, onClick: () => void, disabled = false): Phaser.GameObjects.Container {
-    const c = this.add.container(x, y);
-    const bg = this.add.rectangle(0, 0, 210, 40, disabled ? 0x9a917e : color, disabled ? 0.6 : 0.95)
-      .setStrokeStyle(2, 0x2a1608);
-    const txt = this.add.text(0, 0, label, {
-      fontFamily: FONT, fontSize: '11px', color: disabled ? '#6b6155' : '#ffffff',
-      align: 'center', wordWrap: { width: 196 },
-    }).setOrigin(0.5);
-    c.add([bg, txt]);
-    if (!disabled) {
-      bg.setInteractive({ useHandCursor: true });
-      bg.on('pointerover', () => bg.setStrokeStyle(3, 0xffe9b0));
-      bg.on('pointerout', () => bg.setStrokeStyle(2, 0x2a1608));
-      bg.on('pointerdown', onClick);
-    }
-    return c;
   }
 }
 
