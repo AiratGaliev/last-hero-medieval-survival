@@ -105,6 +105,8 @@ export class PawnAI {
         p.cooldown = 0.5;
         if (p.order === 'collect') p.order = null; // приказ выполнен (сброс после задачи)
       } else {
+        // Перенос добычи — самостоятельная фаза FSM, а не idle с анимацией ходьбы.
+        p.state = 'walk';
         this.walkTo(p, eco.castleX, eco.castleY, dtMs);
       }
       return;
