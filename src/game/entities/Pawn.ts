@@ -1,6 +1,7 @@
 import Phaser from 'phaser';
 import { DEPTH, SHADOW_SCALE, SHADOW_BOX, SHADOW_SRC, FONT } from '../constants';
 import { FS } from '../systems/Text';
+import { t } from '../../i18n';
 import { PAWNS, FIGHTERS, type PawnKind, type PawnState, type PawnWeapon, type ResourceKind, type PawnDef } from '../data';
 
 // ============ Пешка поселения: гражданские и гарнизон (TZ §B.2) ============
@@ -64,6 +65,8 @@ export class Pawn extends Phaser.Physics.Arcade.Sprite {
   private shadow: Phaser.GameObjects.Image;
   private hpBar: Phaser.GameObjects.Graphics;
   private starBadge: Phaser.GameObjects.Text | null = null;
+  /** Компактная плашка статуса ранения/отступления (§J). */
+  private stateBadge: Phaser.GameObjects.Text | null = null;
   /** Таймер истечения кровью над пешкой (§G.3) — видимый дедлайн. */
   private bleedBadge: Phaser.GameObjects.Text | null = null;
   /** Контур щита таунта (§B.7.1). */
@@ -318,6 +321,37 @@ export class Pawn extends Phaser.Physics.Arcade.Sprite {
  * Вспышка таунта: щит-контур вокруг мечника и подпись «−50%» над ним
  * (§B.7.1). Снимается сама по истечении `tauntFlashUntil`.
  */
+  /** Подпись над головой делает состояния retreat/wounded визуально читаемыми. */
+  private updateStateBadge(): void {
+    const label = this.state === 'retreat'
+      ? t('pawn.badgeRetreat')
+      : this.state === 'wounded' || this.state === 'bleeding'
+        ? t('pawn.badgeWounded')
+        : '';
+    if (!label) {
+      this.stateBadge?.destroy();
+      this.stateBadge = null;
+      return;
+    }
+    const isRetreating = this.state === 'retreat';
+    if (!this.stateBadge || !this.stateBadge.active) {
+      this.stateBadge = this.scene.add.text(this.x, this.y - 52, label, {
+        fontFamily: FONT,
+        fontSize: `${FS.small}px`,
+        color: isRetreating ? '#ffd76e' : '#ff806e',
+        backgroundColor: '#1a0f08',
+        padding: { x: 3, y: 1 },
+        stroke: '#1a0f08',
+        strokeThickness: 2,
+      }).setOrigin(0.5).setDepth(DEPTH.HPBAR);
+    }
+    if (this.stateBadge.text !== label) this.stateBadge.setText(label);
+    this.stateBadge.setColor(isRetreating ? '#ffd76e' : '#ff806e');
+    // Индикатор истечения кровью и звёзды остаются отдельными, не накладываются.
+    const offset = this.state === 'bleeding' ? 66 : this.starBadge?.active ? 64 : 48;
+    this.stateBadge.setPosition(this.x, this.y - offset).setVisible(true);
+  }
+
   showTauntBadge(): void {
     if (!this.tauntBadge || !this.tauntBadge.active) {
       this.tauntBadge = this.scene.add.graphics().setDepth(DEPTH.FX);
@@ -367,6 +401,7 @@ export class Pawn extends Phaser.Physics.Arcade.Sprite {
       this.bleedBadge.setPosition(this.x, this.y - 34);
       this.updateBleedBadge();
     }
+    this.updateStateBadge();
     this.tickTauntBadge(time);
     void time;
     void delta;
@@ -376,6 +411,10 @@ export class Pawn extends Phaser.Physics.Arcade.Sprite {
     this.shadow.destroy();
     this.hpBar.destroy();
     this.starBadge?.destroy();
+    this.stateBadge?.destroy();
+    this.bleedBadge?.destroy();
+    this.tauntBadge?.destroy();
+    this.tauntText?.destroy();
     super.destroy(fromScene);
   }
 }
