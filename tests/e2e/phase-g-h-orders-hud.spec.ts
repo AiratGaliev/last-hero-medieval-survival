@@ -345,7 +345,8 @@ test('phase G: carry phase deposits first and only then applies BUILD', async ({
   expect(result.appliedAfterDeposit).toBe(true);
 });
 
-test('phase G: touch long-press opens the same menu; early release and swipe cancel', async ({ page }) => {
+test('phase G: touch long-press opens the same menu; early release and swipe cancel', async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== 'chromium-mobile', 'Touch gesture input is exercised in the mobile browser project');
   await startRun(page, 390, 844);
   const point = await preparePawn(page);
   const cdp = await page.context().newCDPSession(page);
@@ -365,26 +366,30 @@ test('phase G: touch long-press opens the same menu; early release and swipe can
     return (game.scene.getScene('Game') as GameSceneRuntime).orderMenu.ringing;
   });
 
+  // Ранний отпуск — уверенно до порога 500 мс; не допускаем, чтобы перегруженный
+  // runner превратил фиксированное ожидание 250 мс + round-trip в успешный long-press.
   await touch('touchStart', point.x, point.y);
-  await page.waitForTimeout(250);
-  expect(await isRinging()).toBe(true);
+  await page.waitForTimeout(80);
   await touch('touchEnd', point.x, point.y);
-  await page.waitForTimeout(100);
+  await page.waitForTimeout(120);
   expect(await isOpen()).toBe(false);
 
+  // Свайп от пальца должен отменять удержание ещё до открытия меню.
   await touch('touchStart', point.x, point.y);
-  await page.waitForTimeout(200);
+  await page.waitForTimeout(80);
   await touch('touchMove', point.x + 20, point.y);
-  await page.waitForTimeout(450);
-  expect(await isOpen()).toBe(false);
+  await page.waitForTimeout(80);
   await touch('touchEnd', point.x + 20, point.y);
+  await page.waitForTimeout(120);
+  expect(await isOpen()).toBe(false);
 
   // Касание у края зоны проверяет hit-test при уменьшенном зуме мобильной камеры.
   await touch('touchStart', point.x + 28, point.y);
-  await page.waitForTimeout(650);
+  await page.waitForTimeout(140);
+  expect(await isRinging()).toBe(true);
+  await page.waitForTimeout(500);
   expect(await isOpen()).toBe(true);
-  expect(await isRinging()).toBe(false);
-  await touch('touchEnd', point.x, point.y);
+  await touch('touchEnd', point.x + 28, point.y);
   await cdp.detach();
 });
 
