@@ -289,11 +289,27 @@ test('phase G: desktop menu is explicit, closable and BUILD order ends after con
     pawn.cooldown = 0;
     ai.updateCivilian(pawn, 16, scene.time.now + 32);
     const job = economy.buildJobs.find(candidate => candidate.pawn === pawn);
+    let resourcesAvailableForResume = false;
     if (job) {
       pawn.setPosition(job.spot.x, job.spot.y);
       pawn.state = 'work';
       economy.tick(100_000, scene.time.now + 100_000);
+
+      // Не проверяем «автоматический сбор» на складе с избытком: pickNodeFor()
+      // корректно оставляет сборщика idle, если потребности в ресурсах нет.
+      // Для регрессии перехода BUILD → автоэкономика моделируем явный дефицит
+      // и делаем узлы доступными независимо от длительности synthetic tick.
+      economy.resources.wood = 0;
+      economy.resources.ore = 0;
+      economy.resources.meat = 0;
+      for (const node of economy.nodes) {
+        if (node.claimedBy) node.release(node.claimedBy);
+        node.recharge();
+      }
+      resourcesAvailableForResume = economy.nodes.some(node => node.available && node.remaining > 0);
+
       pawn.cooldown = 0;
+      pawn.workNode = null;
       pawn.state = 'idle';
       ai.updateCivilian(pawn, 16, scene.time.now + 100_016);
     }
@@ -303,7 +319,11 @@ test('phase G: desktop menu is explicit, closable and BUILD order ends after con
       orderAfterCompletion: pawn.order,
       targetAfterCompletion: pawn.orderTarget,
       pendingJob: economy.buildJobs.some(candidate => candidate.pawn === pawn),
-      autoResumed: pawn.order === null && (pawn.state === 'walk' || pawn.state === 'work' || pawn.carrying !== null),
+      resourcesAvailableForResume,
+      resumedState: pawn.state,
+      resumedWorkNode: pawn.workNode !== null,
+      autoResumed: pawn.order === null
+        && (pawn.state === 'walk' || pawn.state === 'work' || pawn.carrying !== null),
     };
   });
   expect(result.walksToNearest).toBe(true);
