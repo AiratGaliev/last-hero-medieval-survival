@@ -634,11 +634,16 @@ export class MetaScene extends Phaser.Scene {
                 .strokeRoundedRect(cx - chipW / 2, cy - rowH / 2 + 3, chipW, rowH - 6, 7);
               box.add(g);
               const faceKey = `face-${e.id}`;
-              const hasPortrait = sec.id === 'enemies' && unlocked && this.textures.exists(faceKey);
-              if (hasPortrait) {
-                // Небольшой портрет делает запись кодекса узнаваемой без
-                // захвата всей карточки; неизвестные существа остаются скрыты.
-                box.add(this.add.image(cx - chipW / 2 + 19, cy, faceKey).setDisplaySize(28, 28));
+              const spriteKey = `${e.id}-idle`;
+              const portraitKey = sec.id === 'enemies' && unlocked
+                ? (this.textures.exists(faceKey) ? faceKey
+                  : this.textures.exists(spriteKey) ? spriteKey : null)
+                : null;
+              const hasPortrait = portraitKey !== null;
+              if (portraitKey) {
+                // Сначала используем avatar-портрет, а при его отсутствии —
+                // первый кадр idle-листа (например, у всадника отдельного аватара нет).
+                box.add(this.add.image(cx - chipW / 2 + 19, cy, portraitKey).setDisplaySize(28, 28));
               }
               const label = unlocked ? tr(e.nameKey) : '???';
               const textX = hasPortrait ? cx + 10 : cx;
