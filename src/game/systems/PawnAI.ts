@@ -555,20 +555,23 @@ export class PawnAI {
     // отдавал одно 150-миллисекундное окно первому попавшему, и при двух
     // воинах первый думал вдвое чаще второго — с ростом гарнизона тайминг
     // боя становился всё более неровным.
-    const acc = (this.combatAcc.get(p) ?? 0) + dtMs;
-    const frame = dtMs;
-    if (acc >= this.curTickMs) {
-      // Фолбэк тика при просадке FPS (§B.7.1)
-      const fps = this.scene.game.loop.actualFps;
-      this.curTickMs = fps < 40 ? GARRISON.TICK_FALLBACK_MS : GARRISON.TICK_MS;
-      // Отнимаем ровно одно окно, а не обнуляем: при просадке FPS на 16
-      // остаток не должен копиться и превращать тик в 250 мс «раз в 4 кадра».
-      this.combatAcc.set(p, acc - this.curTickMs);
-      this.combatThink(p, now, this.curTickMs);
+    //
+    // Сначала выбираем актуальное окно, а уже потом сравниваем с аккумулятором.
+    // В старом порядке условие проверялось по 150 мс, но при FPS<40 из
+    // аккумулятора вычиталось 250 мс: получалось отрицательное время и первый
+    // боевой тик запускался раньше окна, а следующий — позже.
+    const fps = this.scene.game.loop.actualFps;
+    this.curTickMs = fps < 40 ? GARRISON.TICK_FALLBACK_MS : GARRISON.TICK_MS;
+    const tickMs = this.curTickMs;
+    const acc = (this.combatAcc.get(p) ?? 0) + Math.max(0, dtMs);
+    if (acc >= tickMs) {
+      // Отнимаем ровно одно окно, сохраняя остаток для следующего тика.
+      this.combatAcc.set(p, acc - tickMs);
+      this.combatThink(p, now, tickMs);
     } else {
       this.combatAcc.set(p, acc);
     }
-    this.combatMove(p, frame);
+    this.combatMove(p, dtMs);
   }
 
   private combatThink(p: Pawn, now: number, tickMs: number): void {
