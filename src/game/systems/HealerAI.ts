@@ -56,11 +56,12 @@ export class HealerAI {
       }
       if (!need) continue;
       const ratio = p.hp / p.maxHp;
-      // Приоритет: раненый гарнизон > раненый гражданский > герой < 40% (§B.7.2)
+      // Приоритет §B.7.2: отступающий гарнизон → критически раненый
+      // союзник в wounded → герой ниже 40% → обычные несмертельные ранения.
+      // Слегка повреждённый гражданский не должен опережать раненого героя.
       let prio = 3;
       if (p.state === 'retreat' && p.cls === 'garrison') prio = 0;
       else if (p.state === 'wounded') prio = 1;
-      else if (p.cls === 'civilian') prio = 2;
       needs.push({ pawn: p, prio, x: p.x, y: p.y, hpRatio: ratio });
     }
     const hero = this.heroFn?.() ?? null;
