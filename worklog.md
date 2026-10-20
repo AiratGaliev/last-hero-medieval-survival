@@ -3257,58 +3257,11 @@ HUD-слота, `SuccessionScene`, `PauseScene` и новые статическ
 - E2E-регрессии Phase L дополнены проверками: карта «Вече» начинает вспомогательную стройку/ремонт, повторный AI-тик продолжает тот же job, job действительно завершается, а прежний ресурсный узел доступен для повторного назначения.
 - Workflow #39454071319 относился к промежуточному SHA и не считается доказательством для этого дополнительного исправления. Новый полный CI требуется на актуальном HEAD; фазовые гейты не закрыты до его результата.
 
+## 2026-10-20 — Сверка последних изменений с README и исправление приёмки
 
-
-## 2026-10-20 — Исправление дедлайнов осады при блокирующей паузе
-
-- Повторная проверка PR #20 обнаружила несоответствие активного времени: `Enemy.preUpdate()` сравнивал `attackWindowEnds` с параметром Phaser `time`, а `GameScene.siegeTick()` использовал тот же глобальный timestamp для 60-секундного срока отступления. Phaser Clock обновляет `now` до проверки `paused`, поэтому пауза Timer Events не замораживает сравнение абсолютных timestamp после продолжения игры.
-- Добавлен отдельный `activeTimeMs`, который продвигается только после ранних выходов для неактивной/завершённой игры и блокирующего FTUE overlay. Значение публикуется в registry как `tss-active-time-ms`; осадные окна, время жизни осады, hitstop, кулдаун башни и окно расчёта DPS используют единую активную шкалу. Анимации по-прежнему получают штатные параметры Phaser `preUpdate(time, delta)`.
-- Добавлена E2E-регрессия, моделирующая 120 секунд системного времени во время overlay: десятисекундное окно атаки остаётся активным, а осадный боец не удаляется по лимиту 60 секунд. Обновлены связанные регрессии, которые задают абсолютные timestamps.
-- CI Fast расширен шагом `npm run check:yg` после production build: архивная проверка Yandex Games должна выполняться на PR, а не только в release-workflow для `main`.
-- Перед правкой CI Fast run [#39463966529](https://github.com/AiratGaliev/last-hero-medieval-survival/actions/runs/39463966529) прошёл на родительском SHA `6f05d42847b9029c3f50ad69dbfe2c2eefc0f535` (`npm ci`, `npm run check`, `npm run build`). Он не подтверждает новый код. E2E run [#39464782783](https://github.com/AiratGaliev/last-hero-medieval-survival/actions/runs/39464782783) прошёл на другой ревизии ветки `test` и также не является доказательством для head PR #20.
-- Локальный checkout не удалось получить: среда выполнения не разрешила DNS-имя `github.com`. Локальные npm-команды не запускались. Новый коммит требует свежего CI Fast; E2E для ревизии с этими изменениями остаётся отдельным открытым гейтом. Реальная мобильная приёмка, длительный балансный матч и Yandex Games Sandbox не выполнялись.
-
-
-## 2026-10-20 — Синхронизация PR #20 с dev и CI актуального SHA
-
-- Изучен дрейф целевой ветки: после базового SHA `dc274fbc8f194371e26722c2f282ac9bb87b3e39` `dev` изменился в `.github/workflows/ci.yml` и `README.md`. Содержимое актуального `README.md` сохранено; все 33 файла изменений PR сохранены. Для CI взят актуальный workflow из `dev`, в него добавлена проверка `npm run check:yg` после production build.
-- Создан merge-коммит [`a40fa6e7`](https://github.com/AiratGaliev/last-hero-medieval-survival/commit/a40fa6e7cf3a9a4ecdbdecfdea96f7fb80871fed), который объединяет head разработки с актуальным `dev` `09263dcc92c3b5229ed2a666e05ade533de52f9a`. GitHub подтвердил `mergeable: true`, сравнение с `dev`: `ahead_by=113`, `behind_by=0`. PR #20 оставлен открытым.
-- CI Fast [run #39470064613](https://github.com/AiratGaliev/last-hero-medieval-survival/actions/runs/39470064613) успешно завершился на этом merge-коммите: валидация маршрута, `npm ci`, `npm run check`, `npm run build`, `npm run check:yg` — **success**.
-- Этот workflow не запускает полный Playwright suite. E2E [run #39464782783](https://github.com/AiratGaliev/last-hero-medieval-survival/actions/runs/39464782783) — успешный, но он проверял другую ревизию ветки `test`; его не засчитываем как фазовый гейт PR #20. Полный browser E2E и мобильная/долгосрочная/платформенная приёмка остаются открытыми.
-
-
-## 2026-10-20 — Повторная верификация CI и фазовых гейтов
-
-- CI Fast [run #39470064613](https://github.com/AiratGaliev/last-hero-medieval-survival/actions/runs/39470064613) завершился успешно на коммите `a40fa6e7cf3a9a4ecdbdecfdea96f7fb80871fed`: маршрут PR, `npm ci`, `npm run check`, `npm run build` и `npm run check:yg` прошли.
-- После обновления статуса документации CI Fast [run #39470274480](https://github.com/AiratGaliev/last-hero-medieval-survival/actions/runs/39470274480) завершился успешно на документационном SHA `e023ff698e5def349a3cf9a71f391284136782ff`; исходники игры в этом коммите не менялись.
-- PR остаётся открытым, синхронизирован с `dev`, mergeable. Browser E2E для ревизии PR #20 не запускался из-за принятой схемы: E2E workflow срабатывает на PR в `test`/`main`, а PR #20 целится в `dev`. Успешный E2E на другой ревизии `test` не считается подтверждением этих изменений.
-- Чекбоксы гейтов I–L не отмечались выполненными только по факту сборки. Их runtime-приёмка, физические мобильные устройства, длительный балансный матч и Yandex Games Sandbox остаются открытыми. Локальный checkout недоступен по DNS, поэтому локальные команды не выполнялись.
-
-
-## 2026-10-20 — Единая шкала активной симуляции и фазовый smoke-контракт
-
-- Исправлены оставшиеся pause-sensitive абсолютные таймеры: shield/iframes героя, временный магнит опыта, токен-бакет DPS гарнизона, расписание патруля и выбор цели гарнизона/целителей, long-press/индикатор приказа, haste от ауры шамана, taunt feedback, таймер вымирания и grace-period. Экономика, лечение, pickup animation phase и sound throttling получают active-time timestamp; Pawn/Player не продвигают анимации под блокирующим FTUE overlay.
-- Регрессионный Playwright-кейс расширен: вызов `GameScene.update()` с искусственным delta 120 секунд при включённом `hintOverlayPaused` не двигает `activeTimeMs`; после закрытия overlay шкала продолжает движение на 16 ms. Тест подтверждает, что атакующее окно осады, timeout отряда и неуязвимость героя не истекают из-за глобального времени.
-- Code/TypeScript/Lint/build/archive CI Fast [run #39473754983](https://github.com/AiratGaliev/last-hero-medieval-survival/actions/runs/39473754983) прошёл на SHA `1a75973b5d199d347a886edb34ca38caf1496d46` — success.
-- По запросу пользователя `docs/ROADMAP.md` разделяет три разных факта: реализация логики в исходниках, наличие автоматизированного smoke-кейса и фактический запуск этого кейса. В секциях I–L перечислены точные имена тестов и отдельная smoke-команда; неисполненный smoke не делает реализованную механику «не реализованной», но также не отмечается зелёным результатом.
-- Browser smoke на текущем SHA пока не запускался в доступном workflow; CI Fast не выполняет Playwright. Локальный checkout/Playwright в этой среде недоступен, поэтому не заявляю о выполнении E2E. Физические мобильные устройства, длительный балансный матч и Yandex Games Sandbox — отдельные ручные проверки.
-
-
-## 2026-10-20 — Отдельная команда фазового smoke
-
-- Добавлен npm-скрипт `test:phase-smoke`, который выбирает Playwright-сценарии фаз I–L, паузы FTUE и мобильного long-press в обоих настроенных Chromium-проектах (desktop/mobile). Это позволяет запустить smoke отдельно от полного `npm run test:e2e`.
-- Команда внесена в `docs/ROADMAP.md` рядом с конкретными сценариями и отдельным статусом фактического выполнения. Наличие сценариев и зелёный запуск остаются разными фактами.
-- Добавление команды в manifest не исполняет Playwright; необходимо проверить новый script-аргумент через CI Fast и отдельно выполнить `npm run test:phase-smoke` на доступной среде с установленным Chromium.
-
-
-## 2026-10-20 — Проверка текущего head и статуса smoke-команды
-
-- CI Fast [run #39474453669](https://github.com/AiratGaliev/last-hero-medieval-survival/actions/runs/39474453669) прошёл на текущем SHA `bd2a0cfe4c9d8376142ce46022f0c1b55a2ac778`: route validation, `npm ci`, `npm run check`, `npm run build` и `npm run check:yg` — success.
-- Добавлен `npm run test:phase-smoke`; он выбирает I–L сценарии, pause regression, FTUE overlay и мобильный long-press в обоих Chromium-проектах. Скрипт и критерии описаны в `docs/ROADMAP.md`.
-- CI Fast не запускал Playwright, а локальный checkout в этой среде отсутствует; `npm run test:phase-smoke` фактически не выполнялся. Запускать его следует в окружении с установленными npm-зависимостями и Chromium; итог записывать с SHA и ссылкой на run. Не считать smoke зелёным по одной успешной сборке.
-
-
-## 2026-10-20 — Подтверждение CI после smoke-документации
-
-- Документационный commit [`f5c2fad9`](https://github.com/AiratGaliev/last-hero-medieval-survival/commit/f5c2fad9d5e5a8d9f373c08f783b37a07c7e0efc) прошёл CI Fast [run #39474658502](https://github.com/AiratGaliev/last-hero-medieval-survival/actions/runs/39474658502): route validation, `npm ci`, `npm run check`, `npm run build`, `npm run check:yg` — success.
-- Это не E2E: smoke-команда уже добавлена, но фактический Playwright-прогон не выполнялся. Последний подтверждённый быстрый CI не следует выдавать за поведенческую приёмку.
+- Повторно сверены `README.md`, действующий `.github/workflows/ci.yml`, `docs/TZ.md` и текущие изменения PR #20.
+- Восстановлен контракт CI Fast из README: `npm run check` и `npm run build`; дополнительный `npm run check:yg` удалён из быстрого workflow. Проверка архива остаётся в предусмотренном README релизном процессе на `main`.
+- Удалена отдельная команда `test:phase-smoke`: README определяет полную Playwright-приёмку через `npm run test:e2e` на этапе продвижения кандидата в `test`/ `main`; точечная команда не заменяет этот процесс.
+- Восстановлены детальные критерии приёмки фаз I–L в `docs/ROADMAP.md`; статус наличия E2E-кейса отделён от результата его выполнения. Удалено добавленное постфактум приложение в `docs/TZ.md`, которое дублировало требования к паузе на уровне деталей реализации.
+- Код активного игрового времени не откатывался без доказанного дефекта: ТЗ требует, чтобы таймеры боевых действий не продвигались при паузе FTUE. Исправлена обнаруженная несогласованность E2E-проверки магнита опыта — сравнение теперь использует `activeTimeMs`, а не часы Phaser.
+- Полный `npm run test:e2e` на текущем head в этой сессии не выполнялся. Не объявлять фазы принятыми до результата браузерного workflow на актуальном кандидате.
