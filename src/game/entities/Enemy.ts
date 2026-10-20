@@ -54,6 +54,8 @@ export class Enemy extends Phaser.Physics.Arcade.Sprite {
   /** Ярость (слом щита скелета / финальная фаза Огра) */
   enraged = false;
   private shootCd = 0;
+  /** Защита от повторного выпуска, если callback анимации и таймер совпадут. */
+  private harpoonShotFired = false;
   private atkCd = 0;
   private summonCd = 8000; // мс до первого зова свиты
   private chargeDirX = 0;
@@ -215,6 +217,15 @@ export class Enemy extends Phaser.Physics.Arcade.Sprite {
    */
   private faceDir(vx: number): boolean {
     return this.def.facesRight === false ? vx > 0 : vx < 0;
+  }
+
+  /** Выпускает гарпун ровно один раз даже при пропущенном animationcomplete. */
+  private fireHarpoon(): void {
+    if (!this.active || this.aiState !== 'windup' || this.harpoonShotFired) return;
+    this.harpoonShotFired = true;
+    this.ctx.onEnemyShoot(this.x, this.y, 'harpoon');
+    this.shootCd = 2400;
+    this.aiState = 'chase';
   }
 
   // ================= ВЫБОР ЦЕЛИ (TZ §A.5) =================
@@ -511,6 +522,9 @@ export class Enemy extends Phaser.Physics.Arcade.Sprite {
         if (this.aiState === 'windup') {
           vx = 0;
           vy = 0;
+          // Пропущенное animationcomplete не должно навсегда блокировать AI и атаку.
+          this.stateTimer -= delta;
+          if (this.stateTimer <= 0) this.fireHarpoon();
         } else if (dist > want + 45) {
           vx = nx * this.speed;
           vy = ny * this.speed;
@@ -523,12 +537,9 @@ export class Enemy extends Phaser.Physics.Arcade.Sprite {
         }
         if (this.shootCd <= 0 && dist < 520 && this.aiState === 'chase') {
           this.aiState = 'windup';
-          this.playOnce('harpoon-shark-atk', () => {
-            if (this.aiState !== 'windup') return;
-            this.ctx.onEnemyShoot(this.x, this.y, 'harpoon');
-            this.shootCd = 2400;
-            this.aiState = 'chase';
-          });
+          this.stateTimer = 900; // Длительность анимации с запасом для пропущенного события.
+          this.harpoonShotFired = false;
+          this.playOnce('harpoon-shark-atk', () => this.fireHarpoon());
         }
         break;
       }
