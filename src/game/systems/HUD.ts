@@ -143,6 +143,8 @@ export class HUD {
   private resTexts: Record<string, Phaser.GameObjects.Text> = {};
   private resVisible = false;
   private settleGroup!: Phaser.GameObjects.Container;
+  /** HP замка — отдельная полоса, чтобы не прятать состояние ядра в общем HP поселения. */
+  private settleCastleBar!: Phaser.GameObjects.Image;
   private settleInfraBar!: Phaser.GameObjects.Image;
   private settlePopBar!: Phaser.GameObjects.Image;
   private garrisonText!: Phaser.GameObjects.Text;
@@ -385,15 +387,17 @@ export class HUD {
     const SETTLE_BAR_W = 100;
     const SETTLE_GAP = 20;
     const castleIc = this.scene.add.image(0, 0, 'castle').setDisplaySize(16, 13).setOrigin(0, 0.5);
-    const barBgI = this.scene.add.rectangle(SETTLE_GAP, -4, SETTLE_BAR_W, 5, 0x1b1008, 0.85).setOrigin(0, 0.5);
-    const barBgP = this.scene.add.rectangle(SETTLE_GAP, 4, SETTLE_BAR_W, 5, 0x1b1008, 0.85).setOrigin(0, 0.5);
-    this.settleInfraBar = this.scene.add.image(SETTLE_GAP, -4, FILL.yellow).setOrigin(0, 0.5);
-    this.settlePopBar = this.scene.add.image(SETTLE_GAP, 4, FILL.green).setOrigin(0, 0.5);
+    const barBgC = this.scene.add.rectangle(SETTLE_GAP, -8, SETTLE_BAR_W, 5, 0x1b1008, 0.85).setOrigin(0, 0.5);
+    const barBgI = this.scene.add.rectangle(SETTLE_GAP, 0, SETTLE_BAR_W, 5, 0x1b1008, 0.85).setOrigin(0, 0.5);
+    const barBgP = this.scene.add.rectangle(SETTLE_GAP, 8, SETTLE_BAR_W, 5, 0x1b1008, 0.85).setOrigin(0, 0.5);
+    this.settleCastleBar = this.scene.add.image(SETTLE_GAP, -8, FILL.green).setOrigin(0, 0.5);
+    this.settleInfraBar = this.scene.add.image(SETTLE_GAP, 0, FILL.yellow).setOrigin(0, 0.5);
+    this.settlePopBar = this.scene.add.image(SETTLE_GAP, 8, FILL.green).setOrigin(0, 0.5);
     this.garrisonText = this.mkText('', 12, {
       fontFamily: FONT, color: '#d8c9a8',
       stroke: '#1b1008', strokeThickness: 3,
     }).setOrigin(0, 0.5).setPosition(this.sc(SETTLE_GAP + SETTLE_BAR_W + 6), 0);
-    this.settleGroup.add([castleIc, barBgI, barBgP, this.settleInfraBar, this.settlePopBar, this.garrisonText]);
+    this.settleGroup.add([castleIc, barBgC, barBgI, barBgP, this.settleCastleBar, this.settleInfraBar, this.settlePopBar, this.garrisonText]);
 
     // Порядок добавления = порядок отрисовки (снизу вверх):
     // полосы/тексты → босс-бар → виньетка → анонс → тосты достижений
@@ -454,7 +458,7 @@ export class HUD {
     this.resGroup.setScale(S).setPosition(this.sc(12) + sa.left, this.sc(120) + sa.top);
     // Индикатор поселения: под ресурсами, а без них — сразу под золотом.
     // Тот же ряд нужен босс-бару на узком экране, поэтому он считается здесь.
-    const settleY = this.resVisible ? this.sc(186) : this.sc(124);
+    const settleY = this.resVisible ? this.sc(192) : this.sc(130);
     this.settleGroup.setScale(S).setPosition(this.sc(12) + sa.left, settleY + sa.top);
     // Правый верхний угол занят кнопкой паузы: весь блок (счёт, метка
     // сложности, серия) заканчивается левее неё, иначе цифры ложились
@@ -600,14 +604,19 @@ export class HUD {
     this.resTexts.ore.setText(`${res.ore}`);
   }
 
-  /** Две полосы поселения + счётчик гарнизона (§E.11). */
-  updateSettlement(infraFrac: number, popFrac: number, garrison: string): void {
+  /** HP замка, инфраструктура, население и численность гарнизона (§E.11). */
+  updateSettlement(castleFrac: number, infraFrac: number, popFrac: number, garrison: string): void {
     const w = this.sc(100);
     const h = this.sc(5);
-    this.settleInfraBar.setDisplaySize(Math.max(2, w * Phaser.Math.Clamp(infraFrac, 0, 1)), h);
-    this.settlePopBar.setDisplaySize(Math.max(2, w * Phaser.Math.Clamp(popFrac, 0, 1)), h);
-    this.settleInfraBar.setTexture(infraFrac > 0.5 ? FILL.yellow : infraFrac > 0.25 ? 'bar-fill-yellow' : FILL.red);
-    this.settlePopBar.setTexture(popFrac > 0.5 ? FILL.green : popFrac > 0.25 ? FILL.yellow : FILL.red);
+    const castle = Phaser.Math.Clamp(castleFrac, 0, 1);
+    const infra = Phaser.Math.Clamp(infraFrac, 0, 1);
+    const population = Phaser.Math.Clamp(popFrac, 0, 1);
+    this.settleCastleBar.setDisplaySize(Math.max(2, w * castle), h);
+    this.settleInfraBar.setDisplaySize(Math.max(2, w * infra), h);
+    this.settlePopBar.setDisplaySize(Math.max(2, w * population), h);
+    this.settleCastleBar.setTexture(castle > 0.5 ? FILL.green : castle > 0.25 ? FILL.yellow : FILL.red);
+    this.settleInfraBar.setTexture(infra > 0.5 ? FILL.yellow : infra > 0.25 ? 'bar-fill-yellow' : FILL.red);
+    this.settlePopBar.setTexture(population > 0.5 ? FILL.green : population > 0.25 ? FILL.yellow : FILL.red);
     if (this.garrisonText.text !== garrison) this.garrisonText.setText(garrison);
   }
 

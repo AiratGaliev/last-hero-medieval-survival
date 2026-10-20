@@ -115,6 +115,8 @@ export class Hints {
     bg: Phaser.GameObjects.NineSlice;
   } | null = null;
   private readonly onOverlayChange?: (paused: boolean) => void;
+  /** Fallback на уровне сцены: касание overlay должно продолжать игру на mobile. */
+  private overlayInputHandler: (() => void) | null = null;
   private readonly resizeHandler = (): void => this.relayoutCurrent();
   /**
    * Очередь отложенных подсказок (§I.1: «Новая подсказка откладывает
@@ -135,6 +137,10 @@ export class Hints {
     this.enabled = st.enabled !== false;
     scene.scale.on('resize', this.resizeHandler);
     scene.events.once('shutdown', () => {
+      if (this.overlayInputHandler) {
+        scene.input.off('pointerdown', this.overlayInputHandler);
+        this.overlayInputHandler = null;
+      }
       if (this.current?.ui === 'overlay') this.onOverlayChange?.(false);
       this.current?.text.destroy();
       this.current?.bg.destroy();
@@ -245,7 +251,13 @@ export class Hints {
     this.current = { id, ui: def.ui, text: label, bg: panel };
     if (dim) dim.on('pointerdown', () => this.hide(true));
     this.extra.push(dim);
-    if (def.ui === 'overlay') this.onOverlayChange?.(true);
+    if (def.ui === 'overlay') {
+      // Panel remains the primary target, but scaled container hit-testing may
+      // miss a touch on some mobile profiles. Scene fallback closes it once.
+      this.overlayInputHandler = () => this.hide(true);
+      this.scene.input.on('pointerdown', this.overlayInputHandler);
+      this.onOverlayChange?.(true);
+    }
     else this.scene.time.delayedCall(def.ttl, () => this.hide());
   }
 
@@ -280,7 +292,13 @@ export class Hints {
     this.current = null;
     for (const e of this.extra) e?.destroy();
     this.extra = [];
-    if (current.ui === 'overlay') this.onOverlayChange?.(false);
+    if (current.ui === 'overlay') {
+      if (this.overlayInputHandler) {
+        this.scene.input.off('pointerdown', this.overlayInputHandler);
+        this.overlayInputHandler = null;
+      }
+      this.onOverlayChange?.(false);
+    }
     this.save();
     const next = this.queue[0];
     const nextIsUrgent = next ? HINT_BY_ID.get(next)?.urgent === true : false;

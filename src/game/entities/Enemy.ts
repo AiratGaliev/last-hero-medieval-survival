@@ -7,12 +7,14 @@ import type { Pawn } from './Pawn';
 // ============ Враг — существо из пака enemies/ (TZ §A) ============
 
 /** Тип снаряда, который враг выдаёт через контекст сцены */
-export type EnemyShotKind = 'bone' | 'hex';
+export type EnemyShotKind = 'bone' | 'hex' | 'harpoon';
 
 export interface EnemyContext {
   playerX(): number;
   playerY(): number;
-  /** Гнолл (кость) или шаман (шар) завершают анимацию броска */
+  /** Ранг «Ополчения» увеличивает радиус перехвата осады. */
+  siegeInterceptRadius?(): number;
+  /** Гнолл, шаман или гарпун-акула завершают анимацию броска. */
   onEnemyShoot(x: number, y: number, proj: EnemyShotKind): void;
   /** Огр бьёт клубом в землю: ударная волна по радиусу */
   onBossSlam(x: number, y: number): void;
@@ -52,6 +54,12 @@ export class Enemy extends Phaser.Physics.Arcade.Sprite {
   /** Ярость (слом щита скелета / финальная фаза Огра) */
   enraged = false;
   private shootCd = 0;
+  /** Защита от повторного выпуска, если callback анимации и таймер совпадут. */
+  private harpoonShotFired = false;
+  /** Бросок остаётся ожидающим даже при пропущенном animationcomplete. */
+  private harpoonWindupActive = false;
+  /** Независимый fallback броска: AI tick не должен быть единственным таймером. */
+  private harpoonWindupTimer: Phaser.Time.TimerEvent | null = null;
   private atkCd = 0;
   private summonCd = 8000; // мс до первого зова свиты
   private chargeDirX = 0;
@@ -67,6 +75,8 @@ export class Enemy extends Phaser.Physics.Arcade.Sprite {
   private auraRing: Phaser.GameObjects.Image | null = null;
   /** Текущая анимация — чтобы не перезапускать один и тот же цикл каждый кадр */
   private lastAnim = '';
+  /** Ожидаемый callback одноразовой анимации; старый отменяется при новом действии. */
+  private animationCompleteHandler: ((anim: Phaser.Animations.Animation) => void) | null = null;
 
   // ---- Выбор цели (§A.5): герой → гарнизон → гражданский, пересчёт 400 мс ----
   /** Осадный враг: цель — здание профиля, не игрок (§E.4) */
@@ -86,6 +96,12 @@ export class Enemy extends Phaser.Physics.Arcade.Sprite {
   get aimedPawn(): Pawn | null { return this.targetPawn; }
   private lastPick = 0;
   private buildingAtkCd = 0;
+  /** Отдельный цикл рывка свиногоблина по зданию в режиме осады (§E.4.1). */
+  private siegeChargeStage: 'idle' | 'windup' | 'charge' | 'recover' = 'idle';
+  private siegeChargeTimerMs = 0;
+  private siegeChargeCooldownMs: number = SIEGE.PIG_RIDER_CHARGE_INTERVAL_MS;
+  private siegeChargeDirX = 0;
+  private siegeChargeDirY = 0;
   /** Момент спавна — таймер отступления осады 60 сек (§E.4.2) */
   spawnedAt = 0;
   /** Окно атаки у стены, конец в мс (0 — не ограничено; §E.4.2) */
@@ -172,36 +188,65 @@ export class Enemy extends Phaser.Physics.Arcade.Sprite {
     this.play(key, true);
   }
 
-  private playOnce(key: string): void {
-    if (!this.scene.anims.exists(key)) return;
+  private playOnce(key: string, onComplete?: () => void): void {
+    if (!this.scene.anims.exists(key)) {
+      // Отсутствующая анимация не должна навсегда блокировать боевой FSM.
+      this.lastAnim = '';
+      if (this.active) onComplete?.();
+      return;
+    }
+    // Не оставляем подписку от прерванного действия. Важно использовать
+    // on/off с фильтрацией по ключу: once('animationcomplete') снимает
+    // обработчик на завершении ЛЮБОЙ анимации, даже если её ключ не совпал.
+    if (this.animationCompleteHandler) {
+      this.off('animationcomplete', this.animationCompleteHandler);
+      this.animationCompleteHandler = null;
+    }
+    const handler = (anim: Phaser.Animations.Animation): void => {
+      if (anim.key !== key) return;
+      this.off('animationcomplete', handler);
+      if (this.animationCompleteHandler === handler) this.animationCompleteHandler = null;
+      if (!this.active) return;
+      this.lastAnim = '';
+      onComplete?.();
+    };
+    this.animationCompleteHandler = handler;
+    this.on('animationcomplete', handler);
     this.lastAnim = key;
-    this.play(key, true);
-    this.once('animationcomplete', (anim: Phaser.Animations.Animation) => {
-      if (anim.key === key && this.active) this.lastAnim = '';
-    });
+    this.play(key);
   }
 
   /**
    * Разворот спрайта по направлению движения — значение для `setFlipX`.
    *
-   *  Весь пак Tiny Swords (`units/*` и `enemies/*`) нарисован «вправо»: правое
-   *  плечо/нос/щит/морда смотрят вправо, дуги замаха уходят вправо. Проверено
-   *  покадрово по всем десяти листам существ (goblin/thief/gnoll/skull/shaman/
-   *  pig-rider/bomb-fish/bear/minotaur/ogre-boss); контрольный признак —
-   *  `units/blue/lancer/lancer-right-attack.png`, где острие копья справа.
-   *  Поэтому флип только при движении влево — ровно как у героя
-   *  (GameScene) и пешек (PawnAI).
-   *
-   *  Раньше здесь стояло `facesRight ? vx < 0 : vx > 0` при `facesRight`
-   *  лишь у `bear`. Для остальных девяти срабатывала ветка `vx > 0`, т.е.
-   *  разворот ровно при движении вправо: существо пятилось спиной. Заметил
-   *  игрок, а не тест — правило TZ §C.2 было написано по неверной посылке.
-   *
-   *  `facesRight: false` в `EnemyDef` — явный выход для будущего листа,
-   *  нарисованного влево.
+   *  По умолчанию листы Tiny Swords считаются нарисованными вправо; для
+   *  листов, у которых морда смотрит влево (gnome, panda, spear-goblin и
+   *  морские акулы), `EnemyDef.facesRight = false` явно меняет правило флипа.
+   *  Значение используется только здесь, а не в координатах тела: `body` и
+   *  `groundY` остаются размерами исходного кадра и не зависят от направления.
    */
   private faceDir(vx: number): boolean {
     return this.def.facesRight === false ? vx > 0 : vx < 0;
+  }
+
+  /** Выпускает гарпун ровно один раз даже при пропущенном animationcomplete. */
+  private fireHarpoon(): void {
+    if (!this.active || this.dead || !this.harpoonWindupActive || this.harpoonShotFired) return;
+    this.harpoonShotFired = true;
+    this.harpoonWindupActive = false;
+    this.harpoonWindupTimer?.remove(false);
+    this.harpoonWindupTimer = null;
+    // Таймерный fallback может завершиться раньше animationcomplete. Снимаем
+    // старый обработчик, чтобы он не висел до следующей одноразовой анимации.
+    if (this.animationCompleteHandler) {
+      this.off('animationcomplete', this.animationCompleteHandler);
+      this.animationCompleteHandler = null;
+    }
+    // Сбрасываем маркер: следующая итерация AI сможет вернуть idle/run.
+    this.lastAnim = '';
+    this.ctx.onEnemyShoot(this.x, this.y, 'harpoon');
+    this.shootCd = 2400;
+    this.aiState = 'chase';
   }
 
   // ================= ВЫБОР ЦЕЛИ (TZ §A.5) =================
@@ -222,17 +267,47 @@ export class Enemy extends Phaser.Physics.Arcade.Sprite {
 
   /** Осадный враг: идёт к зданию, бьёт его; игрок в 260 px перехватывает. */
   private updateSiege(time: number, delta: number): void {
+    const body = this.body as Phaser.Physics.Arcade.Body;
+    // Срок атаки проверяется ДО перехвата героем: близость игрока не должна
+    // продлевать десятисекундное окно у стены (§E.4.2).
+    if (this.attackWindowEnds > 0 && time >= this.attackWindowEnds) {
+      if (this.kind === 'pig-rider') {
+        this.siegeChargeStage = 'idle';
+        this.setSiegeChargeTint(false);
+      }
+      this.siege = false;
+      this.buildingTarget = null;
+      body.setVelocity(0, 0);
+      this.playMove(false);
+      this.ctx.onSiegeWindowEnd?.(this);
+      return;
+    }
+
     const b = this.buildingTarget as { x: number; y: number } | null;
-    if (!b) { this.siege = false; return; }
+    if (!b) {
+      this.siege = false;
+      if (this.kind === 'pig-rider') {
+        this.siegeChargeStage = 'idle';
+        this.setSiegeChargeTint(false);
+      }
+      return;
+    }
     const hx = this.ctx.playerX(), hy = this.ctx.playerY();
     const heroD = Math.hypot(hx - this.x, hy - this.y);
 
     // Игрок рядом перехватывает осаду — она бьёт его, не постройку (§E.4.2)
-    if (heroD < SIEGE.INTERCEPT_R) {
+    const interceptRadius = this.ctx.siegeInterceptRadius?.() ?? SIEGE.INTERCEPT_R;
+    if (heroD < interceptRadius) {
+      // Герой может перехватить и сорвать телеграфированный осадный рывок.
+      if (this.kind === 'pig-rider' && this.siegeChargeStage !== 'idle') {
+        this.siegeChargeStage = 'idle';
+        this.siegeChargeTimerMs = 0;
+        this.siegeChargeCooldownMs = SIEGE.PIG_RIDER_CHARGE_INTERVAL_MS;
+        this.setSiegeChargeTint(false);
+      }
       // обычный погон за игроком
       const dx = hx - this.x, dy = hy - this.y;
       const d = Math.max(1, Math.hypot(dx, dy));
-      const body = this.body as Phaser.Physics.Arcade.Body;
       const vx = (dx / d) * this.speed, vy = (dy / d) * this.speed;
       body.setVelocity(vx + this.knockX, vy + this.knockY);
       if (Math.abs(body.velocity.x) > 8) {
@@ -244,7 +319,6 @@ export class Enemy extends Phaser.Physics.Arcade.Sprite {
 
     const dx = b.x - this.x, dy = b.y - this.y;
     const dist = Math.max(1, Math.hypot(dx, dy));
-    const body = this.body as Phaser.Physics.Arcade.Body;
     const ranged = this.kind === 'gnoll' || this.kind === 'shaman';
     const stopDist = ranged ? 300 : 110;
 
@@ -256,18 +330,6 @@ export class Enemy extends Phaser.Physics.Arcade.Sprite {
       }
       if (!this.lastAnim || this.lastAnim === `${this.kind}-idle`) this.playMove(true);
     } else {
-      // Окно атаки: у стены (§E.4.2). По умолчанию бой длится до гибели
-      // осады; окно в 10 секунд держит вызов из GameScene (§E.4.2 — именно
-      // из него выведены все числа §E.4.1/§E.4.3).
-      if (this.attackWindowEnds > 0 && time >= this.attackWindowEnds) {
-        // Окно истекло — осада отходит за край карты (§E.4.2 «отступает»)
-        this.siege = false;
-        this.buildingTarget = null;
-        body.setVelocity(0, 0);
-        this.playMove(false);
-        this.ctx.onSiegeWindowEnd?.(this);
-        return;
-      }
       body.setVelocity(0, 0);
       this.setFlipX(this.faceDir(dx));
       // Пробившийся внутрь осады враг РАНИТ пешек, которых достиг (§E.4).
@@ -282,15 +344,78 @@ export class Enemy extends Phaser.Physics.Arcade.Sprite {
         }
       }
       this.buildingAtkCd -= delta;
+
+      if (this.kind === 'pig-rider') {
+        if (this.siegeChargeStage === 'windup') {
+          this.siegeChargeTimerMs = Math.max(0, this.siegeChargeTimerMs - delta);
+          body.setVelocity(0, 0);
+          this.setSiegeChargeTint(true);
+          if (this.siegeChargeTimerMs <= 0) {
+            this.setSiegeChargeTint(false);
+            this.siegeChargeDirX = dx / dist;
+            this.siegeChargeDirY = dy / dist;
+            this.siegeChargeStage = 'charge';
+            this.siegeChargeTimerMs = SIEGE.PIG_RIDER_CHARGE_DASH_MS;
+            this.playOnce(`${this.kind}-atk`);
+          }
+          return;
+        }
+
+        if (this.siegeChargeStage === 'charge') {
+          this.siegeChargeTimerMs = Math.max(0, this.siegeChargeTimerMs - delta);
+          const targetDistance = Math.hypot(b.x - this.x, b.y - this.y);
+          if (targetDistance <= SIEGE.PIG_RIDER_CHARGE_HIT_RADIUS || this.siegeChargeTimerMs <= 0) {
+            body.setVelocity(0, 0);
+            this.siegeChargeStage = 'recover';
+            this.siegeChargeTimerMs = SIEGE.PIG_RIDER_CHARGE_RECOVERY_MS;
+            this.siegeChargeCooldownMs = SIEGE.PIG_RIDER_CHARGE_INTERVAL_MS;
+            // Истёкший таймер завершает рывок, но удар засчитывается только на
+            // малой дистанции: застрявший/отброшенный юнит не бьёт издалека.
+            if (targetDistance <= SIEGE.PIG_RIDER_CHARGE_HIT_RADIUS * 2) {
+              this.ctx.attackBuilding(b, SIEGE.PIG_RIDER_CHARGE_DMG, false, false);
+            }
+            this.playMove(false);
+          } else {
+            body.setVelocity(
+              this.siegeChargeDirX * SIEGE.PIG_RIDER_CHARGE_SPEED + this.knockX,
+              this.siegeChargeDirY * SIEGE.PIG_RIDER_CHARGE_SPEED + this.knockY,
+            );
+            if (Math.abs(body.velocity.x) > 8) {
+              this.setFlipX(this.faceDir(body.velocity.x));
+            }
+          }
+          return;
+        }
+
+        if (this.siegeChargeStage === 'recover') {
+          this.siegeChargeTimerMs = Math.max(0, this.siegeChargeTimerMs - delta);
+          body.setVelocity(0, 0);
+          if (this.siegeChargeTimerMs <= 0) this.siegeChargeStage = 'idle';
+          return;
+        }
+
+        // Cooldown ticks only while the rider remains in attack range and active time advances.
+        this.siegeChargeCooldownMs = Math.max(0, this.siegeChargeCooldownMs - delta);
+        if (this.siegeChargeCooldownMs <= 0) {
+          this.siegeChargeStage = 'windup';
+          this.siegeChargeTimerMs = SIEGE.PIG_RIDER_CHARGE_WINDUP_MS;
+          this.setSiegeChargeTint(true);
+          this.playLoop(`${this.kind}-idle`);
+          body.setVelocity(0, 0);
+          return;
+        }
+      }
+
       if (this.buildingAtkCd <= 0) {
         // Босс в фазе 2 бьёт замок быстрее осады: 8 урона / 0.535 c ≈ 15 HP/с
         // — замок (~500 HP, потолка для босса нет) держится ~33 с (§E.6)
-        this.buildingAtkCd = this.kind === 'boss' ? 535 : ranged ? 2600 : 1500;
+        // §E.4.1: обычная атака — 1.5 с; шар шамана — 2.4 с
+        // (5 / 2.4 + 3 / 6 ≈ 2.58 HP/с с учётом DoT); босс фазы 2 — 535 мс.
+        this.buildingAtkCd = this.kind === 'boss' ? 535 : this.kind === 'shaman' ? 2400 : 1500;
         if (ranged) {
           // Бросок по зданию: шаман — огненный шар (поджог), гнолл — кость
-          this.playOnce(`${this.kind}-shoot`);
-          this.once('animationcomplete', (anim: Phaser.Animations.Animation) => {
-            if (anim.key === `${this.kind}-shoot` && this.active && this.siege) {
+          this.playOnce(`${this.kind}-shoot`, () => {
+            if (this.active && this.siege) {
               this.ctx.siegeShoot(
                 this.kind === 'shaman' ? 'hex' : 'bone',
                 this.x, this.y, b.x, b.y,
@@ -306,6 +431,17 @@ export class Enemy extends Phaser.Physics.Arcade.Sprite {
       }
     }
     void time;
+  }
+
+  /** Красный телеграф осадного рывка: FILL tint не зависит от случайного фидбека урона. */
+  private setSiegeChargeTint(active: boolean): void {
+    if (active) {
+      this.setTint(0xff9999);
+      this.setTintMode(Phaser.TintModes.FILL);
+    } else {
+      this.clearTint();
+      this.setTintMode(Phaser.TintModes.MULTIPLY);
+    }
   }
 
   /**
@@ -338,12 +474,17 @@ export class Enemy extends Phaser.Physics.Arcade.Sprite {
   takeDamage(dmg: number): boolean {
     if (this.dead) return false;
     let final = dmg;
-    // Скелет: пока щит цел, гасит 45% урона. Слом щита при 40% HP
-    if (this.kind === 'skull' && !this.enraged && this.def.armorFront) {
-      final = Math.max(1, final * (1 - this.def.armorFront));
-      // Звон щита — блок заметен и без чтения чисел урона
-      if (Math.random() < 0.3) audio.play('hit');
+    // Защита по виду: щит скелета снимается на ярости, панцирь черепахи и
+    // стойка панды уменьшают входящий урон постоянно.
+    const armor = this.def.armorFront;
+    const hasArmor = armor !== undefined && armor > 0 && (this.kind !== 'skull' || !this.enraged);
+    if (hasArmor) {
+      final = Math.max(1, final * (1 - armor));
+      // Звон щита скелета — блок заметен и без чтения чисел урона.
+      if (this.kind === 'skull' && Math.random() < 0.3) audio.play('hit');
     }
+    // Ящер заметно реагирует на попадание: hit-лист есть только у этого вида.
+    if (this.kind === 'lizard' && !this.dead) this.playOnce('lizard-hit');
     this.hp -= final;
     // Вспышка урона (белая заливка в Phaser 4: setTint + FILL режим)
     this.setTint(0xffffff);
@@ -394,6 +535,17 @@ export class Enemy extends Phaser.Physics.Arcade.Sprite {
   }
 
   preUpdate(time: number, delta: number): void {
+    if (!this.active) return;
+
+    // FTUE overlay приостанавливает GameScene.update и Arcade Physics, но Phaser
+    // всё ещё вызывает preUpdate активных GameObject. Проверяем общий флаг ДО
+    // super.preUpdate, иначе AI и анимации атак продолжаются поверх паузы.
+    if (this.scene.registry.get('tss-hint-overlay-paused') === true) {
+      const body = this.body as Phaser.Physics.Arcade.Body | null;
+      body?.setVelocity(0, 0);
+      return;
+    }
+
     super.preUpdate(time, delta);
     if (!this.active) return;
     // Умерший босс остаётся в display list только на время финальной анимации.
@@ -412,9 +564,16 @@ export class Enemy extends Phaser.Physics.Arcade.Sprite {
       return;
     }
 
+    // Все игровые дедлайны используют часы активной симуляции. Phaser.Clock.now
+    // продолжает обновляться при paused=true, хотя его Timer Events заморожены.
+    const activeTimeValue = this.scene.registry.get('tss-active-time-ms');
+    const activeTime = typeof activeTimeValue === 'number' && Number.isFinite(activeTimeValue)
+      ? activeTimeValue
+      : time;
+
     // Хитстоп: короткая заморозка врагов (реестр пишет GameScene)
     const freezeUntil = (this.scene.registry.get('tss-freeze') as number | undefined) ?? 0;
-    if (time < freezeUntil) {
+    if (activeTime < freezeUntil) {
       const b = this.body as Phaser.Physics.Arcade.Body | null;
       if (b) b.setVelocity(0, 0);
       return;
@@ -424,7 +583,7 @@ export class Enemy extends Phaser.Physics.Arcade.Sprite {
 
     // ---- Осада: цель — здание профиля, игрок может перехватить (§E.4) ----
     if (this.siege && this.buildingTarget) {
-      this.updateSiege(time, delta);
+      this.updateSiege(activeTime, delta);
       const groundOff = this.def.groundY - this.def.frameW / 2;
       this.shadow.setPosition(this.x, this.y + groundOff * this.def.scale);
       this.setDepth(DEPTH.ENTITY_BASE + this.y);
@@ -433,8 +592,8 @@ export class Enemy extends Phaser.Physics.Arcade.Sprite {
     }
 
     // ---- Выбор цели (§A.5): пересчёт не чаще раза в 400 мс ----
-    if (time - this.lastPick > 400) {
-      this.lastPick = time;
+    if (activeTime - this.lastPick > 400) {
+      this.lastPick = activeTime;
       this.pickTarget();
     }
 
@@ -461,11 +620,21 @@ export class Enemy extends Phaser.Physics.Arcade.Sprite {
     }
 
     let vx = 0, vy = 0;
+    // Резервные виды фазы I используют полноценный FSM боя; их ниша задаётся
+    // скоростью, дистанцией атаки и защитой в отдельных ENEMIES defs.
     switch (this.kind) {
       case 'goblin':
       case 'thief':
       case 'skull':
       case 'bear':
+      case 'spider':
+      case 'snake':
+      case 'lizard':
+      case 'turtle':
+      case 'gnome':
+      case 'panda':
+      case 'spear-goblin':
+      case 'paddle-shark':
         // Простой погон; вблизи — косметический замах (урон наносит overlap)
         vx = nx * this.speed; vy = ny * this.speed;
         this.atkCd -= delta;
@@ -474,6 +643,44 @@ export class Enemy extends Phaser.Physics.Arcade.Sprite {
           this.playOnce(`${this.kind}-atk`);
         }
         break;
+
+      case 'harpoon-shark': {
+        // Гарпун-акула — отдельный дальнобойный тип: держит дистанцию,
+        // прекращает движение на время броска и стреляет после окончания throw-анимации.
+        this.shootCd -= delta;
+        const want = 300;
+        if (this.aiState === 'windup') {
+          vx = 0;
+          vy = 0;
+          // Пропущенное animationcomplete не должно навсегда блокировать AI и атаку.
+          this.stateTimer -= delta;
+          if (this.stateTimer <= 0) this.fireHarpoon();
+        } else if (dist > want + 45) {
+          vx = nx * this.speed;
+          vy = ny * this.speed;
+        } else if (dist < want - 55) {
+          vx = -nx * this.speed;
+          vy = -ny * this.speed;
+        } else {
+          vx = -ny * this.speed * 0.55;
+          vy = nx * this.speed * 0.55;
+        }
+        if (this.shootCd <= 0 && dist < 520 && this.aiState === 'chase') {
+          this.aiState = 'windup';
+          this.stateTimer = 900; // Совместимый fallback внутри AI tick.
+          this.harpoonShotFired = false;
+          this.harpoonWindupActive = true;
+          this.harpoonWindupTimer?.remove(false);
+          // Scene Clock надёжнее одного animationcomplete и продолжает отсчёт,
+          // даже если анимация была прервана или AI временно сменил состояние.
+          this.harpoonWindupTimer = this.scene.time.delayedCall(900, () => {
+            this.harpoonWindupTimer = null;
+            this.fireHarpoon();
+          });
+          this.playOnce('harpoon-shark-atk', () => this.fireHarpoon());
+        }
+        break;
+      }
 
       case 'gnoll': {
         // Метатель костей: держит дистанцию 300 px
@@ -488,13 +695,10 @@ export class Enemy extends Phaser.Physics.Arcade.Sprite {
         }
         if (this.shootCd <= 0 && dist < 560 && this.aiState === 'chase') {
           this.aiState = 'windup';
-          this.playOnce(`${this.kind}-shoot`);
-          this.once('animationcomplete', (anim: Phaser.Animations.Animation) => {
-            if (anim.key === `${this.kind}-shoot` && this.active) {
-              this.ctx.onEnemyShoot(this.x, this.y, 'bone');
-              this.shootCd = 2200;
-              this.aiState = 'chase';
-            }
+          this.playOnce(`${this.kind}-shoot`, () => {
+            this.ctx.onEnemyShoot(this.x, this.y, 'bone');
+            this.shootCd = 2200;
+            this.aiState = 'chase';
           });
         }
         break;
@@ -520,25 +724,22 @@ export class Enemy extends Phaser.Physics.Arcade.Sprite {
             if (e === this || !e.active) continue;
             // Босса аура не разгоняет: его скорость калибруется отдельно
             if (e.def.isBoss) continue;
-            e.hasteUntil = time + 750;
+            e.hasteUntil = activeTime + 750;
             e.hasteMult = 1.3;
           }
         }
         // Кольцо ауры следует за шаманом
         if (this.auraRing) {
           this.auraRing.setPosition(this.x, this.y + 6);
-          const pulse = 0.22 + Math.abs(Math.sin(time / 320)) * 0.2;
+          const pulse = 0.22 + Math.abs(Math.sin(activeTime / 320)) * 0.2;
           this.auraRing.setAlpha(pulse);
         }
         if (this.shootCd <= 0 && dist < 520 && this.aiState === 'chase') {
           this.aiState = 'windup';
-          this.playOnce(`${this.kind}-shoot`);
-          this.once('animationcomplete', (anim: Phaser.Animations.Animation) => {
-            if (anim.key === `${this.kind}-shoot` && this.active) {
-              this.ctx.onEnemyShoot(this.x, this.y, 'hex');
-              this.shootCd = 2600;
-              this.aiState = 'chase';
-            }
+          this.playOnce(`${this.kind}-shoot`, () => {
+            this.ctx.onEnemyShoot(this.x, this.y, 'hex');
+            this.shootCd = 2600;
+            this.aiState = 'chase';
           });
         }
         break;
@@ -652,7 +853,7 @@ export class Enemy extends Phaser.Physics.Arcade.Sprite {
     this.knockX *= decay; this.knockY *= decay;
 
     // Ускорение от ауры Шамана — применяется к итоговой скорости
-    if (time < this.hasteUntil) {
+    if (activeTime < this.hasteUntil) {
       vx *= this.hasteMult;
       vy *= this.hasteMult;
     }
@@ -795,6 +996,9 @@ export class Enemy extends Phaser.Physics.Arcade.Sprite {
 
   destroy(fromScene?: boolean): void {
     this.clearDeathCleanupTimer();
+    this.harpoonWindupTimer?.remove(false);
+    this.harpoonWindupTimer = null;
+    this.harpoonWindupActive = false;
     this.shadow.destroy();
     this.hpBar?.destroy();
     this.auraRing?.destroy();

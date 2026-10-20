@@ -51,6 +51,36 @@ export const CREATURE_SHEETS: CreatureSheet[] = [
     // idle/run мало — используем собственный bomb-fish-shoot (7 кадров).
     ['atk', 'shoot', 7, 10],
   ] },
+  // Резервные кавернные/морские существа (фаза I): все пути проверены по паку.
+  { kind: 'spider', dir: 'caveborn/spider', base: 'spider', frameW: 192, sheets: [
+    ['idle', 'idle', 8, 7], ['run', 'run', 5, 10], ['atk', 'attack', 8, 12],
+  ] },
+  { kind: 'snake', dir: 'caveborn/snake', base: 'snake', frameW: 192, sheets: [
+    ['idle', 'idle', 8, 7], ['run', 'run', 8, 11], ['atk', 'attack', 6, 12],
+  ] },
+  { kind: 'lizard', dir: 'caveborn/lizard', base: 'lizard', frameW: 192, sheets: [
+    ['idle', 'idle', 7, 7], ['run', 'run', 6, 10], ['atk', 'attack', 9, 12], ['hit', 'hit', 2, 10],
+  ] },
+  { kind: 'turtle', dir: 'caveborn/turtle', base: 'turtle', frameW: 320, sheets: [
+    ['idle', 'idle', 10, 7], ['run', 'walk', 7, 9], ['atk', 'attack', 10, 10],
+    ['guardIn', 'guard-in', 6, 10], ['guardOut', 'guard-out', 3, 10],
+  ] },
+  { kind: 'gnome', dir: 'gnome', base: 'gnome', frameW: 192, sheets: [
+    ['idle', 'idle', 8, 7], ['run', 'run', 6, 11], ['atk', 'attack', 7, 12],
+  ] },
+  { kind: 'panda', dir: 'panda', base: 'panda', frameW: 256, sheets: [
+    ['idle', 'idle', 10, 7], ['run', 'run', 6, 10], ['atk', 'attack', 13, 12], ['guard', 'guard', 8, 9],
+  ] },
+  { kind: 'spear-goblin', dir: 'goblin-raiders/spear-goblin', base: 'spear-goblin', frameW: 256, sheets: [
+    ['idle', 'idle', 8, 7], ['run', 'run', 6, 10], ['atk', 'attack-fast', 7, 12],
+    ['atkStrong', 'attack-strong', 8, 11],
+  ] },
+  { kind: 'harpoon-shark', dir: 'pirate-fish/harpoon-shark', base: 'harpoon-shark', frameW: 192, sheets: [
+    ['idle', 'idle', 8, 7], ['run', 'run', 6, 10], ['atk', 'throw', 8, 11],
+  ] },
+  { kind: 'paddle-shark', dir: 'pirate-fish/paddle-shark', base: 'paddle-shark', frameW: 192, sheets: [
+    ['idle', 'idle', 8, 7], ['run', 'run', 6, 11], ['atk', 'attack', 6, 12],
+  ] },
   { kind: 'bear', dir: 'caveborn/bear', base: 'bear', frameW: 256, sheets: [
     ['idle', 'idle', 8, 6], ['run', 'run', 5, 10], ['atk', 'attack', 9, 12],
   ] },
@@ -67,6 +97,9 @@ export const CREATURE_SHEETS: CreatureSheet[] = [
 const CREATURE_FACES: Array<[kind: string, file: string]> = [
   ['goblin', 'torch-goblin'], ['thief', 'thief'], ['gnoll', 'gnoll'],
   ['skull', 'skull'], ['shaman', 'hex-shaman'], ['bomb-fish', 'bomb-fish'],
+  ['spider', 'spider'], ['snake', 'snake'], ['lizard', 'lizard'], ['turtle', 'turtle'],
+  ['gnome', 'gnome'], ['panda', 'panda'], ['spear-goblin', 'spear-goblin'],
+  ['harpoon-shark', 'harpoon-shark'], ['paddle-shark', 'paddle-shark'],
   ['bear', 'bear'], ['minotaur', 'minotaur'], ['boss', 'ogre-boss'],
 ];
 
@@ -131,6 +164,7 @@ export class BootScene extends Phaser.Scene {
     // плюс FX взрыва шара (все — из того же пака enemies/)
     this.load.spritesheet('proj-bone', asset('tiny-swords', 'enemies/gnoll/gnoll-bone.png'), { frameWidth: 64, frameHeight: 64 });
     this.load.spritesheet('proj-hex', asset('tiny-swords', 'enemies/goblin-raiders/hex-shaman/hex-shaman-projectile.png'), { frameWidth: 128, frameHeight: 128 });
+    this.load.image('proj-harpoon', asset('tiny-swords', 'enemies/pirate-fish/harpoon-shark/harpoon.png'));
     this.load.spritesheet('fx-hex', asset('tiny-swords', 'enemies/goblin-raiders/hex-shaman/hex-shaman-explosion.png'), { frameWidth: 128, frameHeight: 128 });
     // Аватары существ для кино-заставок элит и босса (HUD.bossIntro)
     for (const [kind, file] of CREATURE_FACES) {
@@ -463,7 +497,7 @@ export class BootScene extends Phaser.Scene {
     for (const c of CREATURE_SHEETS) {
       for (const [anim, , frames, rate] of c.sheets) {
         const key = `${c.kind}-${anim}`;
-        if (anim === 'atk' || anim === 'shoot' || anim === 'dead' || anim === 'recover') {
+        if (['atk', 'atkStrong', 'shoot', 'dead', 'recover', 'hit', 'guardIn', 'guardOut'].includes(anim)) {
           this.once(key, key, frames, rate);
         } else {
           this.sheet(key, key, frames, rate);
@@ -479,6 +513,19 @@ export class BootScene extends Phaser.Scene {
     this.once('fx-explosion2', 'fx-explosion2', 10, 16);
     this.once('fx-dust', 'fx-dust', 8, 14);
     this.once('fx-fire', 'fx-fire', 8, 12);
+    // Отдельный цикл для длительного горения построек; hit-FX выше остаётся одноразовым.
+    this.anims.create({
+      key: 'building-fire-loop',
+      frames: this.anims.generateFrameNumbers('fx-fire', { start: 0, end: 7 }),
+      frameRate: 10,
+      repeat: -1,
+    });
+    this.anims.create({
+      key: 'fire-arrow-trail',
+      frames: this.anims.generateFrameNumbers('fx-fire', { start: 0, end: 7 }),
+      frameRate: 14,
+      repeat: -1,
+    });
     this.once('fx-heal', 'fx-heal', 11, 12);
     this.sheet('fx-foam', 'fx-foam', 16, 8);
     this.sheet('fx-treasure', 'fx-treasure', 6, 10);

@@ -62,7 +62,13 @@ type EconomyRuntime = {
   pawns: PawnRuntime[];
   nodes: ResourceNodeRuntime[];
   buildings: BuildingRuntime[];
-  pawnAI: { updateCivilian(pawn: PawnRuntime, dtMs: number, now: number): void };
+  buildJobs: Array<{ pawn: PawnRuntime; spot: BuildSpotRuntime; building: BuildingRuntime; progress: number }>;
+  repairJobs: Array<{ pawn: PawnRuntime; building: BuildingRuntime; progress: number; rebuild: boolean }>;
+  pawnAI: {
+    updateCivilian(pawn: PawnRuntime, dtMs: number, now: number): void;
+    pickBuildSpot(pawn: PawnRuntime): BuildSpotRuntime | null;
+  };
+  applySettlementCard(id: string): void;
   pawnLimit: number;
   castleX: number;
   castleY: number;
@@ -95,7 +101,8 @@ type GameSceneRuntime = {
   hud: HUDRuntime;
   elapsed: number;
   hintOverlayPaused: boolean;
-  time: { now: number };
+  time: { now: number; paused: boolean };
+  physics: { world: { pause(): void; resume(): void } };
   registry: { get(key: string): unknown; set(key: string, value: unknown): void };
 };
 
@@ -116,7 +123,10 @@ type RuntimeWindow = Window & {
   __phaseEHouseSpot?: BuildSpotRuntime;
 };
 
-const startupTimeout = 30_000;
+// Холодный старт dev-сервера: Vite трансформирует весь граф модулей и ~570
+// ассетов. На загруженном CI это занимает больше 30 сек — тест падал с
+// «canvas не появился», хотя приложение стартует штатно.
+const startupTimeout = 60_000;
 
 async function startRun(page: Page): Promise<void> {
   await page.goto('/?lang=en&ysdk=mock');
@@ -347,7 +357,6 @@ test('phases C-D: harvesting delivers resources and depleted veins can recharge'
     context.enemies = () => [];
 
     // Reserve every other resource so the actual AI selects this tree deterministically.
-    const previousClaims = economy.nodes.map(n => n.claimedBy);
     for (const node of economy.nodes) {
       if (node !== tree && node.available) node.claimedBy = blocker;
     }
@@ -884,6 +893,21 @@ test('phases E-F: construction uses the approached spot and repair costs are gua
     const woodAfterRebuild = economy.resources.wood;
     const rebuildFinished = economy.finishRepairInstant();
 
+    // Gate L: разрушенные казармы требуют не только дерево, но и руду.
+    barracks.damage(barracks.maxHp + 10, -1);
+    economy.resources.wood = 100;
+    economy.resources.ore = 0;
+    const woodBeforeBarracksNoOre = economy.resources.wood;
+    const barracksRebuildWithoutOre = economy.repair(barracks, builder);
+    const woodAfterBarracksNoOre = economy.resources.wood;
+    economy.resources.ore = 15;
+    const woodBeforeBarracksRebuild = economy.resources.wood;
+    const oreBeforeBarracksRebuild = economy.resources.ore;
+    const barracksRebuildAccepted = economy.repair(barracks, builder);
+    const woodAfterBarracksRebuild = economy.resources.wood;
+    const oreAfterBarracksRebuild = economy.resources.ore;
+    const barracksRebuildFinished = economy.finishRepairInstant();
+
     // Автоматический ремонтник (поведение позднейшей фазы L) чинит повреждённый дом.
     const repairer = economy.pawns.find(p => p.kind === 'repairer');
     if (!repairer) throw new Error('Automatic repair needs the initial repairer');
@@ -905,6 +929,45 @@ test('phases E-F: construction uses the approached spot and repair costs are gua
     const automaticRepairStarted = house.underConstruction && economy.resources.wood === woodBeforeAutoRepair - 30;
     economy.tick(5_001, scene.time.now + 35_016);
     const automaticRepairFinished = !house.underConstruction && house.hp === house.maxHp;
+
+    const prepareRepairer = (building: BuildingRuntime): void => {
+      repairer.setPosition(building.x, building.y);
+      repairer.state = 'idle';
+      repairer.order = null;
+      repairer.cooldown = 0;
+      repairer.carrying = null;
+      repairer.carriedAmount = 0;
+      repairer.workNode = null;
+      repairer.taskProgress = 0;
+    };
+
+    // Полное разрушение ставит underConstruction=true и hp=0, но не создаёт
+    // buildJob. Автоматический ремонтник обязан отличить руины от активной стройки.
+    house.damage(house.maxHp + 10, -1);
+    economy.resources.wood = 100;
+    const woodBeforeAutomaticHouseRebuild = economy.resources.wood;
+    prepareRepairer(house);
+    economy.pawnAI.updateCivilian(repairer, 16, scene.time.now + 36_000);
+    const automaticHouseRebuildStarted = house.underConstruction
+      && economy.resources.wood === woodBeforeAutomaticHouseRebuild - 60;
+    economy.tick(10_001, scene.time.now + 36_016);
+    const automaticHouseRebuildFinished = house.alive && !house.underConstruction && house.hp === house.maxHp;
+
+    // Казармы требуют те же 60 дерева и ещё 15 руды, причём ресурсы списываются
+    // атомарно до добавления repairJob.
+    barracks.damage(barracks.maxHp + 10, -1);
+    economy.resources.wood = 100;
+    economy.resources.ore = 15;
+    const woodBeforeAutomaticBarracksRebuild = economy.resources.wood;
+    const oreBeforeAutomaticBarracksRebuild = economy.resources.ore;
+    prepareRepairer(barracks);
+    economy.pawnAI.updateCivilian(repairer, 16, scene.time.now + 47_000);
+    const automaticBarracksRebuildStarted = barracks.underConstruction
+      && economy.resources.wood === woodBeforeAutomaticBarracksRebuild - 60
+      && economy.resources.ore === oreBeforeAutomaticBarracksRebuild - 15;
+    economy.tick(10_001, scene.time.now + 47_016);
+    const automaticBarracksRebuildFinished = barracks.alive
+      && !barracks.underConstruction && barracks.hp === barracks.maxHp;
     builder.order = null;
 
     // Phase E fallback: gather inputs when the next structure is unaffordable,
@@ -1008,10 +1071,23 @@ test('phases E-F: construction uses the approached spot and repair costs are gua
       woodBeforeRebuild,
       woodAfterRebuild,
       rebuildFinished,
+      barracksRebuildWithoutOre,
+      woodBeforeBarracksNoOre,
+      woodAfterBarracksNoOre,
+      barracksRebuildAccepted,
+      woodBeforeBarracksRebuild,
+      woodAfterBarracksRebuild,
+      oreBeforeBarracksRebuild,
+      oreAfterBarracksRebuild,
+      barracksRebuildFinished,
       rebuiltAlpha: house.alpha,
       rebuiltUnderConstruction: house.underConstruction,
       automaticRepairStarted,
       automaticRepairFinished,
+      automaticHouseRebuildStarted,
+      automaticHouseRebuildFinished,
+      automaticBarracksRebuildStarted,
+      automaticBarracksRebuildFinished,
       builderFallbackBeforeThreshold,
       builderFallbackCarry,
       builderFallbackAmount,
@@ -1054,10 +1130,20 @@ test('phases E-F: construction uses the approached spot and repair costs are gua
   expect(report.rebuildAccepted).toBe(true);
   expect(report.woodAfterRebuild).toBe(report.woodBeforeRebuild - 60);
   expect(report.rebuildFinished).toBe(true);
+  expect(report.barracksRebuildWithoutOre).toBe(false);
+  expect(report.woodAfterBarracksNoOre).toBe(report.woodBeforeBarracksNoOre);
+  expect(report.barracksRebuildAccepted).toBe(true);
+  expect(report.woodAfterBarracksRebuild).toBe(report.woodBeforeBarracksRebuild - 60);
+  expect(report.oreAfterBarracksRebuild).toBe(report.oreBeforeBarracksRebuild - 15);
+  expect(report.barracksRebuildFinished).toBe(true);
   expect(report.rebuiltAlpha).toBe(1);
   expect(report.rebuiltUnderConstruction).toBe(false);
   expect(report.automaticRepairStarted).toBe(true);
   expect(report.automaticRepairFinished).toBe(true);
+  expect(report.automaticHouseRebuildStarted).toBe(true);
+  expect(report.automaticHouseRebuildFinished).toBe(true);
+  expect(report.automaticBarracksRebuildStarted).toBe(true);
+  expect(report.automaticBarracksRebuildFinished).toBe(true);
   expect(report.builderFallbackBeforeThreshold).toBeNull();
   expect(report.builderFallbackCarry).toBe('wood');
   expect(report.builderFallbackAmount).toBe(5);
@@ -1066,4 +1152,2196 @@ test('phases E-F: construction uses the approached spot and repair costs are gua
   expect(report.builderFullCapacityCarry).toBe('wood');
   expect(report.builderFullCapacityAmount).toBe(5);
   expect(report.residentCountAfterHouse).toBeGreaterThanOrEqual(3);
+});
+
+test('phase K: flaming siege arrows use a bounded pool, visible trail and arrival callback', async ({ page }) => {
+  const pageErrors: string[] = [];
+  page.on('pageerror', (error) => pageErrors.push(error.message));
+  await startRun(page);
+
+  const report = await page.evaluate(() => {
+    const game = (window as unknown as { __tss?: PhaserRuntime }).__tss;
+    if (!game) throw new Error('Phaser game instance is unavailable');
+    type TrailRuntime = { active: boolean; visible: boolean };
+    type FireArrowRuntime = {
+      active: boolean;
+      visible: boolean;
+      texture: { key: string };
+      targetB: { x: number; y: number } | null;
+      trailSprites?: TrailRuntime[];
+      setPosition(x: number, y: number): unknown;
+      isTinted?: boolean;
+    };
+    type ProjectilesRuntime = {
+      size: number;
+      enemyShots: { getChildren(): FireArrowRuntime[] };
+      shootAtBuilding(
+        kind: string, x: number, y: number, tx: number, ty: number,
+        dmg: number, fire: boolean, onArrive: () => void,
+      ): void;
+      update(deltaMs: number): void;
+      clear(): void;
+    };
+    const scene = game.scene.getScene('Game') as GameSceneRuntime & {
+      projectiles: ProjectilesRuntime;
+      spawner: { stopped: boolean };
+    };
+    scene.spawner.stopped = true;
+    scene.projectiles.clear();
+    const castle = scene.economy.buildings.find((building) => building.kind === 'castle');
+    if (!castle) throw new Error('Castle is missing');
+    const before = scene.projectiles.size;
+    let arrivals = 0;
+    scene.projectiles.shootAtBuilding(
+      'hex', castle.x + 150, castle.y, castle.x, castle.y, 8, true, () => { arrivals++; },
+    );
+    const arrow = scene.projectiles.enemyShots.getChildren()
+      .find((shot) => shot.active && shot.texture.key === 'arrow' && shot.targetB !== null);
+    if (!arrow) throw new Error('Fire arrow was not created');
+    const result = {
+      sizeBefore: before,
+      sizeAfter: scene.projectiles.size,
+      arrowTexture: arrow.texture.key,
+      trailCount: arrow.trailSprites?.length ?? 0,
+      trailVisible: arrow.trailSprites?.every((flame) => flame.active && flame.visible) ?? false,
+      animationExists: game.anims.exists('fire-arrow-trail'),
+      tinted: arrow.isTinted ?? false,
+      arrivals: 0,
+    };
+    arrow.setPosition(castle.x, castle.y);
+    scene.projectiles.update(16);
+    result.arrivals = arrivals;
+    scene.projectiles.clear();
+    return result;
+  });
+
+  expect(report.sizeAfter).toBe(report.sizeBefore + 1);
+  expect(report.arrowTexture).toBe('arrow');
+  expect(report.trailCount).toBe(3);
+  expect(report.trailVisible).toBe(true);
+  expect(report.animationExists).toBe(true);
+  expect(report.tinted).toBe(false);
+  expect(report.arrivals).toBe(1);
+  expect(pageErrors).toEqual([]);
+});
+
+test('phase J: barracks hiring spends resources immediately and reserves slots while recruiting', async ({ page }) => {
+  await startRun(page);
+
+  const report = await page.evaluate(() => {
+    const game = (window as RuntimeWindow).__tss;
+    if (!game) throw new Error('Phaser runtime is unavailable');
+    const scene = game.scene.getScene('Game') as GameSceneRuntime & {
+      xp: number;
+      score: number;
+      addXp(value: number): void;
+    };
+    const economy = scene.economy as unknown as {
+      resources: { wood: number; ore: number; meat: number };
+      pawns: Array<PawnRuntime & { weapon?: string; cls?: string }>;
+      buildings: BuildingRuntime[];
+      freeSpots(): BuildSpotRuntime[];
+      tryStartBuild(kind: string, pawn: PawnRuntime, spot: BuildSpotRuntime): boolean;
+      canHire(weapon: 'sword' | 'lance'): boolean;
+      hire(weapon: 'sword' | 'lance', building: BuildingRuntime): boolean;
+      hireSlotUse(weapon: 'sword' | 'lance'): number;
+      garrisonLimit(source: string): number;
+      tick(dtMs: number, now: number): void;
+    };
+    const builder = economy.pawns.find((pawn) => pawn.kind === 'builder');
+    const spot = economy.freeSpots().find((candidate) => candidate.kind === 'barracks');
+    if (!builder || !spot) throw new Error('Builder or barracks spot is missing');
+    economy.resources.wood = 1_000;
+    economy.resources.ore = 1_000;
+    economy.resources.meat = 1_000;
+    const started = economy.tryStartBuild('barracks', builder, spot);
+    const barracks = economy.buildings.find((building) => building.kind === 'barracks');
+    if (!started || !barracks) throw new Error('Barracks construction could not start');
+    builder.setPosition(spot.x, spot.y);
+    builder.state = 'work';
+    const buildXpAwards: number[] = [];
+    const originalAddXp = scene.addXp.bind(scene);
+    scene.addXp = (value: number) => {
+      buildXpAwards.push(value);
+      originalAddXp(value);
+    };
+    const scoreBeforeBarracks = scene.score;
+    economy.tick(20_001, scene.time.now + 20_001);
+    scene.addXp = originalAddXp;
+    const barracksBuildScore = scene.score - scoreBeforeBarracks;
+
+    const completed = barracks.alive && !barracks.underConstruction;
+    const before = { ...economy.resources };
+    const firstAvailable = economy.canHire('sword');
+    const firstHired = economy.hire('sword', barracks);
+    const afterFirst = { ...economy.resources };
+    const slotsAfterFirst = economy.hireSlotUse('sword');
+    const secondAvailable = economy.canHire('lance');
+    const secondHired = economy.hire('lance', barracks);
+    const afterSecond = { ...economy.resources };
+    const slotsAfterSecond = economy.hireSlotUse('lance');
+    const thirdAvailable = economy.canHire('sword');
+    const thirdHired = economy.hire('sword', barracks);
+    const afterThirdAttempt = { ...economy.resources };
+    const limit = economy.garrisonLimit('barracks');
+    economy.tick(10_001, scene.time.now + 30_002);
+    const soldiers = economy.pawns
+      .filter((pawn) => pawn.cls === 'garrison')
+      .map((pawn) => pawn.weapon)
+      .sort();
+    return {
+      completed,
+      buildXpAwards,
+      barracksBuildScore,
+      limit,
+      firstAvailable,
+      firstHired,
+      firstWoodCost: before.wood - afterFirst.wood,
+      firstOreCost: before.ore - afterFirst.ore,
+      firstMeatCost: before.meat - afterFirst.meat,
+      slotsAfterFirst,
+      secondAvailable,
+      secondHired,
+      secondWoodCost: afterFirst.wood - afterSecond.wood,
+      secondOreCost: afterFirst.ore - afterSecond.ore,
+      secondMeatCost: afterFirst.meat - afterSecond.meat,
+      slotsAfterSecond,
+      thirdAvailable,
+      thirdHired,
+      noCostForRejectedHire: afterThirdAttempt.wood === afterSecond.wood
+        && afterThirdAttempt.ore === afterSecond.ore
+        && afterThirdAttempt.meat === afterSecond.meat,
+      soldiers,
+    };
+  });
+
+  expect(report.completed).toBe(true);
+  expect(report.buildXpAwards).toEqual([15]);
+  expect(report.barracksBuildScore).toBe(50);
+  expect(report.limit).toBe(2);
+  expect(report.firstAvailable).toBe(true);
+  expect(report.firstHired).toBe(true);
+  expect(report.firstWoodCost).toBe(20);
+  expect(report.firstOreCost).toBe(10);
+  expect(report.firstMeatCost).toBe(5);
+  expect(report.slotsAfterFirst).toBe(1);
+  expect(report.secondAvailable).toBe(true);
+  expect(report.secondHired).toBe(true);
+  expect(report.secondWoodCost).toBe(20);
+  expect(report.secondOreCost).toBe(10);
+  expect(report.secondMeatCost).toBe(5);
+  expect(report.slotsAfterSecond).toBe(2);
+  expect(report.thirdAvailable).toBe(false);
+  expect(report.thirdHired).toBe(false);
+  expect(report.noCostForRejectedHire).toBe(true);
+  expect(report.soldiers).toEqual(['lance', 'sword']);
+});
+
+test('phases K-L: siege wound caps, extinction delay, settlement score and ideal-victory gates match the rules', async ({ page }) => {
+  await startRun(page);
+
+  const report = await page.evaluate(async () => {
+    const game = (window as RuntimeWindow).__tss;
+    if (!game) throw new Error('Phaser runtime is unavailable');
+    const root = window.location.origin;
+    const [data, constants] = await Promise.all([
+      import(/* @vite-ignore */ new URL('/src/game/data.ts', root).href) as Promise<{
+        SIEGE_SCHEDULE: Array<{ woundCap: number }>;
+      }>,
+      import(/* @vite-ignore */ new URL('/src/game/constants.ts', root).href) as Promise<{
+        SCORE: { SETTLEMENT: number; POPULATION: number; RATING: number };
+      }>,
+    ]);
+    type PawnRef = { kind: string; dead: boolean };
+    type SettlementRef = {
+      aliveBuildings: Array<unknown>;
+      castle: { alive: boolean };
+      settlementScore(): { defence: number; population: number; buildings: number; pawns: number };
+      isIdealVictory(bossKilled: boolean): boolean;
+      beginSiege(index: number, woundCap: number, enemies: unknown[]): void;
+      canWoundInSiege(): boolean;
+      registerWound(): void;
+      checkExtinction(now: number): boolean;
+      extinctAt: number | null;
+    };
+    const scene = game.scene.getScene('Game') as GameSceneRuntime & {
+      settlement: SettlementRef;
+      economy: EconomyRuntime & {
+        pawns: PawnRef[];
+        resources: { wood: number; ore: number; meat: number };
+        houses: number;
+        removePawn(pawn: PawnRef, paid?: boolean): void;
+        spawnPawn(kind: string, x?: number, y?: number, announce?: boolean): PawnRef | null;
+      };
+    };
+
+    const caps = data.SIEGE_SCHEDULE.map((profile) => profile.woundCap);
+    const woundResults = caps.map((cap, index) => {
+      scene.settlement.beginSiege(index, cap, []);
+      const allowed: boolean[] = [];
+      for (let n = 0; n < cap + 1; n++) {
+        allowed.push(scene.settlement.canWoundInSiege());
+        scene.settlement.registerWound();
+      }
+      return allowed;
+    });
+
+    // Удаление населения не должно само по себе начислять замену добровольно ушедшим;
+    // здесь моделируется именно окончательная смерть, а не эмиграция из-за потери дома.
+    for (const pawn of [...scene.economy.pawns]) scene.economy.removePawn(pawn, false);
+    scene.economy.resources.wood = 30;
+    const now = scene.time.now + 120_000;
+    const atHomePrice = scene.settlement.checkExtinction(now);
+    scene.economy.resources.wood = 29;
+    const beforeNextCheck = scene.settlement.checkExtinction(now + 59_999);
+    const atNextCheck = scene.settlement.checkExtinction(now + 60_000);
+
+    const score = scene.settlement.settlementScore();
+    const idealWithoutResidents = scene.settlement.isIdealVictory(true);
+    for (let i = 0; i < 3; i++) {
+      if (!scene.economy.spawnPawn('collector', undefined, undefined, false)) {
+        throw new Error('Could not create residents for positive ideal-victory case');
+      }
+    }
+    const scoreWithResidents = scene.settlement.settlementScore();
+    const idealWithBossAndThree = scene.settlement.isIdealVictory(true);
+    const idealWithoutBossAndThree = scene.settlement.isIdealVictory(false);
+    return {
+      caps,
+      woundResults,
+      houses: scene.economy.houses,
+      pawnsBeforeIdealFixture: score.pawns,
+      atHomePrice,
+      beforeNextCheck,
+      atNextCheck,
+      extinctAtSet: scene.settlement.extinctAt !== null,
+      score,
+      scoreWithResidents,
+      populationScoreDelta: scoreWithResidents.population - score.population,
+      aliveBuildings: scene.settlement.aliveBuildings.length,
+      idealWithBoss: idealWithoutResidents,
+      idealWithoutBoss: scene.settlement.isIdealVictory(false),
+      idealWithBossAndThree,
+      idealWithoutBossAndThree,
+      castleAlive: scene.settlement.castle.alive,
+      scoreConstants: data.SIEGE_SCHEDULE.length > 0 ? constants.SCORE : null,
+    };
+  });
+
+  expect(report.caps).toEqual([1, 1, 2, 2, 3]);
+  expect(report.woundResults).toEqual([[true, false], [true, false], [true, true, false], [true, true, false], [true, true, true, false]]);
+  expect(report.houses).toBe(0);
+  expect(report.pawnsBeforeIdealFixture).toBe(0);
+  expect(report.atHomePrice).toBe(false);
+  expect(report.beforeNextCheck).toBe(false);
+  expect(report.atNextCheck).toBe(true);
+  expect(report.extinctAtSet).toBe(true);
+  expect(report.score.defence).toBe(report.aliveBuildings * report.scoreConstants!.SETTLEMENT);
+  expect(report.score.population).toBe(0);
+  expect(report.idealWithBoss).toBe(false);
+  expect(report.idealWithoutBoss).toBe(false);
+  expect(report.idealWithBossAndThree).toBe(true);
+  expect(report.idealWithoutBossAndThree).toBe(false);
+  expect(report.populationScoreDelta).toBe(3 * report.scoreConstants!.POPULATION);
+  expect(report.castleAlive).toBe(true);
+});
+
+test('phase J: sword taunt redirects siege damage only while HOLD is explicitly ordered', async ({ page }) => {
+  await startRun(page);
+
+  const report = await page.evaluate(() => {
+    const game = (window as RuntimeWindow).__tss;
+    if (!game) throw new Error('Phaser runtime is unavailable');
+    const scene = game.scene.getScene('Game') as GameSceneRuntime & {
+      settlement: {
+        castle: BuildingRuntime;
+        beginSiege(index: number, woundCap: number, enemies: unknown[]): void;
+        damageBuilding(building: BuildingRuntime, raw: number, siegeIndex: number, isBoss?: boolean): void;
+      };
+      economy: EconomyRuntime & {
+        pawns: Array<PawnRuntime & { weapon?: string; cls?: string; orderTarget?: { x: number; y: number } | null }>;
+        hire(weapon: 'sword', building: BuildingRuntime): boolean;
+      };
+    };
+    const economy = scene.economy;
+    const builder = economy.pawns.find((pawn) => pawn.kind === 'builder');
+    const spot = economy.freeSpots().find((candidate) => candidate.kind === 'barracks');
+    if (!builder || !spot) throw new Error('Builder or barracks spot is missing');
+    economy.resources.wood = 1_000;
+    economy.resources.ore = 1_000;
+    economy.resources.meat = 1_000;
+    const buildStarted = economy.tryStartBuild('barracks', builder, spot);
+    const barracks = economy.buildings.find((building) => building.kind === 'barracks');
+    if (!buildStarted || !barracks) throw new Error('Barracks construction did not start');
+    builder.setPosition(spot.x, spot.y);
+    builder.state = 'work';
+    economy.tick(20_001, scene.time.now + 20_001);
+    const hired = economy.hire('sword', barracks);
+    economy.tick(8_001, scene.time.now + 28_002);
+    const sword = economy.pawns.find((pawn) => pawn.kind === 'fighter' && pawn.weapon === 'sword');
+    if (!hired || !sword) throw new Error('Sword garrison was not recruited');
+
+    const castle = scene.settlement.castle;
+    sword.setPosition(castle.x + 100, castle.y);
+    sword.state = 'fight';
+    sword.hp = sword.maxHp;
+    sword.order = null;
+    sword.orderTarget = null;
+    castle.hp = castle.maxHp;
+    scene.settlement.beginSiege(0, 1, []);
+    scene.settlement.damageBuilding(castle, 100, 0, false);
+    const noOrder = {
+      fighterDamage: sword.maxHp - sword.hp,
+      buildingDamage: castle.maxHp - castle.hp,
+    };
+
+    sword.hp = sword.maxHp;
+    sword.order = 'hold';
+    sword.orderTarget = { x: castle.x, y: castle.y };
+    castle.hp = castle.maxHp;
+    scene.settlement.beginSiege(0, 1, []);
+    scene.settlement.damageBuilding(castle, 100, 0, false);
+    const holdOrder = {
+      fighterDamage: sword.maxHp - sword.hp,
+      buildingDamage: castle.maxHp - castle.hp,
+    };
+
+    return { noOrder, holdOrder };
+  });
+
+  expect(report.noOrder.fighterDamage).toBe(0);
+  expect(report.noOrder.buildingDamage).toBeGreaterThan(0);
+  expect(report.holdOrder.fighterDamage).toBeGreaterThan(0);
+  expect(report.holdOrder.buildingDamage).toBeLessThan(report.noOrder.buildingDamage);
+});
+
+test('phase L: repair and siege callbacks award the specified XP and micro-score', async ({ page }) => {
+  await startRun(page);
+  const report = await page.evaluate(() => {
+    const game = (window as RuntimeWindow).__tss;
+    if (!game) throw new Error('Phaser runtime is unavailable');
+    const scene = game.scene.getScene('Game') as GameSceneRuntime & {
+      xp: number;
+      xpNext: number;
+      xpMult: number;
+      level: number;
+      score: number;
+      economy: EconomyRuntime & { emit(event: string, ...args: unknown[]): boolean };
+      settlement: {
+        beginSiege(index: number, woundCap: number, enemies: unknown[]): void;
+        endSiege(outcome: 'defended' | 'partial' | 'ignored'): void;
+      };
+    };
+    scene.xp = 0;
+    scene.xpNext = 10_000;
+    scene.xpMult = 1;
+    scene.level = 1;
+    scene.score = 0;
+    const building = scene.economy.buildings.find((candidate) => candidate.kind === 'castle');
+    if (!building) throw new Error('Castle is missing');
+    scene.economy.emit('repairDone', { building });
+    const repairXp = scene.xp;
+    const scoreAfterRepair = scene.score;
+
+    scene.settlement.beginSiege(0, 1, []);
+    scene.settlement.endSiege('defended');
+    const defendedXp = scene.xp - repairXp;
+    const defendedScore = scene.score - scoreAfterRepair;
+
+    scene.settlement.beginSiege(0, 1, []);
+    scene.settlement.endSiege('partial');
+    const partialXp = scene.xp - repairXp - defendedXp;
+    const partialScore = scene.score - scoreAfterRepair - defendedScore;
+    return { repairXp, scoreAfterRepair, defendedXp, defendedScore, partialXp, partialScore };
+  });
+
+  expect(report.repairXp).toBe(8);
+  expect(report.scoreAfterRepair).toBe(0);
+  expect(report.defendedXp).toBe(40);
+  expect(report.defendedScore).toBe(150);
+  expect(report.partialXp).toBe(20);
+  expect(report.partialScore).toBe(75);
+});
+
+test('phase L: assembly construction helper keeps and completes its assigned job', async ({ page }) => {
+  await startRun(page);
+  const report = await page.evaluate(() => {
+    const game = (window as RuntimeWindow).__tss;
+    if (!game) throw new Error('Phaser runtime is unavailable');
+    const scene = game.scene.getScene('Game') as GameSceneRuntime & {
+      spawner: { stopped: boolean };
+      enemyGroup: { clear(removeFromScene?: boolean, destroyChildren?: boolean): void };
+    };
+    const economy = scene.economy;
+    scene.spawner.stopped = true;
+    scene.enemyGroup.clear(true, true);
+    economy.resources.wood = 1_000;
+    economy.resources.ore = 1_000;
+    economy.resources.meat = 1_000;
+    economy.applySettlementCard('assembly');
+
+    const builder = economy.pawns.find((pawn) => pawn.kind === 'builder');
+    const collector = economy.pawns.find((pawn) => pawn.kind === 'collector');
+    if (!builder || !collector) throw new Error('Builder or collector is missing');
+
+    const firstSpot = economy.pawnAI.pickBuildSpot(builder);
+    if (!firstSpot || !economy.tryStartBuild(firstSpot.kind, builder, firstSpot)) {
+      throw new Error('Could not reserve the builder job');
+    }
+    builder.setPosition(firstSpot.x, firstSpot.y);
+    builder.state = 'work';
+    builder.cooldown = 0;
+
+    // pickBuildSpot returns the same target the collector's helper policy will select.
+    const helperSpot = economy.pawnAI.pickBuildSpot(collector);
+    if (!helperSpot) throw new Error('No free spot remains for the assembly helper');
+    collector.setPosition(helperSpot.x, helperSpot.y);
+    collector.state = 'idle';
+    collector.cooldown = 0;
+    collector.arrivalMs = 0;
+    collector.order = null;
+    collector.carrying = null;
+    collector.carriedAmount = 0;
+    collector.workNode = null;
+    collector.taskProgress = 0;
+    const claimedNode = economy.nodes.find((node) => node.available && !node.claimedBy);
+    if (!claimedNode || !claimedNode.claim(collector)) throw new Error('Could not reserve a resource node for claim-release test');
+    collector.workNode = claimedNode;
+
+    const now = scene.time.now;
+    economy.pawnAI.updateCivilian(collector, 16, now + 16);
+    const helperJob = economy.buildJobs.find((job) => job.pawn === collector);
+    if (!helperJob) throw new Error('Assembly did not assign the collector to construction');
+
+    economy.pawnAI.updateCivilian(collector, 16, now + 32);
+    const stayedAssigned = economy.buildJobs.some((job) => job.pawn === collector
+      && job.building === helperJob.building) && collector.state === 'work';
+    economy.tick(60_000, now + 60_032);
+    const completed = helperJob.building.alive
+      && !helperJob.building.underConstruction
+      && helperJob.building.hp === helperJob.building.maxHp
+      && !economy.buildJobs.some((job) => job.pawn === collector);
+
+    return { stayedAssigned, completed, resourceClaimReleased: claimedNode.claimedBy === null };
+  });
+
+  expect(report.stayedAssigned).toBe(true);
+  expect(report.completed).toBe(true);
+  expect(report.resourceClaimReleased).toBe(true);
+});
+
+test('phase L: assembly repair helper keeps and completes its assigned job', async ({ page }) => {
+  await startRun(page);
+  const report = await page.evaluate(() => {
+    const game = (window as RuntimeWindow).__tss;
+    if (!game) throw new Error('Phaser runtime is unavailable');
+    const scene = game.scene.getScene('Game') as GameSceneRuntime & {
+      spawner: { stopped: boolean };
+      enemyGroup: { clear(removeFromScene?: boolean, destroyChildren?: boolean): void };
+    };
+    const economy = scene.economy;
+    scene.spawner.stopped = true;
+    scene.enemyGroup.clear(true, true);
+    economy.resources.wood = 1_000;
+    economy.resources.ore = 1_000;
+    economy.resources.meat = 1_000;
+
+    const builder = economy.pawns.find((pawn) => pawn.kind === 'builder');
+    const collector = economy.pawns.find((pawn) => pawn.kind === 'collector');
+    const repairer = economy.pawns.find((pawn) => pawn.kind === 'repairer');
+    const houseSpot = economy.freeSpots().find((spot) => spot.kind === 'house');
+    if (!builder || !collector || !repairer || !houseSpot) {
+      throw new Error('Builder, collector, repairer or house spot is missing');
+    }
+
+    const existingBuildings = new Set(economy.buildings);
+    if (!economy.tryStartBuild('house', builder, houseSpot)) throw new Error('House construction did not start');
+    builder.setPosition(houseSpot.x, houseSpot.y);
+    builder.state = 'work';
+    builder.cooldown = 0;
+    const now = scene.time.now;
+    economy.tick(20_001, now + 20_001);
+    const house = economy.buildings.find((building) => !existingBuildings.has(building)
+      && building.kind === 'house');
+    if (!house || house.underConstruction) throw new Error('Test house did not finish construction');
+
+    repairer.dead = true; // Force the «Вече» fallback to provide the repair labor.
+    house.damage(10, -1);
+    economy.applySettlementCard('assembly');
+    economy.resources.wood = 100;
+    collector.setPosition(house.x, house.y);
+    collector.state = 'idle';
+    collector.cooldown = 0;
+    collector.arrivalMs = 0;
+    collector.order = null;
+    collector.carrying = null;
+    collector.carriedAmount = 0;
+    collector.workNode = null;
+    collector.taskProgress = 0;
+    const claimedNode = economy.nodes.find((node) => node.available && !node.claimedBy);
+    if (!claimedNode || !claimedNode.claim(collector)) throw new Error('Could not reserve a resource node for repair claim-release test');
+    collector.workNode = claimedNode;
+
+    const woodBefore = economy.resources.wood;
+    economy.pawnAI.updateCivilian(collector, 16, now + 20_017);
+    const repairJob = economy.repairJobs.find((job) => job.pawn === collector && job.building === house);
+    const paid = economy.resources.wood === woodBefore - 30;
+    if (!repairJob) throw new Error('Assembly did not assign the collector to repair');
+
+    economy.pawnAI.updateCivilian(collector, 16, now + 20_033);
+    const stayedAssigned = economy.repairJobs.some((job) => job.pawn === collector
+      && job.building === house) && collector.state === 'work';
+    economy.tick(5_001, now + 25_034);
+    const completed = house.hp === house.maxHp && !economy.repairJobs.some((job) => job.pawn === collector);
+
+    return { paid, stayedAssigned, completed, resourceClaimReleased: claimedNode.claimedBy === null };
+  });
+
+  expect(report.paid).toBe(true);
+  expect(report.stayedAssigned).toBe(true);
+  expect(report.completed).toBe(true);
+  expect(report.resourceClaimReleased).toBe(true);
+});
+
+test('phase L: settlement cards unlock after the first house, support rank II, and stop at rank II', async ({ page }) => {
+  await startRun(page);
+  const report = await page.evaluate(() => {
+    const game = (window as RuntimeWindow).__tss;
+    if (!game) throw new Error('Phaser runtime is unavailable');
+    const scene = game.scene.getScene('Game') as GameSceneRuntime & {
+      generateChoices(): Array<{ kind: string; id?: string; subtitle: string }>;
+      economy: EconomyRuntime & {
+        card(id: string): number;
+        applySettlementCard(id: string): void;
+      };
+    };
+    const before = scene.generateChoices();
+    const builder = scene.economy.pawns.find((pawn) => pawn.kind === 'builder');
+    const spot = scene.economy.freeSpots().find((candidate) => candidate.kind === 'house');
+    if (!builder || !spot) throw new Error('Builder or house build spot is missing');
+    scene.economy.resources.wood = 1_000;
+    scene.economy.resources.ore = 1_000;
+    scene.economy.resources.meat = 1_000;
+    if (!scene.economy.tryStartBuild('house', builder, spot)) throw new Error('House construction did not start');
+    const house = scene.economy.buildings.find((candidate) => candidate.kind === 'house' && candidate.underConstruction);
+    if (!house) throw new Error('House was not registered');
+    builder.setPosition(spot.x, spot.y);
+    builder.state = 'work';
+    scene.economy.tick(20_001, scene.time.now + 20_001);
+    if (house.underConstruction || !house.alive) throw new Error('House was not completed');
+
+    const afterHouse = scene.generateChoices();
+    const settlementCard = afterHouse.find((card) => card.kind === 'settlement');
+    if (!settlementCard?.id) throw new Error('Settlement card is missing after the first house');
+    const id = settlementCard.id;
+    scene.economy.applySettlementCard(id);
+    const rankOne = scene.economy.card(id);
+    scene.economy.applySettlementCard(id);
+    const rankTwo = scene.economy.card(id);
+    scene.economy.applySettlementCard(id);
+    const rankThree = scene.economy.card(id);
+    const afterRankTwo = scene.generateChoices();
+    return {
+      hadCardsBeforeHouse: before.some((card) => card.kind === 'settlement'),
+      settlementCardCountAfterHouse: afterHouse.filter((card) => card.kind === 'settlement').length,
+      id,
+      rankOne,
+      rankTwo,
+      rankThree,
+      cardOfferedAfterRankTwo: afterRankTwo.some((card) => card.kind === 'settlement' && card.id === id),
+    };
+  });
+
+  expect(report.hadCardsBeforeHouse).toBe(false);
+  expect(report.settlementCardCountAfterHouse).toBe(1);
+  expect(report.id).toBeTruthy();
+  expect(report.rankOne).toBe(1);
+  expect(report.rankTwo).toBe(2);
+  expect(report.rankThree).toBe(2);
+  expect(report.cardOfferedAfterRankTwo).toBe(false);
+});
+
+test('phase L: all combo milestones grant their rewards without match-score inflation', async ({ page }) => {
+  await startRun(page);
+  const scoreBefore = await page.evaluate(() => {
+    const game = (window as RuntimeWindow).__tss;
+    if (!game) throw new Error('Phaser runtime is unavailable');
+    const scene = game.scene.getScene('Game') as GameSceneRuntime & {
+      score: number;
+      comboMilestones: readonly number[];
+      comboMilestone(combo: number, x: number, y: number): void;
+      runRng(): number;
+      xpMagnetUntil: number;
+      spawner: { stopped: boolean };
+      enemyGroup: { clear(removeFromScene?: boolean, destroyChildren?: boolean): void };
+    };
+    scene.spawner.stopped = true;
+    scene.enemyGroup.clear(true, true);
+    scene.economy.resources.wood = 0;
+    scene.economy.resources.ore = 0;
+    scene.economy.resources.meat = 0;
+    scene.comboMilestones = [25, 50, 100, 200];
+    // Фиксируем ветку 50/50: первые две вехи всегда выдают ресурсы.
+    scene.runRng = () => 0.1;
+    const hero = scene.player as unknown as { hp: number; maxHp: number };
+    hero.hp = 1;
+    const initialScore = scene.score;
+    for (const milestone of scene.comboMilestones) {
+      scene.comboMilestone(milestone, scene.player.x, scene.player.y);
+    }
+    return initialScore;
+  });
+
+  await page.waitForTimeout(1_400);
+  const result = await page.evaluate(() => {
+    const game = (window as RuntimeWindow).__tss;
+    if (!game) throw new Error('Phaser runtime is unavailable');
+    const scene = game.scene.getScene('Game') as GameSceneRuntime & {
+      score: number;
+      xpMagnetUntil: number;
+      activeTimeMs: number;
+      time: { now: number };
+    };
+    const hero = scene.player as unknown as { hp: number; maxHp: number };
+    return {
+      wood: scene.economy.resources.wood,
+      ore: scene.economy.resources.ore,
+      meat: scene.economy.resources.meat,
+      score: scene.score,
+      xpMagnetActive: scene.xpMagnetUntil > scene.activeTimeMs,
+      heroFullyHealed: hero.hp === hero.maxHp,
+    };
+  });
+  expect(result.wood).toBe(70);
+  expect(result.ore).toBe(40);
+  expect(result.meat).toBe(30);
+  expect(result.score).toBe(scoreBefore);
+  expect(result.xpMagnetActive).toBe(true);
+  expect(result.heroFullyHealed).toBe(true);
+});
+test('phase L: rank II doubles numeric settlement-card effects and rank III cannot stack them', async ({ page }) => {
+  await startRun(page);
+  const report = await page.evaluate(() => {
+    const game = (window as RuntimeWindow).__tss;
+    if (!game) throw new Error('Phaser runtime unavailable');
+    type CardEconomy = EconomyRuntime & {
+      card(id: string): number;
+      applySettlementCard(id: string): void;
+      workYield(resource: 'wood' | 'meat' | 'ore'): number;
+      veinCharges(): number;
+      pawnLimit: number;
+      pawnAI: { bleedoutSec(): number };
+      monastery: { healWoodMultiplier(): number };
+    };
+    const scene = game.scene.getScene('Game') as GameSceneRuntime & {
+      economy: CardEconomy;
+      spawner: { siegeAlarmSeconds(): number };
+      siegeArrowDurationMs(): number;
+      spawnEnemy(kind: string, x: number, y: number): boolean;
+      enemyGroup: { getChildren(): Array<{ active: boolean; kind: string; ctx?: { siegeInterceptRadius(): number } }> };
+      heroDpsAtTenMinutes: number | null;
+      damageEnemyByPawn(enemy: unknown, damage: number, weapon: string): void;
+    };
+    const economy = scene.economy;
+    const castle = economy.buildings.find((building) => building.kind === 'castle');
+    const builder = economy.pawns.find((pawn) => pawn.kind === 'builder');
+    const houseSpot = economy.freeSpots().find((spot) => spot.kind === 'house');
+    if (!castle || !builder || !houseSpot) throw new Error('Castle, builder or house spot missing');
+    economy.resources.wood = 100;
+    economy.resources.ore = 100;
+    economy.resources.meat = 100;
+    if (!economy.tryStartBuild('house', builder, houseSpot)) throw new Error('House construction did not start');
+    const house = economy.buildings.find((building) => building.kind === 'house' && building.underConstruction);
+    if (!house) throw new Error('House was not registered');
+    builder.setPosition(houseSpot.x, houseSpot.y);
+    builder.state = 'work';
+    economy.tick(10_001, scene.time.now + 10_001);
+    if (house.underConstruction || !house.alive) throw new Error('House did not finish construction');
+    const masonryBaseHp = castle.maxHp;
+    const masonryHouseBaseHp = house.maxHp;
+    economy.applySettlementCard('masonry');
+    const masonryRankOneHp = castle.maxHp;
+    const masonryHouseRankOneHp = house.maxHp;
+    economy.applySettlementCard('masonry');
+    const masonryRankTwoHp = castle.maxHp;
+    const masonryHouseRankTwoHp = house.maxHp;
+    economy.applySettlementCard('masonry');
+    const masonryRankThreeHp = castle.maxHp;
+    const masonryHouseRankThreeHp = house.maxHp;
+
+    const assemblyBaseLimit = economy.pawnLimit;
+    economy.applySettlementCard('assembly');
+    const assemblyRankOneLimit = economy.pawnLimit;
+    economy.applySettlementCard('assembly');
+    const assemblyRankTwoLimit = economy.pawnLimit;
+    economy.applySettlementCard('assembly');
+    const assemblyRankThreeLimit = economy.pawnLimit;
+
+    const woodBase = economy.workYield('wood');
+    economy.applySettlementCard('forestry');
+    const forestryRankOne = economy.workYield('wood');
+    economy.applySettlementCard('forestry');
+    const forestryRankTwo = economy.workYield('wood');
+
+    const meatBase = economy.workYield('meat');
+    economy.applySettlementCard('provisions');
+    const provisionsRankOne = economy.workYield('meat');
+    economy.applySettlementCard('provisions');
+    const provisionsRankTwo = economy.workYield('meat');
+
+    const veinBase = economy.veinCharges();
+    economy.applySettlementCard('deepmines');
+    const deepminesRankOne = economy.veinCharges();
+    economy.applySettlementCard('deepmines');
+    const deepminesRankTwo = economy.veinCharges();
+
+    const bleedBase = economy.pawnAI.bleedoutSec();
+    economy.applySettlementCard('fieldmedic');
+    const fieldmedicRankOne = economy.pawnAI.bleedoutSec();
+    const fieldmedicWoodRankOne = economy.monastery.healWoodMultiplier();
+    economy.applySettlementCard('fieldmedic');
+    const fieldmedicRankTwo = economy.pawnAI.bleedoutSec();
+    const fieldmedicWoodRankTwo = economy.monastery.healWoodMultiplier();
+
+    const alarmBase = scene.spawner.siegeAlarmSeconds();
+    const arrowBase = scene.siegeArrowDurationMs();
+    economy.applySettlementCard('alarm');
+    const alarmRankOne = scene.spawner.siegeAlarmSeconds();
+    const arrowRankOne = scene.siegeArrowDurationMs();
+    economy.applySettlementCard('alarm');
+    const alarmRankTwo = scene.spawner.siegeAlarmSeconds();
+    const arrowRankTwo = scene.siegeArrowDurationMs();
+
+    if (!scene.spawnEnemy('goblin', scene.player.x + 300, scene.player.y + 200)) {
+      throw new Error('Could not spawn militia test enemy');
+    }
+    const enemy = scene.enemyGroup.getChildren().find((candidate) => candidate.active && candidate.kind === 'goblin');
+    if (!enemy?.ctx) throw new Error('Spawned enemy context is missing');
+    const radiusBase = enemy.ctx.siegeInterceptRadius();
+    const dealt: number[] = [];
+    scene.heroDpsAtTenMinutes = null;
+    const dummy = {
+      active: true, dead: false, def: { scale: 1 },
+      x: scene.player.x + 50, y: scene.player.y + 50,
+      takeDamage: (amount: number): boolean => { dealt.push(amount); return false; },
+    };
+    scene.damageEnemyByPawn(dummy, 40, 'sword');
+    economy.applySettlementCard('militia');
+    const radiusRankOne = enemy.ctx.siegeInterceptRadius();
+    scene.damageEnemyByPawn(dummy, 40, 'sword');
+    economy.applySettlementCard('militia');
+    const radiusRankTwo = enemy.ctx.siegeInterceptRadius();
+    scene.damageEnemyByPawn(dummy, 40, 'sword');
+
+    return {
+      masonryBaseHp, masonryRankOneHp, masonryRankTwoHp, masonryRankThreeHp,
+      masonryHouseBaseHp, masonryHouseRankOneHp, masonryHouseRankTwoHp, masonryHouseRankThreeHp,
+      assemblyBaseLimit, assemblyRankOneLimit, assemblyRankTwoLimit, assemblyRankThreeLimit,
+      woodBase, forestryRankOne, forestryRankTwo,
+      meatBase, provisionsRankOne, provisionsRankTwo,
+      veinBase, deepminesRankOne, deepminesRankTwo,
+      bleedBase, fieldmedicRankOne, fieldmedicRankTwo, fieldmedicWoodRankOne, fieldmedicWoodRankTwo,
+      alarmBase, alarmRankOne, alarmRankTwo, arrowBase, arrowRankOne, arrowRankTwo,
+      radiusBase, radiusRankOne, radiusRankTwo, dealt,
+    };
+  });
+
+  expect(report.masonryRankOneHp).toBe(Math.round(report.masonryBaseHp * 1.15));
+  expect(report.masonryRankTwoHp).toBe(Math.round(report.masonryBaseHp * 1.3));
+  expect(report.masonryRankThreeHp).toBe(report.masonryRankTwoHp);
+  expect(report.masonryHouseRankOneHp).toBe(Math.round(report.masonryHouseBaseHp * 1.15));
+  expect(report.masonryHouseRankTwoHp).toBe(Math.round(report.masonryHouseBaseHp * 1.3));
+  expect(report.masonryHouseRankThreeHp).toBe(report.masonryHouseRankTwoHp);
+  expect(report.assemblyRankOneLimit).toBe(report.assemblyBaseLimit + 1);
+  expect(report.assemblyRankTwoLimit).toBe(report.assemblyBaseLimit + 2);
+  expect(report.assemblyRankThreeLimit).toBe(report.assemblyRankTwoLimit);
+  expect(report.forestryRankOne).toBe(Math.round(report.woodBase * 1.2));
+  expect(report.forestryRankTwo).toBe(Math.round(report.woodBase * 1.4));
+  expect(report.provisionsRankOne).toBe(Math.round(report.meatBase * 4 / 3));
+  expect(report.provisionsRankTwo).toBe(Math.round(report.meatBase * 5 / 3));
+  expect(report.deepminesRankOne).toBe(report.veinBase + 1);
+  expect(report.deepminesRankTwo).toBe(report.veinBase + 2);
+  expect(report.fieldmedicRankOne).toBe(report.bleedBase + 15);
+  expect(report.fieldmedicRankTwo).toBe(report.bleedBase + 30);
+  expect(report.fieldmedicWoodRankOne).toBeCloseTo(0.75, 5);
+  expect(report.fieldmedicWoodRankTwo).toBeCloseTo(0.5, 5);
+  expect(report.alarmBase).toBe(5);
+  expect(report.alarmRankOne).toBe(8);
+  expect(report.alarmRankTwo).toBe(11);
+  expect(report.arrowBase).toBe(3_000);
+  expect(report.arrowRankOne).toBe(5_000);
+  expect(report.arrowRankTwo).toBe(7_000);
+  expect(report.radiusBase).toBe(260);
+  expect(report.radiusRankOne).toBe(300);
+  expect(report.radiusRankTwo).toBe(340);
+  expect(report.dealt).toEqual([40, 50, 60]);
+});
+
+test('phase L: resident respawn requires a house, waits 25 seconds, and retries after missing resources', async ({ page }) => {
+  await startRun(page);
+
+  const report = await page.evaluate(() => {
+    const game = (window as RuntimeWindow).__tss;
+    if (!game) throw new Error('Phaser runtime is unavailable');
+    const scene = game.scene.getScene('Game') as GameSceneRuntime & {
+      spawner: { stopped: boolean };
+      economy: EconomyRuntime & {
+        resources: { wood: number; ore: number; meat: number };
+        houses: number;
+        pawnAI: { updateCivilian(pawn: PawnRuntime, dtMs: number, now: number): void };
+        removePawn(pawn: PawnRuntime, paid?: boolean): void;
+      };
+    };
+    const economy = scene.economy;
+    scene.spawner.stopped = true;
+
+    // Pause only civilian AI for deterministic timing; Economy still processes
+    // build jobs, resource payment and the actual resident respawn queue.
+    const ai = economy.pawnAI;
+    const originalUpdateCivilian = ai.updateCivilian.bind(ai);
+    ai.updateCivilian = () => {};
+    const living = (): number => economy.pawns.filter((pawn) => !pawn.dead).length;
+    const firstVictim = economy.pawns.find((pawn) => !pawn.dead && pawn.kind === 'collector');
+    if (!firstVictim) throw new Error('Initial collector is missing');
+
+    economy.removePawn(firstVictim, true);
+    const livingAfterFirstDeath = living();
+    economy.resources.wood = 100;
+    economy.resources.meat = 100;
+    economy.tick(25_000, scene.time.now + 25_000);
+    const livingAfterNoHouseDeadline = living();
+    const housesWithoutHome = economy.houses;
+
+    const builder = economy.pawns.find((pawn) => !pawn.dead && pawn.kind === 'builder');
+    const houseSpot = economy.freeSpots().find((spot) => spot.kind === 'house');
+    if (!builder || !houseSpot) throw new Error('Builder or house spot is missing');
+    economy.resources.wood = 100;
+    economy.resources.ore = 100;
+    economy.resources.meat = 100;
+    if (!economy.tryStartBuild('house', builder, houseSpot)) throw new Error('Could not start house construction');
+    const house = economy.buildings.find((building) => building.kind === 'house' && building.underConstruction);
+    if (!house) throw new Error('House was not registered');
+    builder.setPosition(houseSpot.x, houseSpot.y);
+    builder.state = 'work';
+    economy.tick(10_001, scene.time.now + 35_001);
+    if (!house.alive || house.underConstruction || economy.houses !== 1) {
+      throw new Error('House did not finish construction');
+    }
+
+    const secondVictim = economy.pawns.find((pawn) => !pawn.dead && pawn.kind === 'collector');
+    if (!secondVictim) throw new Error('No collector available for the resource retry test');
+    economy.removePawn(secondVictim, true);
+    economy.resources.wood = 0;
+    economy.resources.meat = 0;
+    economy.tick(25_000, scene.time.now + 60_001);
+    const livingAtInsufficientResources = living();
+    economy.tick(4_999, scene.time.now + 65_000);
+    const livingBeforeResourceRetry = living();
+    economy.resources.wood = 10;
+    economy.resources.meat = 3;
+    economy.tick(1, scene.time.now + 65_001);
+    const livingAfterResourceRetry = living();
+    const resourcesAfterRetry = { wood: economy.resources.wood, meat: economy.resources.meat };
+
+    const thirdVictim = economy.pawns.find((pawn) => !pawn.dead && pawn.kind === 'collector');
+    if (!thirdVictim) throw new Error('Respawned collector is missing for exact-timer test');
+    economy.removePawn(thirdVictim, true);
+    economy.resources.wood = 10;
+    economy.resources.meat = 3;
+    economy.tick(24_999, scene.time.now + 90_000);
+    const livingBeforeExactDeadline = living();
+    economy.tick(1, scene.time.now + 90_001);
+    const livingAtExactDeadline = living();
+    const resourcesAfterExactRespawn = { wood: economy.resources.wood, meat: economy.resources.meat };
+
+    ai.updateCivilian = originalUpdateCivilian;
+    return {
+      housesWithoutHome,
+      livingAfterFirstDeath,
+      livingAfterNoHouseDeadline,
+      houseCount: economy.houses,
+      livingAtInsufficientResources,
+      livingBeforeResourceRetry,
+      livingAfterResourceRetry,
+      resourcesAfterRetry,
+      livingBeforeExactDeadline,
+      livingAtExactDeadline,
+      resourcesAfterExactRespawn,
+    };
+  });
+
+  expect(report.housesWithoutHome).toBe(0);
+  expect(report.livingAfterNoHouseDeadline).toBe(report.livingAfterFirstDeath);
+  expect(report.houseCount).toBe(1);
+  expect(report.livingBeforeResourceRetry).toBe(report.livingAtInsufficientResources);
+  expect(report.livingAfterResourceRetry).toBe(report.livingBeforeResourceRetry + 1);
+  expect(report.resourcesAfterRetry).toEqual({ wood: 0, meat: 0 });
+  expect(report.livingBeforeExactDeadline).toBe(report.livingAfterResourceRetry - 1);
+  expect(report.livingAtExactDeadline).toBe(report.livingBeforeExactDeadline + 1);
+  expect(report.resourcesAfterExactRespawn).toEqual({ wood: 0, meat: 0 });
+});
+
+test('phase K: siege profiles target outer houses and fall back from monastery to houses', async ({ page }) => {
+  await startRun(page);
+  const report = await page.evaluate(async () => {
+    const game = (window as RuntimeWindow).__tss;
+    if (!game) throw new Error('Phaser runtime is unavailable');
+    const root = window.location.origin;
+    const data = await import(/* @vite-ignore */ new URL('/src/game/data.ts', root).href) as {
+      SIEGE_SCHEDULE: Array<{ target: string }>;
+    };
+    type SiegeUnit = { active: boolean; kind: string; buildingTarget: unknown };
+    const scene = game.scene.getScene('Game') as GameSceneRuntime & {
+      spawner: { stopped: boolean };
+      settlement: { castle: BuildingRuntime };
+      assignSiegeTarget(profile: { target: string }, enemies: SiegeUnit[]): void;
+      spawnEnemy(kind: string, x: number, y: number): boolean;
+      enemyGroup: { getChildren(): SiegeUnit[] };
+    };
+    const economy = scene.economy;
+    scene.spawner.stopped = true;
+    economy.resources.wood = 1_000;
+    economy.resources.ore = 1_000;
+    economy.resources.meat = 1_000;
+
+    const builder = economy.pawns.find((pawn) => pawn.kind === 'builder');
+    const houseSpot = economy.freeSpots().find((spot) => spot.kind === 'house');
+    if (!builder || !houseSpot) throw new Error('Builder or house spot is missing');
+    if (!economy.tryStartBuild('house', builder, houseSpot)) throw new Error('Could not start outer house');
+    const house = economy.buildings.find((building) => building.kind === 'house' && building.underConstruction);
+    if (!house) throw new Error('House was not registered');
+    builder.setPosition(houseSpot.x, houseSpot.y);
+    builder.state = 'work';
+    economy.tick(10_001, scene.time.now + 10_001);
+    if (!house.alive || house.underConstruction) throw new Error('House did not finish');
+
+    if (!scene.spawnEnemy('skull', scene.player.x + 450, scene.player.y + 320)) {
+      throw new Error('Could not spawn siege-target test enemy');
+    }
+    const enemy = scene.enemyGroup.getChildren().find((candidate) =>
+      candidate.active && candidate.kind === 'skull');
+    if (!enemy) throw new Error('Spawned skull was not found');
+
+    const secondHouseSpot = economy.freeSpots().find((spot) => spot.kind === 'house');
+    if (!secondHouseSpot || !economy.tryStartBuild('house', builder, secondHouseSpot)) {
+      throw new Error('Could not start second house for reconnaissance split');
+    }
+    const secondHouse = economy.buildings.find((building) =>
+      building.kind === 'house' && building.underConstruction && building !== house);
+    if (!secondHouse) throw new Error('Second house was not registered');
+    builder.setPosition(secondHouseSpot.x, secondHouseSpot.y);
+    builder.state = 'work';
+    economy.tick(10_001, scene.time.now + 20_002);
+    if (!secondHouse.alive || secondHouse.underConstruction) throw new Error('Second house did not finish');
+
+    const scoutUnits = Array.from({ length: 3 }, () => ({
+      active: true,
+      kind: 'skull',
+      buildingTarget: null as unknown,
+    }));
+    scene.assignSiegeTarget(data.SIEGE_SCHEDULE[0], scoutUnits);
+    const scoutTargetsTwoHouses = scoutUnits.filter((unit) => unit.buildingTarget === house).length === 2
+      && scoutUnits.filter((unit) => unit.buildingTarget === secondHouse).length === 1;
+
+    const barracksSpot = economy.freeSpots().find((spot) => spot.kind === 'barracks');
+    if (!barracksSpot || !economy.tryStartBuild('barracks', builder, barracksSpot)) {
+      throw new Error('Could not start barracks for split-target siege profiles');
+    }
+    const barracks = economy.buildings.find((building) => building.kind === 'barracks' && building.underConstruction);
+    if (!barracks) throw new Error('Barracks was not registered');
+    builder.setPosition(barracksSpot.x, barracksSpot.y);
+    builder.state = 'work';
+    economy.tick(30_001, scene.time.now + 40_002);
+    if (!barracks.alive || barracks.underConstruction) throw new Error('Barracks did not finish');
+
+    const raidUnits = Array.from({ length: 5 }, () => ({
+      active: true,
+      kind: 'skull',
+      buildingTarget: null as unknown,
+    }));
+    scene.assignSiegeTarget(data.SIEGE_SCHEDULE[1], raidUnits);
+    const raidTargetSplit = raidUnits.filter((unit) => unit.buildingTarget === house).length === 3
+      && raidUnits.filter((unit) => unit.buildingTarget === barracks).length === 2;
+
+    const pincerUnits = Array.from({ length: 10 }, () => ({
+      active: true,
+      kind: 'skull',
+      buildingTarget: null as unknown,
+    }));
+    scene.assignSiegeTarget(data.SIEGE_SCHEDULE[3], pincerUnits);
+    const pincerTargetSplit = pincerUnits.filter((unit) => unit.buildingTarget === house).length === 5
+      && pincerUnits.filter((unit) => unit.buildingTarget === barracks).length === 5;
+
+    scene.assignSiegeTarget(data.SIEGE_SCHEDULE[2], [enemy]);
+    const burnFallsBackToHouse = enemy.buildingTarget === house;
+
+    const monasterySpot = economy.freeSpots().find((spot) => spot.kind === 'monastery');
+    if (!monasterySpot) throw new Error('Monastery spot is missing');
+    if (!economy.tryStartBuild('monastery', builder, monasterySpot)) throw new Error('Could not start monastery');
+    const monastery = economy.buildings.find((building) => building.kind === 'monastery' && building.underConstruction);
+    if (!monastery) throw new Error('Monastery was not registered');
+    builder.setPosition(monasterySpot.x, monasterySpot.y);
+    builder.state = 'work';
+    economy.tick(25_001, scene.time.now + 35_002);
+    if (!monastery.alive || monastery.underConstruction) throw new Error('Monastery did not finish');
+
+    scene.assignSiegeTarget(data.SIEGE_SCHEDULE[2], [enemy]);
+    const burnTargetsMonastery = enemy.buildingTarget === monastery;
+    scene.assignSiegeTarget(data.SIEGE_SCHEDULE[4], [enemy]);
+    const assaultTargetsCastle = enemy.buildingTarget === scene.settlement.castle;
+
+    return { scoutTargetsTwoHouses, raidTargetSplit, pincerTargetSplit, burnFallsBackToHouse, burnTargetsMonastery, assaultTargetsCastle };
+  });
+
+  expect(report.scoutTargetsTwoHouses).toBe(true);
+  expect(report.raidTargetSplit).toBe(true);
+  expect(report.pincerTargetSplit).toBe(true);
+  expect(report.burnFallsBackToHouse).toBe(true);
+  expect(report.burnTargetsMonastery).toBe(true);
+  expect(report.assaultTargetsCastle).toBe(true);
+});
+
+
+test('phase K: siege attack window expires even while the hero is intercepting the attackers', async ({ page }) => {
+  await startRun(page);
+  // Enemy.preUpdate() намеренно замирает, пока открыт обучающий overlay FTUE:
+  // пауза сцены останавливает и AI осады. Без закрытия подсказки срок окна
+  // атаки не истекает и юнит остаётся в группе — проверять тут нечего.
+  await continueInitialTutorial(page);
+
+  const report = await page.evaluate(() => {
+    const game = (window as RuntimeWindow).__tss;
+    if (!game) throw new Error('Phaser runtime is unavailable');
+    type SiegeEnemyRuntime = {
+      active: boolean;
+      kind: string;
+      siege: boolean;
+      buildingTarget: unknown;
+      attackWindowEnds: number;
+      spawnedAt: number;
+      setPosition(x: number, y: number): unknown;
+      preUpdate(time: number, delta: number): void;
+    };
+    const scene = game.scene.getScene('Game') as GameSceneRuntime & {
+      activeTimeMs: number;
+      spawner: { stopped: boolean };
+      spawnSiegeUnit(kind: string, x: number, y: number, firer: boolean): SiegeEnemyRuntime | null;
+      enemyGroup: { getChildren(): SiegeEnemyRuntime[] };
+      settlement: { castle: BuildingRuntime };
+    };
+    scene.spawner.stopped = true;
+    const activeNow = scene.activeTimeMs;
+    const enemy = scene.spawnSiegeUnit('skull', scene.player.x + 40, scene.player.y, false);
+    if (!enemy) throw new Error('Could not spawn siege interception fixture');
+    enemy.buildingTarget = scene.settlement.castle;
+    enemy.siege = true;
+    enemy.spawnedAt = activeNow - 20_000;
+    enemy.attackWindowEnds = activeNow - 1;
+
+    // Враг находится внутри радиуса перехвата. Просроченное окно всё равно
+    // должно завершить осаду раньше, чем AI выберет погоню за героем.
+    enemy.preUpdate(scene.time.now, 16);
+    return {
+      active: enemy.active,
+      siege: enemy.siege,
+      remainsInGroup: scene.enemyGroup.getChildren().includes(enemy),
+    };
+  });
+
+  expect(report.active).toBe(false);
+  expect(report.siege).toBe(false);
+  expect(report.remainsInGroup).toBe(false);
+});
+
+
+test('phase K: siege deadlines use active gameplay time across an FTUE overlay pause', async ({ page }) => {
+  await startRun(page);
+  await continueInitialTutorial(page);
+
+  const report = await page.evaluate(() => {
+    const game = (window as RuntimeWindow).__tss;
+    if (!game) throw new Error('Phaser runtime is unavailable');
+    type SiegeEnemyRuntime = {
+      active: boolean;
+      siege: boolean;
+      buildingTarget: unknown;
+      spawnedAt: number;
+      attackWindowEnds: number;
+      preUpdate(time: number, delta: number): void;
+    };
+    const scene = game.scene.getScene('Game') as GameSceneRuntime & {
+      activeTimeMs: number;
+      hintOverlayPaused: boolean;
+      update(time: number, delta: number): void;
+      player: { x: number; y: number; hp: number; iframesUntil: number };
+      hurtPlayer(amount: number): void;
+      siegeAlive: boolean;
+      spawnSiegeUnit(kind: string, x: number, y: number, firer: boolean): SiegeEnemyRuntime | null;
+      enemyGroup: { getChildren(): SiegeEnemyRuntime[] };
+      siegeTick(ignoredWallTime?: number): void;
+      settlement: {
+        castle: BuildingRuntime;
+        beginSiege(index: number, woundCap: number, enemies: SiegeEnemyRuntime[]): void;
+      };
+    };
+    const activeNow = scene.activeTimeMs;
+    const playerHpBefore = scene.player.hp;
+    scene.player.iframesUntil = activeNow + 3000;
+    const registeredActiveNow = Number(scene.registry.get('tss-active-time-ms'));
+    const castle = scene.settlement.castle;
+    const windowEnemy = scene.spawnSiegeUnit('skull', castle.x + 150, castle.y, false);
+    const lifetimeEnemy = scene.spawnSiegeUnit('skull', castle.x + 170, castle.y + 20, false);
+    if (!windowEnemy || !lifetimeEnemy) throw new Error('Could not spawn siege pause fixtures');
+
+    windowEnemy.buildingTarget = castle;
+    windowEnemy.siege = true;
+    windowEnemy.spawnedAt = activeNow - 45_000;
+    windowEnemy.attackWindowEnds = activeNow + 10_000;
+
+    lifetimeEnemy.buildingTarget = castle;
+    lifetimeEnemy.siege = true;
+    lifetimeEnemy.spawnedAt = activeNow - 45_000;
+    lifetimeEnemy.attackWindowEnds = activeNow + 180_000;
+    scene.settlement.beginSiege(2, 2, [windowEnemy, lifetimeEnemy]);
+    scene.siegeAlive = true;
+
+    // Моделируем 120 секунд системного времени под блокирующей подсказкой
+    // синтетическим скачком timestamp: игровая симуляция и её часы не тикают.
+    scene.hintOverlayPaused = true;
+    scene.registry.set('tss-hint-overlay-paused', true);
+    scene.registry.set('tss-freeze', 0);
+    scene.time.paused = true;
+    scene.physics.world.pause();
+    const futureTime = activeNow + 120_000;
+    const originalWallTime = scene.time.now;
+    scene.time.now = futureTime + 16;
+    scene.update(futureTime, 120_000);
+    const activeTimeDuringPause = scene.activeTimeMs;
+    windowEnemy.preUpdate(futureTime, 16);
+    lifetimeEnemy.preUpdate(futureTime, 16);
+
+    scene.hintOverlayPaused = false;
+    scene.registry.set('tss-hint-overlay-paused', false);
+    scene.time.paused = false;
+    scene.physics.world.resume();
+    scene.update(futureTime + 16, 16);
+    windowEnemy.preUpdate(futureTime + 16, 16);
+    lifetimeEnemy.preUpdate(futureTime + 16, 16);
+    // Дополнительный аргумент отражает wall-clock timestamp движка; production
+    // siegeTick обязан игнорировать его и брать значение activeTimeMs.
+    scene.siegeTick(futureTime + 16);
+    scene.hurtPlayer(10);
+    const playerHpAfterResume = scene.player.hp;
+    const iframeStillActive = scene.player.iframesUntil > scene.activeTimeMs;
+    scene.time.now = originalWallTime;
+
+    return {
+      activeNow,
+      playerHpBefore,
+      playerHpAfterResume,
+      iframeStillActive,
+      registeredActiveNow,
+      activeTimeDuringPause,
+      activeTimeAfter: scene.activeTimeMs,
+      attackWindowStillActive: windowEnemy.siege,
+      windowEnemyInGroup: scene.enemyGroup.getChildren().includes(windowEnemy),
+      lifetimeEnemyInGroup: scene.enemyGroup.getChildren().includes(lifetimeEnemy),
+    };
+  });
+
+  expect(report.registeredActiveNow).toBe(report.activeNow);
+  expect(report.activeTimeDuringPause).toBe(report.activeNow);
+  expect(report.playerHpAfterResume).toBe(report.playerHpBefore);
+  expect(report.iframeStillActive).toBe(true);
+  expect(report.activeTimeAfter).toBe(report.activeNow + 16);
+  expect(report.attackWindowStillActive).toBe(true);
+  expect(report.windowEnemyInGroup).toBe(true);
+  expect(report.lifetimeEnemyInGroup).toBe(true);
+});
+
+
+test('phase K: building fire pauses with gameplay and applies exactly three DoT over six active seconds', async ({ page }) => {
+  await startRun(page);
+  await continueInitialTutorial(page);
+
+  const initial = await page.evaluate(() => {
+    const game = (window as RuntimeWindow).__tss;
+    if (!game) throw new Error('Phaser runtime is unavailable');
+    const scene = game.scene.getScene('Game') as GameSceneRuntime & {
+      spawner: { stopped: boolean };
+    };
+    scene.spawner.stopped = true;
+    const economy = scene.economy;
+    economy.resources.wood = 1_000;
+    economy.resources.ore = 1_000;
+    economy.resources.meat = 1_000;
+    const builder = economy.pawns.find((pawn) => pawn.kind === 'builder');
+    const spot = economy.freeSpots().find((candidate) => candidate.kind === 'house');
+    if (!builder || !spot || !economy.tryStartBuild('house', builder, spot)) {
+      throw new Error('Could not build the house required for the fire timer test');
+    }
+    const building = economy.buildings.find((candidate) => candidate.kind === 'house' && candidate.underConstruction);
+    if (!building) throw new Error('House construction object is missing');
+    builder.setPosition(spot.x, spot.y);
+    builder.state = 'work';
+    economy.tick(10_001, scene.time.now + 10_001);
+    if (!building.alive || building.underConstruction) throw new Error('Test house did not finish');
+    (building as unknown as { __e2eFireTarget: boolean }).__e2eFireTarget = true;
+    // Пауза включается до ignite, чтобы кадр между созданием таймера и pause
+    // не списывал часть исходного интервала.
+    scene.hintOverlayPaused = true;
+    building.ignite(0);
+    return { remaining: (building as unknown as { burnRemainingMs: number }).burnRemainingMs };
+  });
+  expect(initial.remaining).toBe(6_000);
+
+  await page.waitForTimeout(700);
+  const duringPause = await page.evaluate(() => {
+    const game = (window as RuntimeWindow).__tss!;
+    const scene = game.scene.getScene('Game') as GameSceneRuntime;
+    const building = scene.economy.buildings.find((candidate) => (candidate as unknown as { __e2eFireTarget?: boolean }).__e2eFireTarget === true);
+    return building ? (building as unknown as { burnRemainingMs: number }).burnRemainingMs : -1;
+  });
+  expect(duringPause).toBe(6_000);
+
+  await page.evaluate(() => {
+    const game = (window as RuntimeWindow).__tss!;
+    (game.scene.getScene('Game') as GameSceneRuntime & { hintOverlayPaused: boolean }).hintOverlayPaused = false;
+  });
+  await expect.poll(async () => page.evaluate(() => {
+    const game = (window as RuntimeWindow).__tss!;
+    const scene = game.scene.getScene('Game') as GameSceneRuntime;
+    const building = scene.economy.buildings.find((candidate) => (candidate as unknown as { __e2eFireTarget?: boolean }).__e2eFireTarget === true);
+    return building ? (building as unknown as { burnRemainingMs: number }).burnRemainingMs : -1;
+  }), { timeout: 3_000 }).toBeLessThan(6_000);
+
+  const damageTotal = await page.evaluate(() => {
+    const game = (window as RuntimeWindow).__tss!;
+    const scene = game.scene.getScene('Game') as GameSceneRuntime;
+    const building = scene.economy.buildings.find((candidate) => (candidate as unknown as { __e2eFireTarget?: boolean }).__e2eFireTarget === true);
+    if (!building) throw new Error('House disappeared during fire timer test');
+    const burn = building as unknown as {
+      burnRemainingMs: number;
+      tickBurn(dtMs: number): number;
+    };
+    // Перезапускаем таймер, чтобы точно проверить полный интервал, независимо
+    // от того, сколько кадров прошло между восстановлением симуляции и замером.
+    building.ignite(0);
+    // Повторный прямой вызов проверяет математику DoT при фиксированном полном
+    // интервале; предыдущие assertions отдельно проверяют реальный отсчёт и паузу.
+    burn.burnRemainingMs = 6_000;
+    const first = burn.tickBurn(5_500);
+    const remainingAfterFirst = burn.burnRemainingMs;
+    const last = burn.tickBurn(5_000); // только оставшиеся 500 мс могут нанести урон
+    const afterExpiry = burn.tickBurn(5_000);
+    return {
+      first,
+      remainingAfterFirst,
+      last,
+      afterExpiry,
+      remaining: burn.burnRemainingMs,
+      total: first + last + afterExpiry,
+    };
+  });
+  expect(damageTotal.first).toBeCloseTo(2.75, 5);
+  expect(damageTotal.remainingAfterFirst).toBe(500);
+  expect(damageTotal.last).toBeCloseTo(0.25, 5);
+  expect(damageTotal.afterExpiry).toBe(0);
+  expect(damageTotal.remaining).toBe(0);
+  expect(damageTotal.total).toBeCloseTo(3, 5);
+});
+
+
+test('phase K: ranged siege units start the ten-second attack window at their firing distance', async ({ page }) => {
+  await startRun(page);
+  const report = await page.evaluate(() => {
+    const game = (window as RuntimeWindow).__tss;
+    if (!game) throw new Error('Phaser runtime is unavailable');
+    type SiegeEnemyRuntime = {
+      active: boolean;
+      kind: string;
+      siege: boolean;
+      buildingTarget: unknown;
+      attackWindowEnds: number;
+      spawnedAt: number;
+      setPosition(x: number, y: number): unknown;
+    };
+    const scene = game.scene.getScene('Game') as GameSceneRuntime & {
+      spawner: { stopped: boolean };
+      siegeAlive: boolean;
+      activeTimeMs: number;
+      spawnSiegeUnit(kind: string, x: number, y: number, firer: boolean): SiegeEnemyRuntime | null;
+      siegeTick(now?: number): void;
+      settlement: {
+        castle: BuildingRuntime;
+        siegeIdx: number;
+        beginSiege(index: number, woundCap: number, enemies: SiegeEnemyRuntime[]): void;
+      };
+    };
+    scene.spawner.stopped = true;
+    const castle = scene.settlement.castle;
+    const now = scene.time.now;
+    const activeNow = scene.activeTimeMs;
+    const ranged = scene.spawnSiegeUnit('shaman', castle.x + 320, castle.y, true);
+    if (!ranged) throw new Error('Could not spawn ranged siege fixture');
+    ranged.buildingTarget = castle;
+    scene.settlement.beginSiege(2, 2, [ranged]);
+    scene.siegeAlive = true;
+    scene.siegeTick(now);
+    return { deadline: ranged.attackWindowEnds, now: activeNow, distance: Math.hypot(ranged.x - castle.x, ranged.y - castle.y) };
+  });
+  expect(report.distance).toBeLessThan(330);
+  expect(report.deadline).toBe(report.now + 10_000);
+});
+
+
+
+test('phase K: siege building-attack cadence matches the documented DPS budget', async ({ page }) => {
+  await startRun(page);
+  const cadence = await page.evaluate(() => {
+    const game = (window as RuntimeWindow).__tss;
+    if (!game) throw new Error('Phaser runtime is unavailable');
+    type CadenceEnemy = {
+      active: boolean;
+      kind: string;
+      siege: boolean;
+      buildingTarget: unknown;
+      attackWindowEnds: number;
+    };
+    type RuntimeScene = GameSceneRuntime & {
+      player: { setPosition(x: number, y: number): unknown };
+      settlement: { castle: BuildingRuntime };
+      spawnSiegeUnit(kind: string, x: number, y: number, firer: boolean): CadenceEnemy | null;
+      enemyGroup: { remove(child: unknown, removeFromScene?: boolean, destroyChild?: boolean): void };
+    };
+    type RuntimeEnemy = {
+      updateSiege(time: number, delta: number): void;
+      buildingAtkCd: number;
+      ctx: Record<string, unknown> & {
+        playerX: () => number;
+        playerY: () => number;
+        attackBuilding: (...args: unknown[]) => void;
+        siegeShoot: (...args: unknown[]) => void;
+        attackPawn: (...args: unknown[]) => void;
+        nearPawn?: (...args: unknown[]) => unknown;
+        siegeInterceptRadius?: () => number;
+      };
+    };
+    const scene = game.scene.getScene('Game') as unknown as RuntimeScene;
+    const castle = scene.settlement.castle;
+    const now = scene.time.now;
+    scene.player.setPosition(0, 0);
+    const result: Record<string, number> = {};
+    const profiles = [
+      { kind: 'skull', offset: 100, expected: 1500 },
+      { kind: 'pig-rider', offset: 100, expected: 1500 },
+      { kind: 'gnoll', offset: 250, expected: 1500 },
+      { kind: 'shaman', offset: 250, expected: 2400 },
+      { kind: 'boss', offset: 100, expected: 535 },
+    ];
+    for (const profile of profiles) {
+      const enemy = scene.spawnSiegeUnit(profile.kind, castle.x + profile.offset, castle.y, profile.kind === 'shaman');
+      if (!enemy) throw new Error(`Could not spawn ${profile.kind} siege cadence fixture`);
+      enemy.siege = true;
+      enemy.buildingTarget = castle;
+      enemy.attackWindowEnds = now + 10_000;
+      const runtime = enemy as unknown as RuntimeEnemy;
+      runtime.ctx = {
+        ...runtime.ctx,
+        playerX: () => 0,
+        playerY: () => 0,
+        attackBuilding: () => {},
+        siegeShoot: () => {},
+        attackPawn: () => {},
+        nearPawn: () => null,
+        siegeInterceptRadius: () => 1,
+      };
+      runtime.updateSiege(now + 1, 16);
+      result[profile.kind] = runtime.buildingAtkCd;
+      scene.enemyGroup.remove(enemy, true, true);
+      if (result[profile.kind] !== profile.expected) {
+        throw new Error(`${profile.kind} cadence was ${result[profile.kind]}, expected ${profile.expected}`);
+      }
+    }
+    return result;
+  });
+  expect(cadence).toEqual({
+    skull: 1500,
+    'pig-rider': 1500,
+    gnoll: 1500,
+    shaman: 2400,
+    boss: 535,
+  });
+});
+
+
+test('phase K: pig-rider siege charge telegraphs and adds one 8 HP building hit', async ({ page }) => {
+  await startRun(page);
+  const report = await page.evaluate(() => {
+    const game = (window as RuntimeWindow).__tss;
+    if (!game) throw new Error('Phaser runtime is unavailable');
+    type SiegeEnemyRuntime = {
+      active: boolean;
+      kind: string;
+      siege: boolean;
+      buildingTarget: unknown;
+      attackWindowEnds: number;
+      setPosition(x: number, y: number): unknown;
+    };
+    type RuntimeScene = GameSceneRuntime & {
+      player: { setPosition(x: number, y: number): unknown };
+      settlement: { castle: BuildingRuntime };
+      spawnSiegeUnit(kind: string, x: number, y: number, firer: boolean): SiegeEnemyRuntime | null;
+      enemyGroup: { remove(child: unknown, removeFromScene?: boolean, destroyChild?: boolean): void };
+    };
+    type RuntimeEnemy = {
+      updateSiege(time: number, delta: number): void;
+      siegeChargeStage: 'idle' | 'windup' | 'charge' | 'recover';
+      siegeChargeTimerMs: number;
+      buildingAtkCd: number;
+      ctx: Record<string, unknown> & {
+        playerX: () => number;
+        playerY: () => number;
+        attackBuilding: (target: unknown, damage: number, fire?: boolean, isBoss?: boolean) => void;
+        siegeShoot: (...args: unknown[]) => void;
+        attackPawn: (...args: unknown[]) => void;
+        nearPawn?: (...args: unknown[]) => unknown;
+        siegeInterceptRadius?: () => number;
+      };
+    };
+    const scene = game.scene.getScene('Game') as unknown as RuntimeScene;
+    const castle = scene.settlement.castle;
+    const now = scene.time.now;
+    scene.player.setPosition(0, 0);
+    const enemy = scene.spawnSiegeUnit('pig-rider', castle.x + 100, castle.y, false);
+    if (!enemy) throw new Error('Could not spawn pig-rider charge fixture');
+    enemy.siege = true;
+    enemy.buildingTarget = castle;
+    enemy.attackWindowEnds = now + 10_000;
+    const damageEvents: number[] = [];
+    const runtime = enemy as unknown as RuntimeEnemy;
+    runtime.ctx = {
+      ...runtime.ctx,
+      playerX: () => 0,
+      playerY: () => 0,
+      attackBuilding: (_target, damage) => damageEvents.push(damage),
+      siegeShoot: () => {},
+      attackPawn: () => {},
+      nearPawn: () => null,
+      siegeInterceptRadius: () => 1,
+    };
+    runtime.updateSiege(now + 1, 8_000);
+    const stageAtChargeStart = runtime.siegeChargeStage;
+    const chargeHitsBeforeContact = damageEvents.filter((damage) => damage === 8).length;
+    runtime.updateSiege(now + 481, 480);
+    const stageAfterTelegraph = runtime.siegeChargeStage;
+    enemy.setPosition(castle.x + 30, castle.y);
+    runtime.updateSiege(now + 700, 50);
+    const chargeHits = damageEvents.filter((damage) => damage === 8).length;
+    const stageAfterContact = runtime.siegeChargeStage;
+    scene.enemyGroup.remove(enemy, true, true);
+    return { stageAtChargeStart, chargeHitsBeforeContact, stageAfterTelegraph, chargeHits, stageAfterContact };
+  });
+  expect(report.stageAtChargeStart).toBe('windup');
+  expect(report.chargeHitsBeforeContact).toBe(0);
+  expect(report.stageAfterTelegraph).toBe('charge');
+  expect(report.chargeHits).toBe(1);
+  expect(report.stageAfterContact).toBe('recover');
+});
+
+
+test('phase K: pig-rider charge timeout outside contact radius does not damage the building', async ({ page }) => {
+  await startRun(page);
+  const report = await page.evaluate(() => {
+    const game = (window as RuntimeWindow).__tss;
+    if (!game) throw new Error('Phaser runtime is unavailable');
+    type SiegeEnemyRuntime = {
+      active: boolean;
+      kind: string;
+      siege: boolean;
+      buildingTarget: unknown;
+      attackWindowEnds: number;
+    };
+    type RuntimeScene = GameSceneRuntime & {
+      player: { setPosition(x: number, y: number): unknown };
+      settlement: { castle: BuildingRuntime };
+      spawnSiegeUnit(kind: string, x: number, y: number, firer: boolean): SiegeEnemyRuntime | null;
+      enemyGroup: { remove(child: unknown, removeFromScene?: boolean, destroyChild?: boolean): void };
+    };
+    type RuntimeEnemy = {
+      updateSiege(time: number, delta: number): void;
+      siegeChargeStage: 'idle' | 'windup' | 'charge' | 'recover';
+      siegeChargeTimerMs: number;
+      buildingAtkCd: number;
+      ctx: Record<string, unknown> & {
+        playerX: () => number;
+        playerY: () => number;
+        attackBuilding: (target: unknown, damage: number) => void;
+        siegeShoot: (...args: unknown[]) => void;
+        attackPawn: (...args: unknown[]) => void;
+        nearPawn?: (...args: unknown[]) => unknown;
+        siegeInterceptRadius?: () => number;
+      };
+    };
+    const scene = game.scene.getScene('Game') as unknown as RuntimeScene;
+    const castle = scene.settlement.castle;
+    const now = scene.time.now;
+    scene.player.setPosition(0, 0);
+    const enemy = scene.spawnSiegeUnit('pig-rider', castle.x + 100, castle.y, false);
+    if (!enemy) throw new Error('Could not spawn pig-rider timeout fixture');
+    enemy.siege = true;
+    enemy.buildingTarget = castle;
+    enemy.attackWindowEnds = now + 10_000;
+    const damageEvents: number[] = [];
+    const runtime = enemy as unknown as RuntimeEnemy;
+    runtime.siegeChargeStage = 'charge';
+    runtime.siegeChargeTimerMs = 0;
+    runtime.buildingAtkCd = 100_000;
+    runtime.ctx = {
+      ...runtime.ctx,
+      playerX: () => 0,
+      playerY: () => 0,
+      attackBuilding: (_target, damage) => damageEvents.push(damage),
+      siegeShoot: () => {},
+      attackPawn: () => {},
+      nearPawn: () => null,
+      siegeInterceptRadius: () => 1,
+    };
+    runtime.updateSiege(now + 1_000, 16);
+    scene.enemyGroup.remove(enemy, true, true);
+    return { damageEvents, stage: runtime.siegeChargeStage };
+  });
+  expect(report.damageEvents).toEqual([]);
+  expect(report.stage).toBe('recover');
+});
+
+
+test('phase K: building fire displays the loaded dynamite and fire assets and clears them after six active seconds', async ({ page }) => {
+  await startRun(page);
+  const report = await page.evaluate(() => {
+    const game = (window as RuntimeWindow).__tss;
+    if (!game) throw new Error('Phaser runtime is unavailable');
+    const scene = game.scene.getScene('Game') as GameSceneRuntime & {
+      settlement: { castle: BuildingRuntime };
+    };
+    type SpriteRuntime = {
+      active: boolean;
+      visible: boolean;
+      texture: { key: string };
+      anims: { currentAnim?: { key: string } | null };
+    };
+    type BurningBuildingRuntime = BuildingRuntime & {
+      ignite(siegeIndex: number): void;
+      tickBurn(dtMs: number): number;
+      burnSprite: SpriteRuntime | null;
+      fireFx: SpriteRuntime | null;
+    };
+    const castle = scene.settlement.castle as unknown as BurningBuildingRuntime;
+    castle.ignite(0);
+    const visual = {
+      dynamiteKey: castle.burnSprite?.texture.key ?? null,
+      dynamiteVisible: castle.burnSprite?.active === true && castle.burnSprite.visible,
+      dynamiteAnimation: castle.burnSprite?.anims.currentAnim?.key ?? null,
+      fireKey: castle.fireFx?.texture.key ?? null,
+      fireVisible: castle.fireFx?.active === true && castle.fireFx.visible,
+      fireAnimation: castle.fireFx?.anims.currentAnim?.key ?? null,
+      burnAnimationRegistered: game.anims.exists('barrel-burn'),
+      fireAnimationRegistered: game.anims.exists('building-fire-loop'),
+    };
+    const dotDamage = castle.tickBurn(6_000);
+    return {
+      ...visual,
+      dotDamage,
+      remainingDynamite: castle.burnSprite !== null,
+      remainingFireFx: castle.fireFx !== null,
+    };
+  });
+
+  expect(report.dynamiteKey).toBe('barrel');
+  expect(report.dynamiteVisible).toBe(true);
+  expect(report.dynamiteAnimation).toBe('barrel-burn');
+  expect(report.fireKey).toBe('fx-fire');
+  expect(report.fireVisible).toBe(true);
+  expect(report.fireAnimation).toBe('building-fire-loop');
+  expect(report.burnAnimationRegistered).toBe(true);
+  expect(report.fireAnimationRegistered).toBe(true);
+  expect(report.dotDamage).toBe(3);
+  expect(report.remainingDynamite).toBe(false);
+  expect(report.remainingFireFx).toBe(false);
+});
+
+
+test('phase K: ordinary wave enemies do not damage castle buildings', async ({ page }) => {
+  await startRun(page);
+  const report = await page.evaluate(() => {
+    const game = (window as RuntimeWindow).__tss;
+    if (!game) throw new Error('Phaser runtime is unavailable');
+    type RegularEnemyRuntime = {
+      active: boolean;
+      kind: string;
+      siege: boolean;
+      preUpdate(time: number, delta: number): void;
+    };
+    type RuntimeScene = GameSceneRuntime & {
+      hints: { setEnabled(enabled: boolean): void };
+      started: boolean;
+      spawner: { stopped: boolean };
+      settlement: { castle: BuildingRuntime };
+      enemyGroup: {
+        clear(removeFromScene?: boolean, destroyChildren?: boolean): void;
+        getChildren(): RegularEnemyRuntime[];
+        remove(child: unknown, removeFromScene?: boolean, destroyChild?: boolean): void;
+      };
+      spawnEnemy(kind: string, x: number, y: number): boolean;
+    };
+    const scene = game.scene.getScene('Game') as unknown as RuntimeScene;
+    scene.hints.setEnabled(false);
+    scene.started = true;
+    scene.spawner.stopped = true;
+    scene.enemyGroup.clear(true, true);
+    scene.player.setPosition(0, 0);
+    const castle = scene.settlement.castle;
+    if (!scene.spawnEnemy('skull', castle.x + 80, castle.y)) {
+      throw new Error('Could not spawn regular-wave enemy fixture');
+    }
+    const enemy = scene.enemyGroup.getChildren().find((candidate) =>
+      candidate.active && candidate.kind === 'skull');
+    if (!enemy) throw new Error('Regular-wave enemy fixture is missing');
+    enemy.siege = false;
+    const castleHpBefore = castle.hp;
+    const now = scene.time.now;
+    // AI active-time ticks advance deterministically. Normal enemies can attack
+    // the hero or pawns but must never use the building-damage callback.
+    for (let i = 0; i < 120; i++) enemy.preUpdate(now + i * 16, 16);
+    const castleHpAfter = castle.hp;
+    scene.enemyGroup.remove(enemy, true, true);
+    return { castleHpBefore, castleHpAfter, siege: enemy.siege };
+  });
+  expect(report.siege).toBe(false);
+  expect(report.castleHpAfter).toBe(report.castleHpBefore);
+});
+
+
+test('phase K: destroying the last barracks removes the settlement succession source', async ({ page }) => {
+  await startRun(page);
+  const report = await page.evaluate(() => {
+    const game = (window as RuntimeWindow).__tss;
+    if (!game) throw new Error('Phaser runtime is unavailable');
+    type RuntimeJob = { building: BuildingRuntime };
+    type RuntimeEconomy = EconomyRuntime & { buildJobs: RuntimeJob[] };
+    type RuntimeScene = GameSceneRuntime & {
+      hints: { setEnabled(enabled: boolean): void };
+      settlement: {
+        hasSuccessionSource(): boolean;
+        aliveBuildings: BuildingRuntime[];
+      };
+    };
+    const scene = game.scene.getScene('Game') as unknown as RuntimeScene;
+    scene.hints.setEnabled(false);
+    const economy = scene.economy as RuntimeEconomy;
+    economy.resources.wood = 10_000;
+    economy.resources.ore = 10_000;
+    economy.resources.meat = 10_000;
+
+    // Isolate the last source in case a scenario prebuilt one.
+    for (const building of [...economy.buildings]) {
+      if (['barracks', 'archery', 'monastery'].includes(building.kind) && building.alive) {
+        building.damage(building.maxHp + 1, -1);
+      }
+    }
+    // После изоляции источника преемственности быть не должно: переменная
+    // хранит ОТСУТСТВИЕ источника, а не его наличие.
+    const noSourceInitially = !scene.settlement.hasSuccessionSource();
+    const builder = economy.pawns.find((pawn) => pawn.kind === 'builder');
+    const spot = economy.freeSpots().find((candidate) => candidate.kind === 'barracks');
+    if (!builder || !spot) throw new Error('Builder or barracks spot is unavailable');
+    if (!economy.tryStartBuild('barracks', builder, spot)) {
+      throw new Error('Could not start barracks for succession-source regression');
+    }
+    const barracks = economy.buildings.find((building) =>
+      building.kind === 'barracks' && building.underConstruction);
+    if (!barracks) throw new Error('Barracks construction object was not registered');
+    for (let i = economy.buildJobs.length - 1; i >= 0; i--) {
+      if (economy.buildJobs[i].building === barracks) economy.buildJobs.splice(i, 1);
+    }
+    barracks.finishConstruction();
+    const sourceWhileBarracksAlive = scene.settlement.hasSuccessionSource();
+    barracks.damage(barracks.maxHp + 1, -1);
+    const sourceAfterBarracksDestroyed = scene.settlement.hasSuccessionSource();
+    return {
+      noSourceInitially,
+      sourceWhileBarracksAlive,
+      sourceAfterBarracksDestroyed,
+      // Разрушенные казармы становятся РУИНАМИ: alive остаётся true, но
+      // здание выпадает из Settlement.aliveBuildings (alive && !underConstruction),
+      // то есть больше не является ни источником преемственности, ни целью найма.
+      barracksStillActive: scene.settlement.aliveBuildings.includes(barracks),
+      barracksIsRuins: barracks.underConstruction,
+    };
+  });
+  expect(report.noSourceInitially).toBe(true);
+  expect(report.sourceWhileBarracksAlive).toBe(true);
+  expect(report.barracksIsRuins).toBe(true);
+  expect(report.barracksStillActive).toBe(false);
+  expect(report.sourceAfterBarracksDestroyed).toBe(false);
+});
+
+
+
+test('phase K: siege schedule warns five seconds before exact profile start times', async ({ page }) => {
+  await startRun(page);
+  const report = await page.evaluate(async () => {
+    const game = (window as RuntimeWindow).__tss;
+    if (!game) throw new Error('Phaser runtime is unavailable');
+    const root = window.location.origin;
+    const [data, constants] = await Promise.all([
+      import(/* @vite-ignore */ new URL('/src/game/data.ts', root).href) as Promise<{
+        SIEGE_SCHEDULE: Array<{ t: number; target: string; woundCap: number; name: string }>;
+        WAVE_EVENTS: unknown[];
+      }>,
+      import(/* @vite-ignore */ new URL('/src/game/constants.ts', root).href) as Promise<{
+        SIEGE: { ANNOUNCE_SEC: number };
+      }>,
+    ]);
+    type SiegeRuntimeProfile = { t: number; target: string; woundCap: number; name: string };
+    type RuntimeSpawner = {
+      elapsed: number;
+      eventIdx: number;
+      siegeIdx: number;
+      siegeAnnounced: boolean;
+      stopped: boolean;
+      timer: number;
+      o: {
+        endless?: boolean;
+        siegeIntervalSec?: number | null;
+        extraSiege?: boolean;
+        contractQuiet?: boolean;
+        alarmLevel?: () => number;
+      };
+      ctx: {
+        announce(text: string, color?: string): void;
+        beginSiege(profile: SiegeRuntimeProfile, index: number): void;
+      };
+      update(dtSec: number): void;
+    };
+    const scene = game.scene.getScene('Game') as GameSceneRuntime & { spawner: RuntimeSpawner };
+    scene.registry.set('tss-siege-warn', 0);
+    const spawner = scene.spawner;
+    const warnings: Array<{ at: number; text: string }> = [];
+    const starts: Array<{ at: number; index: number; target: string; woundCap: number }> = [];
+
+    // Изолируем расписание от обычных spawn events; исполняется публичный update(0),
+    // без ожидания 15 минут и без таймеров реального времени.
+    spawner.stopped = false;
+    spawner.o.endless = false;
+    spawner.o.siegeIntervalSec = null;
+    spawner.o.extraSiege = false;
+    spawner.o.contractQuiet = false;
+    spawner.o.alarmLevel = () => 0;
+    spawner.eventIdx = data.WAVE_EVENTS.length;
+    spawner.elapsed = 0;
+    spawner.siegeIdx = 0;
+    spawner.siegeAnnounced = false;
+    spawner.timer = 1_200;
+    spawner.ctx.announce = (text) => warnings.push({ at: spawner.elapsed, text });
+    spawner.ctx.beginSiege = (profile, index) => starts.push({
+      at: spawner.elapsed,
+      index,
+      target: profile.target,
+      woundCap: profile.woundCap,
+    });
+
+    const alarmSeconds = constants.SIEGE.ANNOUNCE_SEC;
+    for (const profile of data.SIEGE_SCHEDULE) {
+      spawner.elapsed = profile.t - alarmSeconds;
+      spawner.siegeAnnounced = false;
+      spawner.update(0);
+      spawner.elapsed = profile.t;
+      spawner.update(0);
+    }
+    spawner.stopped = true;
+    return {
+      warningTimes: warnings.map((warning) => warning.at),
+      warningCount: warnings.length,
+      startTimes: starts.map((start) => start.at),
+      indexes: starts.map((start) => start.index),
+      targets: starts.map((start) => start.target),
+      woundCaps: starts.map((start) => start.woundCap),
+    };
+  });
+
+  expect(report.warningCount).toBe(5);
+  expect(report.warningTimes).toEqual([355, 475, 595, 715, 805]);
+  expect(report.startTimes).toEqual([360, 480, 600, 720, 810]);
+  expect(report.indexes).toEqual([0, 1, 2, 3, 4]);
+  expect(report.targets).toEqual(['houses', 'houses', 'monastery', 'houses', 'castle']);
+  expect(report.woundCaps).toEqual([1, 1, 2, 2, 3]);
+});
+
+
+
+test('phase K: a 150 HP house survives ten flaming siege hits including burn damage', async ({ page }) => {
+  await startRun(page);
+  const report = await page.evaluate(() => {
+    const game = (window as RuntimeWindow).__tss;
+    if (!game) throw new Error('Phaser runtime is unavailable');
+    type BurningBuildingRuntime = BuildingRuntime & {
+      ignite(siegeIndex: number): void;
+      tickBurn(dtMs: number): number;
+      fireTimer: number;
+    };
+    type RuntimeEconomy = EconomyRuntime & { buildJobs: Array<{ building: BuildingRuntime }> };
+    type RuntimeSettlement = {
+      castle: BuildingRuntime;
+      beginSiege(index: number, woundCap: number, enemies: unknown[]): void;
+      damageBuilding(building: BuildingRuntime, raw: number, siegeIndex: number, isBoss?: boolean): void;
+      capApplied: boolean;
+    };
+    const scene = game.scene.getScene('Game') as GameSceneRuntime & {
+      settlement: RuntimeSettlement;
+    };
+    const economy = scene.economy as RuntimeEconomy;
+    economy.resources.wood = 10_000;
+    economy.resources.ore = 10_000;
+    economy.resources.meat = 10_000;
+    const builder = economy.pawns.find((pawn) => pawn.kind === 'builder');
+    const spot = economy.freeSpots().find((candidate) => candidate.kind === 'house');
+    if (!builder || !spot) throw new Error('Builder or house spot is unavailable');
+    if (!economy.tryStartBuild('house', builder, spot)) throw new Error('Could not start test house');
+    const house = economy.buildings.find((building) =>
+      building.kind === 'house' && building.underConstruction) as BuildingRuntime | undefined;
+    if (!house) throw new Error('House construction object was not registered');
+    for (let i = economy.buildJobs.length - 1; i >= 0; i--) {
+      if (economy.buildJobs[i].building === house) economy.buildJobs.splice(i, 1);
+    }
+    house.finishConstruction();
+    const burning = house as BurningBuildingRuntime;
+    scene.settlement.beginSiege(0, 1, []);
+    let directDamage = 0;
+    let dotDamage = 0;
+    for (let i = 0; i < 10; i++) {
+      scene.settlement.damageBuilding(house, 5, 0, false);
+      directDamage += 5;
+      burning.ignite(0);
+      // Prevent the test's synthetic large active-time steps from accumulating
+      // particle objects; the independent visual test checks the real FX lifecycle.
+      burning.fireTimer = 1_000_000;
+      const dot = burning.tickBurn(i === 9 ? 6_000 : 2_400);
+      dotDamage += dot;
+      scene.settlement.damageBuilding(house, dot, 0, false);
+    }
+    return {
+      maxHp: house.maxHp,
+      hp: house.hp,
+      directDamage,
+      dotDamage,
+      totalDamage: directDamage + dotDamage,
+      capApplied: scene.settlement.capApplied,
+      alive: house.alive,
+    };
+  });
+
+  expect(report.maxHp).toBe(150);
+  expect(report.directDamage).toBe(50);
+  expect(report.dotDamage).toBeCloseTo(13.8, 5);
+  expect(report.totalDamage).toBeLessThan(150);
+  expect(report.hp).toBeGreaterThan(0);
+  expect(report.alive).toBe(true);
+  expect(report.capApplied).toBe(false);
+});
+
+
+test('phase K: hero interception cancels a pig-rider charge before building impact', async ({ page }) => {
+  await startRun(page);
+  const report = await page.evaluate(() => {
+    const game = (window as RuntimeWindow).__tss;
+    if (!game) throw new Error('Phaser runtime is unavailable');
+    type SiegeEnemyRuntime = {
+      active: boolean;
+      kind: string;
+      siege: boolean;
+      buildingTarget: unknown;
+      attackWindowEnds: number;
+    };
+    type RuntimeScene = GameSceneRuntime & {
+      player: { x: number; y: number; setPosition(x: number, y: number): unknown };
+      settlement: { castle: BuildingRuntime };
+      spawnSiegeUnit(kind: string, x: number, y: number, firer: boolean): SiegeEnemyRuntime | null;
+      enemyGroup: { remove(child: unknown, removeFromScene?: boolean, destroyChild?: boolean): void };
+    };
+    type RuntimeEnemy = {
+      updateSiege(time: number, delta: number): void;
+      siegeChargeStage: 'idle' | 'windup' | 'charge' | 'recover';
+      siegeChargeTimerMs: number;
+      siegeChargeCooldownMs: number;
+      buildingAtkCd: number;
+      ctx: Record<string, unknown> & {
+        playerX: () => number;
+        playerY: () => number;
+        attackBuilding: (target: unknown, damage: number, fire?: boolean, isBoss?: boolean) => void;
+        siegeShoot: (...args: unknown[]) => void;
+        attackPawn: (...args: unknown[]) => void;
+        nearPawn?: (...args: unknown[]) => unknown;
+        siegeInterceptRadius?: () => number;
+      };
+    };
+    const scene = game.scene.getScene('Game') as unknown as RuntimeScene;
+    const castle = scene.settlement.castle;
+    const now = scene.time.now;
+    const enemy = scene.spawnSiegeUnit('pig-rider', castle.x + 100, castle.y, false);
+    if (!enemy) throw new Error('Could not spawn pig-rider interception fixture');
+    enemy.siege = true;
+    enemy.buildingTarget = castle;
+    enemy.attackWindowEnds = now + 10_000;
+    const damageEvents: number[] = [];
+    const runtime = enemy as unknown as RuntimeEnemy;
+    runtime.siegeChargeStage = 'windup';
+    runtime.siegeChargeTimerMs = 200;
+    runtime.buildingAtkCd = 100_000;
+    runtime.ctx = {
+      ...runtime.ctx,
+      playerX: () => enemy.x + 30,
+      playerY: () => enemy.y,
+      attackBuilding: (_target, damage) => damageEvents.push(damage),
+      siegeShoot: () => {},
+      attackPawn: () => {},
+      nearPawn: () => null,
+      siegeInterceptRadius: () => 260,
+    };
+    runtime.updateSiege(now + 100, 100);
+    const state = {
+      stage: runtime.siegeChargeStage,
+      timer: runtime.siegeChargeTimerMs,
+      cooldown: runtime.siegeChargeCooldownMs,
+      damageEvents,
+    };
+    scene.enemyGroup.remove(enemy, true, true);
+    return state;
+  });
+
+  expect(report.stage).toBe('idle');
+  expect(report.timer).toBe(0);
+  expect(report.cooldown).toBe(8_000);
+  expect(report.damageEvents).toEqual([]);
+});
+
+
+test('phase K: siege infrastructure caps exclude unfinished and ruined buildings and clamp damage at 12%/6%', async ({ page }) => {
+  await startRun(page);
+  const report = await page.evaluate(() => {
+    const game = (window as RuntimeWindow).__tss;
+    if (!game) throw new Error('Phaser runtime is unavailable');
+    type SettlementBudgetRuntime = {
+      castle: BuildingRuntime;
+      infrastructureMax: number;
+      infrastructureHp: number;
+      capApplied: boolean;
+      beginSiege(index: number, woundCap: number, enemies: unknown[]): void;
+      damageBuilding(building: BuildingRuntime, raw: number, siegeIndex: number, isBoss?: boolean): void;
+    };
+    const scene = game.scene.getScene('Game') as GameSceneRuntime & {
+      settlement: SettlementBudgetRuntime;
+      spawner: { stopped: boolean };
+    };
+    scene.spawner.stopped = true;
+    const economy = scene.economy;
+    economy.resources.wood = 1_000;
+    economy.resources.ore = 1_000;
+    economy.resources.meat = 1_000;
+    const builder = economy.pawns.find((pawn) => pawn.kind === 'builder');
+    const spot = economy.freeSpots().find((candidate) => candidate.kind === 'house');
+    if (!builder || !spot) throw new Error('Builder or house spot unavailable');
+
+    const castle = scene.settlement.castle;
+    const initialMax = scene.settlement.infrastructureMax;
+    if (!economy.tryStartBuild('house', builder, spot)) throw new Error('House construction did not start');
+    const house = economy.buildings.find((candidate) => candidate.kind === 'house' && candidate.underConstruction);
+    if (!house) throw new Error('House construction object missing');
+    const maxDuringConstruction = scene.settlement.infrastructureMax;
+    builder.setPosition(spot.x, spot.y);
+    builder.state = 'work';
+    economy.tick(10_001, scene.time.now + 10_001);
+    const maxAfterConstruction = scene.settlement.infrastructureMax;
+    if (!house.alive || house.underConstruction) throw new Error('House did not finish');
+    house.damage(house.maxHp, -1);
+    const maxAfterRuin = scene.settlement.infrastructureMax;
+
+    // На базе из одного замка потолок равен 12% × 500 = 60 HP за осаду.
+    castle.hp = castle.maxHp;
+    scene.settlement.beginSiege(0, 1, []);
+    const highStart = castle.hp;
+    scene.settlement.damageBuilding(castle, 100, 0);
+    scene.settlement.damageBuilding(castle, 100, 0);
+    const highLoss = highStart - castle.hp;
+    const highCapApplied = scene.settlement.capApplied;
+
+    // При инфраструктуре <60% HP применяется страховочный потолок 6% × 500 = 30.
+    castle.hp = castle.maxHp;
+    scene.settlement.damageBuilding(castle, 250, -1);
+    scene.settlement.beginSiege(0, 1, []);
+    const lowStart = castle.hp;
+    scene.settlement.damageBuilding(castle, 100, 0);
+    const lowLoss = lowStart - castle.hp;
+    const lowCapApplied = scene.settlement.capApplied;
+
+    return {
+      initialMax,
+      maxDuringConstruction,
+      maxAfterConstruction,
+      houseMaxHp: house.maxHp,
+      maxAfterRuin,
+      highLoss,
+      highCapApplied,
+      lowLoss,
+      lowCapApplied,
+    };
+  });
+
+  expect(report.maxDuringConstruction).toBe(report.initialMax);
+  expect(report.maxAfterConstruction).toBe(report.initialMax + report.houseMaxHp);
+  expect(report.maxAfterRuin).toBe(report.initialMax);
+  expect(report.highLoss).toBeCloseTo(report.initialMax * 0.12, 5);
+  expect(report.highCapApplied).toBe(true);
+  expect(report.lowLoss).toBeCloseTo(report.initialMax * 0.06, 5);
+  expect(report.lowCapApplied).toBe(true);
+});
+
+
+test('phase K: HUD exposes castle HP separately from aggregate infrastructure and population', async ({ page }) => {
+  await startRun(page);
+  const report = await page.evaluate(() => {
+    const game = (window as RuntimeWindow).__tss;
+    if (!game) throw new Error('Phaser runtime is unavailable');
+    const scene = game.scene.getScene('Game') as GameSceneRuntime & {
+      hud: {
+        updateSettlement(castle: number, infra: number, population: number, garrison: string): void;
+        settleCastleBar: { displayWidth: number; displayHeight: number; texture: { key: string } };
+        settleInfraBar: { displayWidth: number; displayHeight: number; texture: { key: string } };
+        settlePopBar: { displayWidth: number; displayHeight: number; texture: { key: string } };
+      };
+      settlement: { castle: BuildingRuntime };
+    };
+    const hud = scene.hud;
+    const castle = scene.settlement.castle;
+    const previousHp = castle.hp;
+    castle.hp = castle.maxHp * 0.25;
+    hud.updateSettlement(0.25, 0.8, 0.75, 'Garrison 1/4');
+    const result = {
+      castleWidth: hud.settleCastleBar.displayWidth,
+      infrastructureWidth: hud.settleInfraBar.displayWidth,
+      populationWidth: hud.settlePopBar.displayWidth,
+      castleTexture: hud.settleCastleBar.texture.key,
+      castleHpFraction: castle.hp / castle.maxHp,
+      barsHaveHeight: hud.settleCastleBar.displayHeight > 0
+        && hud.settleInfraBar.displayHeight > 0 && hud.settlePopBar.displayHeight > 0,
+    };
+    castle.hp = previousHp;
+    return result;
+  });
+  expect(report.castleWidth).toBeLessThan(report.infrastructureWidth);
+  expect(report.castleWidth).toBeLessThan(report.populationWidth);
+  expect(report.castleTexture).toBe('bar-fill-red');
+  expect(report.castleHpFraction).toBe(0.25);
+  expect(report.barsHaveHeight).toBe(true);
+});
+
+
+test('phase K: siege wound cap counts only newly wounded pawns and skips wounded targets', async ({ page }) => {
+  await startRun(page);
+  const report = await page.evaluate(() => {
+    const game = (window as RuntimeWindow).__tss;
+    if (!game) throw new Error('Phaser runtime is unavailable');
+    const scene = game.scene.getScene('Game') as GameSceneRuntime & {
+      spawner: { stopped: boolean };
+      settlement: {
+        beginSiege(index: number, woundCap: number, enemies: unknown[]): void;
+        siegeWoundPawn(pawn: PawnRuntime, dmg: number, now: number): void;
+        canWoundInSiege(): boolean;
+      };
+      economy: EconomyRuntime & {
+        spawnPawn(kind: string, x?: number, y?: number, announce?: boolean): PawnRuntime | null;
+        woundPawn(pawn: PawnRuntime, dmg: number, now: number): boolean;
+      };
+    };
+    scene.spawner.stopped = true;
+    const now = scene.time.now;
+    const availableResidents = scene.economy.pawns.filter((pawn) =>
+      pawn.cls === 'civilian' && !pawn.dead
+        && pawn.state !== 'wounded' && pawn.state !== 'bleeding');
+    const alreadyWounded = availableResidents[0] ?? null;
+    const firstAvailable = availableResidents[1] ?? null;
+    const secondAvailable = availableResidents[2] ?? null;
+    if (!alreadyWounded || !firstAvailable || !secondAvailable) {
+      throw new Error(`Need 3 existing available residents for wound-cap test; found ${availableResidents.length}`);
+    }
+    const preWoundApplied = scene.economy.woundPawn(alreadyWounded, alreadyWounded.maxHp + 1, now);
+    if (!preWoundApplied || alreadyWounded.state !== 'wounded') {
+      throw new Error('Could not prepare an already-wounded pawn');
+    }
+
+    scene.settlement.beginSiege(0, 1, []);
+    scene.settlement.siegeWoundPawn(alreadyWounded, alreadyWounded.maxHp + 1, now);
+    const slotAvailableAfterRejectedTarget = scene.settlement.canWoundInSiege();
+    scene.settlement.siegeWoundPawn(firstAvailable, firstAvailable.maxHp + 1, now);
+    scene.settlement.siegeWoundPawn(secondAvailable, secondAvailable.maxHp + 1, now);
+    return {
+      alreadyWoundedState: alreadyWounded.state,
+      firstAvailableState: firstAvailable.state,
+      secondAvailableState: secondAvailable.state,
+      firstAvailableHp: firstAvailable.hp,
+      secondAvailableHp: secondAvailable.hp,
+      slotAvailableAfterRejectedTarget,
+      capExhausted: !scene.settlement.canWoundInSiege(),
+    };
+  });
+
+  expect(report.alreadyWoundedState).toBe('wounded');
+  expect(report.slotAvailableAfterRejectedTarget).toBe(true);
+  expect(report.firstAvailableState).toBe('wounded');
+  expect(report.secondAvailableState).not.toBe('wounded');
+  expect(report.secondAvailableHp).toBeGreaterThan(0);
+  expect(report.capExhausted).toBe(true);
+});
+
+
+test('phase K: destroying the castle sets the castle defeat cause and announces the loss', async ({ page }) => {
+  await startRun(page);
+  const report = await page.evaluate(() => {
+    const game = (window as RuntimeWindow).__tss;
+    if (!game) throw new Error('Phaser runtime is unavailable');
+    const scene = game.scene.getScene('Game') as GameSceneRuntime & {
+      gameEnded: boolean;
+      loseCause: string | null;
+      settlement: {
+        castle: BuildingRuntime;
+        damageBuilding(building: BuildingRuntime, raw: number, siegeIndex: number, isBoss?: boolean): void;
+      };
+      hud: {
+        announce(message: string, color?: string): void;
+        feed(message: string, color?: string): void;
+      };
+    };
+    // The test checks the immediate defeat route; prevent its delayed game-over
+    // transition from navigating away while Playwright reads the result.
+    scene.gameEnded = true;
+    scene.loseCause = null;
+    const announcements: string[] = [];
+    scene.hud.announce = (message: string): void => { announcements.push(message); };
+    scene.hud.feed = (): void => {};
+    const castle = scene.settlement.castle;
+    scene.settlement.damageBuilding(castle, castle.hp + 1, -1, true);
+    return {
+      castleAlive: castle.alive,
+      castleHp: castle.hp,
+      loseCause: scene.loseCause,
+      announcementCount: announcements.length,
+      lastAnnouncement: announcements.length > 0 ? announcements[announcements.length - 1] : '',
+    };
+  });
+
+  expect(report.castleAlive).toBe(false);
+  expect(report.castleHp).toBe(0);
+  expect(report.loseCause).toBe('castle');
+  expect(report.announcementCount).toBeGreaterThanOrEqual(2);
+  expect(report.lastAnnouncement.toLowerCase()).toContain('castle');
 });

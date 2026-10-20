@@ -1,9 +1,10 @@
 import Phaser from 'phaser';
 import {
   NEW_VILLAGER, REPAIR, VEIN_YIELD, VEIN_CHARGES, HIRE_COST, HIRE_TIME_MS,
+  SETTLEMENT_CORE, SETTLEMENT_SPOT_ZONE,
 } from '../constants';
 import {
-  RESOURCES, BUILDING_PLANS, BUILD_SPOTS, TOOL_BY_RESOURCE,
+  RESOURCES, BUILDING_PLANS, BUILD_SPOTS, BUILD_PLAN, TOOL_BY_RESOURCE,
   type PawnKind, type PawnWeapon, type ResourceKind, type ResourceCost, type BuildingKind,
   PAWN_NAMES, PAWN_NAMES_RU, garrisonSourceOf,
 } from '../data';
@@ -229,6 +230,10 @@ export class Economy extends Phaser.Events.EventEmitter {
     this.pawnAI = new PawnAI(scene, this);
     this.healerAI = new HealerAI(this);
     this.monastery = new Monastery(this);
+    for (const s of BUILD_SPOTS) {
+      this.baseSpots.push({ kind: s.kind, x: this.castleX + s.dx, y: this.castleY + s.dy });
+    }
+    this.ensureSpots();
   }
 
   /** Система обители (§G.10): места, лечение, выписка. */
@@ -242,7 +247,8 @@ export class Economy extends Phaser.Events.EventEmitter {
 
   /** Лимит рабочих: 4 + 1 за каждый дом (§B.2), «Вече» +1 (§H.5). */
   get pawnLimit(): number {
-    return 4 + this.houses + (this.card('assembly') > 0 ? 1 : 0);
+    // Вече даёт +1 место на каждом ранге, то есть +2 на ранге II.
+    return 4 + this.houses + this.card('assembly');
   }
 
   get civilians(): Pawn[] {
@@ -295,6 +301,61 @@ export class Economy extends Phaser.Events.EventEmitter {
   /** Всего слотов гарнизона во всех источниках — для HUD (§B.2). */
   totalGarrisonSlots(): number {
     return this.garrisonLimit('barracks') + this.garrisonLimit('archery') + this.garrisonLimit('monastery');
+  }
+
+  /**
+   * План расхода на стройку: текущая цель и следующий шаг (TZ §B.6).
+   *
+   *  Сборщики берут ресурсы «под два следующих здания»: так руда под
+   *  казармы добывается заранее, а не после того, как дерево уже есть.
+   */
+  plannedBuildCost(): ResourceCost {
+    const out: ResourceCost = {};
+    let steps = 0;
+    for (const step of BUILD_PLAN) {
+      const built = this.buildings.filter((b) => b.kind === step.kind && b.alive).length;
+      if (built >= step.count) continue;
+      for (const [k, v] of Object.entries(BUILDING_PLANS[step.kind].cost)) {
+        const key = k as ResourceKind;
+        out[key] = (out[key] ?? 0) + v;
+      }
+      steps++;
+      if (steps >= 2) break;
+    }
+    return out;
+  }
+
+  /**
+   * Следующее здание по плану автостройки (null — план исчерпан).
+   *
+   *  План — статичный список шагов (data.ts BUILD_PLAN): шаг считается
+   *  выполненным, когда построено достаточно зданий его вида. Поэтому
+   *  порядок не ломается, если игрок или другая пешка построили что-то
+   *  раньше (например, приказ «СТРОИТЬ»).
+   *
+   *  ⚠️ Раньше строитель всегда брал первое свободное КРУПНОЕ пятно, то есть
+   *  казармы (40 дерева + 15 руды). Дом не строился вообще: за 3,5 минуты
+   *  матча поселение не получало ни одного жилища, лимит рабочих оставался
+   *  равным 4, а гейт фазы E «первый дом на 30–45 секунде» был недостижим.
+   */
+  nextBuildKind(): BuildingKind | null {
+    const built = (kind: BuildingKind): number =>
+      this.buildings.filter((b) => b.kind === kind && b.alive).length;
+    const hasSpot = (kind: BuildingKind): boolean => this.spotFor(kind) !== null;
+    // Срочное исключение: раненые без обителя истекают кровью (§G.3).
+    // Обитель важнее любого следующего шага плана.
+    if (built('monastery') === 0 && hasSpot('monastery')
+      && this.pawns.some((p) => !p.dead && (p.state === 'wounded' || p.state === 'bleeding'))) {
+      return 'monastery';
+    }
+    for (const step of BUILD_PLAN) {
+      if (built(step.kind) >= step.count) continue;
+      // Пятен этого вида больше нет — шаг пропускаем (план не должен
+      // блокировать стройку из-за отсутствующего места).
+      if (!hasSpot(step.kind)) continue;
+      return step.kind;
+    }
+    return null;
   }
 
   /** Занято слотов по источнику (живые + вербуются). Для плана расхода. */
@@ -441,7 +502,10 @@ export class Economy extends Phaser.Events.EventEmitter {
         target[k as ResourceKind] += v;
       }
     }
-    for (const j of this.repairJobs) target.wood += j.rebuild ? REPAIR.REBUILD_WOOD : REPAIR.WOOD;
+    for (const j of this.repairJobs) {
+      target.wood += j.rebuild ? REPAIR.REBUILD_WOOD : REPAIR.WOOD;
+      if (j.rebuild && j.building.kind === 'barracks') target.ore += REPAIR.REBUILD_BARRACKS_ORE;
+    }
     const planned = target.wood + target.ore + target.meat;
     if (planned <= 0) return this.nearestFreeNode(from);
 
@@ -485,11 +549,11 @@ export class Economy extends Phaser.Events.EventEmitter {
     // Дополнительные пятна согласованы с базовыми BUILD_SPOTS: бонусы
     // должны расширять поселение, а не ставить дома поверх крупных зданий.
     const pts: Array<{ dx: number; dy: number }> = [
-      { dx: -420, dy: -330 },
-      { dx: 350, dy: -350 },
-      { dx: 500, dy: 500 },
-      { dx: -250, dy: -420 },
-      { dx: 580, dy: 300 },
+      { dx: -780, dy: 400 },
+      { dx: 780, dy: 400 },
+      { dx: 900, dy: 0 },
+      { dx: -900, dy: 0 },
+      { dx: 250, dy: -880 },
     ];
     const out: Array<{ kind: BuildingKind; dx: number; dy: number }> = [];
     for (let i = 0; i < this.tune.extraHouseSpots && i < pts.length; i++) {
@@ -498,13 +562,29 @@ export class Economy extends Phaser.Events.EventEmitter {
     return out;
   }
 
+
+  /** Базовые пятна стройки (кольцо деревни) — не меняются за матч. */
+  private readonly baseSpots: Array<{ kind: BuildingKind; x: number; y: number }> = [];
+  /** Бонусные пятна — зависят от tune.extraHouseSpots, поэтому кешируются отдельно. */
+  private extraSpotCache: Array<{ kind: BuildingKind; x: number; y: number }> = [];
+  private extraSpotCount = -1;
+
+  /** Обновить кеш пятен, если изменилось число бонусных слотов. */
+  private ensureSpots(): void {
+    if (this.extraSpotCount === this.tune.extraHouseSpots) return;
+    this.extraSpotCount = this.tune.extraHouseSpots;
+    this.extraSpotCache = this.extraSpots().map((s) => ({
+      kind: s.kind, x: this.castleX + s.dx, y: this.castleY + s.dy,
+    }));
+  }
+
   spotFor(kind: BuildingKind): { x: number; y: number } | null {
-    for (const s of [...BUILD_SPOTS, ...this.extraSpots()]) {
+    this.ensureSpots();
+    for (const s of [...this.baseSpots, ...this.extraSpotCache]) {
       if (s.kind !== kind) continue;
-      const key = `${this.castleX + s.dx}:${this.castleY + s.dy}`;
-      if (!this.usedSpots.has(key)) {
+      if (!this.usedSpots.has(`${s.x}:${s.y}`)) {
         // Место свободно физически (нет здания)
-        return { x: this.castleX + s.dx, y: this.castleY + s.dy };
+        return { x: s.x, y: s.y };
       }
     }
     return null;
@@ -519,12 +599,35 @@ export class Economy extends Phaser.Events.EventEmitter {
   }
 
   freeSpots(): Array<{ kind: BuildingKind; x: number; y: number }> {
+    this.ensureSpots();
     const out: Array<{ kind: BuildingKind; x: number; y: number }> = [];
-    for (const s of [...BUILD_SPOTS, ...this.extraSpots()]) {
-      const x = this.castleX + s.dx, y = this.castleY + s.dy;
-      if (!this.usedSpots.has(`${x}:${y}`)) out.push({ kind: s.kind, x, y });
+    for (const s of [...this.baseSpots, ...this.extraSpotCache]) {
+      if (!this.usedSpots.has(`${s.x}:${s.y}`)) out.push({ kind: s.kind, x: s.x, y: s.y });
     }
     return out;
+  }
+
+  /**
+   * Точка внутри защищённой зоны поселения? (TZ §A.5)
+   *
+   *  Зона — это замок (SETTLEMENT_CORE) плюс окрестности точек стройки и
+   *  построенных зданий (SETTLEMENT_SPOT_ZONE). Внутри зоны гражданские
+   *  недостижимы для обычных волн: единственный механизм угрозы базе —
+   *  осада (§D.1). Без этого рабочие впадали в панику от каждого проходящего
+   *  гоблина, и вся экономика поселения вставала.
+   */
+  isSettlementCore(x: number, y: number): boolean {
+    if (Math.hypot(x - this.castleX, y - this.castleY) < SETTLEMENT_CORE) return true;
+    for (const b of this.buildings) {
+      if (!b.alive) continue;
+      if (Math.hypot(x - b.x, y - b.y) < SETTLEMENT_SPOT_ZONE) return true;
+    }
+    this.ensureSpots();
+    for (const s of [...this.baseSpots, ...this.extraSpotCache]) {
+      if (this.usedSpots.has(`${s.x}:${s.y}`)) continue;
+      if (Math.hypot(x - s.x, y - s.y) < SETTLEMENT_SPOT_ZONE) return true;
+    }
+    return false;
   }
 
   /** Стоимость постройки с мета-модификаторами: «Скидки казны» (§H.16),
@@ -588,7 +691,13 @@ export class Economy extends Phaser.Events.EventEmitter {
     this.markSpot(spot.x, spot.y);
     this.buildings.push(b);
     this.buildJobs.push({ spot: { kind, x: spot.x, y: spot.y }, building: b, progress: 0, pawn });
-    if (pawn) pawn.workNode = b;
+    if (pawn) {
+      // Пешка могла переходить на помощь со своего ресурсного узла. Снимаем
+      // его claim до замены workNode зданием, иначе узел остаётся навсегда
+      // заблокирован прежним работником.
+      if (pawn.workNode instanceof ResourceNode) pawn.workNode.release(pawn);
+      pawn.workNode = b;
+    }
     return true;
   }
 
@@ -599,6 +708,9 @@ export class Economy extends Phaser.Events.EventEmitter {
   repair(building: Building, pawn: Pawn | null): boolean {
     if (this.tune.repairDisabled) return false;
     if (!building.alive || building.kind === 'castle' || building.plan.noRepair) return false;
+    // Критическое окно монастыря — предупреждение для эвакуации раненых,
+    // а не скрытая стройка, которая не успеет завершиться до обрушения.
+    if (building.collapsePending) return false;
     if (building.underConstruction && building.hp > 0) return false;
     if (this.buildJobs.some((j) => j.building === building)) return false; // ещё строится
     if (this.repairJobs.some((j) => j.building === building)) return false;
@@ -607,11 +719,18 @@ export class Economy extends Phaser.Events.EventEmitter {
     if (!rebuild && building.hp >= building.maxHp) return false;
     // «Сметливые ремонтники» (§H.16): стоимость ремонта ×0.75
     const wood = Math.round((rebuild ? REPAIR.REBUILD_WOOD : REPAIR.WOOD) * this.tune.repairCost);
-    if (!this.spend({ wood })) return false;
+    const cost: ResourceCost = { wood };
+    if (rebuild && building.kind === 'barracks') {
+      cost.ore = Math.round(REPAIR.REBUILD_BARRACKS_ORE * this.tune.repairCost);
+    }
+    if (!this.spend(cost)) return false;
     building.underConstruction = true;
     if (rebuild) building.setScale(building.scaleX, 0.02);
     this.repairJobs.push({ building, progress: 0, pawn, rebuild });
-    if (pawn) pawn.workNode = building;
+    if (pawn) {
+      if (pawn.workNode instanceof ResourceNode) pawn.workNode.release(pawn);
+      pawn.workNode = building;
+    }
     return true;
   }
 
@@ -675,15 +794,25 @@ export class Economy extends Phaser.Events.EventEmitter {
   }
 
   applySettlementCard(id: string): void {
-    this.settlementLevels[id] = Math.min(2, this.card(id) + 1);
-    // «Каменное зодчество» (§H.5): +15% макс. HP всем живым зданиям —
-    // карта берётся после первого дома, постройки до неё тоже растут
+    const previousLevel = this.card(id);
+    // Ранг III не предусмотрен: повторный вызов на уровне II ничего не меняет.
+    if (previousLevel >= 2) return;
+    const nextLevel = previousLevel + 1;
+    this.settlementLevels[id] = nextLevel;
+    // Каменное зодчество даёт +15% базового max HP за каждый ранг.
     if (id === 'masonry') {
+      const nextMult = 1 + 0.15 * nextLevel;
       for (const b of this.buildings) {
         if (!b.alive) continue;
-        const old = b.maxHp;
-        b.maxHp = Math.max(1, Math.round(b.maxHp * 1.15));
-        b.hp += b.maxHp - old;
+        const baseMultiplier = b.kind === 'castle'
+          ? 1
+          : b.kind === 'house' ? this.tune.houseHp : this.tune.buildingHp;
+        const baseMaxHp = BUILDING_PLANS[b.kind].hp * baseMultiplier;
+        const oldMaxHp = b.maxHp;
+        b.maxHp = Math.max(1, Math.round(baseMaxHp * nextMult));
+        if (!b.underConstruction) {
+          b.hp = Math.min(b.maxHp, Math.max(0, b.hp + b.maxHp - oldMaxHp));
+        }
       }
     }
   }
@@ -831,9 +960,14 @@ export class Economy extends Phaser.Events.EventEmitter {
       }
     }
 
-    // Горение зданий: DoT через Settlement — потолок осады и таунт (§E.4.2)
-    for (const b of this.buildings) {
+    // Окно обрушения монастыря продвигается тем же игровым временем, что и экономика.
+    // Копия массива нужна: при истечении срока callback удаления может убрать здание из реестра.
+    for (const b of [...this.buildings]) {
       if (!b.alive) continue;
+      b.tickMonasteryCollapse(dtMs);
+      if (!b.alive) continue;
+
+      // Горение зданий: DoT через Settlement — потолок осады и таунт (§E.4.2)
       const dot = b.tickBurn(dtMs);
       if (dot > 0) {
         if (this.opts.onBurnDamage) this.opts.onBurnDamage(b, dot);
@@ -882,12 +1016,15 @@ export class Economy extends Phaser.Events.EventEmitter {
     // Дерево: «Засуха» ×0.7 (§H.17); мясо: «Пастбище» (§H.16);
     // руда: «Золотая жила»/сезон «Золотая лихорадка мира» (§H.16, §H.18)
     if (res === 'wood') return Math.max(1, Math.round(base * (1 + 0.2 * this.card('forestry')) * this.tune.woodYield));
-    if (res === 'meat') return Math.max(1, Math.round(base * (this.card('provisions') > 0 ? 4 / 3 : 1) * this.tune.sheepYield));
+    if (res === 'meat') {
+      // «Провиант»: +1 мясо за цикл на каждом ранге (3 → 4 → 5).
+      return Math.max(1, Math.round(base * (1 + this.card('provisions') / 3) * this.tune.sheepYield));
+    }
     return Math.max(1, Math.round(base * this.tune.veinYield));
   }
 
   veinCharges(): number {
-    return this.tune.veinCharges + (this.card('deepmines') > 0 ? 1 : 0);
+    return this.tune.veinCharges + this.card('deepmines');
   }
 
   veinYield(): number {

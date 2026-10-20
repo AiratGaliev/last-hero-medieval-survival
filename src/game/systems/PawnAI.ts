@@ -126,32 +126,46 @@ export class PawnAI {
     }
 
     // --- 2. Враг рядом → паника, бег к замку (§A.5, PANIC 220) ---
-    if (this.enemyNear(p.x, p.y, AGGRO.PANIC)) {
+    if (this.shouldFlee(p)) {
       p.state = 'flee';
       this.walkTo(p, eco.castleX, eco.castleY, dtMs);
       return;
     }
 
+    // Уже оплаченная стройка или ремонт закреплены за пешкой до завершения.
+    // Ранее эти jobs продолжались только в отдельных ветках builder/repairer
+    // или при приказе BUILD: помощник-сборщик по карте «Вече» возвращался к
+    // обычному сбору на следующем тике, оставляя оплаченный job незавершённым.
+    const activeBuildJob = eco.buildJobs.find((job) => job.pawn === p);
+    if (activeBuildJob) {
+      const d = Phaser.Math.Distance.Between(p.x, p.y, activeBuildJob.spot.x, activeBuildJob.spot.y);
+      if (d < 90) {
+        p.state = 'work';
+        p.playWork('hammer');
+        p.setVelocity(0, 0);
+      } else {
+        p.state = 'walk';
+        this.walkTo(p, activeBuildJob.spot.x, activeBuildJob.spot.y, dtMs);
+      }
+      return;
+    }
+
+    const activeRepairJob = eco.repairJobs.find((job) => job.pawn === p);
+    if (activeRepairJob) {
+      const d = Phaser.Math.Distance.Between(p.x, p.y, activeRepairJob.building.x, activeRepairJob.building.y);
+      if (d < 100) {
+        p.state = 'work';
+        p.playWork('hammer');
+        p.setVelocity(0, 0);
+      } else {
+        p.state = 'walk';
+        this.walkTo(p, activeRepairJob.building.x, activeRepairJob.building.y, dtMs);
+      }
+      return;
+    }
+
     // --- 3. Приказы игрока (перебивают автоприоритеты, §B.6) ---
     if (p.order === 'build') {
-      // ⚠️ Если стройка УЖЕ оплачена этой пешкой — продолжаем её, а не берём
-      // новое пятно. `nearestFreeSpot` на следующем тике вернул бы уже другое
-      // пятно (первое занято markSpot), строитель ушёл бы, оплаченная стройка
-      // зависла бы навсегда — и пешка заплатила бы за ВТОРОЕ здание.
-      const mine = eco.buildJobs.find((j) => j.pawn === p);
-      if (mine) {
-        const d = Phaser.Math.Distance.Between(p.x, p.y, mine.spot.x, mine.spot.y);
-        if (d > 90) {
-          p.state = 'walk';
-          this.walkTo(p, mine.spot.x, mine.spot.y, dtMs);
-        } else {
-          p.state = 'work';
-          p.playWork('hammer');
-          p.setVelocity(0, 0);
-          p.taskProgress = 0;
-        }
-        return;
-      }
       const spot = this.nearestFreeSpot(p);
       if (spot) {
         if (Phaser.Math.Distance.Between(p.x, p.y, spot.x, spot.y) < 70) {
@@ -192,35 +206,13 @@ export class PawnAI {
     // ⚠️ Сначала продолжаем НАЧАТУЮ стройку — иначе строитель закладывал бы
     // новое здание каждый кадр (двойное списание, риск §D.2).
     if (p.kind === 'builder') {
-      const job = eco.buildJobs.find((j) => j.pawn === p);
-      if (job) {
-        const d = Phaser.Math.Distance.Between(p.x, p.y, job.spot.x, job.spot.y);
-        if (d < 90) {
-          p.state = 'work';
-          p.playWork('hammer');
-          p.setVelocity(0, 0);
-        } else {
-          p.state = 'walk';
-          this.walkTo(p, job.spot.x, job.spot.y, dtMs);
-        }
-        return;
-      }
       const spot = this.pickBuildSpot(p);
-      let target = spot;
-      if (spot && spot.kind !== 'house') {
-        const cost = BUILDING_PLANS[spot.kind].cost;
-        const affordBig = eco.resources.wood >= (cost.wood ?? 0) && eco.resources.ore >= (cost.ore ?? 0);
-        if (!affordBig) {
-          // Экономика в яме: крупная стройка не по карману. Фолбэк — дом:
-          // он даёт +1 лимит населения и новых жителей (§B.2, §E.5), иначе
-          // строитель простаивает вечно, а поселение не восстанавливается.
-          const house = this.nearestHouseSpot(p);
-          if (house) {
-            const hc = BUILDING_PLANS.house.cost;
-            if (eco.resources.wood >= (hc.wood ?? 0)) target = house;
-          }
-        }
-      }
+      // ⚠️ Раньше здесь был фолбэк «крупное здание не по карману → дом».
+      // Он ломал план поселения: строитель всегда уходил строить дом и
+      // казармы (нужны для преемственности, §F.3) не появлялись НИКОГДА.
+      // Теперь порядок задаёт Economy.nextBuildKind(), а если цель ещё
+      // недоступна по деньгам — строитель копит под неё (target ниже).
+      const target = spot;
       if (target) {
         const cost = BUILDING_PLANS[target.kind].cost;
         const afford = eco.resources.wood >= (cost.wood ?? 0) && eco.resources.ore >= (cost.ore ?? 0);
@@ -250,20 +242,6 @@ export class PawnAI {
 
     // --- 5. Ремонтник: повреждённое здание (активировано фазой L) ---
     if (p.kind === 'repairer') {
-      // Продолжаем начатый ремонт
-      const job = eco.repairJobs.find((j) => j.pawn === p);
-      if (job) {
-        const d = Phaser.Math.Distance.Between(p.x, p.y, job.building.x, job.building.y);
-        if (d < 100) {
-          p.state = 'work';
-          p.playWork('hammer');
-          p.setVelocity(0, 0);
-        } else {
-          p.state = 'walk';
-          this.walkTo(p, job.building.x, job.building.y, dtMs);
-        }
-        return;
-      }
       const b = this.mostDamagedBuilding();
       if (b && eco.resources.wood >= 30 && eco.repair(b, p)) {
         p.state = 'work';
@@ -380,9 +358,25 @@ export class PawnAI {
   private pickNodeFor(p: Pawn, minimums?: Partial<Record<ResourceKind, number>>): ResourceNode | null {
     const eco = this.eco;
     const enemies = this.c.enemies();
-    // Дефицит: план расхода (стройки/ремонт/лечение/наём) против склада
-    // + базовый план старта (первый дом 30 дерева, казармы 40+15 — §B.4, §B.9)
-    const target: Record<string, number> = { wood: 30, ore: 15, meat: 3 };
+    // Дефицит: план расхода (стройки/ремонт/лечение/наём) против склада.
+    //
+    // ⚠️ Раньше здесь стоял жёсткий базовый план `{ wood: 30, ore: 15, meat: 3 }`
+    // и НЕ учитывалась цель автостройки. Из-за этого руда под казармы никогда
+    // не добывалась (дефицит руды был 15 против 30 дерева, и сборщики
+    // бесконечно таскали дерево), а после исчерпания базового плана все
+    // оценки становились нулевыми и сборщик вообще вставал. Теперь план
+    // расхода — это цель следующей постройки плюс активные стройки, ремонты
+    // и найм (§B.6: «target — план расхода»).
+    const target: Record<string, number> = { wood: 0, ore: 0, meat: 3 };
+    // План автостройки: цель и следующий шаг (§B.6 «target — план расхода»).
+    // Если такая стройка уже заложена, её цена учтена ниже по списку.
+    const plannedCost = eco.plannedBuildCost();
+    const plannedKind = eco.nextBuildKind();
+    if (plannedKind && !eco.buildJobs.some((j) => j.spot.kind === plannedKind)) {
+      for (const [k, v] of Object.entries(plannedCost)) {
+        target[k] = (target[k] ?? 0) + v;
+      }
+    }
     for (const j of eco.buildJobs) {
       for (const [k, v] of Object.entries(BUILDING_PLANS[j.spot.kind].cost)) {
         target[k] += v;
@@ -434,41 +428,47 @@ export class PawnAI {
     return best;
   }
 
-  /** Ближайшее свободное пятно именно под дом (фолбэк автостройки, §B.2). */
-  private nearestHouseSpot(p: Pawn): { kind: BuildingKind; x: number; y: number } | null {
-    const spots = this.eco.freeSpots().filter((s) => s.kind === 'house');
-    let best: { kind: BuildingKind; x: number; y: number } | null = null;
-    let bestD = Infinity;
-    for (const s of spots) {
-      const d = (s.x - p.x) ** 2 + (s.y - p.y) ** 2;
-      if (d < bestD) { bestD = d; best = s; }
-    }
-    return best;
-  }
-
   /**
-   * Пятно для автостройки строителя. Казармы имеют приоритет над домиками —
-   * «страховка от смерти строится раньше» (Фаза E ROADMAP, TZ §F.3).
+   * Пятно для автостройки строителя — по плану поселения (TZ §B.4, §B.9).
+   *
+   *  Порядок задаёт Economy.nextBuildKind(): сначала дом (цель первой
+   *  минуты), потом казармы (страховка от смерти героя), затем остальные
+   *  дома, обитель, башня и тир. Прежний порядок «крупное пятно первым»
+   *  держал строителя в ожидании руды до 107-й секунды матча, а дом
+   *  не появлялся вообще.
    */
   private pickBuildSpot(p: Pawn): { kind: BuildingKind; x: number; y: number } | null {
     const spots = this.eco.freeSpots();
-    const big = spots.filter((s) => s.kind !== 'house');
-    if (big.length > 0) {
-      // Казармы первыми (порядок BUILD_SPOTS), затем прочие крупные
-      const barracks = big.find((s) => s.kind === 'barracks');
-      if (barracks) return barracks;
-      return big[0];
+    const kind = this.eco.nextBuildKind();
+    if (kind) {
+      const spot = spots.find((s) => s.kind === kind);
+      if (spot) return spot;
     }
+    // Пятна нужного вида кончились (или план исчерпан) — берём ближайшее.
     return this.nearestFreeSpot(p);
   }
 
   private mostDamagedBuilding(): Building | null {
     let best: Building | null = null;
     let bestFrac = 1;
+    let bestIsRuins = false;
     for (const b of this.eco.buildings) {
-      if (!b.alive || b.kind === 'castle' || b.plan.noRepair) continue;
-      // Строящееся здание (hp=0 при стройке) — не «повреждённое» (§B.4)
-      if (b.underConstruction) continue;
+      if (!b.alive || b.kind === 'castle' || b.plan.noRepair || b.collapsePending) continue;
+      // Активная стройка не является целью ремонта. Руины тоже помечены
+      // underConstruction, но у них нет buildJob и hp=0 — их надо восстановить.
+      if (this.eco.buildJobs.some((job) => job.building === b)) continue;
+      const isRuins = b.hp <= 0;
+      if (b.underConstruction && !isRuins) continue;
+      if (isRuins) {
+        // Восстановление руин приоритетнее починки повреждённого здания.
+        if (!bestIsRuins) {
+          best = b;
+          bestFrac = -1;
+          bestIsRuins = true;
+        }
+        continue;
+      }
+      if (bestIsRuins) continue;
       const frac = b.hp / b.maxHp;
       if (frac < 1 && frac < bestFrac) { bestFrac = frac; best = b; }
     }
@@ -534,7 +534,7 @@ export class PawnAI {
 
   /** 45 сек, +15 с картой «Полевой лекарь» (§G.3 / §H.5). */
   private bleedoutSec(): number {
-    return BLEEDOUT_SEC + (this.eco.card('fieldmedic') > 0 ? 15 : 0);
+    return BLEEDOUT_SEC + 15 * this.eco.card('fieldmedic');
   }
 
   /** Доводит истекающего до ворот (у монастыря — уже там, у замка — нет). */
@@ -555,20 +555,23 @@ export class PawnAI {
     // отдавал одно 150-миллисекундное окно первому попавшему, и при двух
     // воинах первый думал вдвое чаще второго — с ростом гарнизона тайминг
     // боя становился всё более неровным.
-    const acc = (this.combatAcc.get(p) ?? 0) + dtMs;
-    const frame = dtMs;
-    if (acc >= this.curTickMs) {
-      // Фолбэк тика при просадке FPS (§B.7.1)
-      const fps = this.scene.game.loop.actualFps;
-      this.curTickMs = fps < 40 ? GARRISON.TICK_FALLBACK_MS : GARRISON.TICK_MS;
-      // Отнимаем ровно одно окно, а не обнуляем: при просадке FPS на 16
-      // остаток не должен копиться и превращать тик в 250 мс «раз в 4 кадра».
-      this.combatAcc.set(p, acc - this.curTickMs);
-      this.combatThink(p, now, this.curTickMs);
+    //
+    // Сначала выбираем актуальное окно, а уже потом сравниваем с аккумулятором.
+    // В старом порядке условие проверялось по 150 мс, но при FPS<40 из
+    // аккумулятора вычиталось 250 мс: получалось отрицательное время и первый
+    // боевой тик запускался раньше окна, а следующий — позже.
+    const fps = this.scene.game.loop.actualFps;
+    this.curTickMs = fps < 40 ? GARRISON.TICK_FALLBACK_MS : GARRISON.TICK_MS;
+    const tickMs = this.curTickMs;
+    const acc = (this.combatAcc.get(p) ?? 0) + Math.max(0, dtMs);
+    if (acc >= tickMs) {
+      // Отнимаем ровно одно окно, сохраняя остаток для следующего тика.
+      this.combatAcc.set(p, acc - tickMs);
+      this.combatThink(p, now, tickMs);
     } else {
       this.combatAcc.set(p, acc);
     }
-    this.combatMove(p, frame);
+    this.combatMove(p, dtMs);
   }
 
   private combatThink(p: Pawn, now: number, tickMs: number): void {
@@ -934,6 +937,60 @@ export class PawnAI {
   private enemyNear(x: number, y: number, r: number): boolean {
     for (const e of this.c.enemies()) {
       if (!e.active || e.dead) continue;
+      if (Math.hypot(e.x - x, e.y - y) < r) return true;
+    }
+    return false;
+  }
+
+  /**
+   * Паника гражданского (§B.2, §A.5).
+   *
+   *  Базовое правило: враг ближе AGGRO.PANIC — пешка бежит к замку.
+   *
+   *  ⚠️ **Два уточнения, без которых экономика не работала.**
+   *
+   *  1. **Ядро поселения** (авторизованное отклонение §A.5): гражданские
+   *     внутри ядра (замок + пояс вокруг строек, `Economy.isSettlementCore`)
+   *     недостижимы для обычных волн — враг их там не выбирает целью. Паниковать
+   *     из-за врага, который всё равно не дойдёт, бессмысленно: толпа гоблинов
+   *     у ворот вставала колом ВСЁ поселение, и экономика вставала вместе с
+   *     ним (в замере первый дом не появлялся и за 3,5 минуты матча). Осада —
+   *     единственный механизм угрозы базе (§D.1), поэтому от осадного врага
+   *     паника сохраняется в любой точке карты.
+   *
+   *  2. **Враг, занятый героем, — не личная угроза рабочему.** §A.5
+   *     отдаёт герою первую цель: пока игрок дерётся, толпа идёт за ним, и
+   *     рабочие не должны бросать работу из-за каждого проходящего гоблина.
+   *     Паника включается ровно тогда, когда враг переключился на
+   *     поселение (цель-пешка вместо героя) — это и есть «база в опасности»
+   *     из §B.2. Именно тогда игрок должен вернуться к базе.
+   */
+  private shouldFlee(p: Pawn): boolean {
+    const eco = this.eco;
+    if (!this.enemyNear(p.x, p.y, AGGRO.PANIC)) return false;
+    const inCore = eco.isSettlementCore(p.x, p.y);
+    // В ядре поселения обычная волна не достаёт до гражданских (§A.5) —
+    // паникует только осада, единственная угроза базе (§D.1).
+    if (inCore) return this.siegeNear(p.x, p.y, AGGRO.PANIC);
+    // Враг идёт за героем — угрозы лично для рабочему нет. Паника
+    // включается, когда враг переключился на поселение.
+    return this.hunterNear(p.x, p.y, AGGRO.PANIC);
+  }
+
+  /** Осадный враг рядом: доходит до самой базы (§D.1). */
+  private siegeNear(x: number, y: number, r: number): boolean {
+    for (const e of this.c.enemies()) {
+      if (!e.active || e.dead || !e.siege) continue;
+      if (Math.hypot(e.x - x, e.y - y) < r) return true;
+    }
+    return false;
+  }
+
+  /** Враг, переключившийся на поселение (цель-пешка вместо героя, §A.5). */
+  private hunterNear(x: number, y: number, r: number): boolean {
+    for (const e of this.c.enemies()) {
+      if (!e.active || e.dead) continue;
+      if (e.aimedPawn === null) continue;
       if (Math.hypot(e.x - x, e.y - y) < r) return true;
     }
     return false;

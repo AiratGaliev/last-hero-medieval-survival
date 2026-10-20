@@ -59,6 +59,11 @@ export class Monastery {
     return Math.max(0, this.totalSlots() - this.usedSlots());
   }
 
+  /** «Полевой лекарь»: ранг I экономит 25% дерева, ранг II — 50%. */
+  private healWoodMultiplier(): number {
+    return Math.max(0.5, 1 - 0.25 * this.eco.card('fieldmedic')) * this.eco.tune.healWood;
+  }
+
   /**
    * Тик лечения: 12 HP/с (+3 «Чистые перевязи» §H.16), 1 дерево за 15 HP;
    * «Бережные руки» ×0.7 и «Чума» ×2 (A2); пустой склад — пауза, место
@@ -77,9 +82,7 @@ export class Monastery {
       for (let s = 0; s < b.healSlots.length; s++) {
         const unit = b.healSlots[s] as Pawn | null;
         if (!unit || !unit.active) continue;
-        const woodPerSec = hpPerSec / 15
-          * (this.eco.card('fieldmedic') > 0 ? 0.75 : 1)
-          * this.eco.tune.healWood;
+        const woodPerSec = hpPerSec / 15 * this.healWoodMultiplier();
         if (this.eco.resources.wood < woodPerSec * seconds) continue; // склад пуст — HP не растёт
         spentWood += woodPerSec * seconds;
         const amount = hpPerSec * seconds;

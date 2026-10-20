@@ -96,7 +96,10 @@ export class Settlement {
   get infrastructureMax(): number {
     let hp = 0;
     for (const b of this.eco.buildings) {
-      if (b.alive) hp += b.maxHp;
+      // Незавершённые стройки и руины не могут принимать урон и не должны
+      // увеличивать знаменатель потолка осады. Иначе игрок получает скрытый
+      // бонус к лимиту урона, просто начав строить/потеряв дом.
+      if (b.alive && !b.underConstruction) hp += b.maxHp;
     }
     return Math.max(1, hp);
   }
@@ -174,7 +177,7 @@ export class Settlement {
       if (sword) {
         const share = Math.min(amount * TAUNT.SHARE, sword.hp);
         amount -= share;
-        this.eco.woundPawn(sword, share, this.scene.time.now);
+        this.eco.woundPawn(sword, share, this.simulationTimeMs);
         this.flashTaunt(sword);
         // Телеметрия §K.2: таунт перетянул долю урона на себя
         track('garrison_taunt', { weapon: sword.weapon ?? 'sword', building_kind: b.kind, dmg_redirected: Math.round(share * 10) / 10 });
@@ -216,7 +219,7 @@ export class Settlement {
   private tauntingSword(b: Building): Pawn | null {
     for (const p of this.eco.garrison) {
       if (p.kind !== 'fighter' || p.weapon !== 'sword' || p.dead) continue;
-      if (p.state !== 'fight') continue;
+      if (p.state !== 'fight' || p.order !== 'hold' || !p.orderTarget) continue;
       if (Math.hypot(p.x - b.x, p.y - b.y) <= TAUNT.RADIUS) return p;
     }
     return null;
@@ -231,7 +234,7 @@ export class Settlement {
     const sword = this.tauntingSwordAt(victim);
     if (!sword) return raw;
     const share = Math.min(raw * TAUNT.SHARE, sword.hp);
-    this.eco.woundPawn(sword, share, this.scene.time.now);
+    this.eco.woundPawn(sword, share, this.simulationTimeMs);
     this.flashTaunt(sword);
     track('garrison_taunt', {
       weapon: sword.weapon ?? 'sword', building_kind: 'pawn', dmg_redirected: Math.round(share * 10) / 10,
@@ -242,7 +245,7 @@ export class Settlement {
   private tauntingSwordAt(victim: Pawn): Pawn | null {
     for (const p of this.eco.garrison) {
       if (p.kind !== 'fighter' || p.weapon !== 'sword' || p.dead) continue;
-      if (p.state !== 'fight') continue;
+      if (p.state !== 'fight' || p.order !== 'hold' || !p.orderTarget) continue;
       if (Math.hypot(p.x - victim.x, p.y - victim.y) <= TAUNT.RADIUS) return p;
     }
     return null;
@@ -255,8 +258,8 @@ export class Settlement {
    * «поставить мечника под осаду», ради которого таунт и придуман.
    */
   private flashTaunt(sword: Pawn): void {
-    if (sword.tauntFlashUntil > this.scene.time.now) return;
-    sword.tauntFlashUntil = this.scene.time.now + 700;
+    if (sword.tauntFlashUntil > this.simulationTimeMs) return;
+    sword.tauntFlashUntil = this.simulationTimeMs + 700;
     sword.showTauntBadge();
     audio.play('hit');
   }
@@ -270,11 +273,10 @@ export class Settlement {
     this.siegeWounds++;
   }
 
-  /** Осадный враг ранит пешку: только по лимиту профиля (§E.4). */
+  /** Осадный враг ранит пешку: лимит расходуется только на реальный переход в wounded (§E.4). */
   siegeWoundPawn(pawn: Pawn, dmg: number, now: number): void {
     if (!this.canWoundInSiege()) return;
-    this.registerWound();
-    this.eco.woundPawn(pawn, dmg, now);
+    if (this.eco.woundPawn(pawn, dmg, now)) this.registerWound();
   }
 
   // ================= РАЗРУШЕНИЕ =================
@@ -312,8 +314,13 @@ export class Settlement {
       }
   }
 
+  private get simulationTimeMs(): number {
+    const value = this.scene.registry.get('tss-active-time-ms');
+    return typeof value === 'number' && Number.isFinite(value) ? value : this.scene.time.now;
+  }
+
   private fmtTime(): string {
-    const s = Math.floor(this.scene.time.now / 1000);
+    const s = Math.floor(this.simulationTimeMs / 1000);
     return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
   }
 

@@ -3,11 +3,11 @@ import { Cursor } from '../systems/Cursor';
 import {
   WORLD, PLAYER_BASE, DEPTH, ENEMY_CAP, SCORE, XP_CURVE, COMBO, MAX_LEVEL,
   AGGRO, SIEGE, LONGPRESS_MS, VEIN_COUNT, VEIN_CHARGES, VEIN_YIELD,
-  TOWER, BOSS_GOLD, HEAL_HP_PER_SEC, GARRISON_DPS_CAP,
+  TOWER, BOSS_GOLD, HEAL_HP_PER_SEC, GARRISON_DPS_CAP, SETTLEMENT_CORE,
 } from '../constants';
 import {
   WEAPONS, PASSIVES, HEROES, ENEMIES, DIFFICULTIES, EVOLUTIONS,
-  SETTLEMENT_CARDS, BUILD_SPOTS,
+  SETTLEMENT_CARDS, BUILD_SPOTS, pickDailyPool,
   type WeaponId, type PassiveId, type EnemyKind, type UpgradeCard, type HeroId, type HeroDef, type DifficultyId, type DifficultyDef,
   type SiegeProfile, type BuildingKind, type PawnWeapon,
 } from '../data';
@@ -90,6 +90,11 @@ export class GameScene extends Phaser.Scene {
   private readonly garrisonDpsBudget = new GarrisonDpsBudget(GARRISON_DPS_CAP);
   /** Frozen theoretical hero DPS baseline captured at game time 10:00. */
   private heroDpsAtTenMinutes: number | null = null;
+  /** Диагностика потолка урона гарнизона включается только в dev с ?debug. */
+  private dpsDebugText: Phaser.GameObjects.Text | null = null;
+  private lastDpsDebugUpdate = 0;
+  private dpsDebugRawDamage = 0;
+  private dpsDebugAppliedDamage = 0;
   /** Замок стоит в центре-севере арены (как декор раньше). */
   private readonly castleX = WORLD.SIZE / 2;
   private readonly castleY = WORLD.SIZE / 2 - 460;
@@ -168,6 +173,8 @@ export class GameScene extends Phaser.Scene {
   private chestTimer = 40;
   private chestsOpened = 0;
   private elitesSlain = 0;
+  /** Монотонное время активной симуляции: не расходуется под блокирующим overlay. */
+  private activeTimeMs = 0;
   private hitstopUntil = 0;
   private ach: AchTracker | null = null;
   private shopLevels: ShopLevels = { might: 0, vitality: 0, speed: 0, magnet: 0, luck: 0 };
@@ -294,7 +301,7 @@ export class GameScene extends Phaser.Scene {
     const heroTint = heroSkinTint();
     if (heroTint !== null) this.player.setTint(heroTint);
     // «Вторые ворота» (§H.16): щит героя на 5 сек в начале матча
-    if (this.fx.heroShieldMs > 0) this.player.iframesUntil = this.time.now + this.fx.heroShieldMs;
+    if (this.fx.heroShieldMs > 0) this.player.iframesUntil = this.activeTimeMs + this.fx.heroShieldMs;
     // Зум камеры выставлен выше (до сборки мира) — HUD и подсказки
     // компенсируют его обратным масштабом.
     this.scale.on('resize', this.resizeZoom, this);
@@ -332,9 +339,18 @@ export class GameScene extends Phaser.Scene {
   }
 
   private resetState(): void {
+    this.activeTimeMs = 0;
     this.heroDpsAtTenMinutes = null;
     this.garrisonDpsBudget.reset();
+    this.dpsDebugText?.destroy();
+    this.dpsDebugText = null;
+    this.lastDpsDebugUpdate = 0;
+    this.dpsDebugRawDamage = 0;
+    this.dpsDebugAppliedDamage = 0;
     this.hintOverlayPaused = false;
+    this.registry.set('tss-hint-overlay-paused', false);
+    this.registry.set('tss-active-time-ms', 0);
+    this.time.paused = false;
     this.houseHintArmed = true;
     this.pawnsHintArmed = true;
     this.elapsed = 0; this.kills = 0; this.level = 1;
@@ -514,7 +530,11 @@ export class GameScene extends Phaser.Scene {
     const cx = S / 2, cy = S / 2;
     const placed: { x: number; y: number; r: number }[] = [];
     const canPlace = (x: number, y: number, r: number): boolean => {
-      if (Math.hypot(x - cx, y - cy) < 380) return false; // зона спавна
+      // ⚠️ Чистая зона — вокруг ЗАМКА, а не вокруг центра карты. Раньше
+      // центр был зоной спавна героя (до появления поселения); теперь там
+      // стоит база, и запрет на 380 px выкашивал полкарты — деревьев
+      // оставалось 26, а половина рабочего радиуса была пустой.
+      if (Math.hypot(x - this.castleX, y - this.castleY) < 200) return false;
       for (const p of placed) {
         if (Math.hypot(x - p.x, y - p.y) < p.r + r) return false;
       }
@@ -525,6 +545,28 @@ export class GameScene extends Phaser.Scene {
       Phaser.Math.Clamp(rng.between(m + 80, S - m - 80), margin, S - margin),
       Phaser.Math.Clamp(rng.between(m + 80, S - m - 80), margin, S - margin),
     ];
+    /** Дерево-узел: спрайт + ResourceNode (§B.3). */
+    const TREE_KEYS = ['tree1', 'tree2', 'tree3', 'tree4'] as const;
+    const addTree = (x: number, y: number, radius = 70): void => {
+      const key = TREE_KEYS[rng.between(0, TREE_KEYS.length - 1)];
+      const sc = 0.75 + rng.frac() * 0.4;
+      const t = this.add.sprite(x, y, key).setScale(sc);
+      t.play(key + '-sway');
+      if (t.anims.currentAnim) t.setFrame(rng.between(0, 7));
+      t.setDepth(DEPTH.ENTITY_BASE + y);
+      place(x, y, radius);
+      this.economy.registerNode(new ResourceNode(this, 'tree', 'wood', x, y, 1, t));
+    };
+    /** Овца-узел: 3 мяса за цикл (§B.3). */
+    const addSheep = (x: number, y: number): void => {
+      const sh = this.add.sprite(x, y, 'sheep').setScale(0.8);
+      sh.play('sheep-idle');
+      sh.setDepth(DEPTH.ENTITY_BASE + y);
+      place(x, y, 50);
+      if (this.contractId !== 'c_hunger') {
+        this.economy.registerNode(new ResourceNode(this, 'sheep', 'meat', x, y, 1, sh));
+      }
+    };
 
     // ---- Экономика и поселение (TZ §B): до декора, чтобы узлы
     // ресурсов регистрировались сразу. Замок — Building с HP (§E). ----
@@ -611,6 +653,10 @@ export class GameScene extends Phaser.Scene {
     this.speedup = new Speedup(this.economy);
     this.hints = new Hints(this, (paused) => {
       this.hintOverlayPaused = paused;
+      this.registry.set('tss-hint-overlay-paused', paused);
+      // Заморозить Timer Events: иначе delayedCall (например fallback гарпуна)
+      // может сработать под overlay, а абсолютные дедлайны продолжат истекать.
+      this.time.paused = paused;
       if (paused) this.physics.world.pause();
       else this.physics.world.resume();
     });
@@ -621,8 +667,18 @@ export class GameScene extends Phaser.Scene {
     this.orderMenu = new OrderMenu(this);
     void cx; void cy;
 
-    // Замок — база поселения (Building с HP, создаётся в Settlement)
-    place(this.castleX, this.castleY, 200);
+    // Замок — база поселения (Building с HP, создаётся в Settlement).
+    // Радиус занятости 150 px: замок 288×230 (scale 0.9), и больше места
+    // занимать нельзя — иначе рабочий пояс у базы не помещается.
+    place(this.castleX, this.castleY, 150);
+    // ---- Рабочий пояс поселения (§B.3, §B.9) ----
+    //
+    // Собственный лес, пастбище и две жилы у самой базы. Пояс ставится
+    // ДО точек стройки (в промежутках между ними) и лежит ВНУТРИ ядра
+    // поселения (SETTLEMENT_CORE), поэтому сбор идёт без паники: иначе
+    // рабочим приходилось бегать через полкарты за каждым куском, и первый
+    // дом не появлялся даже за 3,5 минуты матча (гейт фазы E).
+    const belt = this.spawnSettlementBelt(rng, canPlace, place, addTree, addSheep);
     // Пятна стройки: мягкие маркеры на земле (§I.2 — игрок видит, где будет дом)
     for (const spot of BUILD_SPOTS) {
       const sx = this.castleX + spot.dx, sy = this.castleY + spot.dy;
@@ -630,12 +686,24 @@ export class GameScene extends Phaser.Scene {
         .setScale(0.85).setAlpha(0.16).setDepth(DEPTH.GEM);
       place(sx, sy, 96);
     }
-    this.add.image(cx - 240, cy - 420, 'house2').setScale(0.8).setDepth(DEPTH.ENTITY_BASE + cy - 420);
-    this.add.image(cx + 230, cy - 430, 'house1').setScale(0.8).setDepth(DEPTH.ENTITY_BASE + cy - 430);
-    this.add.image(cx - 320, cy - 300, 'tower').setScale(0.85).setDepth(DEPTH.ENTITY_BASE + cy - 300);
-    this.add.image(cx + 320, cy - 280, 'tower').setScale(0.85).setDepth(DEPTH.ENTITY_BASE + cy - 280);
-    this.add.image(cx + 60, cy + 470, 'monastery').setScale(0.8).setDepth(DEPTH.ENTITY_BASE + cy + 470);
-    place(cx + 60, cy + 470, 160);
+    // ---- Декоративные постройки других поселений ----
+    // ⚠️ Раньше они ставились относительно центра карты (±240…470 от него),
+    // то есть в 230–360 px от ЗАМКА — прямо на пятна стройки и на рабочий
+    // пояс. Теперь они отнесены на 900+ px от базы: это чужие деревни на
+    // карте, а не деталь, растущая сквозь казармы.
+    const decor: Array<[string, number, number, number]> = [
+      ['house2', -620, 700, 0.8],
+      ['house1', 640, 690, 0.8],
+      ['tower', -900, 260, 0.85],
+      ['tower', 880, -240, 0.85],
+      ['monastery', 120, 1150, 0.8],
+    ];
+    for (const [key, dx, dy, scale] of decor) {
+      const x = this.castleX + dx, y = this.castleY + dy;
+      if (x < m + 120 || x > S - m - 120 || y < m + 120 || y > S - m - 120) continue;
+      this.add.image(x, y, key).setScale(scale).setDepth(DEPTH.ENTITY_BASE + y);
+      place(x, y, key === 'monastery' ? 160 : 120);
+    }
 
     // Дома и башни по карте
     for (let i = 0; i < 8; i++) {
@@ -653,20 +721,57 @@ export class GameScene extends Phaser.Scene {
         place(x, y, 110);
       }
     }
+    // ---- Овечки: ресурс мяса — 3 за цикл, овца исчезает (§B.3) ----
+    // «Дефицит» (A2): овец ×2; контракт «Голодный год» (§H.9): овцы не доятся
+    //
+    // ⚠️ Овцы ставятся ДО деревьев, камней и кустов: раньше они шли
+    // последними и почти всегда попадали в уже занятое canPlace() место —
+    // на карте оказывалось 2 овцы вместо 10, то есть 6 мяса вместо 30
+    // (§B.5: «мясо — стоковый кран, ~30 мяса на матч, максимум ~6
+    // наймов/жителей»). Мясо — жёсткий лимит найма, его нельзя терять.
+    const sheepCount = (this.challengeMods.has('cm_scarcity') ? 20 : 10) - belt.sheep;
+    let sheepPlaced = 0;
+    for (let attempt = 0; attempt < 60 && sheepPlaced < sheepCount; attempt++) {
+      // Овцы — в рабочем радиусе: мясо нужно пешкам, а не декорации (§B.3).
+      const a = rng.realInRange(0, Math.PI * 2);
+      const r = rng.realInRange(230, 980);
+      const x = this.castleX + Math.cos(a) * r;
+      const y = this.castleY + Math.sin(a) * r;
+      if (x < m + 80 || x > S - m - 80 || y < m + 80 || y > S - m - 80) continue;
+      if (!canPlace(x, y, 50)) continue;
+      addSheep(x, y);
+      sheepPlaced++;
+    }
+    // ---- Золотые жилы: 10 штук, 4 цикла × 20 руды (§B.3) ----
+    // Благословение «+1 жила» (A2) добавляет одиннадцатую.
+    // Жилы ставятся ДО деревьев: одна жила — 80 руды, это треть плана
+    // поселения по руде, и терять её из-за переполнения лесом нельзя.
+    this.spawnVeins(
+      rng, canPlace, place,
+      VEIN_COUNT - belt.veins + (this.mods.blessing === 'bl_vein' ? 1 : 0),
+    );
     // ---- Деревья: четыре породы разной высоты ----
     // Каждое дерево — ResourceNode: пешка рубит его и уносит 5 дерева (§B.3).
-    const TREE_KEYS = ['tree1', 'tree2', 'tree3', 'tree4'] as const;
-    for (let i = 0; i < 96; i++) {
-      const [x, y] = randPos();
-      if (!canPlace(x, y, 80)) continue;
-      const key = TREE_KEYS[rng.between(0, TREE_KEYS.length - 1)];
-      const sc = 0.75 + rng.frac() * 0.4;
-      const t = this.add.sprite(x, y, key).setScale(sc);
-      t.play(key + '-sway');
-      if (t.anims.currentAnim) t.setFrame(rng.between(0, 7));
-      t.setDepth(DEPTH.ENTITY_BASE + y);
-      place(x, y, 80);
-      this.economy.registerNode(new ResourceNode(this, 'tree', 'wood', x, y, 1, t));
+    //
+    // ⚠️ Деревья сеются В РАБОЧЕМ РАДИУСЕ (220…980 px от замка) решёткой
+    // с разбросом: пешки дальше 1000 px не ходят (§B.3), а раньше лес
+    // высыпался по всей карте и большая часть его была недостижима. Случайная
+    // выборка давала 26 деревьев (130 дерева на матч — на дом и казармы едва
+    // хватало), решётка с шагом 190 px и разбросом ±30 даёт ~40 деревьев
+    // (~200 дерева) — ровно под план поселения (§B.4) и ровно столько,
+    // сколько нужно, чтобы лес не выглядел полем с кустами.
+    const TREE_STEP = 190;
+    const TREE_JITTER = 30;
+    for (let gx = this.castleX - 980; gx <= this.castleX + 980; gx += TREE_STEP) {
+      for (let gy = this.castleY - 980; gy <= this.castleY + 980; gy += TREE_STEP) {
+        const x = gx + rng.realInRange(-TREE_JITTER, TREE_JITTER);
+        const y = gy + rng.realInRange(-TREE_JITTER, TREE_JITTER);
+        if (x < m + 80 || x > S - m - 80 || y < m + 80 || y > S - m - 80) continue;
+        const d = Math.hypot(x - this.castleX, y - this.castleY);
+        if (d < 220 || d > 980) continue;
+        if (!canPlace(x, y, 70)) continue;
+        addTree(x, y, 70);
+      }
     }
     // Пни у опушек: закрывают пустоты, где полноценное дерево не влезает
     for (let i = 0; i < 22; i++) {
@@ -769,23 +874,6 @@ export class GameScene extends Phaser.Scene {
       this.settlement.castle.hp += 50;
     }
 
-    // ---- Овечки: ресурс мяса — 3 за цикл, овца исчезает (§B.3) ----
-    // «Дефицит» (A2): овец ×2; контракт «Голодный год» (§H.9): овцы не доятся
-    const sheepCount = this.challengeMods.has('cm_scarcity') ? 20 : 10;
-    for (let i = 0; i < sheepCount; i++) {
-      const [x, y] = randPos();
-      if (!canPlace(x, y, 50)) continue;
-      const sh = this.add.sprite(x, y, 'sheep').setScale(0.8);
-      sh.play('sheep-idle');
-      sh.setDepth(DEPTH.ENTITY_BASE + y);
-      place(x, y, 50);
-      if (this.contractId !== 'c_hunger') {
-        this.economy.registerNode(new ResourceNode(this, 'sheep', 'meat', x, y, 1, sh));
-      }
-    }
-    // ---- Золотые жилы: 10 штук, 4 цикла × 20 руды (§B.3) ----
-    // Благословение «+1 жила» (A2) добавляет одиннадцатую
-    this.spawnVeins(rng, canPlace, place, VEIN_COUNT + (this.mods.blessing === 'bl_vein' ? 1 : 0));
     // Облака (дрейф вправо, относительный твин с переносом)
     for (let i = 0; i < 10; i++) {
       const [x, y] = [rng.between(0, S), rng.between(0, S)];
@@ -805,7 +893,12 @@ export class GameScene extends Phaser.Scene {
   }
 
   private buildPlayer(): void {
-    this.player = new Player(this, WORLD.SIZE / 2, WORLD.SIZE / 2 + 260, this.heroDef);
+    // ⚠️ Герой начинает У ЗАМКА, а не в стороне от поселения (§0.1, §B.9).
+    // Раньше старт был на 720 px южнее базы: камера открывала пустую траву,
+    // поселение было за экраном, а волны, спавнящиеся кольцом вокруг героя,
+    // проходили прямо сквозь базу. Теперь первый экран матча — это дом,
+    // пешки и точки стройки, а игрок сразу видит, что защищает.
+    this.player = new Player(this, this.castleX, this.castleY + 150, this.heroDef);
     // QA-хук (?qa_hero_hp=N, dev-сборки): увеличенное HP героя — чтобы
     // проверять осады/волны/поражение поселения E2E без смерти героя.
     // Бонус применяется в recomputeStats — иначе он перетирался бы heroDef.
@@ -849,6 +942,87 @@ export class GameScene extends Phaser.Scene {
       created++;
     }
     void VEIN_YIELD;
+  }
+
+  /**
+   * Рабочий пояс поселения (§B.3, §B.9).
+   *
+   *  Собственный лес, пастбище и две жилы у самой базы. Пояс лежит ВНУТРИ
+   *  ядра поселения (SETTLEMENT_CORE) и в промежутках между точками стройки,
+   *  поэтому:
+   *  • сбор идёт без паники — рабочему не нужно бегать через полкарты;
+   *  • первый дом появляется в первую минуту матча (гейт фазы E);
+   *  • пояс не пересекается с будущими постройками.
+   *
+   *  Числа подобраны под план расхода: 10 деревьев — это 50 дерева, а
+   *  дом + казармы стоят 70 дерева; три овцы — 9 мяса (найм воина — 5),
+   *  две жилы — 160 руды (казармы нужны 15, обитель — 40). Фактические
+   *  количества возвращаются наружу: общий сток карты обязан остаться
+   *  ровно 10 овец и 10 жил (§B.3), иначе мясо перестаёт быть стоковым
+   *  краном найма (§B.5).
+   */
+  private spawnSettlementBelt(
+    rng: Phaser.Math.RandomDataGenerator,
+    canPlace: (x: number, y: number, r: number) => boolean,
+    place: (x: number, y: number, r: number) => void,
+    addTree: (x: number, y: number, radius?: number) => void,
+    addSheep: (x: number, y: number) => void,
+  ): { sheep: number; veins: number } {
+    const R_MIN = 250;
+    const R_MAX = SETTLEMENT_CORE - 60;
+    /** Точка пояса: угол + радиус, с проверкой занятости и точек стройки. */
+    const beltSpot = (radius: number, attempts = 60): { x: number; y: number } | null => {
+      for (let i = 0; i < attempts; i++) {
+        const a = rng.realInRange(0, Math.PI * 2);
+        const r = rng.realInRange(R_MIN, R_MAX);
+        const x = this.castleX + Math.cos(a) * r;
+        const y = this.castleY + Math.sin(a) * r;
+        if (x < WORLD.GRASS_MARGIN + 80 || x > WORLD.SIZE - WORLD.GRASS_MARGIN - 80) continue;
+        if (y < WORLD.GRASS_MARGIN + 80 || y > WORLD.SIZE - WORLD.GRASS_MARGIN - 80) continue;
+        if (!canPlace(x, y, radius)) continue;
+        // Точки стройки: пояс не должен лезть под будущую постройку.
+        let clear = true;
+        for (const spot of BUILD_SPOTS) {
+          const sx = this.castleX + spot.dx, sy = this.castleY + spot.dy;
+          if (Math.hypot(x - sx, y - sy) < 96 + radius) { clear = false; break; }
+        }
+        if (!clear) continue;
+        return { x, y };
+      }
+      return null;
+    };
+    // Лес поселения
+    for (let i = 0; i < 16; i++) {
+      const spot = beltSpot(70);
+      if (!spot) break;
+      addTree(spot.x, spot.y, 70);
+    }
+    // Пастбище
+    let sheep = 0;
+    for (let i = 0; i < 4; i++) {
+      const spot = beltSpot(50);
+      if (!spot) break;
+      addSheep(spot.x, spot.y);
+      sheep++;
+    }
+    // Две жилы у базы: руда под казармы и обитель добывается рядом с домом
+    let veins = 0;
+    for (let i = 0; i < 3; i++) {
+      const spot = beltSpot(70);
+      if (!spot) break;
+      const variant = rng.between(1, 5);
+      const img = this.add.sprite(spot.x, spot.y, `gold-vein-${variant}`).setScale(0.9)
+        .setDepth(DEPTH.ENTITY_BASE + spot.y);
+      const pulse = this.add.sprite(spot.x, spot.y, `gold-vein-pulse-${variant}`)
+        .setScale(0.9).setDepth(DEPTH.GEM + 1).setBlendMode(Phaser.BlendModes.ADD);
+      pulse.play(`gold-vein-pulse-${variant}`);
+      place(spot.x, spot.y, 70);
+      this.economy.registerNode(
+        new ResourceNode(this, 'vein', 'ore', spot.x, spot.y, this.economy.veinCharges(), img, pulse),
+      );
+      veins++;
+    }
+    return { sheep, veins };
   }
 
   /** Скин построек (§J.6.2): setTint на замок и все здания. */
@@ -897,23 +1071,36 @@ export class GameScene extends Phaser.Scene {
         : null,
     });
     // Выбор цели врагом §A.5: гарнизон приоритетнее гражданских.
-    // Гражданские в ядре поселения (≤360 px от замка) — вне досягаемости:
-    // у разбега нет гарнизона, и без этого первая же волна вычищает
-    // экономику за минуту. Осада — единственный механизм угрозы базе (§D.1).
+    // Гражданские в ядре поселения — вне досягаемости: у разбега нет
+    // гарнизона, и без этого первая же волна вычищает экономику за минуту.
+    // Осада — единственный механизм угрозы базе (§D.1).
     this.registry.set('tss-picktarget', (e: Enemy): Pawn | null => {
-      let best: Pawn | null = null;
-      let bestScore = Infinity;
+      let nearestGarrison: Pawn | null = null;
+      let nearestCivilian: Pawn | null = null;
+      let garrisonDistance = Infinity;
+      let civilianDistance = Infinity;
       for (const p of this.economy.pawns) {
         if (p.dead || !p.active) continue;
         if (p.state === 'wounded' || p.state === 'bleeding') continue;
         const d = Math.hypot(p.x - e.x, p.y - e.y);
         if (d > AGGRO.NPC) continue;
-        if (p.cls === 'civilian'
-          && Math.hypot(p.x - this.castleX, p.y - this.castleY) < 360) continue;
-        const score = p.cls === 'garrison' ? d : d + 500; // гарнизон ближе к врагу в приоритете
-        if (score < bestScore) { bestScore = score; best = p; }
+        // Ядро поселения (TZ §A.5): обычные волны не выбирают гражданских
+        // в защищённой зоне — замок (560 px) плюс пояс вокруг точек стройки
+        // и построенных зданий; у осад отдельный путь.
+        if (p.cls === 'civilian' && this.economy.isSettlementCore(p.x, p.y)) continue;
+        // Приоритет категорий строгий: гарнизон важнее гражданских независимо
+        // от расстояния; внутри категории выбирается ближайшая доступная цель.
+        if (p.cls === 'garrison') {
+          if (d < garrisonDistance) {
+            garrisonDistance = d;
+            nearestGarrison = p;
+          }
+        } else if (d < civilianDistance) {
+          civilianDistance = d;
+          nearestCivilian = p;
+        }
       }
-      return best;
+      return nearestGarrison ?? nearestCivilian;
     });
 
     const spawnCtx: SpawnerCtx = {
@@ -991,6 +1178,10 @@ export class GameScene extends Phaser.Scene {
       extraSiege: this.challengeMods.has('cm_gold_rush'),
       // FTUE (§I.2): первый матч аккаунта — плотность волн −20% первые 3 минуты
       ftueSoftStart: this.ftueSoftStart,
+      // Вызов дня использует повторяемый пул по дате — обычные и бесконечные
+      // матчи не меняют свой состав врагов.
+      dailyPool: this.mods.challenge ? pickDailyPool(rollMetaDay().quests.date) : undefined,
+      alarmLevel: () => this.economy.card('alarm'),
     });
 
     const weaponCtx: WeaponCtx = {
@@ -1013,14 +1204,16 @@ export class GameScene extends Phaser.Scene {
     });
     this.hud.setIcon(startId, WEAPONS[startId].icon, 1, false);
     this.ach = new AchTracker((a) => this.hud.achievementToast(a));
+    this.setupDpsDebug();
 
     // ---- Подписки HUD на экономику (обновление по событию, §B.8) ----
     this.economy.on('change', () => {
       this.hud.updateResources(this.economy.resources);
       this.hud.updateSettlement(
+        this.settlement.castle.hp / Math.max(1, this.settlement.castle.maxHp),
         this.settlement.infrastructureHp / this.settlement.infrastructureMax,
         this.economy.pawns.length / Math.max(1, this.economy.pawnLimit),
-        t('hud.garrison', { a: this.economy.garrison.length, b: this.economy.totalGarrisonSlots() }),
+        this.garrisonHudLabel(),
       );
     });
     this.economy.on('built', ({ kind, first }) => {
@@ -1275,7 +1468,9 @@ export class GameScene extends Phaser.Scene {
         (target as Phaser.GameObjects.GameObject & { __tssOrderMenuTarget?: boolean }).__tssOrderMenuTarget === true
       ));
       if (hitsOrderMenu) return;
-      if (this.gameEnded || this.overlayOpen) return;
+      // FTUE-overlay имеет собственный pointerdown для закрытия; игровой ввод
+      // не должен начинать long-press/приказ на том же касании, пока overlay активен.
+      if (this.gameEnded || this.overlayOpen || this.hintOverlayPaused) return;
       // Нативный MouseEvent — основной источник, Phaser Keyboard — резерв:
       // часть браузеров/сценариев передаёт pointer.event уже после keyup Shift.
       const nativeShift = (pointer.event as unknown as { shiftKey?: boolean })?.shiftKey === true;
@@ -1295,7 +1490,7 @@ export class GameScene extends Phaser.Scene {
       if (!hitPawn && !hitBuilding) return;
       this.pressState = {
         x: wp, y: wy, screenX: pointer.x, screenY: pointer.y,
-        t: this.time.now, pointer, pawn: hitPawn, building: hitBuilding,
+        t: this.activeTimeMs, pointer, pawn: hitPawn, building: hitBuilding,
       };
       if (shift && hitPawn) {
         this.openOrderMenu(hitPawn, wp, wy);
@@ -1365,9 +1560,17 @@ private ordersUnlocked(): boolean {
     }
     this.orderMenu.open(pawn, wx, wy, (key) => {
       if (!this.orderMenu.openPawn) return;
-      // Приказ не перебивает carry-фазу — PawnAI применит после сдачи (§B.6)
+      // Сброс — возврат к автоповедению, а не новый игровой приказ.
+      if (key === 'reset') {
+        pawn.order = null;
+        pawn.orderTarget = null;
+        return;
+      }
+      // Приказ не перебивает carry-фазу — PawnAI применит после сдачи (§B.6).
+      // Точка нужна только HOLD: у FOLLOW/POST/MONASTERY старую координату
+      // нельзя хранить после смены режима.
       pawn.order = key;
-      if (key === 'hold') pawn.orderTarget = { x: wx, y: wy };
+      pawn.orderTarget = key === 'hold' ? { x: wx, y: wy } : null;
       track('first_order_used', { order: key });
       if (pawn.cls === 'civilian') this.hints?.show('orders');
     });
@@ -1394,6 +1597,56 @@ private ordersUnlocked(): boolean {
     });
   }
 
+  /** Короткая строка состояния дружины и раненых для поселкового HUD. */
+  private garrisonHudLabel(): string {
+    const wounded = this.economy.pawns.filter((p) => p.state === 'wounded' || p.state === 'bleeding').length;
+    const retreating = this.economy.garrison.filter((p) => p.state === 'retreat').length;
+    const base = t('hud.garrison', { a: this.economy.garrison.length, b: this.economy.totalGarrisonSlots() });
+    return wounded + retreating > 0
+      ? `${base} · ${t('hud.garrisonStatus', { w: wounded, r: retreating })}`
+      : base;
+  }
+
+  /**
+   * В dev (?debug) выводит измеренный урон гарнизона за последнее окно и
+   * теоретический потолок в 25% от базового DPS героя на отметке 10:00.
+   * В обычной сборке диагностический текст не создаётся.
+   */
+  private setupDpsDebug(): void {
+    if (!import.meta.env.DEV || typeof window === 'undefined'
+      || !new URLSearchParams(window.location.search).has('debug')) return;
+    this.dpsDebugText = this.add.text(8, 82, '', {
+      fontFamily: 'monospace',
+      fontSize: '11px',
+      color: '#baf7ff',
+      backgroundColor: '#111923',
+      padding: { x: 6, y: 4 },
+      lineSpacing: 2,
+    }).setScrollFactor(0).setDepth(90_000);
+    this.lastDpsDebugUpdate = this.activeTimeMs;
+  }
+
+  private updateDpsDebug(time: number): void {
+    if (!this.dpsDebugText || time - this.lastDpsDebugUpdate < 1_000) return;
+    const windowMs = Math.max(1, time - this.lastDpsDebugUpdate);
+    const rawDps = this.dpsDebugRawDamage * 1_000 / windowMs;
+    const appliedDps = this.dpsDebugAppliedDamage * 1_000 / windowMs;
+    const heroDps = this.heroDpsAtTenMinutes;
+    const capDps = heroDps === null ? null : heroDps * GARRISON_DPS_CAP;
+    const rawShare = heroDps !== null && heroDps > 0 ? rawDps / heroDps * 100 : null;
+    const appliedShare = heroDps !== null && heroDps > 0 ? appliedDps / heroDps * 100 : null;
+    this.dpsDebugText.setText([
+      'DPS QA · window 1s',
+      `hero@10m: ${heroDps === null ? 'not captured' : heroDps.toFixed(1)} /s`,
+      `garrison: ${rawDps.toFixed(1)} → ${appliedDps.toFixed(1)} /s`,
+      `share of hero DPS: raw ${rawShare === null ? 'n/a' : rawShare.toFixed(1) + '%'} → applied ${appliedShare === null ? 'n/a' : appliedShare.toFixed(1) + '%'}`,
+      `cap: ${capDps === null ? 'not active' : capDps.toFixed(1) + ' /s (' + (GARRISON_DPS_CAP * 100).toFixed(0) + '% hero)'} · bank ${this.garrisonDpsBudget.availableDamage.toFixed(1)}`,
+    ].join('\n'));
+    this.dpsDebugRawDamage = 0;
+    this.dpsDebugAppliedDamage = 0;
+    this.lastDpsDebugUpdate = time;
+  }
+
   // ================= ЦИКЛ =================
 
   update(time: number, delta: number): void {
@@ -1402,14 +1655,20 @@ private ordersUnlocked(): boolean {
     if (this.confirmDefeat()) return;
     if (!this.started || this.gameEnded || this.victoryPending || this.hintOverlayPaused) return;
 
-    // Хитстоп: короткая заморозка мира (после убийств элит/взрывов/урона)
-    if (time < this.hitstopUntil) {
+    // Scene Clock.now и параметр update(time) продолжают расти под Clock.pause().
+    // Отдельные часы симуляции останавливаются вместе с блокирующим FTUE overlay.
+    const dtMs = Math.min(Math.max(0, delta), 50);
+    this.activeTimeMs += dtMs;
+    this.registry.set('tss-active-time-ms', this.activeTimeMs);
+    this.updateDpsDebug(this.activeTimeMs);
+
+    // Хитстоп замораживает движение, но не собственный короткий таймер.
+    if (this.activeTimeMs < this.hitstopUntil) {
       this.player.setVelocity(0, 0);
       return;
     }
 
-    const dt = Math.min(delta, 50) / 1000;
-    const dtMs = Math.min(delta, 50);
+    const dt = dtMs / 1000;
 
     // Escape закрывает меню приказов, не создавая поверх него окно паузы.
     const escapePressed = Phaser.Input.Keyboard.JustDown(this.keys.esc);
@@ -1435,7 +1694,7 @@ private ordersUnlocked(): boolean {
     // Все атаки гарнизона после этого момента расходуют общий токен-бакет.
     if (this.elapsed >= 600 && this.heroDpsAtTenMinutes === null) {
       this.heroDpsAtTenMinutes = this.weapons.estimateTheoreticalDps();
-      this.garrisonDpsBudget.reset(time);
+      this.garrisonDpsBudget.reset(this.activeTimeMs);
     }
 
     // Движение игрока
@@ -1469,18 +1728,18 @@ private ordersUnlocked(): boolean {
     this.spawner.update(dt);
 
     // Экономика поселения: пешки, стройка, ремонт, найм, обитель (TZ §B)
-    this.economy.tick(dtMs, time);
+    this.economy.tick(dtMs, this.activeTimeMs);
     this.economy.monasteryHealTick(dtMs);
 
     // Осада: таймер отступления 60 сек и исход (§E.4.2)
-    this.siegeTick(time);
+    this.siegeTick();
 
     // Условие поражения №3 — вымирание, пересчёт раз в 60 сек (§E.3)
-    if (this.settlement.checkExtinction(time) && this.extinctAt === null) {
-      this.extinctAt = time;
+    if (this.settlement.checkExtinction(this.activeTimeMs) && this.extinctAt === null) {
+      this.extinctAt = this.activeTimeMs;
       this.hud.announce(t('over.extinct'), '#ff5544');
     }
-    if (this.extinctAt !== null && time - this.extinctAt > 3000) {
+    if (this.extinctAt !== null && this.activeTimeMs - this.extinctAt > 3000) {
       // 3-секундный экран перед GameOverScene (§E.3)
       this.loseCause = 'population';
       this.gameOver(false);
@@ -1507,7 +1766,7 @@ private ordersUnlocked(): boolean {
       }
     }
     if (this.pressState && !this.orderMenu.isOpen) {
-      const held = time - this.pressState.t;
+      const held = this.activeTimeMs - this.pressState.t;
       if (held >= LONGPRESS_MS) {
         this.orderMenu.hideRing();
         if (this.pressState.pawn) this.openOrderMenu(this.pressState.pawn, this.pressState.x, this.pressState.y);
@@ -1515,7 +1774,7 @@ private ordersUnlocked(): boolean {
         this.pressState = null;
       } else if (held > 120) {
         this.orderMenu.showRing(this.pressState.x, this.pressState.y, this.pressState.t);
-        this.orderMenu.updateRing(time, LONGPRESS_MS);
+        this.orderMenu.updateRing(this.activeTimeMs, LONGPRESS_MS);
       }
     }
 
@@ -1523,7 +1782,7 @@ private ordersUnlocked(): boolean {
     this.bossPhaseCheck();
 
     // Башни поселения стреляют по осаде/толпе (фаза M ROADMAP)
-    this.towerTick(time);
+    this.towerTick(this.activeTimeMs);
 
     // Сундуки с сокровищами
     if (!this.gameEnded) {
@@ -1536,10 +1795,10 @@ private ordersUnlocked(): boolean {
     // Магнит комбо-вехи 200 живёт 10 секунд (§H.4) — радиус пересчитываем
     // каждый кадр, потому что он не входит в recomputeStats (там он был бы
     // перетёрт снятием пассивки).
-    const magnetNow = this.time.now < this.xpMagnetUntil
+    const magnetNow = this.activeTimeMs < this.xpMagnetUntil
       ? this.magnetRadius * 6
       : this.magnetRadius;
-    this.pickups.update(delta, this.player.x, this.player.y, magnetNow, time);
+    this.pickups.update(delta, this.player.x, this.player.y, magnetNow, this.activeTimeMs);
 
     // Регенерация
     if (this.regen > 0 && this.player.hp < this.player.maxHp) {
@@ -1578,9 +1837,10 @@ private ordersUnlocked(): boolean {
     if (time - this.lastSettleHud > 700) {
       this.lastSettleHud = time;
       this.hud.updateSettlement(
+        this.settlement.castle.hp / Math.max(1, this.settlement.castle.maxHp),
         this.settlement.infrastructureHp / this.settlement.infrastructureMax,
         this.economy.pawns.length / Math.max(1, this.economy.pawnLimit),
-        t('hud.garrison', { a: this.economy.garrison.length, b: this.economy.totalGarrisonSlots() }),
+        this.garrisonHudLabel(),
       );
       this.hud.updateSpeedups(
         this.speedup.hasTarget('repair'),
@@ -1657,7 +1917,7 @@ private ordersUnlocked(): boolean {
 
   /** Хитстоп: заморозить врагов на ms миллисекунд */
   private hitstop(ms: number): void {
-    this.hitstopUntil = Math.max(this.hitstopUntil, this.time.now + ms);
+    this.hitstopUntil = Math.max(this.hitstopUntil, this.activeTimeMs + ms);
     this.registry.set('tss-freeze', this.hitstopUntil);
   }
 
@@ -1670,7 +1930,7 @@ private ordersUnlocked(): boolean {
     this.effects.damage(e.x, e.y - 40 * e.def.scale, final, crit);
     if (Math.random() < 0.6) this.effects.hitSpark(e.x, e.y - 26 * e.def.scale);
     if (force > 0) e.knockback(kx, ky, force);
-    this.effects.hitSound(this.time.now);
+    this.effects.hitSound(this.activeTimeMs);
     const died = e.takeDamage(final);
     if (src) {
       const st = this.weaponStats.get(src) ?? { dmg: 0, kills: 0 };
@@ -1709,9 +1969,9 @@ private ordersUnlocked(): boolean {
   private hurtPlayer(amount: number): void {
     if (this.gameEnded || this.victoryPending || this.defeatPending) return;
     // Эффекты урона (звук/тряска/хитстоп) — только когда удар реально прошёл
-    if (this.time.now < this.player.iframesUntil) return;
+    if (this.activeTimeMs < this.player.iframesUntil) return;
     const dmg = Math.max(1, Math.round(amount * this.armorMult));
-    const dead = this.player.damage(dmg, this.time.now);
+    const dead = this.player.damage(dmg, this.activeTimeMs);
     audio.play('hurt');
     this.cameras.main.shake(120, 0.0035);
     this.cameras.main.flash(110, 190, 40, 30, false);
@@ -1766,6 +2026,7 @@ private ordersUnlocked(): boolean {
       }
     }
     this.assignSiegeTarget(profile, enemies);
+    this.showSiegeTargetIndicators(enemies);
     this.settlement.beginSiege(index, profile.woundCap, enemies);
     this.siegeAlive = true;
     this.siegeDestroyed = 0;
@@ -1781,6 +2042,44 @@ private ordersUnlocked(): boolean {
     track('siege_start', { index, profile: profile.name });
   }
 
+  /**
+   * На 3 секунды показывает направление осадного отряда к его текущей цели.
+   * Это короткая подсказка поверх карты, а не постоянный навигационный слой.
+   */
+  private siegeArrowDurationMs(): number {
+    return 3_000 + 2_000 * this.economy.card('alarm');
+  }
+
+  private showSiegeTargetIndicators(enemies: Enemy[]): void {
+    if (enemies.length === 0) return;
+    const marker = this.add.graphics().setDepth(DEPTH.FX + 1);
+    marker.lineStyle(2, 0xff5544, 0.78);
+    marker.fillStyle(0xff5544, 0.92);
+    for (const enemy of enemies) {
+      const target = (enemy.buildingTarget as { x: number; y: number } | null) ?? this.settlement.castle;
+      const dx = target.x - enemy.x;
+      const dy = target.y - enemy.y;
+      const length = Math.hypot(dx, dy);
+      if (length < 1) continue;
+      const ux = dx / length;
+      const uy = dy / length;
+      const tipX = target.x - ux * 46;
+      const tipY = target.y - uy * 46;
+      marker.beginPath();
+      marker.moveTo(enemy.x, enemy.y);
+      marker.lineTo(tipX, tipY);
+      marker.strokePath();
+      const baseX = tipX - ux * 17;
+      const baseY = tipY - uy * 17;
+      const px = -uy * 8;
+      const py = ux * 8;
+      marker.fillTriangle(tipX, tipY, baseX + px, baseY + py, baseX - px, baseY - py);
+    }
+    this.time.delayedCall(this.siegeArrowDurationMs(), () => {
+      if (marker.active) marker.destroy();
+    });
+  }
+
   /** Осадный юнит: флаг siege, вне лимита толпы не считается (это волна события). */
   private spawnSiegeUnit(kind: EnemyKind, x: number, y: number, firer: boolean): Enemy | null {
     const m = WORLD.GRASS_MARGIN + 40;
@@ -1792,52 +2091,71 @@ private ordersUnlocked(): boolean {
     if (this.enemySpeedMult !== 1) e.speed = Math.round(e.speed * this.enemySpeedMult);
     e.siege = true;
     e.firer = firer;
-    e.spawnedAt = this.time.now;
+    e.spawnedAt = this.activeTimeMs;
     this.enemyGroup.add(e);
     return e;
   }
 
-  /** Цель профиля осады с фолбэком §G.7 (замок > монастырь > казармы > прочее). */
+  /** Цель профиля осады с фолбэком §G.7; в профилях с двумя целями отряды разделяются. */
   private assignSiegeTarget(profile: SiegeProfile, enemies: Enemy[]): void {
     const pick = (kind: BuildingKind): Building | null =>
       this.economy.buildings.find((b) => b.alive && b.kind === kind && !b.underConstruction) ?? null;
+    const outerHouse = (exclude?: Building | null): Building | null => {
+      const houses = this.economy.buildings
+        .filter((b) => b.kind === 'house' && b.alive && !b.underConstruction && b !== exclude)
+        .sort((a, b) =>
+          Math.hypot(b.x - this.castleX, b.y - this.castleY)
+          - Math.hypot(a.x - this.castleX, a.y - this.castleY));
+      return houses[0] ?? null;
+    };
+    const directTarget = (kind: SiegeProfile['target'], exclude?: Building | null): Building | null =>
+      kind === 'houses' ? outerHouse(exclude) : pick(kind);
     const priorityOrder: BuildingKind[] = ['castle', 'monastery', 'barracks', 'house', 'tower', 'archery'];
-    let target: Building | null = null;
-    if (profile.target === 'houses') {
-      // Дома внешнего кольца: самый дальний от замка дом
-      let bestD = -1;
-      for (const b of this.economy.buildings) {
-        if (b.kind !== 'house' || !b.alive || b.underConstruction) continue;
-        const d = Math.hypot(b.x - this.castleX, b.y - this.castleY);
-        if (d > bestD) { bestD = d; target = b; }
+    let target = directTarget(profile.target);
+    if (!target && profile.target === 'houses') {
+      // Домашние профили предпочитают не-замковые здания, чтобы первая осада
+      // обучала защите поселения без немедленного давления на замок.
+      for (const k of ['monastery', 'barracks', 'house', 'tower', 'archery'] as BuildingKind[]) {
+        target = pick(k);
+        if (target) break;
       }
-      // ⚠️ Фолбэк для «домашних» профилей идёт по §G.7, но БЕЗ замка:
-      // §E.4.3 прямо говорит, что «Разведка» в 6:00 замок НЕ трогает —
-      // игрок учится правилам на малой ставке. Раньше падая в общий порядок
-      // она могла ударить по замку и обесценить саму идею профилей.
+    } else if (!target && profile.target === 'monastery') {
+      // «Поджигатели»: если обители нет, сначала атакуют внешний дом.
+      target = outerHouse();
       if (!target) {
-        for (const k of ['monastery', 'barracks', 'house', 'tower', 'archery'] as BuildingKind[]) {
-          target = pick(k);
-          if (target) break;
-        }
-      }
-    } else {
-      target = pick(profile.target);
-      if (!target) {
-        for (const k of priorityOrder) {
+        for (const k of ['barracks', 'house', 'tower', 'archery'] as BuildingKind[]) {
           target = pick(k);
           if (target) break;
         }
       }
     }
-    for (const e of enemies) e.buildingTarget = target ?? this.settlement.castle;
-    if (target?.kind === 'monastery') {
+    if (!target) {
+      for (const k of priorityOrder) {
+        target = pick(k);
+        if (target) break;
+      }
+    }
+
+    // Для «Налёта» и «Клещей» цель по умолчанию — внешний дом,
+    // вторичный объект — казармы. У «Клещей» чередование в массиве совпадает
+    // с чередованием флангов SiegeFormation (baseAngle / baseAngle + PI).
+    const secondary = profile.secondaryTarget
+      ? directTarget(profile.secondaryTarget, target)
+      : null;
+    const splitTargets = secondary !== null && target !== null && secondary !== target;
+    for (const [index, enemy] of enemies.entries()) {
+      enemy.buildingTarget = splitTargets && index % 2 === 1
+        ? secondary
+        : target ?? this.settlement.castle;
+    }
+    if (target?.kind === 'monastery' || secondary?.kind === 'monastery') {
       this.hud.announce(t('siege.monastery'), '#ff5544');
     }
   }
 
   /** Тик осады: окно атаки 10 сек у стены, отступление и исход (§E.4.2). */
-  private siegeTick(now: number): void {
+  private siegeTick(): void {
+    const now = this.activeTimeMs;
     if (!this.siegeAlive || this.settlement.siegeIdx < 0) return;
     const members = this.settlement.siegeMembers();
     for (const e of members) {
@@ -1848,7 +2166,12 @@ private ordersUnlocked(): boolean {
       // фактический урон по базе в разы выше расчётного.
       if (e.attackWindowEnds === 0) {
         const b = e.buildingTarget as { x: number; y: number } | null;
-        if (b && Math.hypot(e.x - b.x, e.y - b.y) < 220) {
+        const ranged = e.kind === 'gnoll' || e.kind === 'shaman';
+        // updateSiege() halts ranged units at ~330px (300 + 30), melee at ~140px.
+        // If this radius is smaller than the AI's stop distance, ranged sieges never
+        // open the 10-second window and can attack for their entire 60-second lifetime.
+        const firingRadius = ranged ? 330 : 220;
+        if (b && Math.hypot(e.x - b.x, e.y - b.y) < firingRadius) {
           e.attackWindowEnds = now + SIEGE.ATTACK_WINDOW * 1000;
         }
       }
@@ -1951,12 +2274,12 @@ private ordersUnlocked(): boolean {
     this.addXp(15);
     this.score += 50;
     this.economy.emit('change');
-    track(kind === 'house' ? 'first_house' : kind === 'barracks' ? 'first_barracks' : 'economy_stuck', { t_sec: Math.floor(this.elapsed) });
+    // Метрики first_house/first_barracks отправляет единственный listener
+    // Economy.on('built'); не дублируем событие из XP-callback.
     if (kind === 'house' && !this.registry.get('tss-first-house')) {
       this.registry.set('tss-first-house', true);
       this.hints?.show('barracks');
     }
-    void kind;
   }
 
   private pawnTitle(pawn: Pawn): string {
@@ -2062,8 +2385,8 @@ private ordersUnlocked(): boolean {
 
     this.effects.explosion(x, y, big ? 1.7 : e.def.scale * 1.15, big ? 2 : 1);
     if (big) this.hitstop(110);
-    if (this.time.now - this.lastDieSound > 120) {
-      this.lastDieSound = this.time.now;
+    if (this.activeTimeMs - this.lastDieSound > 120) {
+      this.lastDieSound = this.activeTimeMs;
       audio.play('die');
     }
     // Дроп. Крупные роняют несколько кристаллов вместо одного (крупный дроп
@@ -2175,7 +2498,7 @@ private ordersUnlocked(): boolean {
           // Магнит даём временным расширением радиуса — иначе игрок,
           // доведший серию до 200, должен был вручную собирать кристаллы.
           this.player.heal(999);
-          this.xpMagnetUntil = this.time.now + 10_000;
+          this.xpMagnetUntil = this.activeTimeMs + 10_000;
           this.economy.deposit('wood', 25);
           this.economy.deposit('ore', 15);
           this.economy.deposit('meat', 15);
@@ -2202,10 +2525,14 @@ private bossDeathSequence(e: Enemy): boolean {
   /** Убийство врага гарнизоном: KILL растёт, комбо игрока — нет (§B.7.1). */
   private damageEnemyByPawn(e: Enemy, dmg: number, weapon: string): void {
     if (!e.active || e.dead) return;
-    const rawDamage = Math.max(1, Math.round(dmg * (this.economy.card('militia') > 0 ? 1.25 : 1)));
+    const rawDamage = Math.max(1, Math.round(dmg * (1 + 0.25 * this.economy.card('militia'))));
     const final = this.heroDpsAtTenMinutes === null
       ? rawDamage
-      : this.garrisonDpsBudget.apply(rawDamage, this.time.now, this.heroDpsAtTenMinutes);
+      : this.garrisonDpsBudget.apply(rawDamage, this.activeTimeMs, this.heroDpsAtTenMinutes);
+    if (this.dpsDebugText) {
+      this.dpsDebugRawDamage += rawDamage;
+      this.dpsDebugAppliedDamage += final;
+    }
     if (final <= 0) return;
     this.effects.damage(e.x, e.y - 40 * e.def.scale, final, false);
     const died = e.takeDamage(final);
@@ -2366,7 +2693,7 @@ private bossDeathSequence(e: Enemy): boolean {
     this.weapons.add(this.heroDef.startWeapon);
     this.hud.setIcon(this.heroDef.startWeapon, WEAPONS[this.heroDef.startWeapon].icon, 1, false);
     this.recomputeStats();
-    this.player.iframesUntil = this.time.now + 3000; // ровно 3 сек (§F.9)
+    this.player.iframesUntil = this.activeTimeMs + 3000; // ровно 3 сек (§F.9)
     // Сохранённый опыт возвращается после сброса (может сразу дать карточки)
     if (keptXp > 0) {
       this.xp += keptXp;
@@ -2786,7 +3113,6 @@ private bossDeathSequence(e: Enemy): boolean {
         const id = String(card.id);
         this.economy.applySettlementCard(id);
         this.cardsPicked.push(id); // кодекс/сводка рана (§H.10, §K.2)
-        if (id === 'alarm') this.registry.set('tss-alarm', true);
         this.hud.announce(`${t('settle.subtitle')}: ${card.title}`, '#9fd8ff');
         track('levelup_card_picked', { card_id: id, settlement_card: true });
         break;
@@ -3316,11 +3642,14 @@ private bossDeathSequence(e: Enemy): boolean {
     return {
       playerX: () => this.player.x,
       playerY: () => this.player.y,
+      siegeInterceptRadius: () => SIEGE.INTERCEPT_R + 40 * this.economy.card('militia'),
       onEnemyShoot: (x, y, proj) => {
         // Бросок выполняется по ТЕКУЩЕЙ позиции игрока в момент выпуска
         const tx = this.player.x, ty = this.player.y;
         const a = Math.atan2(ty - y, tx - x);
-        const srcDmg = proj === 'bone' ? ENEMIES.gnoll.damage : ENEMIES.shaman.damage;
+        const srcDmg = proj === 'bone' ? ENEMIES.gnoll.damage
+          : proj === 'hex' ? ENEMIES.shaman.damage
+            : ENEMIES['harpoon-shark'].damage;
         this.projectiles.shootEnemy(proj, x, y, a, Math.round(srcDmg * this.spawner.dmgMult));
       },
       onBossSlam: (x, y) => {
@@ -3358,17 +3687,17 @@ private bossDeathSequence(e: Enemy): boolean {
       // Враг ранит пешку (§A.5): обычный бой — напрямую, осада — по лимиту профиля
       attackPawn: (pawn, dmg, siege) => {
         if (pawn.dead) return;
-        if (siege) this.settlement.siegeWoundPawn(pawn, dmg, this.time.now);
+        if (siege) this.settlement.siegeWoundPawn(pawn, dmg, this.activeTimeMs);
         else {
           // Таунт мечника перетягивает и урон по гражданскому (§B.7.1).
           // Раньше он работал только по зданиям — половина правила молчала.
           const dmgToPawn = this.settlement.siegeIdx >= 0
             ? this.settlement.tauntCivilian(pawn, dmg, this.settlement.siegeIdx)
             : dmg;
-          const wounded = this.economy.woundPawn(pawn, dmgToPawn, this.time.now);
+          const wounded = this.economy.woundPawn(pawn, dmgToPawn, this.activeTimeMs);
           if (wounded) track('pawn_wounded', { name_role: `${pawn.kind}:${pawn.name}`, cause: 'regular' });
         }
-        this.effects.hitSound(this.time.now);
+        this.effects.hitSound(this.activeTimeMs);
       },
       // Осада бьёт здание: потолок и таунт внутри Settlement (§E.4.2, §B.7.1)
       attackBuilding: (b, dmg, fire, isBoss) => {
@@ -3401,7 +3730,9 @@ private bossDeathSequence(e: Enemy): boolean {
         let best: Pawn | null = null;
         let bestD = r;
         for (const p of this.economy.pawns) {
-          if (p.dead || !p.active) continue;
+          // Уже раненые не могут получить второе ранение и не должны блокировать
+          // поиск следующей цели осады.
+          if (p.dead || !p.active || p.state === 'wounded' || p.state === 'bleeding') continue;
           // Герой — не пешка, его ранение идёт обычным путём (§A.5)
           const d = Math.hypot(p.x - x, p.y - y);
           if (d < bestD) { bestD = d; best = p; }

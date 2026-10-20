@@ -4,6 +4,7 @@ type Point = { x: number; y: number };
 type Bounds = { x: number; y: number; width: number; height: number };
 type PawnRuntime = {
   kind: string;
+  cls: string;
   x: number;
   y: number;
   state: string;
@@ -86,11 +87,19 @@ type PointerDiagnostic = {
 };
 type RuntimeWindow = Window & { __tss?: PhaserRuntime; __tssLastPointerDown?: PointerDiagnostic };
 
-const startupTimeout = 30_000;
+// Холодный старт dev-сервера: Vite трансформирует весь граф модулей и ~570
+// ассетов. На загруженном CI это занимает больше 30 сек — тест падал с
+// «canvas не появился», хотя приложение стартует штатно.
+const startupTimeout = 60_000;
 
-async function startRun(page: Page, width = 1280, height = 720): Promise<void> {
+async function startRun(
+  page: Page,
+  width = 1280,
+  height = 720,
+  url = '/?lang=en&ysdk=mock',
+): Promise<void> {
   await page.setViewportSize({ width, height });
-  await page.goto('/?lang=en&ysdk=mock');
+  await page.goto(url);
   await expect(page.locator('#game canvas')).toBeVisible({ timeout: startupTimeout });
   await expect(page.locator('#boot')).toHaveCount(0, { timeout: startupTimeout });
   await expect.poll(
@@ -196,7 +205,7 @@ async function preparePawn(page: Page): Promise<Point> {
   });
 }
 
-test('phase G: desktop menu is explicit, closable and BUILD order ends after construction', async ({ page }) => {
+test('phase G: command menu is explicit, closable and BUILD order ends after construction', async ({ page }, testInfo) => {
   await startRun(page);
   const point = await preparePawn(page);
   const isOpen = () => page.evaluate(() => {
@@ -246,7 +255,20 @@ test('phase G: desktop menu is explicit, closable and BUILD order ends after con
   await expect.poll(isOpen).toBe(false);
   await shiftClick(page, point.x, point.y);
   await expect.poll(isOpen).toBe(true);
-  await page.keyboard.press('Escape');
+  // Escape — desktop-контракт. В touch-профиле клавиатурное событие не
+  // моделирует пользовательский ввод: закрываем меню штатным центральным крестиком.
+  if (testInfo.project.name === 'chromium-mobile') {
+    await page.touchscreen.tap(point.x, point.y);
+  } else {
+    // Удерживаем клавишу до реакции игрового update loop: page.keyboard.press()
+    // иногда отпускает её до того, как Phaser успевает прочитать JustDown().
+    await page.keyboard.down('Escape');
+    try {
+      await expect.poll(isOpen).toBe(false);
+    } finally {
+      await page.keyboard.up('Escape');
+    }
+  }
   await expect.poll(isOpen).toBe(false);
   expect(await page.evaluate(() => (window as RuntimeWindow).__tss!.scene.isActive('Pause'))).toBe(false);
 
@@ -333,6 +355,54 @@ test('phase G: desktop menu is explicit, closable and BUILD order ends after con
   expect(result.targetAfterCompletion).toBeNull();
   expect(result.resourcesAvailableForResume).toBe(true);
   expect(result.autoResumed, JSON.stringify(result)).toBe(true);
+});
+
+test('phase J: a persistent garrison order can be reset to autonomous behavior', async ({ page }) => {
+  await startRun(page);
+  const point = await preparePawn(page);
+  await page.evaluate(() => {
+    const game = (window as RuntimeWindow).__tss!;
+    const scene = game.scene.getScene('Game') as GameSceneRuntime;
+    const pawn = scene.economy.pawns.find(p => p.kind === 'collector')!;
+    // Подменяем роль тестового юнита, не запуская отдельный дорогой цикл найма.
+    pawn.cls = 'garrison';
+    pawn.kind = 'fighter';
+    pawn.order = 'hold';
+    pawn.orderTarget = { x: pawn.x, y: pawn.y };
+  });
+
+  const isOpen = () => page.evaluate(() => {
+    const game = (window as RuntimeWindow).__tss!;
+    return (game.scene.getScene('Game') as GameSceneRuntime).orderMenu.isOpen;
+  });
+  await shiftClick(page, point.x, point.y);
+  await expect.poll(isOpen).toBe(true);
+
+  const entries = await page.evaluate(() => {
+    const game = (window as RuntimeWindow).__tss!;
+    const scene = game.scene.getScene('Game') as GameSceneRuntime;
+    const pawn = scene.economy.pawns.find(p => p.kind === 'fighter')!;
+    return scene.orderMenu.entriesFor(pawn).map(entry => entry.key);
+  });
+  expect(entries).toEqual(['follow', 'post', 'hold', 'reset']);
+
+  // Четвёртый сектор находится слева от центра выбранного юнита.
+  await page.mouse.click(point.x - 74, point.y);
+  await expect.poll(() => page.evaluate(() => {
+    const game = (window as RuntimeWindow).__tss!;
+    const scene = game.scene.getScene('Game') as GameSceneRuntime;
+    const pawn = scene.economy.pawns.find(p => p.kind === 'fighter')!;
+    return pawn.order;
+  })).toBeNull();
+
+  const result = await page.evaluate(() => {
+    const game = (window as RuntimeWindow).__tss!;
+    const scene = game.scene.getScene('Game') as GameSceneRuntime;
+    const pawn = scene.economy.pawns.find(p => p.kind === 'fighter')!;
+    return { target: pawn.orderTarget, menuOpen: scene.orderMenu.isOpen };
+  });
+  expect(result.target).toBeNull();
+  expect(result.menuOpen).toBe(false);
 });
 
 test('phase G: carry phase deposits first and only then applies BUILD', async ({ page }) => {
@@ -501,4 +571,54 @@ test('phase H: resource HUD labels stock separately from match gold and plays de
   expect(result.assetKeysLoaded).toBe(true);
   expect(result.withinViewport).toBe(true);
   expect(result.hiddenAfterReset).toBe(true);
+});
+
+test('phase J: ?debug DPS panel and pawn retreat/wounded badges are visible', async ({ page }) => {
+  await startRun(page, 1280, 720, '/?lang=en&ysdk=mock&debug=1');
+  const report = await page.evaluate(() => {
+    const runtime = (window as RuntimeWindow).__tss;
+    if (!runtime) throw new Error('Phaser runtime is unavailable');
+    const scene = runtime.scene.getScene('Game') as GameSceneRuntime & {
+      dpsDebugText: { active: boolean; visible: boolean; text: string } | null;
+      dpsDebugRawDamage: number;
+      dpsDebugAppliedDamage: number;
+      heroDpsAtTenMinutes: number | null;
+      lastDpsDebugUpdate: number;
+      updateDpsDebug(time: number): void;
+      time: { now: number };
+    };
+    if (!scene.dpsDebugText) throw new Error('Debug panel was not created for ?debug=1');
+    scene.heroDpsAtTenMinutes = 100;
+    scene.dpsDebugRawDamage = 30;
+    scene.dpsDebugAppliedDamage = 20;
+    scene.lastDpsDebugUpdate = scene.time.now;
+    scene.updateDpsDebug(scene.lastDpsDebugUpdate + 1_000);
+    const pawn = scene.economy.pawns[0] as PawnRuntime & {
+      preUpdate(time: number, delta: number): void;
+      stateBadge: { text: string; active: boolean } | null;
+    };
+    if (!pawn) throw new Error('Initial settlement has no pawn');
+    const originalState = pawn.state;
+    pawn.state = 'retreat';
+    pawn.preUpdate(scene.time.now, 16);
+    const retreatLabel = pawn.stateBadge?.text ?? '';
+    pawn.state = 'wounded';
+    pawn.preUpdate(scene.time.now + 16, 16);
+    const woundedLabel = pawn.stateBadge?.text ?? '';
+    pawn.state = originalState;
+    pawn.preUpdate(scene.time.now + 32, 16);
+    return {
+      debugVisible: scene.dpsDebugText.active && scene.dpsDebugText.visible,
+      debugText: scene.dpsDebugText.text,
+      retreatLabel,
+      woundedLabel,
+    };
+  });
+
+  expect(report.debugVisible).toBe(true);
+  expect(report.debugText).toContain('DPS QA');
+  expect(report.debugText).toContain('share of hero DPS: raw 30.0% → applied 20.0%');
+  expect(report.debugText).toContain('25% hero');
+  expect(report.retreatLabel).toBe('RETREAT');
+  expect(report.woundedLabel).toBe('WOUNDED');
 });

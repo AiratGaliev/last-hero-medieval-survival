@@ -36,10 +36,14 @@ export class Building extends Phaser.GameObjects.Image {
   /** Монастырь: занятые места (индексы 0..9, null = свободно). */
   healSlots: (unknown | null)[] = [];
   /** Горение: DoT поджога (§E.4.1). */
-  private burnUntil = 0;
+  /** Остаток активного игрового времени горения; пауза симуляции его не тратит. */
+  private burnRemainingMs = 0;
   private burnSprite: Phaser.GameObjects.Sprite | null = null;
   private fireFx: Phaser.GameObjects.Sprite | null = null;
   private fireTimer = 0;
+  /** Окно реакции: обитель рушится через 3 с после порога 10% HP (§G.5.1). */
+  /** Остаток активного игрового времени до обрушения обители. */
+  private monasteryCollapseRemainingMs: number | null = null;
   private slotLabel: Phaser.GameObjects.Text | null = null;
   private readonly scene_: Phaser.Scene;
   private readonly ctx: BuildingCtx;
@@ -63,6 +67,11 @@ export class Building extends Phaser.GameObjects.Image {
 
   get plan() {
     return BUILDING_PLANS[this.kind];
+  }
+
+  /** Во время трёхсекундного предупреждения обитель уже нельзя чинить. */
+  get collapsePending(): boolean {
+    return this.monasteryCollapseRemainingMs !== null;
   }
 
   /** Завершение стройки: твин scaleY 0→1 + полное HP (TZ §B.4). */
@@ -104,26 +113,34 @@ export class Building extends Phaser.GameObjects.Image {
     if (this.kind === 'monastery') {
       const frac = this.hp / this.maxHp;
       const victims = this.healSlots.filter((s) => s !== null).length;
-      if (frac <= 0.1 && !this.warned10) {
-        this.warned10 = true;
-        this.ctx.onMonasteryFalling(this, victims);
-      } else if (frac <= 0.3 && !this.warned30) {
+      // Раздельные проверки нужны, чтобы один большой удар, пересёкший сразу
+      // оба порога, не пропустил предупреждение 30% перед критическим 10%.
+      if (frac <= 0.3 && !this.warned30) {
         this.warned30 = true;
         this.ctx.onMonasteryFalling(this, victims);
       }
+      if (frac <= 0.1 && !this.warned10) {
+        this.warned10 = true;
+        this.ctx.onMonasteryFalling(this, victims);
+        this.scheduleMonasteryCollapse();
+      }
     }
     if (this.hp <= 0) {
-      // Замок и обитель гибнут полностью (§E.3, §G.5); прочие — руины,
-      // которые ремонтник восстанавливает за 60 дерева / 10 сек (§E.5).
-      if (this.kind === 'castle' || this.kind === 'monastery') this.destroy();
-      else this.enterRuins();
+      // Замок погибает сразу. Обитель сохраняет минимум 1 HP до конца
+      // трёхсекундного окна реакции после предупреждения на пороге 10% (§G.5.1).
+      // Прочие здания превращаются в руины и восстанавливаются за 60 дерева.
+      if (this.kind === 'castle') this.destroy();
+      else if (this.kind === 'monastery') {
+        if (this.monasteryCollapseRemainingMs !== null) this.hp = 1;
+        else this.destroy();
+      } else this.enterRuins();
     }
   }
 
   /** Руины: стоит сгоревший каркас, лимит не даёт, чинится через repair(). */
   private enterRuins(): void {
     this.underConstruction = true; // блокирует урон и найм
-    this.burnUntil = 0;
+    this.burnRemainingMs = 0;
     this.burnSprite?.destroy();
     this.burnSprite = null;
     this.fireFx?.destroy();
@@ -143,14 +160,42 @@ export class Building extends Phaser.GameObjects.Image {
 
   /** Сброс порогов предупреждений после ремонта (обитель достроена). */
   warnedReset(): void {
+    this.monasteryCollapseRemainingMs = null;
     this.warned30 = false;
     this.warned10 = false;
+  }
+
+  /** Отложенное обрушение оставляет игроку три секунды на спасение раненых. */
+  private scheduleMonasteryCollapse(): void {
+    if (this.kind !== 'monastery' || this.monasteryCollapseRemainingMs !== null) return;
+    this.monasteryCollapseRemainingMs = 3_000;
+  }
+
+  /**
+   * Продвигает окно обрушения только активным игровым тиком.
+   * Во время паузы GameScene не вызывает Economy.tick(), поэтому обратный
+   * отсчёт приостанавливается вместе с остальной симуляцией.
+   */
+  tickMonasteryCollapse(dtMs: number): void {
+    if (this.monasteryCollapseRemainingMs === null) return;
+    if (!this.alive) {
+      this.monasteryCollapseRemainingMs = null;
+      return;
+    }
+    this.monasteryCollapseRemainingMs = Math.max(
+      0,
+      this.monasteryCollapseRemainingMs - Math.max(0, dtMs),
+    );
+    if (this.monasteryCollapseRemainingMs > 0) return;
+    this.monasteryCollapseRemainingMs = null;
+    this.hp = 0;
+    this.destroy();
   }
 
   /** Поджог: DoT SIEGE.BURN_DMG за SIEGE.BURN_MS (TZ §E.4.1). */
   ignite(siegeIdx: number): void {
     if (!this.alive || this.underConstruction) return;
-    this.burnUntil = Math.max(this.burnUntil, this.scene_.time.now + SIEGE.BURN_MS);
+    this.burnRemainingMs = Math.max(this.burnRemainingMs, SIEGE.BURN_MS);
     this.lastSiegeIdx = siegeIdx;
     if (!this.burnSprite || !this.burnSprite.active) {
       // Динамит на корпусе: горящий фитиль (§E.4.1)
@@ -161,20 +206,23 @@ export class Building extends Phaser.GameObjects.Image {
     if (!this.fireFx || !this.fireFx.active) {
       this.fireFx = this.scene_.add.sprite(this.x, this.y - 20, 'fx-fire')
         .setScale(1.1).setDepth(DEPTH.FX - 5).setAlpha(0.9);
+      this.fireFx.play('building-fire-loop');
     }
   }
 
-  /** Тик горения; возвращает урон DoT за кадр (вызывает Economy). */
+  /** Тик горения; возвращает урон только за реально прошедшее игровое время. */
   tickBurn(dtMs: number): number {
-    if (!this.alive || this.scene_.time.now >= this.burnUntil) {
-      if (this.burnSprite?.active) this.burnSprite.destroy();
-      this.burnSprite = null;
-      if (this.fireFx?.active) this.fireFx.destroy();
-      this.fireFx = null;
+    if (!this.alive || this.burnRemainingMs <= 0) {
+      this.clearBurnEffects();
       return 0;
     }
-    this.fireTimer -= dtMs;
-    if (this.fireTimer <= 0) {
+
+    // Не наносим лишний DoT, если dt пересекает конец горения. dtMs поступает
+    // из Economy.tick(), который вызывается только для активной симуляции.
+    const activeMs = Math.min(Math.max(0, dtMs), this.burnRemainingMs);
+    this.burnRemainingMs = Math.max(0, this.burnRemainingMs - activeMs);
+    this.fireTimer -= activeMs;
+    if (this.fireTimer <= 0 && this.burnRemainingMs > 0) {
       this.fireTimer = 500;
       const f = this.scene_.add.sprite(
         this.x + Phaser.Math.Between(-24, 24), this.y - Phaser.Math.Between(0, 40), 'fx-fire',
@@ -182,8 +230,17 @@ export class Building extends Phaser.GameObjects.Image {
       f.play('fx-fire');
       f.once('animationcomplete', () => f.destroy());
     }
-    // DoT — равномерно за всё время горения
-    return (SIEGE.BURN_DMG * dtMs) / SIEGE.BURN_MS;
+
+    if (this.burnRemainingMs === 0) this.clearBurnEffects();
+    // DoT — 3 HP ровно за 6 секунд активной игры; последний тик ограничен остатком.
+    return (SIEGE.BURN_DMG * activeMs) / SIEGE.BURN_MS;
+  }
+
+  private clearBurnEffects(): void {
+    if (this.burnSprite?.active) this.burnSprite.destroy();
+    this.burnSprite = null;
+    if (this.fireFx?.active) this.fireFx.destroy();
+    this.fireFx = null;
   }
 
   /** Слот лечения: null если свободных нет (FIFO по приходу, §G.4). */
@@ -219,6 +276,7 @@ export class Building extends Phaser.GameObjects.Image {
   }
 
   destroy(fromScene?: boolean): void {
+    this.monasteryCollapseRemainingMs = null;
     // Phaser вызывает destroy() у всех детей при шатдауне/уничтожении сцены.
     // Это НЕ игровое разрушение: колбэки осад/жильцов били бы по уже
     // уничтоженному HUD (setText на уничтоженном кадре — «Cannot read
@@ -237,6 +295,7 @@ export class Building extends Phaser.GameObjects.Image {
     this.alive = false;
     this.burnSprite?.destroy();
     this.fireFx?.destroy();
+    this.burnRemainingMs = 0;
     this.slotLabel?.destroy();
     this.ctx.onDestroyed(this, false);
     // Облако щепы при разрушении (juice №5 §H.13)

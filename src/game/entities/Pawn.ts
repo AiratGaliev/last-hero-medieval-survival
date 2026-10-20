@@ -1,6 +1,7 @@
 import Phaser from 'phaser';
 import { DEPTH, SHADOW_SCALE, SHADOW_BOX, SHADOW_SRC, FONT } from '../constants';
 import { FS } from '../systems/Text';
+import { t } from '../../i18n';
 import { PAWNS, FIGHTERS, type PawnKind, type PawnState, type PawnWeapon, type ResourceKind, type PawnDef } from '../data';
 
 // ============ Пешка поселения: гражданские и гарнизон (TZ §B.2) ============
@@ -64,6 +65,8 @@ export class Pawn extends Phaser.Physics.Arcade.Sprite {
   private shadow: Phaser.GameObjects.Image;
   private hpBar: Phaser.GameObjects.Graphics;
   private starBadge: Phaser.GameObjects.Text | null = null;
+  /** Компактная плашка статуса ранения/отступления (§J). */
+  private stateBadge: Phaser.GameObjects.Text | null = null;
   /** Таймер истечения кровью над пешкой (§G.3) — видимый дедлайн. */
   private bleedBadge: Phaser.GameObjects.Text | null = null;
   /** Контур щита таунта (§B.7.1). */
@@ -105,13 +108,15 @@ export class Pawn extends Phaser.Physics.Arcade.Sprite {
 
     scene.add.existing(this);
     scene.physics.add.existing(this);
-    this.setScale(0.42);
+    const scale = Pawn.spriteScale(prefix);
+    this.setScale(scale);
     this.setDepth(DEPTH.ENTITY_BASE + y);
     this.lastAnim = `${prefix}-idle`;
     this.play(this.lastAnim);
 
-    // Тело у ног (кадр 192)
-    const r = 16 / 0.42;
+    // Тело у ног (кадр 192). Радиус в МИРОВЫХ единицах не зависит от
+    // масштаба спрайта: 16 px — тело пешки, как и у героя.
+    const r = 16 / scale;
     this.setCircle(r, 96 - r, 150 - r);
     this.setCollideWorldBounds(false);
 
@@ -123,6 +128,19 @@ export class Pawn extends Phaser.Physics.Arcade.Sprite {
 
     this.hpBar = scene.add.graphics().setDepth(DEPTH.HPBAR);
     this.hpBar.setVisible(false);
+  }
+
+  /**
+   * Масштаб спрайта пешки.
+   *
+   *  Рабочие и гарнизон берут те же листы, что и герой (units/*), поэтому
+   *  масштаб должен совпадать с геройским (0.55) — иначе рабочий выглядит
+   *  муравьём: при 0.42 содержание кадра (≈55×72 px) давало на экране
+   *  23×30 px против 43×49 у героя, и поселение читалось как пустое поле.
+   *  Копейщик — лист 320 px, как у героя-копейщика: 0.34.
+   */
+  static spriteScale(prefix: string): number {
+    return prefix === 'pawn-lancer' ? 0.34 : 0.55;
   }
 
   /** Префикс анимаций: pawn/pawny для рабочих, pawn-warrior/lancer/archer/monk для гарнизона. */
@@ -318,6 +336,37 @@ export class Pawn extends Phaser.Physics.Arcade.Sprite {
  * Вспышка таунта: щит-контур вокруг мечника и подпись «−50%» над ним
  * (§B.7.1). Снимается сама по истечении `tauntFlashUntil`.
  */
+  /** Подпись над головой делает состояния retreat/wounded визуально читаемыми. */
+  private updateStateBadge(): void {
+    const label = this.state === 'retreat'
+      ? t('pawn.badgeRetreat')
+      : this.state === 'wounded' || this.state === 'bleeding'
+        ? t('pawn.badgeWounded')
+        : '';
+    if (!label) {
+      this.stateBadge?.destroy();
+      this.stateBadge = null;
+      return;
+    }
+    const isRetreating = this.state === 'retreat';
+    if (!this.stateBadge || !this.stateBadge.active) {
+      this.stateBadge = this.scene.add.text(this.x, this.y - 52, label, {
+        fontFamily: FONT,
+        fontSize: `${FS.small}px`,
+        color: isRetreating ? '#ffd76e' : '#ff806e',
+        backgroundColor: '#1a0f08',
+        padding: { x: 3, y: 1 },
+        stroke: '#1a0f08',
+        strokeThickness: 2,
+      }).setOrigin(0.5).setDepth(DEPTH.HPBAR);
+    }
+    if (this.stateBadge.text !== label) this.stateBadge.setText(label);
+    this.stateBadge.setColor(isRetreating ? '#ffd76e' : '#ff806e');
+    // Индикатор истечения кровью и звёзды остаются отдельными, не накладываются.
+    const offset = this.state === 'bleeding' ? 66 : this.starBadge?.active ? 64 : 48;
+    this.stateBadge.setPosition(this.x, this.y - offset).setVisible(true);
+  }
+
   showTauntBadge(): void {
     if (!this.tauntBadge || !this.tauntBadge.active) {
       this.tauntBadge = this.scene.add.graphics().setDepth(DEPTH.FX);
@@ -357,6 +406,7 @@ export class Pawn extends Phaser.Physics.Arcade.Sprite {
   }
 
   preUpdate(time: number, delta: number): void {
+    if (!this.active || this.scene.registry.get('tss-hint-overlay-paused') === true) return;
     super.preUpdate(time, delta);
     if (!this.active) return;
     this.shadow.setPosition(this.x, this.y + 8);
@@ -367,8 +417,12 @@ export class Pawn extends Phaser.Physics.Arcade.Sprite {
       this.bleedBadge.setPosition(this.x, this.y - 34);
       this.updateBleedBadge();
     }
-    this.tickTauntBadge(time);
-    void time;
+    this.updateStateBadge();
+    const activeTimeValue = this.scene.registry.get('tss-active-time-ms');
+    const activeTime = typeof activeTimeValue === 'number' && Number.isFinite(activeTimeValue)
+      ? activeTimeValue
+      : time;
+    this.tickTauntBadge(activeTime);
     void delta;
   }
 
@@ -376,6 +430,10 @@ export class Pawn extends Phaser.Physics.Arcade.Sprite {
     this.shadow.destroy();
     this.hpBar.destroy();
     this.starBadge?.destroy();
+    this.stateBadge?.destroy();
+    this.bleedBadge?.destroy();
+    this.tauntBadge?.destroy();
+    this.tauntText?.destroy();
     super.destroy(fromScene);
   }
 }

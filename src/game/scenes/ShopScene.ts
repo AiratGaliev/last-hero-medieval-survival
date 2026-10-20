@@ -179,6 +179,8 @@ export class ShopScene extends Phaser.Scene {
   private catalogState: 'idle' | 'loading' | 'sdk' | 'fallback' | 'unavailable' = 'idle';
   private catalogProducts = new Map<string, CatalogProduct>();
   private catalogRequestId = 0;
+  /** Каталог уже получен — повторно не запрашиваем (рестарт сцены на ресайзе). */
+  private catalogLoaded = false;
 
   // Геометрия панели
   private pw = 0;
@@ -211,8 +213,16 @@ export class ShopScene extends Phaser.Scene {
     this.refreshBusy = false;
     this.flashUpgradeId = null;
     this.catalogRequestId += 1;
-    this.catalogState = 'idle';
-    this.catalogProducts = new Map();
+    // ⚠️ Каталог НЕ сбрасывается при пересоздании сцены: ресайз панели
+    // вызывает scene.restart(), и без этого каталог запрашивался бы у SDK
+    // дважды за одно открытие магазина (лишний сетевой вызов к API
+    // Яндекса и «мигание» цен). Состояние и товары живут на экземпляре сцены
+    // и переживают перезапуск; сбросить их нужно только при первой
+    // загрузке — она и помечена флагом catalogLoaded.
+    if (!this.catalogLoaded) {
+      this.catalogState = 'idle';
+      this.catalogProducts = new Map();
+    }
     this.titleText = null;
     this.crownText = null;
     this.backBtn = null;
@@ -384,6 +394,7 @@ export class ShopScene extends Phaser.Scene {
       }
       if (requestId !== this.catalogRequestId || !this.scene.isActive()) return;
       this.catalogState = 'sdk';
+      this.catalogLoaded = true;
     }
     if (this.tab === 'crowns') this.renderTab();
   }
