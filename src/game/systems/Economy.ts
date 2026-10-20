@@ -242,7 +242,8 @@ export class Economy extends Phaser.Events.EventEmitter {
 
   /** Лимит рабочих: 4 + 1 за каждый дом (§B.2), «Вече» +1 (§H.5). */
   get pawnLimit(): number {
-    return 4 + this.houses + (this.card('assembly') > 0 ? 1 : 0);
+    // Вече даёт +1 место на каждом ранге, то есть +2 на ранге II.
+    return 4 + this.houses + this.card('assembly');
   }
 
   get civilians(): Pawn[] {
@@ -682,15 +683,23 @@ export class Economy extends Phaser.Events.EventEmitter {
   }
 
   applySettlementCard(id: string): void {
-    this.settlementLevels[id] = Math.min(2, this.card(id) + 1);
-    // «Каменное зодчество» (§H.5): +15% макс. HP всем живым зданиям —
-    // карта берётся после первого дома, постройки до неё тоже растут
+    const previousLevel = this.card(id);
+    // Ранг III не предусмотрен: повторный вызов на уровне II ничего не меняет.
+    if (previousLevel >= 2) return;
+    const nextLevel = previousLevel + 1;
+    this.settlementLevels[id] = nextLevel;
+    // Каменное зодчество даёт +15% базового max HP за каждый ранг.
     if (id === 'masonry') {
+      const previousMult = 1 + 0.15 * previousLevel;
+      const nextMult = 1 + 0.15 * nextLevel;
       for (const b of this.buildings) {
         if (!b.alive) continue;
-        const old = b.maxHp;
-        b.maxHp = Math.max(1, Math.round(b.maxHp * 1.15));
-        b.hp += b.maxHp - old;
+        const baseMaxHp = b.maxHp / previousMult;
+        const oldMaxHp = b.maxHp;
+        b.maxHp = Math.max(1, Math.round(baseMaxHp * nextMult));
+        if (!b.underConstruction) {
+          b.hp = Math.min(b.maxHp, Math.max(0, b.hp + b.maxHp - oldMaxHp));
+        }
       }
     }
   }
@@ -889,12 +898,15 @@ export class Economy extends Phaser.Events.EventEmitter {
     // Дерево: «Засуха» ×0.7 (§H.17); мясо: «Пастбище» (§H.16);
     // руда: «Золотая жила»/сезон «Золотая лихорадка мира» (§H.16, §H.18)
     if (res === 'wood') return Math.max(1, Math.round(base * (1 + 0.2 * this.card('forestry')) * this.tune.woodYield));
-    if (res === 'meat') return Math.max(1, Math.round(base * (this.card('provisions') > 0 ? 4 / 3 : 1) * this.tune.sheepYield));
+    if (res === 'meat') {
+      // «Провиант»: +1 мясо за цикл на каждом ранге (3 → 4 → 5).
+      return Math.max(1, Math.round(base * (1 + this.card('provisions') / 3) * this.tune.sheepYield));
+    }
     return Math.max(1, Math.round(base * this.tune.veinYield));
   }
 
   veinCharges(): number {
-    return this.tune.veinCharges + (this.card('deepmines') > 0 ? 1 : 0);
+    return this.tune.veinCharges + this.card('deepmines');
   }
 
   veinYield(): number {
