@@ -69,6 +69,7 @@ export class Enemy extends Phaser.Physics.Arcade.Sprite {
   private auraRing: Phaser.GameObjects.Image | null = null;
   /** Текущая анимация — чтобы не перезапускать один и тот же цикл каждый кадр */
   private lastAnim = '';
+  /** Ожидаемый callback одноразовой анимации; старый отменяется при новом действии. */
 
   // ---- Выбор цели (§A.5): герой → гарнизон → гражданский, пересчёт 400 мс ----
   /** Осадный враг: цель — здание профиля, не игрок (§E.4) */
@@ -174,15 +175,34 @@ export class Enemy extends Phaser.Physics.Arcade.Sprite {
     this.play(key, true);
   }
 
-  private playOnce(key: string): void {
-    if (!this.scene.anims.exists(key)) return;
+  private animationCompleteHandler: ((anim: Phaser.Animations.Animation) => void) | null = null;
+
+  private playOnce(key: string, onComplete?: () => void): void {
+    if (!this.scene.anims.exists(key)) {
+      // Отсутствующая анимация не должна навсегда блокировать боевой FSM.
+      this.lastAnim = '';
+      if (this.active) onComplete?.();
+      return;
+    }
+    // Не оставляем подписку от прерванного действия. Важно использовать
+    // on/off с фильтрацией по ключу: once('animationcomplete') снимает
+    // обработчик на завершении ЛЮБОЙ анимации, даже если её ключ не совпал.
+    if (this.animationCompleteHandler) {
+      this.off('animationcomplete', this.animationCompleteHandler);
+      this.animationCompleteHandler = null;
+    }
+    const handler = (anim: Phaser.Animations.Animation): void => {
+      if (anim.key !== key) return;
+      this.off('animationcomplete', handler);
+      if (this.animationCompleteHandler === handler) this.animationCompleteHandler = null;
+      if (!this.active) return;
+      this.lastAnim = '';
+      onComplete?.();
+    };
+    this.animationCompleteHandler = handler;
+    this.on('animationcomplete', handler);
     this.lastAnim = key;
-    // Однократная анимация обязана завершаться: loop=true блокирует
-    // animationcomplete, из-за чего гарпун/выстрел и прочие FSM-переходы зависают.
     this.play(key);
-    this.once('animationcomplete', (anim: Phaser.Animations.Animation) => {
-      if (anim.key === key && this.active) this.lastAnim = '';
-    });
   }
 
   /**
@@ -283,9 +303,8 @@ export class Enemy extends Phaser.Physics.Arcade.Sprite {
         this.buildingAtkCd = this.kind === 'boss' ? 535 : ranged ? 2600 : 1500;
         if (ranged) {
           // Бросок по зданию: шаман — огненный шар (поджог), гнолл — кость
-          this.playOnce(`${this.kind}-shoot`);
-          this.once('animationcomplete', (anim: Phaser.Animations.Animation) => {
-            if (anim.key === `${this.kind}-shoot` && this.active && this.siege) {
+          this.playOnce(`${this.kind}-shoot`, () => {
+            if (this.active && this.siege) {
               this.ctx.siegeShoot(
                 this.kind === 'shaman' ? 'hex' : 'bone',
                 this.x, this.y, b.x, b.y,
@@ -505,13 +524,11 @@ export class Enemy extends Phaser.Physics.Arcade.Sprite {
         }
         if (this.shootCd <= 0 && dist < 520 && this.aiState === 'chase') {
           this.aiState = 'windup';
-          this.playOnce('harpoon-shark-atk');
-          this.once('animationcomplete', (anim: Phaser.Animations.Animation) => {
-            if (anim.key === 'harpoon-shark-atk' && this.active && this.aiState === 'windup') {
-              this.ctx.onEnemyShoot(this.x, this.y, 'harpoon');
-              this.shootCd = 2400;
-              this.aiState = 'chase';
-            }
+          this.playOnce('harpoon-shark-atk', () => {
+            if (this.aiState !== 'windup') return;
+            this.ctx.onEnemyShoot(this.x, this.y, 'harpoon');
+            this.shootCd = 2400;
+            this.aiState = 'chase';
           });
         }
         break;
@@ -530,13 +547,10 @@ export class Enemy extends Phaser.Physics.Arcade.Sprite {
         }
         if (this.shootCd <= 0 && dist < 560 && this.aiState === 'chase') {
           this.aiState = 'windup';
-          this.playOnce(`${this.kind}-shoot`);
-          this.once('animationcomplete', (anim: Phaser.Animations.Animation) => {
-            if (anim.key === `${this.kind}-shoot` && this.active) {
-              this.ctx.onEnemyShoot(this.x, this.y, 'bone');
-              this.shootCd = 2200;
-              this.aiState = 'chase';
-            }
+          this.playOnce(`${this.kind}-shoot`, () => {
+            this.ctx.onEnemyShoot(this.x, this.y, 'bone');
+            this.shootCd = 2200;
+            this.aiState = 'chase';
           });
         }
         break;
@@ -574,13 +588,10 @@ export class Enemy extends Phaser.Physics.Arcade.Sprite {
         }
         if (this.shootCd <= 0 && dist < 520 && this.aiState === 'chase') {
           this.aiState = 'windup';
-          this.playOnce(`${this.kind}-shoot`);
-          this.once('animationcomplete', (anim: Phaser.Animations.Animation) => {
-            if (anim.key === `${this.kind}-shoot` && this.active) {
-              this.ctx.onEnemyShoot(this.x, this.y, 'hex');
-              this.shootCd = 2600;
-              this.aiState = 'chase';
-            }
+          this.playOnce(`${this.kind}-shoot`, () => {
+            this.ctx.onEnemyShoot(this.x, this.y, 'hex');
+            this.shootCd = 2600;
+            this.aiState = 'chase';
           });
         }
         break;
