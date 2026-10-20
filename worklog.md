@@ -3346,7 +3346,9 @@ HUD-слота, `SuccessionScene`, `PauseScene` и новые статическ
 ### Проверки
 
 - Playwright, один воркер (один процесс chrome-headless-shell на тест):
-  **121 тест пройден, 0 failed, 0 flaky** (desktop + mobile), ни одного retry.
+  **194 теста пройдено (96 desktop + 98 mobile), 0 failed, 0 flaky**, ни одного
+  retry — прогон выполнен уже в ветке `feat/phases-i-l-completion-20261019`
+  поверх фаз I–L.
 - `npm run check` (tsc + eslint): 0 ошибок, 0 предупреждений.
 - `npm run build`: успех. `npm run build:yg`: архив 4.62 МБ, требования
   Yandex Games выполнены.

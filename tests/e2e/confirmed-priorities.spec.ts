@@ -50,6 +50,8 @@ type GameSceneRuntime = {
   heroDpsAtTenMinutes: number | null;
   garrisonDpsBudget: { reset(nowMs?: number): void };
   damageEnemyByPawn(enemy: unknown, damage: number, weapon: string): void;
+  xp: number;
+  xpNext: number;
 };
 
 // Холодный старт dev-сервера: Vite трансформирует весь граф модулей и ~570
@@ -376,6 +378,7 @@ test('intro overlay really pauses gameplay; monastery warnings and garrison dama
   expect(monastery.warned30).toBe(true);
   expect(monastery.warned10).toBe(true);
   expect(monastery.collapsePending).toBe(true);
+  console.log("WARNINGS_DUMP", JSON.stringify(monastery.warnings.slice(0, 25)));
   expect(monastery.warnings).toHaveLength(2);
   expect(monastery.aliveAtWarning).toBe(true);
   expect(monastery.repairAccepted).toBe(false);
@@ -444,7 +447,30 @@ test('intro overlay really pauses gameplay; monastery warnings and garrison dama
   });
   expect(Number.isFinite(heroDps)).toBe(true);
   expect(heroDps).toBeGreaterThan(0);
-  await page.waitForTimeout(1_100);
+  // Уровень героя не должен открывать окно левел-апа: оно ставит сцену на
+  // паузу, а активный клок на паузе не идёт — и бюджет не набирал бы токены.
+  await page.evaluate(() => {
+    const game = (window as RuntimeWindow).__tss!;
+    const scene = game.scene.getScene('Game') as GameSceneRuntime;
+    scene.xp = 0;
+    scene.xpNext = Number.MAX_SAFE_INTEGER;
+  });
+  const budgetStart = await page.evaluate(() => {
+    const game = (window as RuntimeWindow).__tss!;
+    const scene = game.scene.getScene('Game') as GameSceneRuntime;
+    return scene.activeTimeMs;
+  });
+  // Ждём секунду АКТИВНОГО игрового времени: бюджет гарнизона считает
+  // только его, а фиксированная пауза по wall-clock на медленном раннере
+  // давала меньше секунды активного времени.
+  await expect.poll(
+    () => page.evaluate(() => {
+      const game = (window as RuntimeWindow).__tss!;
+      const scene = game.scene.getScene('Game') as GameSceneRuntime;
+      return scene.activeTimeMs;
+    }),
+    { timeout: 20_000 },
+  ).toBeGreaterThanOrEqual(budgetStart + 1_100);
 
   const damage = await page.evaluate(() => {
     const game = (window as RuntimeWindow).__tss!;
@@ -547,8 +573,12 @@ test('phase J: enemy target priority is hero, then garrison, then civilian', asy
     };
     scene.spawner.stopped = true;
     scene.player.setPosition(scene.economy.castleX - 1_200, scene.economy.castleY - 200);
-    const x = scene.economy.castleX + 650;
-    const y = scene.economy.castleY + 120;
+    // Фикстура — ЗА пределами поселения: гражданский в защищённой зоне (замок
+    // плюс пояс вокруг точек стройки) недостижим для обычной волны (§A.5),
+    // и проверка «враг переключился с гарнизона на гражданского» была бы
+    // бессмысленной.
+    const x = scene.economy.castleX + 1_000;
+    const y = scene.economy.castleY;
     if (!scene.spawnEnemy('goblin', x, y)) throw new Error('Could not create target-selection enemy');
     const enemy = scene.enemyGroup.getChildren().find((candidate) =>
       candidate.active && candidate.kind === 'goblin'
@@ -570,9 +600,9 @@ test('phase J: enemy target priority is hero, then garrison, then civilian', asy
 
     // Гарнизон дальше ближайшего гражданского, но в радиусе агро: его категория
     // обязана победить независимо от дистанции до гражданского.
-    const garrison = scene.economy.spawnPawn('fighter', x + 700, y, false);
+    const garrison = scene.economy.spawnPawn('fighter', x - 700, y, false);
     if (!garrison) throw new Error('Could not create a garrison target');
-    garrison.setPosition(x + 700, y);
+    garrison.setPosition(x - 700, y);
     enemy.pickTarget();
     if (enemy.aimedPawn !== garrison) throw new Error('Enemy preferred a closer civilian over a garrison');
     (window as RuntimeWindow & { __phaseJEnemy?: EnemyTarget }).__phaseJEnemy = enemy;
