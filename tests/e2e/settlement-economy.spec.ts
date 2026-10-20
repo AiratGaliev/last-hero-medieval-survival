@@ -3647,7 +3647,7 @@ test('phase M: field healing rescues a bleeding pawn at 50% HP without spending 
       };
     };
     const economy = scene.economy as unknown as EconomyWithHealer;
-    const victim = economy.pawns.find(p => p.kind === 'collector');
+    const victim = economy.pawns.find(p => p.kind === 'collector') as (PawnRuntime & { arrivalMs: number }) | undefined;
     const monk = economy.spawnPawn('healer', economy.castleX, economy.castleY, false);
     if (!victim || !monk) throw new Error('Could not create healer rescue fixtures');
 
@@ -3656,6 +3656,7 @@ test('phase M: field healing rescues a bleeding pawn at 50% HP without spending 
     monk.healTarget = null;
     monk.healHeroPoint = null;
     victim.setPosition(economy.castleX + 180, economy.castleY);
+    victim.arrivalMs = 0;
     victim.hp = 0;
     victim.state = 'wounded';
     victim.bleedTimer = 0;
@@ -3957,6 +3958,7 @@ test('phase M: one wounded pawn reserves exactly one monastery bed across repeat
     type SlotPawn = PawnRuntime & {
       monasterySlot: number | null;
       monasteryBuilding: BuildingRuntime | null;
+      arrivalMs: number;
     };
     type MonasteryBuilding = BuildingRuntime & {
       healSlots: Array<SlotPawn | null>;
@@ -3978,6 +3980,7 @@ test('phase M: one wounded pawn reserves exactly one monastery bed across repeat
     if (jobIndex >= 0) economy.buildJobs.splice(jobIndex, 1);
 
     victim.setPosition(monastery.x + 20, monastery.y);
+    victim.arrivalMs = 0;
     victim.hp = victim.maxHp * 0.2;
     victim.state = 'wounded';
     victim.monasterySlot = null;
