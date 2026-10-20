@@ -1854,7 +1854,7 @@ private ordersUnlocked(): boolean {
     marker.lineStyle(2, 0xff5544, 0.78);
     marker.fillStyle(0xff5544, 0.92);
     for (const enemy of enemies) {
-      const target = enemy.buildingTarget ?? this.settlement.castle;
+      const target = (enemy.buildingTarget as { x: number; y: number } | null) ?? this.settlement.castle;
       const dx = target.x - enemy.x;
       const dy = target.y - enemy.y;
       const length = Math.hypot(dx, dy);
