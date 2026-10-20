@@ -564,9 +564,16 @@ export class Enemy extends Phaser.Physics.Arcade.Sprite {
       return;
     }
 
+    // Все игровые дедлайны используют часы активной симуляции. Phaser.Clock.now
+    // продолжает обновляться при paused=true, хотя его Timer Events заморожены.
+    const activeTimeValue = this.scene.registry.get('tss-active-time-ms');
+    const activeTime = typeof activeTimeValue === 'number' && Number.isFinite(activeTimeValue)
+      ? activeTimeValue
+      : time;
+
     // Хитстоп: короткая заморозка врагов (реестр пишет GameScene)
     const freezeUntil = (this.scene.registry.get('tss-freeze') as number | undefined) ?? 0;
-    if (time < freezeUntil) {
+    if (activeTime < freezeUntil) {
       const b = this.body as Phaser.Physics.Arcade.Body | null;
       if (b) b.setVelocity(0, 0);
       return;
@@ -576,7 +583,7 @@ export class Enemy extends Phaser.Physics.Arcade.Sprite {
 
     // ---- Осада: цель — здание профиля, игрок может перехватить (§E.4) ----
     if (this.siege && this.buildingTarget) {
-      this.updateSiege(time, delta);
+      this.updateSiege(activeTime, delta);
       const groundOff = this.def.groundY - this.def.frameW / 2;
       this.shadow.setPosition(this.x, this.y + groundOff * this.def.scale);
       this.setDepth(DEPTH.ENTITY_BASE + this.y);
@@ -585,8 +592,8 @@ export class Enemy extends Phaser.Physics.Arcade.Sprite {
     }
 
     // ---- Выбор цели (§A.5): пересчёт не чаще раза в 400 мс ----
-    if (time - this.lastPick > 400) {
-      this.lastPick = time;
+    if (activeTime - this.lastPick > 400) {
+      this.lastPick = activeTime;
       this.pickTarget();
     }
 

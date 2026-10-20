@@ -81,3 +81,6 @@ jobs:
 
       - name: Production build
         run: npm run build
+
+      - name: Validate Yandex Games archive contents
+        run: npm run check:yg

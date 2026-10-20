@@ -101,7 +101,8 @@ type GameSceneRuntime = {
   hud: HUDRuntime;
   elapsed: number;
   hintOverlayPaused: boolean;
-  time: { now: number };
+  time: { now: number; paused: boolean };
+  physics: { world: { pause(): void; resume(): void } };
   registry: { get(key: string): unknown; set(key: string, value: unknown): void };
 };
 
@@ -2221,18 +2222,20 @@ test('phase K: siege attack window expires even while the hero is intercepting t
       preUpdate(time: number, delta: number): void;
     };
     const scene = game.scene.getScene('Game') as GameSceneRuntime & {
+      activeTimeMs: number;
       spawner: { stopped: boolean };
       spawnSiegeUnit(kind: string, x: number, y: number, firer: boolean): SiegeEnemyRuntime | null;
       enemyGroup: { getChildren(): SiegeEnemyRuntime[] };
       settlement: { castle: BuildingRuntime };
     };
     scene.spawner.stopped = true;
+    const activeNow = scene.activeTimeMs;
     const enemy = scene.spawnSiegeUnit('skull', scene.player.x + 40, scene.player.y, false);
     if (!enemy) throw new Error('Could not spawn siege interception fixture');
     enemy.buildingTarget = scene.settlement.castle;
     enemy.siege = true;
-    enemy.spawnedAt = scene.time.now - 20_000;
-    enemy.attackWindowEnds = scene.time.now - 1;
+    enemy.spawnedAt = activeNow - 20_000;
+    enemy.attackWindowEnds = activeNow - 1;
 
     // Враг находится внутри радиуса перехвата. Просроченное окно всё равно
     // должно завершить осаду раньше, чем AI выберет погоню за героем.
@@ -2247,6 +2250,88 @@ test('phase K: siege attack window expires even while the hero is intercepting t
   expect(report.active).toBe(false);
   expect(report.siege).toBe(false);
   expect(report.remainsInGroup).toBe(false);
+});
+
+
+test('phase K: siege deadlines use active gameplay time across an FTUE overlay pause', async ({ page }) => {
+  await startRun(page);
+  await continueInitialTutorial(page);
+
+  const report = await page.evaluate(() => {
+    const game = (window as RuntimeWindow).__tss;
+    if (!game) throw new Error('Phaser runtime is unavailable');
+    type SiegeEnemyRuntime = {
+      active: boolean;
+      siege: boolean;
+      buildingTarget: unknown;
+      spawnedAt: number;
+      attackWindowEnds: number;
+      preUpdate(time: number, delta: number): void;
+    };
+    const scene = game.scene.getScene('Game') as GameSceneRuntime & {
+      activeTimeMs: number;
+      siegeAlive: boolean;
+      spawnSiegeUnit(kind: string, x: number, y: number, firer: boolean): SiegeEnemyRuntime | null;
+      enemyGroup: { getChildren(): SiegeEnemyRuntime[] };
+      siegeTick(ignoredWallTime?: number): void;
+      settlement: {
+        castle: BuildingRuntime;
+        beginSiege(index: number, woundCap: number, enemies: SiegeEnemyRuntime[]): void;
+      };
+    };
+    const activeNow = scene.activeTimeMs;
+    const registeredActiveNow = Number(scene.registry.get('tss-active-time-ms'));
+    const castle = scene.settlement.castle;
+    const windowEnemy = scene.spawnSiegeUnit('skull', castle.x + 150, castle.y, false);
+    const lifetimeEnemy = scene.spawnSiegeUnit('skull', castle.x + 170, castle.y + 20, false);
+    if (!windowEnemy || !lifetimeEnemy) throw new Error('Could not spawn siege pause fixtures');
+
+    windowEnemy.buildingTarget = castle;
+    windowEnemy.siege = true;
+    windowEnemy.spawnedAt = activeNow - 45_000;
+    windowEnemy.attackWindowEnds = activeNow + 10_000;
+
+    lifetimeEnemy.buildingTarget = castle;
+    lifetimeEnemy.siege = true;
+    lifetimeEnemy.spawnedAt = activeNow - 45_000;
+    lifetimeEnemy.attackWindowEnds = activeNow + 180_000;
+    scene.settlement.beginSiege(2, 2, [windowEnemy, lifetimeEnemy]);
+    scene.siegeAlive = true;
+
+    // Моделируем 120 секунд системного времени под блокирующей подсказкой
+    // синтетическим скачком timestamp: игровая симуляция и её часы не тикают.
+    scene.registry.set('tss-hint-overlay-paused', true);
+    scene.registry.set('tss-freeze', 0);
+    scene.time.paused = true;
+    scene.physics.world.pause();
+    const futureTime = activeNow + 120_000;
+    windowEnemy.preUpdate(futureTime, 16);
+    lifetimeEnemy.preUpdate(futureTime, 16);
+
+    scene.registry.set('tss-hint-overlay-paused', false);
+    scene.time.paused = false;
+    scene.physics.world.resume();
+    windowEnemy.preUpdate(futureTime + 16, 16);
+    lifetimeEnemy.preUpdate(futureTime + 16, 16);
+    // Дополнительный аргумент отражает wall-clock timestamp движка; production
+    // siegeTick обязан игнорировать его и брать значение activeTimeMs.
+    scene.siegeTick(futureTime + 16);
+
+    return {
+      activeNow,
+      registeredActiveNow,
+      activeTimeAfter: scene.activeTimeMs,
+      attackWindowStillActive: windowEnemy.siege,
+      windowEnemyInGroup: scene.enemyGroup.getChildren().includes(windowEnemy),
+      lifetimeEnemyInGroup: scene.enemyGroup.getChildren().includes(lifetimeEnemy),
+    };
+  });
+
+  expect(report.registeredActiveNow).toBe(report.activeNow);
+  expect(report.activeTimeAfter).toBe(report.activeNow);
+  expect(report.attackWindowStillActive).toBe(true);
+  expect(report.windowEnemyInGroup).toBe(true);
+  expect(report.lifetimeEnemyInGroup).toBe(true);
 });
 
 
@@ -2359,8 +2444,9 @@ test('phase K: ranged siege units start the ten-second attack window at their fi
     const scene = game.scene.getScene('Game') as GameSceneRuntime & {
       spawner: { stopped: boolean };
       siegeAlive: boolean;
+      activeTimeMs: number;
       spawnSiegeUnit(kind: string, x: number, y: number, firer: boolean): SiegeEnemyRuntime | null;
-      siegeTick(now: number): void;
+      siegeTick(now?: number): void;
       settlement: {
         castle: BuildingRuntime;
         siegeIdx: number;
@@ -2370,13 +2456,14 @@ test('phase K: ranged siege units start the ten-second attack window at their fi
     scene.spawner.stopped = true;
     const castle = scene.settlement.castle;
     const now = scene.time.now;
+    const activeNow = scene.activeTimeMs;
     const ranged = scene.spawnSiegeUnit('shaman', castle.x + 320, castle.y, true);
     if (!ranged) throw new Error('Could not spawn ranged siege fixture');
     ranged.buildingTarget = castle;
     scene.settlement.beginSiege(2, 2, [ranged]);
     scene.siegeAlive = true;
     scene.siegeTick(now);
-    return { deadline: ranged.attackWindowEnds, now, distance: Math.hypot(ranged.x - castle.x, ranged.y - castle.y) };
+    return { deadline: ranged.attackWindowEnds, now: activeNow, distance: Math.hypot(ranged.x - castle.x, ranged.y - castle.y) };
   });
   expect(report.distance).toBeLessThan(330);
   expect(report.deadline).toBe(report.now + 10_000);

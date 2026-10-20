@@ -173,6 +173,8 @@ export class GameScene extends Phaser.Scene {
   private chestTimer = 40;
   private chestsOpened = 0;
   private elitesSlain = 0;
+  /** Монотонное время активной симуляции: не расходуется под блокирующим overlay. */
+  private activeTimeMs = 0;
   private hitstopUntil = 0;
   private ach: AchTracker | null = null;
   private shopLevels: ShopLevels = { might: 0, vitality: 0, speed: 0, magnet: 0, luck: 0 };
@@ -337,6 +339,7 @@ export class GameScene extends Phaser.Scene {
   }
 
   private resetState(): void {
+    this.activeTimeMs = 0;
     this.heroDpsAtTenMinutes = null;
     this.garrisonDpsBudget.reset();
     this.dpsDebugText?.destroy();
@@ -346,6 +349,7 @@ export class GameScene extends Phaser.Scene {
     this.dpsDebugAppliedDamage = 0;
     this.hintOverlayPaused = false;
     this.registry.set('tss-hint-overlay-paused', false);
+    this.registry.set('tss-active-time-ms', 0);
     this.time.paused = false;
     this.houseHintArmed = true;
     this.pawnsHintArmed = true;
@@ -1465,7 +1469,7 @@ private ordersUnlocked(): boolean {
       padding: { x: 6, y: 4 },
       lineSpacing: 2,
     }).setScrollFactor(0).setDepth(90_000);
-    this.lastDpsDebugUpdate = this.time.now;
+    this.lastDpsDebugUpdate = this.activeTimeMs;
   }
 
   private updateDpsDebug(time: number): void {
@@ -1496,16 +1500,21 @@ private ordersUnlocked(): boolean {
     // Если тем же тиком погиб босс, победа уже объявлена и урон не считается.
     if (this.confirmDefeat()) return;
     if (!this.started || this.gameEnded || this.victoryPending || this.hintOverlayPaused) return;
-    this.updateDpsDebug(time);
 
-    // Хитстоп: короткая заморозка мира (после убийств элит/взрывов/урона)
-    if (time < this.hitstopUntil) {
+    // Scene Clock.now и параметр update(time) продолжают расти под Clock.pause().
+    // Отдельные часы симуляции останавливаются вместе с блокирующим FTUE overlay.
+    const dtMs = Math.min(Math.max(0, delta), 50);
+    this.activeTimeMs += dtMs;
+    this.registry.set('tss-active-time-ms', this.activeTimeMs);
+    this.updateDpsDebug(this.activeTimeMs);
+
+    // Хитстоп замораживает движение, но не собственный короткий таймер.
+    if (this.activeTimeMs < this.hitstopUntil) {
       this.player.setVelocity(0, 0);
       return;
     }
 
-    const dt = Math.min(delta, 50) / 1000;
-    const dtMs = Math.min(delta, 50);
+    const dt = dtMs / 1000;
 
     // Escape закрывает меню приказов, не создавая поверх него окно паузы.
     const escapePressed = Phaser.Input.Keyboard.JustDown(this.keys.esc);
@@ -1569,7 +1578,7 @@ private ordersUnlocked(): boolean {
     this.economy.monasteryHealTick(dtMs);
 
     // Осада: таймер отступления 60 сек и исход (§E.4.2)
-    this.siegeTick(time);
+    this.siegeTick();
 
     // Условие поражения №3 — вымирание, пересчёт раз в 60 сек (§E.3)
     if (this.settlement.checkExtinction(time) && this.extinctAt === null) {
@@ -1619,7 +1628,7 @@ private ordersUnlocked(): boolean {
     this.bossPhaseCheck();
 
     // Башни поселения стреляют по осаде/толпе (фаза M ROADMAP)
-    this.towerTick(time);
+    this.towerTick(this.activeTimeMs);
 
     // Сундуки с сокровищами
     if (!this.gameEnded) {
@@ -1754,7 +1763,7 @@ private ordersUnlocked(): boolean {
 
   /** Хитстоп: заморозить врагов на ms миллисекунд */
   private hitstop(ms: number): void {
-    this.hitstopUntil = Math.max(this.hitstopUntil, this.time.now + ms);
+    this.hitstopUntil = Math.max(this.hitstopUntil, this.activeTimeMs + ms);
     this.registry.set('tss-freeze', this.hitstopUntil);
   }
 
@@ -1928,7 +1937,7 @@ private ordersUnlocked(): boolean {
     if (this.enemySpeedMult !== 1) e.speed = Math.round(e.speed * this.enemySpeedMult);
     e.siege = true;
     e.firer = firer;
-    e.spawnedAt = this.time.now;
+    e.spawnedAt = this.activeTimeMs;
     this.enemyGroup.add(e);
     return e;
   }
@@ -1991,7 +2000,8 @@ private ordersUnlocked(): boolean {
   }
 
   /** Тик осады: окно атаки 10 сек у стены, отступление и исход (§E.4.2). */
-  private siegeTick(now: number): void {
+  private siegeTick(): void {
+    const now = this.activeTimeMs;
     if (!this.siegeAlive || this.settlement.siegeIdx < 0) return;
     const members = this.settlement.siegeMembers();
     for (const e of members) {
