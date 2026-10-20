@@ -121,6 +121,14 @@ export const SIEGE = {
   INTERCEPT_R: 260,    // игрок в радиусе перехватывает осаду
   BURN_DMG: 3,         // DoT поджога
   BURN_MS: 6000,
+  /** Осадный рывок всадника по зданию. */
+  PIG_RIDER_CHARGE_DMG: 8,
+  PIG_RIDER_CHARGE_INTERVAL_MS: 8000,
+  PIG_RIDER_CHARGE_WINDUP_MS: 480,
+  PIG_RIDER_CHARGE_DASH_MS: 560,
+  PIG_RIDER_CHARGE_SPEED: 420,
+  PIG_RIDER_CHARGE_RECOVERY_MS: 850,
+  PIG_RIDER_CHARGE_HIT_RADIUS: 36,
   ANNOUNCE_SEC: 5,     // анонс за 5 секунд
   WOUND_CAP: [1, 1, 2, 2, 3] as readonly number[], // лимит ранений по профилям
 } as const;

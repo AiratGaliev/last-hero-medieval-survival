@@ -99,7 +99,7 @@ export class Enemy extends Phaser.Physics.Arcade.Sprite {
   /** Отдельный цикл рывка свиногоблина по зданию в режиме осады (§E.4.1). */
   private siegeChargeStage: 'idle' | 'windup' | 'charge' | 'recover' = 'idle';
   private siegeChargeTimerMs = 0;
-  private siegeChargeCooldownMs = 8_000;
+  private siegeChargeCooldownMs = SIEGE.PIG_RIDER_CHARGE_INTERVAL_MS;
   private siegeChargeDirX = 0;
   private siegeChargeDirY = 0;
   /** Момент спавна — таймер отступления осады 60 сек (§E.4.2) */
@@ -302,7 +302,7 @@ export class Enemy extends Phaser.Physics.Arcade.Sprite {
       if (this.kind === 'pig-rider' && this.siegeChargeStage !== 'idle') {
         this.siegeChargeStage = 'idle';
         this.siegeChargeTimerMs = 0;
-        this.siegeChargeCooldownMs = 8_000;
+        this.siegeChargeCooldownMs = SIEGE.PIG_RIDER_CHARGE_INTERVAL_MS;
         this.setSiegeChargeTint(false);
       }
       // обычный погон за игроком
@@ -355,7 +355,7 @@ export class Enemy extends Phaser.Physics.Arcade.Sprite {
             this.siegeChargeDirX = dx / dist;
             this.siegeChargeDirY = dy / dist;
             this.siegeChargeStage = 'charge';
-            this.siegeChargeTimerMs = 560;
+            this.siegeChargeTimerMs = SIEGE.PIG_RIDER_CHARGE_DASH_MS;
             this.playOnce(`${this.kind}-atk`);
           }
           return;
@@ -364,18 +364,21 @@ export class Enemy extends Phaser.Physics.Arcade.Sprite {
         if (this.siegeChargeStage === 'charge') {
           this.siegeChargeTimerMs = Math.max(0, this.siegeChargeTimerMs - delta);
           const targetDistance = Math.hypot(b.x - this.x, b.y - this.y);
-          if (targetDistance <= 36 || this.siegeChargeTimerMs <= 0) {
+          if (targetDistance <= SIEGE.PIG_RIDER_CHARGE_HIT_RADIUS || this.siegeChargeTimerMs <= 0) {
             body.setVelocity(0, 0);
             this.siegeChargeStage = 'recover';
-            this.siegeChargeTimerMs = 850;
-            this.siegeChargeCooldownMs = 8_000;
-            // Рывок — отдельные 8 HP, тот же Settlement/cap, что и обычный урон.
-            this.ctx.attackBuilding(b, 8, false, false);
+            this.siegeChargeTimerMs = SIEGE.PIG_RIDER_CHARGE_RECOVERY_MS;
+            this.siegeChargeCooldownMs = SIEGE.PIG_RIDER_CHARGE_INTERVAL_MS;
+            // Истёкший таймер завершает рывок, но удар засчитывается только на
+            // малой дистанции: застрявший/отброшенный юнит не бьёт издалека.
+            if (targetDistance <= SIEGE.PIG_RIDER_CHARGE_HIT_RADIUS * 2) {
+              this.ctx.attackBuilding(b, SIEGE.PIG_RIDER_CHARGE_DMG, false, false);
+            }
             this.playMove(false);
           } else {
             body.setVelocity(
-              this.siegeChargeDirX * 420 + this.knockX,
-              this.siegeChargeDirY * 420 + this.knockY,
+              this.siegeChargeDirX * SIEGE.PIG_RIDER_CHARGE_SPEED + this.knockX,
+              this.siegeChargeDirY * SIEGE.PIG_RIDER_CHARGE_SPEED + this.knockY,
             );
             if (Math.abs(body.velocity.x) > 8) {
               this.setFlipX(this.faceDir(body.velocity.x));
@@ -395,7 +398,7 @@ export class Enemy extends Phaser.Physics.Arcade.Sprite {
         this.siegeChargeCooldownMs = Math.max(0, this.siegeChargeCooldownMs - delta);
         if (this.siegeChargeCooldownMs <= 0) {
           this.siegeChargeStage = 'windup';
-          this.siegeChargeTimerMs = 480;
+          this.siegeChargeTimerMs = SIEGE.PIG_RIDER_CHARGE_WINDUP_MS;
           this.setSiegeChargeTint(true);
           this.playLoop(`${this.kind}-idle`);
           body.setVelocity(0, 0);

@@ -395,7 +395,7 @@ export const ENEMIES: Record<EnemyKind, EnemyDef> = {
     kind: 'pig-rider', name: t('enemy.pig-rider.name'), frameW: 256, scale: 0.55,
     body: { cx: 127, cy: 145, r: 32 }, groundY: 165,
     hp: 54, speed: 92, damage: 17, xp: 4, gem: 'gem-green',
-    buildingDmg: 2.6,   // 2.6 HP/удар ≈ 1.6 HP/с + рывок 8 HP раз в 8 с
+    buildingDmg: 1.5,   // 1 HP/с обычной атаки; отдельный осадный рывок — 8 HP в окне
   },
   'bomb-fish': {
     // Рыба-бомба: камикадзе — разгоняется, мигает и взрывается
