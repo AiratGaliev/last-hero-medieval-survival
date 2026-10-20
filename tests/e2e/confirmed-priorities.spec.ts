@@ -162,6 +162,8 @@ test('mobile FTUE long-press cannot open an order menu on the same touch', async
     pawn.setPosition(x, y);
     return { x, y };
   });
+  expect(Number.isFinite(center.x)).toBe(true);
+  expect(Number.isFinite(center.y)).toBe(true);
 
   const canvas = page.locator('#game canvas');
   const bounds = await canvas.boundingBox();
