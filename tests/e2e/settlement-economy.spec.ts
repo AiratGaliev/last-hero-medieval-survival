@@ -4123,3 +4123,81 @@ test('phase M: field healer does not bypass the wood cost for a pawn already adm
   expect(report.slotStillOwned).toBe(true);
   expect(report.slotIndex).toBe(0);
 });
+
+
+test('phase M: a bleeding pawn claims a freed monastery bed before the bleedout deadline', async ({ page }) => {
+  await startRun(page);
+  const report = await page.evaluate(() => {
+    const game = (window as RuntimeWindow).__tss;
+    if (!game) throw new Error('Phaser runtime is unavailable');
+    const scene = game.scene.getScene('Game') as GameSceneRuntime & {
+      hints?: { setEnabled(enabled: boolean): void };
+    };
+    scene.hints?.setEnabled(false);
+    scene.registry.set('tss-hint-overlay-paused', false);
+
+    type BleedingPawn = PawnRuntime & {
+      arrivalMs: number;
+      bleedTimer: number;
+      monasterySlot: number | null;
+      monasteryBuilding: BuildingRuntime | null;
+    };
+    type MonasteryFixture = BuildingRuntime & {
+      healSlots: Array<unknown | null>;
+      occupiedSlots: number;
+      claimHealSlot(unit: unknown): number | null;
+      releaseHealSlot(slot: number): void;
+    };
+    type EconomyWithPawnAI = EconomyRuntime & {
+      pawnAI: {
+        updateCivilian(pawn: BleedingPawn, dtMs: number, now: number): void;
+      };
+    };
+    const economy = scene.economy as unknown as EconomyWithPawnAI;
+    const builder = economy.pawns.find(p => p.kind === 'builder');
+    const victim = economy.pawns.find(p => p.kind === 'collector') as BleedingPawn | undefined;
+    const spot = economy.freeSpots().find(s => s.kind === 'monastery');
+    if (!builder || !victim || !spot) throw new Error('Bleedout rescue fixture is incomplete');
+
+    economy.resources.wood = 1_000;
+    economy.resources.ore = 1_000;
+    if (!economy.tryStartBuild('monastery', builder, spot)) throw new Error('Could not start monastery fixture');
+    const monastery = economy.buildings.find(b => b.kind === 'monastery' && b.underConstruction) as MonasteryFixture | undefined;
+    if (!monastery) throw new Error('Monastery fixture was not registered');
+    monastery.finishConstruction();
+    const jobIndex = economy.buildJobs.findIndex(job => job.building === monastery);
+    if (jobIndex >= 0) economy.buildJobs.splice(jobIndex, 1);
+
+    // Заполняем все десять мест, затем освобождаем одно из середины.
+    for (let i = 0; i < 10; i++) {
+      if (monastery.claimHealSlot({ fixtureSlot: i }) === null) {
+        throw new Error('Monastery rejected a slot before reaching capacity');
+      }
+    }
+    monastery.releaseHealSlot(4);
+    victim.setPosition(monastery.x + 20, monastery.y);
+    victim.arrivalMs = 0;
+    victim.hp = 0;
+    victim.state = 'bleeding';
+    victim.bleedTimer = 30;
+    victim.monasterySlot = null;
+    victim.monasteryBuilding = null;
+
+    economy.pawnAI.updateCivilian(victim, 150, scene.time.now + 150);
+    return {
+      state: victim.state,
+      bleedTimer: victim.bleedTimer,
+      slotIndex: victim.monasterySlot,
+      ownerMatches: victim.monasteryBuilding === monastery,
+      slotContainsPawn: monastery.healSlots[4] === victim,
+      occupiedSlots: monastery.occupiedSlots,
+    };
+  });
+
+  expect(report.state).toBe('wounded');
+  expect(report.bleedTimer).toBe(0);
+  expect(report.slotIndex).toBe(4);
+  expect(report.ownerMatches).toBe(true);
+  expect(report.slotContainsPawn).toBe(true);
+  expect(report.occupiedSlots).toBe(10);
+});
