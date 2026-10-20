@@ -2230,6 +2230,85 @@ test('phase K: ranged siege units start the ten-second attack window at their fi
 });
 
 
+
+test('phase K: siege building-attack cadence matches the documented DPS budget', async ({ page }) => {
+  await startRun(page);
+  const cadence = await page.evaluate(() => {
+    const game = (window as RuntimeWindow).__tss;
+    if (!game) throw new Error('Phaser runtime is unavailable');
+    type CadenceEnemy = {
+      active: boolean;
+      kind: string;
+      siege: boolean;
+      buildingTarget: unknown;
+      attackWindowEnds: number;
+    };
+    type RuntimeScene = GameSceneRuntime & {
+      player: { setPosition(x: number, y: number): unknown };
+      settlement: { castle: BuildingRuntime };
+      spawnSiegeUnit(kind: string, x: number, y: number, firer: boolean): CadenceEnemy | null;
+      enemyGroup: { remove(child: unknown, removeFromScene?: boolean, destroyChild?: boolean): void };
+    };
+    type RuntimeEnemy = {
+      updateSiege(time: number, delta: number): void;
+      buildingAtkCd: number;
+      ctx: Record<string, unknown> & {
+        playerX: () => number;
+        playerY: () => number;
+        attackBuilding: (...args: unknown[]) => void;
+        siegeShoot: (...args: unknown[]) => void;
+        attackPawn: (...args: unknown[]) => void;
+        nearPawn?: (...args: unknown[]) => unknown;
+        siegeInterceptRadius?: () => number;
+      };
+    };
+    const scene = game.scene.getScene('Game') as unknown as RuntimeScene;
+    const castle = scene.settlement.castle;
+    const now = scene.time.now;
+    scene.player.setPosition(0, 0);
+    const result: Record<string, number> = {};
+    const profiles = [
+      { kind: 'skull', offset: 100, expected: 1500 },
+      { kind: 'pig-rider', offset: 100, expected: 1500 },
+      { kind: 'gnoll', offset: 250, expected: 1500 },
+      { kind: 'shaman', offset: 250, expected: 2400 },
+      { kind: 'boss', offset: 100, expected: 535 },
+    ];
+    for (const profile of profiles) {
+      const enemy = scene.spawnSiegeUnit(profile.kind, castle.x + profile.offset, castle.y, profile.kind === 'shaman');
+      if (!enemy) throw new Error(`Could not spawn ${profile.kind} siege cadence fixture`);
+      enemy.siege = true;
+      enemy.buildingTarget = castle;
+      enemy.attackWindowEnds = now + 10_000;
+      const runtime = enemy as unknown as RuntimeEnemy;
+      runtime.ctx = {
+        ...runtime.ctx,
+        playerX: () => 0,
+        playerY: () => 0,
+        attackBuilding: () => {},
+        siegeShoot: () => {},
+        attackPawn: () => {},
+        nearPawn: () => null,
+        siegeInterceptRadius: () => 1,
+      };
+      runtime.updateSiege(now + 1, 16);
+      result[profile.kind] = runtime.buildingAtkCd;
+      scene.enemyGroup.remove(enemy, true, true);
+      if (result[profile.kind] !== profile.expected) {
+        throw new Error(`${profile.kind} cadence was ${result[profile.kind]}, expected ${profile.expected}`);
+      }
+    }
+    return result;
+  });
+  expect(cadence).toEqual({
+    skull: 1500,
+    'pig-rider': 1500,
+    gnoll: 1500,
+    shaman: 2400,
+    boss: 535,
+  });
+});
+
 test('phase K: siege infrastructure caps exclude unfinished and ruined buildings and clamp damage at 12%/6%', async ({ page }) => {
   await startRun(page);
   const report = await page.evaluate(() => {

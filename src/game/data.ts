@@ -388,7 +388,7 @@ export const ENEMIES: Record<EnemyKind, EnemyDef> = {
     body: { cx: 92, cy: 120, r: 20 }, groundY: 136,
     hp: 32, speed: 72, damage: 9, xp: 5, gem: 'gem-purple',
     auraSpeed: 250,
-    buildingDmg: 5,     // огненный шар: 5 HP + 3 поджог каждые 3 с ≈ 2.6 HP/с
+    buildingDmg: 5,     // 5 HP прямого урона; выстрел раз в 2.4 с + 3 HP DoT за 6 с ≈ 2.6 HP/с
   },
   'pig-rider': {
     // Гоблин-всадник: телеграф 480 мс → рывок 420 px/s → отдых

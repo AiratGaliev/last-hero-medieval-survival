@@ -323,7 +323,9 @@ export class Enemy extends Phaser.Physics.Arcade.Sprite {
       if (this.buildingAtkCd <= 0) {
         // Босс в фазе 2 бьёт замок быстрее осады: 8 урона / 0.535 c ≈ 15 HP/с
         // — замок (~500 HP, потолка для босса нет) держится ~33 с (§E.6)
-        this.buildingAtkCd = this.kind === 'boss' ? 535 : ranged ? 2600 : 1500;
+        // §E.4.1: обычная атака — 1.5 с; шар шамана — 2.4 с
+      // (5 / 2.4 + 3 / 6 ≈ 2.58 HP/с с учётом DoT); босс фазы 2 — 535 мс.
+      this.buildingAtkCd = this.kind === 'boss' ? 535 : this.kind === 'shaman' ? 2400 : 1500;
         if (ranged) {
           // Бросок по зданию: шаман — огненный шар (поджог), гнолл — кость
           this.playOnce(`${this.kind}-shoot`, () => {
@@ -436,6 +438,17 @@ export class Enemy extends Phaser.Physics.Arcade.Sprite {
   }
 
   preUpdate(time: number, delta: number): void {
+    if (!this.active) return;
+
+    // FTUE overlay приостанавливает GameScene.update и Arcade Physics, но Phaser
+    // всё ещё вызывает preUpdate активных GameObject. Проверяем общий флаг ДО
+    // super.preUpdate, иначе AI и анимации атак продолжаются поверх паузы.
+    if (this.scene.registry.get('tss-hint-overlay-paused') === true) {
+      const body = this.body as Phaser.Physics.Arcade.Body | null;
+      body?.setVelocity(0, 0);
+      return;
+    }
+
     super.preUpdate(time, delta);
     if (!this.active) return;
     // Умерший босс остаётся в display list только на время финальной анимации.

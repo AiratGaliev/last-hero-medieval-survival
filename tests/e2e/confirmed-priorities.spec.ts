@@ -16,6 +16,8 @@ type HintRuntime = {
   current: { id: string; ui: string } | null;
 };
 type BuildingRuntime = {
+  x: number;
+  y: number;
   kind: string;
   alive: boolean;
   hp: number;
@@ -216,6 +218,55 @@ test('intro overlay really pauses gameplay; monastery warnings and garrison dama
     return (game.scene.getScene('Game') as GameSceneRuntime).elapsed;
   });
   expect(elapsedDuringOverlay).toBe(elapsedBefore);
+  const pausedCombat = await page.evaluate(() => {
+    const game = (window as RuntimeWindow).__tss;
+    if (!game) throw new Error('Phaser runtime is unavailable');
+    const scene = game.scene.getScene('Game') as GameSceneRuntime & {
+      spawner: { stopped: boolean };
+      player: { setPosition(x: number, y: number): unknown };
+      settlement: { castle: BuildingRuntime };
+      enemyGroup: {
+        clear(removeFromScene?: boolean, destroyChildren?: boolean): void;
+        getChildren(): Array<{
+          active: boolean;
+          kind: string;
+          siege: boolean;
+          buildingTarget: unknown;
+          attackWindowEnds: number;
+          buildingAtkCd: number;
+        }>;
+      };
+      spawnEnemy(kind: string, x: number, y: number): boolean;
+    };
+    scene.spawner.stopped = true;
+    scene.enemyGroup.clear(true, true);
+    const castle = scene.settlement.castle;
+    scene.player.setPosition(0, 0);
+    if (!scene.spawnEnemy('skull', castle.x + 100, castle.y)) {
+      throw new Error('Could not spawn the paused-overlay siege fixture');
+    }
+    const enemy = scene.enemyGroup.getChildren().find((candidate) =>
+      candidate.active && candidate.kind === 'skull');
+    if (!enemy) throw new Error('Paused-overlay siege fixture is missing');
+    enemy.siege = true;
+    enemy.buildingTarget = castle;
+    enemy.attackWindowEnds = scene.time.now + 10_000;
+    enemy.buildingAtkCd = 0;
+    return { castleHp: castle.hp };
+  });
+  await page.waitForTimeout(500);
+  const castleHpDuringOverlay = await page.evaluate(() => {
+    const game = (window as RuntimeWindow).__tss!;
+    const scene = game.scene.getScene('Game') as GameSceneRuntime & {
+      settlement: { castle: BuildingRuntime };
+      enemyGroup: { clear(removeFromScene?: boolean, destroyChildren?: boolean): void };
+    };
+    const hp = scene.settlement.castle.hp;
+    scene.enemyGroup.clear(true, true);
+    return hp;
+  });
+  expect(castleHpDuringOverlay).toBe(pausedCombat.castleHp);
+
   await continueInitialTutorial(page);
 
   // Проверка выше уже подтвердила паузу стартового overlay. Отключаем последующие
@@ -232,10 +283,13 @@ test('intro overlay really pauses gameplay; monastery warnings and garrison dama
   const monastery = await page.evaluate(() => {
     const game = (window as RuntimeWindow).__tss!;
     const scene = game.scene.getScene('Game') as GameSceneRuntime & {
+      started: boolean;
       spawner: { stopped: boolean };
       enemyGroup: { clear(removeFromScene?: boolean, destroyChildren?: boolean): void };
     };
-    // Изолируем трёхсекундное окно от новых волн и уже живых врагов.
+    // Автотик остановлен только в этой фикстуре: ниже активное игровое время
+    // продвигается контролируемо на 2999 и 1 мс, независимо от FPS CI.
+    scene.started = false;
     scene.spawner.stopped = true;
     scene.enemyGroup.clear(true, true);
     const economy = scene.economy;
@@ -246,6 +300,7 @@ test('intro overlay really pauses gameplay; monastery warnings and garrison dama
     const started = economy.tryStartBuild('monastery', builder);
     const building = economy.buildings.find((candidate) => candidate.kind === 'monastery');
     if (!started || !building) return { started, found: Boolean(building), warnings: [] as string[] };
+    (building as unknown as { __e2eMonasteryCollapseTarget: boolean }).__e2eMonasteryCollapseTarget = true;
 
     // Фикстура должна быть построенной, а не одновременно оставаться активным
     // buildJob: иначе фоновая стройка могла бы завершить и восстановить HP во
@@ -300,7 +355,8 @@ test('intro overlay really pauses gameplay; monastery warnings and garrison dama
   const collapseWindowState = async (): Promise<{ alive: boolean; hasRepairJob: boolean }> => page.evaluate(() => {
     const game = (window as RuntimeWindow).__tss!;
     const scene = game.scene.getScene('Game') as GameSceneRuntime;
-    const building = scene.economy.buildings.find((candidate) => candidate.kind === 'monastery');
+    const building = scene.economy.buildings.find((candidate) =>
+      (candidate as unknown as { __e2eMonasteryCollapseTarget?: boolean }).__e2eMonasteryCollapseTarget === true);
     return {
       alive: building?.alive ?? false,
       hasRepairJob: building
@@ -312,10 +368,27 @@ test('intro overlay really pauses gameplay; monastery warnings and garrison dama
   const duringWindow = await collapseWindowState();
   expect(duringWindow.alive).toBe(true);
   expect(duringWindow.hasRepairJob).toBe(false);
-  await expect.poll(
-    async () => (await collapseWindowState()).alive,
-    { timeout: 5_000 },
-  ).toBe(false);
+  const collapseBoundary = await page.evaluate(() => {
+    const game = (window as RuntimeWindow).__tss!;
+    const scene = game.scene.getScene('Game') as GameSceneRuntime & {
+      started: boolean;
+      economy: EconomyRuntime & { tick(dtMs: number, now: number): void };
+    };
+    const building = scene.economy.buildings.find((candidate) =>
+      (candidate as unknown as { __e2eMonasteryCollapseTarget?: boolean }).__e2eMonasteryCollapseTarget === true);
+    if (!building) throw new Error('Exact monastery collapse fixture disappeared');
+    const now = scene.time.now;
+    scene.economy.tick(2_999, now + 2_999);
+    const aliveBeforeDeadline = building.alive;
+    const remainingMs = (building as unknown as { monasteryCollapseRemainingMs: number | null }).monasteryCollapseRemainingMs;
+    scene.economy.tick(1, now + 3_000);
+    const aliveAtDeadline = building.alive;
+    scene.started = true;
+    return { aliveBeforeDeadline, remainingMs, aliveAtDeadline };
+  });
+  expect(collapseBoundary.aliveBeforeDeadline).toBe(true);
+  expect(collapseBoundary.remainingMs).toBe(1);
+  expect(collapseBoundary.aliveAtDeadline).toBe(false);
 
   const expectedDpsAtTenMinutes = await page.evaluate(() => {
     const game = (window as RuntimeWindow).__tss!;

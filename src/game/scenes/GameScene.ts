@@ -345,6 +345,7 @@ export class GameScene extends Phaser.Scene {
     this.dpsDebugRawDamage = 0;
     this.dpsDebugAppliedDamage = 0;
     this.hintOverlayPaused = false;
+    this.registry.set('tss-hint-overlay-paused', false);
     this.houseHintArmed = true;
     this.pawnsHintArmed = true;
     this.elapsed = 0; this.kills = 0; this.level = 1;
@@ -621,6 +622,7 @@ export class GameScene extends Phaser.Scene {
     this.speedup = new Speedup(this.economy);
     this.hints = new Hints(this, (paused) => {
       this.hintOverlayPaused = paused;
+      this.registry.set('tss-hint-overlay-paused', paused);
       if (paused) this.physics.world.pause();
       else this.physics.world.resume();
     });
