@@ -63,7 +63,7 @@ export const CREATURE_SHEETS: CreatureSheet[] = [
   ] },
   { kind: 'turtle', dir: 'caveborn/turtle', base: 'turtle', frameW: 320, sheets: [
     ['idle', 'idle', 10, 7], ['run', 'walk', 7, 9], ['atk', 'attack', 10, 10],
-    ['guardIn', 'guard-in', 8, 10], ['guardOut', 'guard-out', 8, 10],
+    ['guardIn', 'guard-in', 6, 10], ['guardOut', 'guard-out', 3, 10],
   ] },
   { kind: 'gnome', dir: 'gnome', base: 'gnome', frameW: 192, sheets: [
     ['idle', 'idle', 8, 7], ['run', 'run', 6, 11], ['atk', 'attack', 7, 12],

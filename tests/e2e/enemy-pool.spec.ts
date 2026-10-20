@@ -156,6 +156,20 @@ test('creature sheets, combat animations, projectiles and hero-monk regression a
       ...keys.filter((key) => !game.textures.exists(key)),
       ...requiredTextures.filter((key) => !game.textures.exists(key)),
     ];
+    // Декларация кадров не должна выходить за реальные границы PNG-спрайтлиста.
+    // Это ловит тихие Phaser-ошибки, которые обычный exists() не обнаруживает.
+    const invalidFrameCounts = boot.CREATURE_SHEETS.flatMap((creature) =>
+      creature.sheets.flatMap(([anim, , frames]) => {
+        const key = `${creature.kind}-${anim}`;
+        if (!game.textures.exists(key)) return [];
+        const source = game.textures.get(key).getSourceImage() as { width: number; height: number };
+        const availableFrames = Math.floor(source.width / creature.frameW)
+          * Math.floor(source.height / creature.frameW);
+        return frames > availableFrames
+          ? [`${key}: configured ${frames}, PNG provides ${availableFrames}`]
+          : [];
+      }),
+    );
     const invalidDefs = Object.values(data.ENEMIES).filter((enemy) =>
       enemy.hp <= 0 || enemy.speed <= 0 || enemy.damage <= 0
       || enemy.frameW <= 0 || enemy.groundY <= 0 || enemy.body.r <= 0
@@ -176,7 +190,7 @@ test('creature sheets, combat animations, projectiles and hero-monk regression a
     );
 
     return {
-      kinds, sheetKinds, missingAnimations, missingTextures, nonLooping,
+      kinds, sheetKinds, missingAnimations, missingTextures, nonLooping, invalidFrameCounts,
       invalidDefs: invalidDefs.map((enemy) => enemy.kind), wrongFacing, legacyRuntimeKeys,
       hasMonk: 'monk' in data.HEROES,
       bossWindupRepeat: game.anims.get('boss-windup')?.repeat ?? null,
@@ -193,6 +207,7 @@ test('creature sheets, combat animations, projectiles and hero-monk regression a
   expect(report.sheetKinds).toEqual(report.kinds);
   expect(report.missingAnimations).toEqual([]);
   expect(report.missingTextures).toEqual([]);
+  expect(report.invalidFrameCounts).toEqual([]);
   expect(report.nonLooping).toEqual([]);
   expect(report.invalidDefs).toEqual([]);
   expect(report.wrongFacing).toEqual([]);
