@@ -58,7 +58,7 @@ jobs:
               ;;
             main)
               case "$HEAD_BRANCH" in
-                test|hotfix/*|chore/ci-branching-policy)
+                test|hotfix/*)
                   echo "Допустимый маршрут: $HEAD_BRANCH -> main"
                   ;;
                 *)
