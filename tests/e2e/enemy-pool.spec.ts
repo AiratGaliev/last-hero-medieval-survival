@@ -17,6 +17,7 @@ type RuntimeEnemy = {
   };
 };
 type RuntimeScene = {
+  activeTimeMs: number;
   scene: { isActive: () => boolean; resume: () => void };
   hints: { current: { id: string; ui: string } | null };
   time: { paused: boolean; now: number };
@@ -469,7 +470,7 @@ test('phase I: harpoon shark still fires when its throw animation is interrupted
       lastPick: number;
       stateTimer: number;
     };
-    controlled.lastPick = scene.time.now - 1_000;
+    controlled.lastPick = scene.activeTimeMs - 1_000;
     controlled.preUpdate(scene.time.now + 1_000, 16);
 
     // Дальше AI tick не может завершить бросок сам: тест проверяет именно
