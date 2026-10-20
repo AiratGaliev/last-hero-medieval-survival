@@ -330,9 +330,10 @@ export class Enemy extends Phaser.Physics.Arcade.Sprite {
     let final = dmg;
     // Защита по виду: щит скелета снимается на ярости, панцирь черепахи и
     // стойка панды уменьшают входящий урон постоянно.
-    const hasArmor = this.def.armorFront && (this.kind !== 'skull' || !this.enraged);
+    const armor = this.def.armorFront;
+    const hasArmor = armor !== undefined && armor > 0 && (this.kind !== 'skull' || !this.enraged);
     if (hasArmor) {
-      final = Math.max(1, final * (1 - this.def.armorFront));
+      final = Math.max(1, final * (1 - armor));
       // Звон щита скелета — блок заметен и без чтения чисел урона.
       if (this.kind === 'skull' && Math.random() < 0.3) audio.play('hit');
     }
