@@ -172,25 +172,6 @@ export class OrderMenu {
       }
       container.add(c);
     });
-    // §B.6: приказ гарнизону ДЕРЖИТСЯ ДО ОТМЕНЫ («пост ставится один раз:
-    // стой здесь и держи — и забыл»), поэтому у приказа обязателен явный
-    // «сброс» в радиальном меню. Без него перевести воина обратно на
-    // автоповедение было невозможно в принципе.
-    const reset = this.scene.add.container(wx, wy - 54 * uiScale).setScale(uiScale);
-    const rbg = this.markMenuTarget(
-      this.scene.add.rectangle(0, 0, 96, 26, 0x5a4327, 0.95)
-        .setStrokeStyle(2, 0xd8c9a8).setInteractive({ useHandCursor: true }),
-    );
-    const rtxt = this.scene.add.text(0, 0, t('order.reset'), {
-      fontFamily: FONT, fontSize: '12px', color: '#ffe9b0',
-    }).setOrigin(0.5);
-    rbg.on('pointerdown', () => {
-      if (this.pawn) { this.pawn.order = null; this.pawn.orderTarget = null; }
-      this.close();
-    });
-    reset.add([rbg, rtxt]);
-    container.add(reset);
-
     const close = this.markMenuTarget(
       this.scene.add.circle(wx, wy, 24, 0x1a0f08, 0.9)
         .setStrokeStyle(2, 0x8a6d3b).setInteractive({ useHandCursor: true }).setScale(uiScale),
@@ -225,6 +206,10 @@ export class OrderMenu {
         { key: 'hold', label: t('order.hold') },
       ];
       if (pawn.kind === 'healer') list.push({ key: 'monastery', label: t('order.monastery') });
+      // Сброс доступен именно в меню выбранного гарнизонного юнита.
+      // Меню найма открывается через openCustom() и не должно показывать
+      // нерабочую кнопку отмены приказа.
+      list.push({ key: 'reset', label: t('order.reset') });
       return list;
     }
     return [
