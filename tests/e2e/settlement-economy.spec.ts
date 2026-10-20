@@ -3763,7 +3763,12 @@ test('phase M: monastery collapse announces occupied beds and waits three active
       warnings,
       critical,
       beforeDeadline,
-      afterDeadline: { hp: monastery.hp, alive: monastery.alive, pending: monastery.collapsePending },
+      afterDeadline: {
+        hp: monastery.hp,
+        alive: monastery.alive,
+        pending: monastery.collapsePending,
+        occupiedSlots: monastery.occupiedSlots,
+      },
     };
   });
 
@@ -3773,6 +3778,7 @@ test('phase M: monastery collapse announces occupied beds and waits three active
   expect(report.beforeDeadline).toEqual({ hp: 1, alive: true, pending: true });
   expect(report.afterDeadline.alive).toBe(false);
   expect(report.afterDeadline.pending).toBe(false);
+  expect(report.afterDeadline.occupiedSlots).toBe(0);
 });
 
 
