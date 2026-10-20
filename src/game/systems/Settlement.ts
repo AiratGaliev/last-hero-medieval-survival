@@ -290,13 +290,26 @@ export class Settlement {
     // каждые пару минут и обещает игроку бесперспективность.
     if (b.kind === 'monastery' && !this.monasteryCollapsed) {
       this.monasteryCollapsed = true;
-      const victims: Pawn[] = [];
-      for (const slot of b.healSlots) {
-        if (slot) victims.push(slot as Pawn);
-      }
+      // Слот — локальный индекс здания. Защищаемся от повторной ссылки на
+      // одну пешку в нескольких местах: одна жертва учитывается один раз.
+      const victims = [...new Set(
+        b.healSlots.filter((slot): slot is Pawn => slot !== null) as Pawn[],
+      )];
       this.facts.monasteryFallenAt = this.fmtTime();
       this.facts.monasteryVictims += victims.length;
-      for (const v of victims) this.eco.removePawn(v);
+
+      // Building уже помечен destroyed при вызове callback. removePawn()
+      // корректно не вызывает UI-освобождение слота у мёртвого здания, поэтому
+      // обнуляем его массив без создания новых slot-label-ов на разрушенном
+      // спрайте и очищаем owner-ссылки до обработки окончательной смерти.
+      b.healSlots.fill(null);
+      for (const victim of victims) {
+        if (victim.monasteryBuilding === b) {
+          victim.monasterySlot = null;
+          victim.monasteryBuilding = null;
+        }
+        this.eco.removePawn(victim);
+      }
       if (victims.length > 0) this.ctx.onMonasteryCollapsed(victims.length);
       track('monastery_collapsed', { victims_n: victims.length });
     }
