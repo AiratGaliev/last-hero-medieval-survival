@@ -1074,7 +1074,7 @@ export class PawnAI {
     let bestScore = Infinity;
     for (const fighter of fighters) {
       let nearest: Enemy | null = null;
-      let nearestD = GARRISON.RALLY;
+      let nearestD: number = GARRISON.RALLY;
       for (const enemy of enemies) {
         if (!enemy.active || enemy.dead) continue;
         const d = Phaser.Math.Distance.Between(fighter.x, fighter.y, enemy.x, enemy.y);
