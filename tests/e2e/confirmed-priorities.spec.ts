@@ -40,6 +40,7 @@ type EconomyRuntime = {
 };
 type GameSceneRuntime = {
   elapsed: number;
+  activeTimeMs: number;
   hintOverlayPaused: boolean;
   hints: HintRuntime;
   economy: EconomyRuntime;
@@ -272,7 +273,7 @@ test('intro overlay really pauses gameplay; monastery warnings and garrison dama
     if (!enemy) throw new Error('Paused-overlay siege fixture is missing');
     enemy.siege = true;
     enemy.buildingTarget = castle;
-    enemy.attackWindowEnds = scene.time.now + 10_000;
+    enemy.attackWindowEnds = scene.activeTimeMs + 10_000;
     enemy.buildingAtkCd = 0;
     return { castleHp: castle.hp };
   });
@@ -438,7 +439,7 @@ test('intro overlay really pauses gameplay; monastery warnings and garrison dama
     const scene = game.scene.getScene('Game') as GameSceneRuntime;
     const currentHeroDps = scene.weapons.estimateTheoreticalDps();
     scene.heroDpsAtTenMinutes = 100; // deterministic fixture for the shared limiter
-    scene.garrisonDpsBudget.reset(scene.time.now);
+    scene.garrisonDpsBudget.reset(scene.activeTimeMs);
     return currentHeroDps;
   });
   expect(Number.isFinite(heroDps)).toBe(true);
