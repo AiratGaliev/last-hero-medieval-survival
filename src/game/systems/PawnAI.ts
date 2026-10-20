@@ -534,7 +534,7 @@ export class PawnAI {
 
   /** 45 сек, +15 с картой «Полевой лекарь» (§G.3 / §H.5). */
   private bleedoutSec(): number {
-    return BLEEDOUT_SEC + (this.eco.card('fieldmedic') > 0 ? 15 : 0);
+    return BLEEDOUT_SEC + 15 * this.eco.card('fieldmedic');
   }
 
   /** Доводит истекающего до ворот (у монастыря — уже там, у замка — нет). */
