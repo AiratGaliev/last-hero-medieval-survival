@@ -40,7 +40,7 @@ jobs:
           case "$BASE_BRANCH" in
             dev)
               case "$HEAD_BRANCH" in
-                feat/*|feature/*|fix/*|refactor/*|test/*|docs/*|chore/*)
+                feat/*|feature/*|fix/*|refactor/*|test/*|docs/*|chore/*|hotfix/*)
                   echo "Допустимый маршрут: $HEAD_BRANCH -> dev"
                   ;;
                 *)
@@ -58,7 +58,7 @@ jobs:
               ;;
             main)
               case "$HEAD_BRANCH" in
-                test|hotfix/*|chore/ci-branching-policy)
+                test|hotfix/*)
                   echo "Допустимый маршрут: $HEAD_BRANCH -> main"
                   ;;
                 *)
