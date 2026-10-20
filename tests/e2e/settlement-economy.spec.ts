@@ -1577,3 +1577,141 @@ test('phase L: the 100-kill combo milestone grants settlement resources but no m
   expect(result.meat).toBe(15);
   expect(result.score).toBe(scoreBefore);
 });
+
+test('phase L: rank II doubles numeric settlement-card effects and rank III cannot stack them', async ({ page }) => {
+  await startRun(page);
+  const report = await page.evaluate(() => {
+    const game = (window as RuntimeWindow).__tss;
+    if (!game) throw new Error('Phaser runtime unavailable');
+    type CardEconomy = EconomyRuntime & {
+      card(id: string): number;
+      applySettlementCard(id: string): void;
+      workYield(resource: 'wood' | 'meat' | 'ore'): number;
+      veinCharges(): number;
+      pawnLimit: number;
+      pawnAI: { bleedoutSec(): number };
+      monastery: { healWoodMultiplier(): number };
+    };
+    const scene = game.scene.getScene('Game') as GameSceneRuntime & {
+      economy: CardEconomy;
+      spawner: { siegeAlarmSeconds(): number };
+      siegeArrowDurationMs(): number;
+      spawnEnemy(kind: string, x: number, y: number): boolean;
+      enemyGroup: { getChildren(): Array<{ active: boolean; kind: string; ctx?: { siegeInterceptRadius(): number } }> };
+      heroDpsAtTenMinutes: number | null;
+      damageEnemyByPawn(enemy: unknown, damage: number, weapon: string): void;
+    };
+    const economy = scene.economy;
+    const castle = economy.buildings.find((building) => building.kind === 'castle');
+    if (!castle) throw new Error('Castle missing');
+    const masonryBaseHp = castle.maxHp;
+    economy.applySettlementCard('masonry');
+    const masonryRankOneHp = castle.maxHp;
+    economy.applySettlementCard('masonry');
+    const masonryRankTwoHp = castle.maxHp;
+    economy.applySettlementCard('masonry');
+    const masonryRankThreeHp = castle.maxHp;
+
+    const assemblyBaseLimit = economy.pawnLimit;
+    economy.applySettlementCard('assembly');
+    const assemblyRankOneLimit = economy.pawnLimit;
+    economy.applySettlementCard('assembly');
+    const assemblyRankTwoLimit = economy.pawnLimit;
+    economy.applySettlementCard('assembly');
+    const assemblyRankThreeLimit = economy.pawnLimit;
+
+    const woodBase = economy.workYield('wood');
+    economy.applySettlementCard('forestry');
+    const forestryRankOne = economy.workYield('wood');
+    economy.applySettlementCard('forestry');
+    const forestryRankTwo = economy.workYield('wood');
+
+    const meatBase = economy.workYield('meat');
+    economy.applySettlementCard('provisions');
+    const provisionsRankOne = economy.workYield('meat');
+    economy.applySettlementCard('provisions');
+    const provisionsRankTwo = economy.workYield('meat');
+
+    const veinBase = economy.veinCharges();
+    economy.applySettlementCard('deepmines');
+    const deepminesRankOne = economy.veinCharges();
+    economy.applySettlementCard('deepmines');
+    const deepminesRankTwo = economy.veinCharges();
+
+    const bleedBase = economy.pawnAI.bleedoutSec();
+    economy.applySettlementCard('fieldmedic');
+    const fieldmedicRankOne = economy.pawnAI.bleedoutSec();
+    const fieldmedicWoodRankOne = economy.monastery.healWoodMultiplier();
+    economy.applySettlementCard('fieldmedic');
+    const fieldmedicRankTwo = economy.pawnAI.bleedoutSec();
+    const fieldmedicWoodRankTwo = economy.monastery.healWoodMultiplier();
+
+    const alarmBase = scene.spawner.siegeAlarmSeconds();
+    const arrowBase = scene.siegeArrowDurationMs();
+    economy.applySettlementCard('alarm');
+    const alarmRankOne = scene.spawner.siegeAlarmSeconds();
+    const arrowRankOne = scene.siegeArrowDurationMs();
+    economy.applySettlementCard('alarm');
+    const alarmRankTwo = scene.spawner.siegeAlarmSeconds();
+    const arrowRankTwo = scene.siegeArrowDurationMs();
+
+    if (!scene.spawnEnemy('goblin', scene.player.x + 300, scene.player.y + 200)) {
+      throw new Error('Could not spawn militia test enemy');
+    }
+    const enemy = scene.enemyGroup.getChildren().find((candidate) => candidate.active && candidate.kind === 'goblin');
+    if (!enemy?.ctx) throw new Error('Spawned enemy context is missing');
+    const radiusBase = enemy.ctx.siegeInterceptRadius();
+    const dealt: number[] = [];
+    scene.heroDpsAtTenMinutes = null;
+    const dummy = {
+      active: true, dead: false, def: { scale: 1 },
+      x: scene.player.x + 50, y: scene.player.y + 50,
+      takeDamage: (amount: number): boolean => { dealt.push(amount); return false; },
+    };
+    scene.damageEnemyByPawn(dummy, 40, 'sword');
+    economy.applySettlementCard('militia');
+    const radiusRankOne = enemy.ctx.siegeInterceptRadius();
+    scene.damageEnemyByPawn(dummy, 40, 'sword');
+    economy.applySettlementCard('militia');
+    const radiusRankTwo = enemy.ctx.siegeInterceptRadius();
+    scene.damageEnemyByPawn(dummy, 40, 'sword');
+
+    return {
+      masonryBaseHp, masonryRankOneHp, masonryRankTwoHp, masonryRankThreeHp,
+      assemblyBaseLimit, assemblyRankOneLimit, assemblyRankTwoLimit, assemblyRankThreeLimit,
+      woodBase, forestryRankOne, forestryRankTwo,
+      meatBase, provisionsRankOne, provisionsRankTwo,
+      veinBase, deepminesRankOne, deepminesRankTwo,
+      bleedBase, fieldmedicRankOne, fieldmedicRankTwo, fieldmedicWoodRankOne, fieldmedicWoodRankTwo,
+      alarmBase, alarmRankOne, alarmRankTwo, arrowBase, arrowRankOne, arrowRankTwo,
+      radiusBase, radiusRankOne, radiusRankTwo, dealt,
+    };
+  });
+
+  expect(report.masonryRankOneHp).toBe(Math.round(report.masonryBaseHp * 1.15));
+  expect(report.masonryRankTwoHp).toBe(Math.round(report.masonryBaseHp * 1.3));
+  expect(report.masonryRankThreeHp).toBe(report.masonryRankTwoHp);
+  expect(report.assemblyRankOneLimit).toBe(report.assemblyBaseLimit + 1);
+  expect(report.assemblyRankTwoLimit).toBe(report.assemblyBaseLimit + 2);
+  expect(report.assemblyRankThreeLimit).toBe(report.assemblyRankTwoLimit);
+  expect(report.forestryRankOne).toBe(Math.round(report.woodBase * 1.2));
+  expect(report.forestryRankTwo).toBe(Math.round(report.woodBase * 1.4));
+  expect(report.provisionsRankOne).toBe(Math.round(report.meatBase * 4 / 3));
+  expect(report.provisionsRankTwo).toBe(Math.round(report.meatBase * 5 / 3));
+  expect(report.deepminesRankOne).toBe(report.veinBase + 1);
+  expect(report.deepminesRankTwo).toBe(report.veinBase + 2);
+  expect(report.fieldmedicRankOne).toBe(report.bleedBase + 15);
+  expect(report.fieldmedicRankTwo).toBe(report.bleedBase + 30);
+  expect(report.fieldmedicWoodRankOne).toBeCloseTo(0.75, 5);
+  expect(report.fieldmedicWoodRankTwo).toBeCloseTo(0.5, 5);
+  expect(report.alarmBase).toBe(5);
+  expect(report.alarmRankOne).toBe(8);
+  expect(report.alarmRankTwo).toBe(11);
+  expect(report.arrowBase).toBe(3_000);
+  expect(report.arrowRankOne).toBe(5_000);
+  expect(report.arrowRankTwo).toBe(7_000);
+  expect(report.radiusBase).toBe(260);
+  expect(report.radiusRankOne).toBe(300);
+  expect(report.radiusRankTwo).toBe(340);
+  expect(report.dealt).toEqual([40, 50, 60]);
+});
