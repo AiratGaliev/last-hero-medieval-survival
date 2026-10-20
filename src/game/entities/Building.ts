@@ -130,7 +130,7 @@ export class Building extends Phaser.GameObjects.Image {
       // Прочие здания превращаются в руины и восстанавливаются за 60 дерева.
       if (this.kind === 'castle') this.destroy();
       else if (this.kind === 'monastery') {
-        if (this.monasteryCollapseTimer) this.hp = 1;
+        if (this.monasteryCollapseRemainingMs !== null) this.hp = 1;
         else this.destroy();
       } else this.enterRuins();
     }
