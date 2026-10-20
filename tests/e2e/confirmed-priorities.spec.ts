@@ -84,7 +84,13 @@ async function continueInitialTutorial(page: Page): Promise<void> {
   const canvas = page.locator('#game canvas');
   const bounds = await canvas.boundingBox();
   if (!bounds) throw new Error('Game canvas has no bounds');
-  await page.mouse.click(bounds.x + bounds.width / 2, bounds.y + bounds.height / 2);
+  const viewport = page.viewportSize();
+  if (viewport && viewport.width <= 600) {
+    // На мобильном профиле посылаем touch-событие, как на реальном устройстве.
+    await page.touchscreen.tap(bounds.x + bounds.width / 2, bounds.y + bounds.height / 2);
+  } else {
+    await page.mouse.click(bounds.x + bounds.width / 2, bounds.y + bounds.height / 2);
+  }
   await expect.poll(
     () => page.evaluate(() => {
       const game = (window as RuntimeWindow).__tss;
