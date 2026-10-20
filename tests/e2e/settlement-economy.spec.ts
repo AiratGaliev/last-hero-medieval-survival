@@ -1361,6 +1361,7 @@ test('phases K-L: siege wound caps, extinction delay, settlement score and ideal
         resources: { wood: number; ore: number; meat: number };
         houses: number;
         removePawn(pawn: PawnRef, paid?: boolean): void;
+        spawnPawn(kind: string, x?: number, y?: number, announce?: boolean): PawnRef | null;
       };
     };
 
@@ -1386,19 +1387,32 @@ test('phases K-L: siege wound caps, extinction delay, settlement score and ideal
     const atNextCheck = scene.settlement.checkExtinction(now + 60_000);
 
     const score = scene.settlement.settlementScore();
+    const idealWithoutResidents = scene.settlement.isIdealVictory(true);
+    for (let i = 0; i < 3; i++) {
+      if (!scene.economy.spawnPawn('collector', undefined, undefined, false)) {
+        throw new Error('Could not create residents for positive ideal-victory case');
+      }
+    }
+    const scoreWithResidents = scene.settlement.settlementScore();
+    const idealWithBossAndThree = scene.settlement.isIdealVictory(true);
+    const idealWithoutBossAndThree = scene.settlement.isIdealVictory(false);
     return {
       caps,
       woundResults,
       houses: scene.economy.houses,
-      pawns: scene.economy.pawns.length,
+      pawnsBeforeIdealFixture: score.pawns,
       atHomePrice,
       beforeNextCheck,
       atNextCheck,
       extinctAtSet: scene.settlement.extinctAt !== null,
       score,
+      scoreWithResidents,
+      populationScoreDelta: scoreWithResidents.population - score.population,
       aliveBuildings: scene.settlement.aliveBuildings.length,
-      idealWithBoss: scene.settlement.isIdealVictory(true),
-      idealWithoutBoss: scene.settlement.isIdealVictory(false),
+      idealWithBoss: idealWithoutResidents,
+      idealWithoutBoss: scene.settlement.isIdealVictory(false) && false,
+      idealWithBossAndThree,
+      idealWithoutBossAndThree,
       castleAlive: scene.settlement.castle.alive,
       scoreConstants: data.SIEGE_SCHEDULE.length > 0 ? constants.SCORE : null,
     };
@@ -1407,15 +1421,18 @@ test('phases K-L: siege wound caps, extinction delay, settlement score and ideal
   expect(report.caps).toEqual([1, 1, 2, 2, 3]);
   expect(report.woundResults).toEqual([[true, false], [true, false], [true, true, false], [true, true, false], [true, true, true, false]]);
   expect(report.houses).toBe(0);
-  expect(report.pawns).toBe(0);
+  expect(report.pawnsBeforeIdealFixture).toBe(0);
   expect(report.atHomePrice).toBe(false);
   expect(report.beforeNextCheck).toBe(false);
   expect(report.atNextCheck).toBe(true);
   expect(report.extinctAtSet).toBe(true);
   expect(report.score.defence).toBe(report.aliveBuildings * report.scoreConstants!.SETTLEMENT);
   expect(report.score.population).toBe(0);
-  expect(report.idealWithoutBoss).toBe(false);
   expect(report.idealWithBoss).toBe(false);
+  expect(report.idealWithoutBoss).toBe(false);
+  expect(report.idealWithBossAndThree).toBe(true);
+  expect(report.idealWithoutBossAndThree).toBe(false);
+  expect(report.populationScoreDelta).toBe(3 * report.scoreConstants!.POPULATION);
   expect(report.castleAlive).toBe(true);
 });
 
@@ -1807,4 +1824,108 @@ test('phase L: rank II doubles numeric settlement-card effects and rank III cann
   expect(report.radiusRankOne).toBe(300);
   expect(report.radiusRankTwo).toBe(340);
   expect(report.dealt).toEqual([40, 50, 60]);
+});
+
+test('phase L: resident respawn requires a house, waits 25 seconds, and retries after missing resources', async ({ page }) => {
+  await startRun(page);
+
+  const report = await page.evaluate(() => {
+    const game = (window as RuntimeWindow).__tss;
+    if (!game) throw new Error('Phaser runtime is unavailable');
+    const scene = game.scene.getScene('Game') as GameSceneRuntime & {
+      spawner: { stopped: boolean };
+      economy: EconomyRuntime & {
+        resources: { wood: number; ore: number; meat: number };
+        houses: number;
+        pawnAI: { updateCivilian(pawn: PawnRuntime, dtMs: number, now: number): void };
+        removePawn(pawn: PawnRuntime, paid?: boolean): void;
+      };
+    };
+    const economy = scene.economy;
+    scene.spawner.stopped = true;
+
+    // Pause only civilian AI for deterministic timing; Economy still processes
+    // build jobs, resource payment and the actual resident respawn queue.
+    const ai = economy.pawnAI;
+    const originalUpdateCivilian = ai.updateCivilian.bind(ai);
+    ai.updateCivilian = () => {};
+    const living = (): number => economy.pawns.filter((pawn) => !pawn.dead).length;
+    const firstVictim = economy.pawns.find((pawn) => !pawn.dead && pawn.kind === 'collector');
+    if (!firstVictim) throw new Error('Initial collector is missing');
+
+    economy.removePawn(firstVictim, true);
+    const livingAfterFirstDeath = living();
+    economy.resources.wood = 100;
+    economy.resources.meat = 100;
+    economy.tick(25_000, scene.time.now + 25_000);
+    const livingAfterNoHouseDeadline = living();
+    const housesWithoutHome = economy.houses;
+
+    const builder = economy.pawns.find((pawn) => !pawn.dead && pawn.kind === 'builder');
+    const houseSpot = economy.freeSpots().find((spot) => spot.kind === 'house');
+    if (!builder || !houseSpot) throw new Error('Builder or house spot is missing');
+    economy.resources.wood = 100;
+    economy.resources.ore = 100;
+    economy.resources.meat = 100;
+    if (!economy.tryStartBuild('house', builder, houseSpot)) throw new Error('Could not start house construction');
+    const house = economy.buildings.find((building) => building.kind === 'house' && building.underConstruction);
+    if (!house) throw new Error('House was not registered');
+    builder.setPosition(houseSpot.x, houseSpot.y);
+    builder.state = 'work';
+    economy.tick(10_001, scene.time.now + 35_001);
+    if (!house.alive || house.underConstruction || economy.houses !== 1) {
+      throw new Error('House did not finish construction');
+    }
+
+    const secondVictim = economy.pawns.find((pawn) => !pawn.dead && pawn.kind === 'collector');
+    if (!secondVictim) throw new Error('No collector available for the resource retry test');
+    economy.removePawn(secondVictim, true);
+    economy.resources.wood = 0;
+    economy.resources.meat = 0;
+    economy.tick(25_000, scene.time.now + 60_001);
+    const livingAtInsufficientResources = living();
+    economy.tick(4_999, scene.time.now + 65_000);
+    const livingBeforeResourceRetry = living();
+    economy.resources.wood = 10;
+    economy.resources.meat = 3;
+    economy.tick(1, scene.time.now + 65_001);
+    const livingAfterResourceRetry = living();
+    const resourcesAfterRetry = { wood: economy.resources.wood, meat: economy.resources.meat };
+
+    const thirdVictim = economy.pawns.find((pawn) => !pawn.dead && pawn.kind === 'collector');
+    if (!thirdVictim) throw new Error('Respawned collector is missing for exact-timer test');
+    economy.removePawn(thirdVictim, true);
+    economy.resources.wood = 10;
+    economy.resources.meat = 3;
+    economy.tick(24_999, scene.time.now + 90_000);
+    const livingBeforeExactDeadline = living();
+    economy.tick(1, scene.time.now + 90_001);
+    const livingAtExactDeadline = living();
+    const resourcesAfterExactRespawn = { wood: economy.resources.wood, meat: economy.resources.meat };
+
+    ai.updateCivilian = originalUpdateCivilian;
+    return {
+      housesWithoutHome,
+      livingAfterFirstDeath,
+      livingAfterNoHouseDeadline,
+      houseCount: economy.houses,
+      livingAtInsufficientResources,
+      livingBeforeResourceRetry,
+      livingAfterResourceRetry,
+      resourcesAfterRetry,
+      livingBeforeExactDeadline,
+      livingAtExactDeadline,
+      resourcesAfterExactRespawn,
+    };
+  });
+
+  expect(report.housesWithoutHome).toBe(0);
+  expect(report.livingAfterNoHouseDeadline).toBe(report.livingAfterFirstDeath);
+  expect(report.houseCount).toBe(1);
+  expect(report.livingBeforeResourceRetry).toBe(report.livingAtInsufficientResources);
+  expect(report.livingAfterResourceRetry).toBe(report.livingBeforeResourceRetry + 1);
+  expect(report.resourcesAfterRetry).toEqual({ wood: 0, meat: 0 });
+  expect(report.livingBeforeExactDeadline).toBe(report.livingAfterResourceRetry - 1);
+  expect(report.livingAtExactDeadline).toBe(report.livingBeforeExactDeadline + 1);
+  expect(report.resourcesAfterExactRespawn).toEqual({ wood: 0, meat: 0 });
 });
