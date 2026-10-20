@@ -1,0 +1,47 @@
+name: Release Yandex Games
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-main
+  cancel-in-progress: false
+
+jobs:
+  release:
+    name: release-archive
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install locked dependencies
+        run: npm ci
+
+      - name: Typecheck and lint
+        run: npm run check
+
+      - name: Build and validate Yandex Games archive
+        run: npm run build:yg
+
+      - name: Upload release archive
+        uses: actions/upload-artifact@v4
+        with:
+          name: yandex-games-release
+          path: release/tiny-sword-survivors.zip
+          if-no-files-found: error
+          retention-days: 30
