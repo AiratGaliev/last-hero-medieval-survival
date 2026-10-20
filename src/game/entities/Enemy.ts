@@ -99,7 +99,7 @@ export class Enemy extends Phaser.Physics.Arcade.Sprite {
   /** Отдельный цикл рывка свиногоблина по зданию в режиме осады (§E.4.1). */
   private siegeChargeStage: 'idle' | 'windup' | 'charge' | 'recover' = 'idle';
   private siegeChargeTimerMs = 0;
-  private siegeChargeCooldownMs = SIEGE.PIG_RIDER_CHARGE_INTERVAL_MS;
+  private siegeChargeCooldownMs: number = SIEGE.PIG_RIDER_CHARGE_INTERVAL_MS;
   private siegeChargeDirX = 0;
   private siegeChargeDirY = 0;
   /** Момент спавна — таймер отступления осады 60 сек (§E.4.2) */

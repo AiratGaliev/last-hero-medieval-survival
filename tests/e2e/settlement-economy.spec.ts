@@ -2450,6 +2450,161 @@ test('phase K: pig-rider charge timeout outside contact radius does not damage t
   expect(report.stage).toBe('recover');
 });
 
+
+test('phase K: building fire displays the loaded dynamite and fire assets and clears them after six active seconds', async ({ page }) => {
+  await startRun(page);
+  const report = await page.evaluate(() => {
+    const game = (window as RuntimeWindow).__tss;
+    if (!game) throw new Error('Phaser runtime is unavailable');
+    const scene = game.scene.getScene('Game') as GameSceneRuntime & {
+      settlement: { castle: BuildingRuntime };
+    };
+    type SpriteRuntime = {
+      active: boolean;
+      visible: boolean;
+      texture: { key: string };
+      anims: { currentAnim?: { key: string } | null };
+    };
+    type BurningBuildingRuntime = BuildingRuntime & {
+      ignite(siegeIndex: number): void;
+      tickBurn(dtMs: number): number;
+      burnSprite: SpriteRuntime | null;
+      fireFx: SpriteRuntime | null;
+    };
+    const castle = scene.settlement.castle as unknown as BurningBuildingRuntime;
+    castle.ignite(0);
+    const visual = {
+      dynamiteKey: castle.burnSprite?.texture.key ?? null,
+      dynamiteVisible: castle.burnSprite?.active === true && castle.burnSprite.visible,
+      dynamiteAnimation: castle.burnSprite?.anims.currentAnim?.key ?? null,
+      fireKey: castle.fireFx?.texture.key ?? null,
+      fireVisible: castle.fireFx?.active === true && castle.fireFx.visible,
+      burnAnimationRegistered: game.anims.exists('barrel-burn'),
+      fireAnimationRegistered: game.anims.exists('fx-fire'),
+    };
+    const dotDamage = castle.tickBurn(6_000);
+    return {
+      ...visual,
+      dotDamage,
+      remainingDynamite: castle.burnSprite !== null,
+      remainingFireFx: castle.fireFx !== null,
+    };
+  });
+
+  expect(report.dynamiteKey).toBe('barrel');
+  expect(report.dynamiteVisible).toBe(true);
+  expect(report.dynamiteAnimation).toBe('barrel-burn');
+  expect(report.fireKey).toBe('fx-fire');
+  expect(report.fireVisible).toBe(true);
+  expect(report.burnAnimationRegistered).toBe(true);
+  expect(report.fireAnimationRegistered).toBe(true);
+  expect(report.dotDamage).toBe(3);
+  expect(report.remainingDynamite).toBe(false);
+  expect(report.remainingFireFx).toBe(false);
+});
+
+
+test('phase K: ordinary wave enemies do not damage castle buildings', async ({ page }) => {
+  await startRun(page);
+  const report = await page.evaluate(() => {
+    const game = (window as RuntimeWindow).__tss;
+    if (!game) throw new Error('Phaser runtime is unavailable');
+    type RegularEnemyRuntime = {
+      active: boolean;
+      kind: string;
+      siege: boolean;
+      preUpdate(time: number, delta: number): void;
+    };
+    type RuntimeScene = GameSceneRuntime & {
+      hints: { setEnabled(enabled: boolean): void };
+      started: boolean;
+      spawner: { stopped: boolean };
+      settlement: { castle: BuildingRuntime };
+      enemyGroup: {
+        clear(removeFromScene?: boolean, destroyChildren?: boolean): void;
+        getChildren(): RegularEnemyRuntime[];
+        remove(child: unknown, removeFromScene?: boolean, destroyChild?: boolean): void;
+      };
+      spawnEnemy(kind: string, x: number, y: number): boolean;
+    };
+    const scene = game.scene.getScene('Game') as unknown as RuntimeScene;
+    scene.hints.setEnabled(false);
+    scene.started = true;
+    scene.spawner.stopped = true;
+    scene.enemyGroup.clear(true, true);
+    scene.player.setPosition(0, 0);
+    const castle = scene.settlement.castle;
+    if (!scene.spawnEnemy('skull', castle.x + 80, castle.y)) {
+      throw new Error('Could not spawn regular-wave enemy fixture');
+    }
+    const enemy = scene.enemyGroup.getChildren().find((candidate) =>
+      candidate.active && candidate.kind === 'skull');
+    if (!enemy) throw new Error('Regular-wave enemy fixture is missing');
+    enemy.siege = false;
+    const castleHpBefore = castle.hp;
+    const now = scene.time.now;
+    // AI active-time ticks advance deterministically. Normal enemies can attack
+    // the hero or pawns but must never use the building-damage callback.
+    for (let i = 0; i < 120; i++) enemy.preUpdate(now + i * 16, 16);
+    const castleHpAfter = castle.hp;
+    scene.enemyGroup.remove(enemy, true, true);
+    return { castleHpBefore, castleHpAfter, siege: enemy.siege };
+  });
+  expect(report.siege).toBe(false);
+  expect(report.castleHpAfter).toBe(report.castleHpBefore);
+});
+
+
+test('phase K: destroying the last barracks removes the settlement succession source', async ({ page }) => {
+  await startRun(page);
+  const report = await page.evaluate(() => {
+    const game = (window as RuntimeWindow).__tss;
+    if (!game) throw new Error('Phaser runtime is unavailable');
+    type RuntimeJob = { building: BuildingRuntime };
+    type RuntimeEconomy = EconomyRuntime & { buildJobs: RuntimeJob[] };
+    type RuntimeScene = GameSceneRuntime & {
+      hints: { setEnabled(enabled: boolean): void };
+      settlement: { hasSuccessionSource(): boolean };
+    };
+    const scene = game.scene.getScene('Game') as unknown as RuntimeScene;
+    scene.hints.setEnabled(false);
+    const economy = scene.economy as RuntimeEconomy;
+    economy.resources.wood = 10_000;
+    economy.resources.ore = 10_000;
+    economy.resources.meat = 10_000;
+
+    // Isolate the last source in case a scenario prebuilt one.
+    for (const building of [...economy.buildings]) {
+      if (['barracks', 'archery', 'monastery'].includes(building.kind) && building.alive) {
+        building.damage(building.maxHp + 1, -1);
+      }
+    }
+    const noSourceInitially = scene.settlement.hasSuccessionSource();
+    const builder = economy.pawns.find((pawn) => pawn.kind === 'builder');
+    const spot = economy.freeSpots().find((candidate) => candidate.kind === 'barracks');
+    if (!builder || !spot) throw new Error('Builder or barracks spot is unavailable');
+    if (!economy.tryStartBuild('barracks', builder, spot)) {
+      throw new Error('Could not start barracks for succession-source regression');
+    }
+    const barracks = economy.buildings.find((building) =>
+      building.kind === 'barracks' && building.underConstruction);
+    if (!barracks) throw new Error('Barracks construction object was not registered');
+    for (let i = economy.buildJobs.length - 1; i >= 0; i--) {
+      if (economy.buildJobs[i].building === barracks) economy.buildJobs.splice(i, 1);
+    }
+    barracks.finishConstruction();
+    const sourceWhileBarracksAlive = scene.settlement.hasSuccessionSource();
+    barracks.damage(barracks.maxHp + 1, -1);
+    const sourceAfterBarracksDestroyed = scene.settlement.hasSuccessionSource();
+    return { noSourceInitially, sourceWhileBarracksAlive, sourceAfterBarracksDestroyed, barracksAlive: barracks.alive };
+  });
+  expect(report.noSourceInitially).toBe(true);
+  expect(report.sourceWhileBarracksAlive).toBe(true);
+  expect(report.barracksAlive).toBe(false);
+  expect(report.sourceAfterBarracksDestroyed).toBe(false);
+});
+
+
 test('phase K: siege infrastructure caps exclude unfinished and ruined buildings and clamp damage at 12%/6%', async ({ page }) => {
   await startRun(page);
   const report = await page.evaluate(() => {
