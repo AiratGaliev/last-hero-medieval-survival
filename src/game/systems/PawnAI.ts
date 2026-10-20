@@ -511,6 +511,7 @@ export class PawnAI {
         this.toBleeding(p);
       } else {
         p.monasterySlot = slot;
+        p.monasteryBuilding = mon;
         p.state = 'wounded'; // лечится внутри; monasteryHealTick поднимет
         p.playMove(false);
         p.setVelocity(0, 0);
