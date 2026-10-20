@@ -3937,3 +3937,61 @@ test('phase M: field rescue releases only the assigned monastery slot when two m
   expect(report.targetBuilding).toBeNull();
   expect(report.monkTargetCleared).toBe(true);
 });
+
+
+test('phase M: one wounded pawn reserves exactly one monastery bed across repeated AI ticks', async ({ page }) => {
+  await startRun(page);
+  const report = await page.evaluate(() => {
+    const game = (window as RuntimeWindow).__tss;
+    if (!game) throw new Error('Phaser runtime is unavailable');
+    const scene = game.scene.getScene('Game') as GameSceneRuntime & {
+      hints?: { setEnabled(enabled: boolean): void };
+    };
+    scene.hints?.setEnabled(false);
+    scene.registry.set('tss-hint-overlay-paused', false);
+
+    type SlotPawn = PawnRuntime & {
+      monasterySlot: number | null;
+      monasteryBuilding: BuildingRuntime | null;
+    };
+    type MonasteryBuilding = BuildingRuntime & {
+      healSlots: Array<SlotPawn | null>;
+      occupiedSlots: number;
+      claimHealSlot(unit: unknown): number | null;
+    };
+    const economy = scene.economy;
+    const victim = economy.pawns.find(p => p.kind === 'collector') as SlotPawn | undefined;
+    const builder = economy.pawns.find(p => p.kind === 'builder');
+    const spot = economy.freeSpots().find(s => s.kind === 'monastery');
+    if (!victim || !builder || !spot) throw new Error('Monastery slot fixture is unavailable');
+    economy.resources.wood = 1_000;
+    economy.resources.ore = 1_000;
+    if (!economy.tryStartBuild('monastery', builder, spot)) throw new Error('Could not build monastery fixture');
+    const monastery = economy.buildings.find(b => b.kind === 'monastery' && b.underConstruction) as MonasteryBuilding | undefined;
+    if (!monastery) throw new Error('Monastery fixture is missing');
+    monastery.finishConstruction();
+    const jobIndex = economy.buildJobs.findIndex(job => job.building === monastery);
+    if (jobIndex >= 0) economy.buildJobs.splice(jobIndex, 1);
+
+    victim.setPosition(monastery.x + 20, monastery.y);
+    victim.hp = victim.maxHp * 0.2;
+    victim.state = 'wounded';
+    victim.monasterySlot = null;
+    victim.monasteryBuilding = null;
+    for (let i = 0; i < 5; i++) {
+      economy.pawnAI.updateCivilian(victim, 150, scene.time.now + i * 150);
+    }
+    const owners = monastery.healSlots.filter(slot => slot === victim).length;
+    return {
+      occupiedSlots: monastery.occupiedSlots,
+      referencesToVictim: owners,
+      slotIndex: victim.monasterySlot,
+      ownerMatches: victim.monasteryBuilding === monastery,
+    };
+  });
+
+  expect(report.occupiedSlots).toBe(1);
+  expect(report.referencesToVictim).toBe(1);
+  expect(report.slotIndex).toBe(0);
+  expect(report.ownerMatches).toBe(true);
+});
