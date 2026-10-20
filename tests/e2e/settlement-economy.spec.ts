@@ -1799,6 +1799,7 @@ test('phase L: all combo milestones grant their rewards without match-score infl
     const scene = game.scene.getScene('Game') as GameSceneRuntime & {
       score: number;
       xpMagnetUntil: number;
+      activeTimeMs: number;
       time: { now: number };
     };
     const hero = scene.player as unknown as { hp: number; maxHp: number };
@@ -1807,7 +1808,7 @@ test('phase L: all combo milestones grant their rewards without match-score infl
       ore: scene.economy.resources.ore,
       meat: scene.economy.resources.meat,
       score: scene.score,
-      xpMagnetActive: scene.xpMagnetUntil > scene.time.now,
+      xpMagnetActive: scene.xpMagnetUntil > scene.activeTimeMs,
       heroFullyHealed: hero.hp === hero.maxHp,
     };
   });
