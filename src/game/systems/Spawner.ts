@@ -64,6 +64,8 @@ export interface SpawnerOpts {
   ftueSoftStart?: boolean;
   /** Поднабор врагов из ежедневного вызова; undefined сохраняет обычный рандом. */
   dailyPool?: readonly EnemyKind[];
+  /** Ранг карты «Набат»: 8/11 сек предупреждения на рангах I/II. */
+  alarmLevel?: () => number;
 }
 
 export class Spawner {
@@ -190,12 +192,18 @@ export class Spawner {
     return kind;
   }
 
+  /** Ранг «Набата» даёт +3 секунды предупреждения за уровень: 5 → 8 → 11. */
+  private siegeAlarmSeconds(): number {
+    const rank = Math.max(0, Math.min(2, Math.floor(this.o.alarmLevel?.() ?? 0)));
+    return rank > 0
+      ? SIEGE.ANNOUNCE_SEC + 3 * rank
+      : SIEGE.ANNOUNCE_SEC + Math.max(0, Number(this.scene.registry.get('tss-siege-warn') ?? 0));
+  }
+
   /** Осады по расписанию §E.4.3 или по фиксированному интервалу-оверрайду. */
   private scheduleSiegeTick(): void {
     // «Набат» (карта §H.5) — 8 сек; «Дозорные» (узел d3, §H.16) — +2 сек (итого 7)
-    const alarm = this.scene.registry.get('tss-alarm')
-      ? 8
-      : SIEGE.ANNOUNCE_SEC + Math.max(0, Number(this.scene.registry.get('tss-siege-warn') ?? 0));
+    const alarm = this.siegeAlarmSeconds();
     const interval = this.o.siegeIntervalSec ?? null;
     if (interval !== null) {
       // Контракт «Осадное положение» / указ «Двойные осады» / сезон «Долгая
@@ -245,9 +253,7 @@ export class Spawner {
     const interval = this.o.siegeIntervalSec ?? 90;
     const wave = this.siegeIdx + 1;
     const at = interval * wave;
-    const alarm = this.scene.registry.get('tss-alarm')
-      ? 8
-      : SIEGE.ANNOUNCE_SEC + Math.max(0, Number(this.scene.registry.get('tss-siege-warn') ?? 0));
+    const alarm = this.siegeAlarmSeconds();
     let s = this.endlessProfile(wave, at);
     // Благословение «Первая осада» работает и в бесконечном (A2)
     if (this.siegeIdx === 0 && (this.o.firstSiegeTrim ?? 0) > 0) s = this.maybeTrim(s, 0);
