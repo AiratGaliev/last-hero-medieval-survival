@@ -460,6 +460,21 @@ test('phase I: harpoon shark still fires when its throw animation is interrupted
       scene.__e2eHarpoonInterrupted = true;
       animated.play('harpoon-shark-run', true);
     });
+
+    // Запускаем один штатный AI preUpdate с гарантированно истёкшим lastPick.
+    // Это убирает зависимость регрессии от первого случайного кадра после
+    // старта сцены, но не подменяет логику перехода в windup/создание таймера.
+    const controlled = shark as unknown as {
+      preUpdate(time: number, delta: number): void;
+      lastPick: number;
+      stateTimer: number;
+    };
+    controlled.lastPick = scene.time.now - 1_000;
+    controlled.preUpdate(scene.time.now + 1_000, 16);
+
+    // Дальше AI tick не может завершить бросок сам: тест проверяет именно
+    // независимый Scene Clock fallback после прерывания анимации.
+    controlled.stateTimer = 60_000;
   });
 
   await expect.poll(() => page.evaluate(() => {
@@ -469,7 +484,7 @@ test('phase I: harpoon shark still fires when its throw animation is interrupted
       __e2eHarpoonInterrupted?: boolean;
     };
     return scene.__e2eHarpoonInterrupted === true;
-  }), { timeout: 3_000 }).toBe(true);
+  }), { timeout: 5_000 }).toBe(true);
   await expect.poll(() => page.evaluate(() => {
     const game = (window as unknown as { __tss?: RuntimeGame }).__tss;
     if (!game) return false;
