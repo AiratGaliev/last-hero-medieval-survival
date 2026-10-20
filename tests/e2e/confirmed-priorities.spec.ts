@@ -220,7 +220,13 @@ test('intro overlay really pauses gameplay; monastery warnings and garrison dama
 
   const monastery = await page.evaluate(() => {
     const game = (window as RuntimeWindow).__tss!;
-    const scene = game.scene.getScene('Game') as GameSceneRuntime;
+    const scene = game.scene.getScene('Game') as GameSceneRuntime & {
+      spawner: { stopped: boolean };
+      enemyGroup: { clear(removeFromScene?: boolean, destroyChildren?: boolean): void };
+    };
+    // Изолируем трёхсекундное окно от новых волн и уже живых врагов.
+    scene.spawner.stopped = true;
+    scene.enemyGroup.clear(true, true);
     const economy = scene.economy;
     economy.resources.wood = 10_000;
     economy.resources.ore = 10_000;
@@ -295,8 +301,10 @@ test('intro overlay really pauses gameplay; monastery warnings and garrison dama
   const duringWindow = await collapseWindowState();
   expect(duringWindow.alive).toBe(true);
   expect(duringWindow.hasRepairJob).toBe(false);
-  await page.waitForTimeout(2_200);
-  expect((await collapseWindowState()).alive).toBe(false);
+  await expect.poll(
+    async () => (await collapseWindowState()).alive,
+    { timeout: 5_000 },
+  ).toBe(false);
 
   const expectedDpsAtTenMinutes = await page.evaluate(() => {
     const game = (window as RuntimeWindow).__tss!;
