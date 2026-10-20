@@ -4207,3 +4207,74 @@ test('phase M: a bleeding pawn claims a freed monastery bed before the bleedout 
   expect(report.slotContainsPawn).toBe(true);
   expect(report.occupiedSlots).toBe(10);
 });
+
+
+test('phase M: every monastery collapse kills its own occupants and clears its beds', async ({ page }) => {
+  await startRun(page);
+  const report = await page.evaluate(() => {
+    const game = (window as RuntimeWindow).__tss;
+    if (!game) throw new Error('Phaser runtime is unavailable');
+    const scene = game.scene.getScene('Game') as GameSceneRuntime & {
+      hints?: { setEnabled(enabled: boolean): void };
+      settlement: SettlementRuntime & {
+        onBuildingDestroyed(building: BuildingRuntime): void;
+        facts: { monasteryVictims: number };
+      };
+    };
+    scene.hints?.setEnabled(false);
+    scene.registry.set('tss-hint-overlay-paused', false);
+
+    type SlotPawn = PawnRuntime & {
+      monasterySlot: number | null;
+      monasteryBuilding: BuildingRuntime | null;
+    };
+    type MonasteryFixture = BuildingRuntime & {
+      healSlots: Array<SlotPawn | null>;
+      occupiedSlots: number;
+    };
+    const economy = scene.economy;
+    const victims = economy.pawns.filter(p => p.kind === 'collector').slice(0, 2) as SlotPawn[];
+    if (victims.length !== 2) throw new Error('Two real occupants are required for collapse test');
+
+    const createDestroyedMonastery = (occupant: SlotPawn, x: number): MonasteryFixture => {
+      const building = {
+        kind: 'monastery',
+        x, y: economy.castleY,
+        hp: 0, maxHp: 360,
+        alpha: 0, alive: false, underConstruction: false,
+        healSlots: [occupant],
+        get occupiedSlots() { return this.healSlots.filter(Boolean).length; },
+        finishConstruction: () => {},
+        damage: () => {},
+      } as MonasteryFixture;
+      occupant.monasterySlot = 0;
+      occupant.monasteryBuilding = building;
+      occupant.state = 'wounded';
+      return building;
+    };
+    const first = createDestroyedMonastery(victims[0], economy.castleX + 100);
+    const second = createDestroyedMonastery(victims[1], economy.castleX + 200);
+    economy.buildings.push(first, second);
+
+    scene.settlement.onBuildingDestroyed(first);
+    const afterFirst = {
+      victimDead: victims[0].dead,
+      occupiedSlots: first.occupiedSlots,
+      slotOwnerCleared: victims[0].monasteryBuilding === null && victims[0].monasterySlot === null,
+    };
+    scene.settlement.onBuildingDestroyed(second);
+    return {
+      afterFirst,
+      afterSecond: {
+        victimDead: victims[1].dead,
+        occupiedSlots: second.occupiedSlots,
+        slotOwnerCleared: victims[1].monasteryBuilding === null && victims[1].monasterySlot === null,
+      },
+      totalVictims: scene.settlement.facts.monasteryVictims,
+    };
+  });
+
+  expect(report.afterFirst).toEqual({ victimDead: true, occupiedSlots: 0, slotOwnerCleared: true });
+  expect(report.afterSecond).toEqual({ victimDead: true, occupiedSlots: 0, slotOwnerCleared: true });
+  expect(report.totalVictims).toBe(2);
+});
