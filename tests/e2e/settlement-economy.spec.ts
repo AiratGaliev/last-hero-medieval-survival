@@ -3734,8 +3734,10 @@ test('phase M: monastery collapse announces occupied beds and waits three active
     monastery.finishConstruction();
     economy.buildJobs.splice(economy.buildJobs.findIndex(job => job.building === monastery), 1);
 
-    monastery.claimHealSlot({});
-    monastery.claimHealSlot({});
+    const occupiedPawns = economy.pawns.filter(p => p.kind === 'collector').slice(0, 2);
+    if (occupiedPawns.length !== 2) throw new Error('Two valid monastery occupants are required');
+    monastery.claimHealSlot(occupiedPawns[0]);
+    monastery.claimHealSlot(occupiedPawns[1]);
     const announcements: string[] = [];
     scene.hud.announce = (text) => announcements.push(text);
 
