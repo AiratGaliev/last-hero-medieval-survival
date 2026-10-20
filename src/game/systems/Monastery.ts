@@ -76,21 +76,32 @@ export class Monastery {
     // resources. Прямая запись не поднимала `emit('change')`, и единственная
     // подписка HUD (economy.on('change'), §B.8) обновляла дерево только по
     // случайному совпадению — на экране расходились числа.
+    let remainingWood = Math.max(0, this.eco.resources.wood);
     let spentWood = 0;
+    const woodPerHp = Math.max(0, this.healWoodMultiplier()) / 15;
     for (const b of this.eco.buildings) {
       if (!b.alive || b.kind !== 'monastery' || b.underConstruction) continue;
       for (let s = 0; s < b.healSlots.length; s++) {
         const unit = b.healSlots[s] as Pawn | null;
         if (!unit || !unit.active) continue;
-        const woodPerSec = hpPerSec / 15 * this.healWoodMultiplier();
-        if (this.eco.resources.wood < woodPerSec * seconds) continue; // склад пуст — HP не растёт
-        spentWood += woodPerSec * seconds;
-        const amount = hpPerSec * seconds;
+        // Общий остаток дерева расходуется FIFO по монастырям и местам.
+        // Проверка исходного склада для каждого слота позволяла всем раненым
+        // вылечиться при одном и том же небольшом остатке.
+        const requestedAmount = Math.max(0, hpPerSec * seconds);
+        const affordableAmount = woodPerHp > 0
+          ? remainingWood / woodPerHp
+          : requestedAmount;
+        const amount = Math.min(requestedAmount, affordableAmount, Math.max(0, unit.maxHp - unit.hp));
+        if (amount <= 0) continue; // пустой склад — HP не растёт, место удерживается
+        const woodCost = amount * woodPerHp;
+        remainingWood = Math.max(0, remainingWood - woodCost);
+        spentWood += woodCost;
         unit.healBy(amount);
         this.eco.healHpTotal += amount;
         if (unit.hp >= unit.maxHp) {
           b.releaseHealSlot(s);
           unit.monasterySlot = null;
+          unit.monasteryBuilding = null;
           unit.state = 'idle';
           unit.cooldown = 0.5;
           this.eco.monasteryHealed += 1;

@@ -3364,17 +3364,19 @@ test('phase M: autonomous archers prioritize siege shamans over closer enemies',
       attackCd: number;
     };
     type EconomyWithCombat = {
-      castleX: number;
-      castleY: number;
       spawnFighter(weapon: 'bow' | 'sword'): FighterPawn;
-      pawnAI: { updateCombat(pawn: FighterPawn, dtMs: number, now: number): void };
+      pawnAI: {
+        postPoint(pawn: FighterPawn): { x: number; y: number };
+        updateCombat(pawn: FighterPawn, dtMs: number, now: number): void;
+      };
     };
     const economy = scene.economy as unknown as EconomyWithCombat;
     const archer = economy.spawnFighter('bow');
-    const postX = economy.castleX + 70;
-    const postY = economy.castleY + 80;
-    archer.setPosition(postX, postY);
     archer.weapon = 'bow';
+    const post = economy.pawnAI.postPoint(archer);
+    const postX = post.x;
+    const postY = post.y;
+    archer.setPosition(postX, postY);
     archer.order = null;
     archer.attackCd = 0;
 
@@ -3423,17 +3425,19 @@ test('phase M: an archer beyond the 420 px leash returns to its post before atta
       body: { velocity: { x: number; y: number } };
     };
     type EconomyWithCombat = {
-      castleX: number;
-      castleY: number;
       spawnFighter(weapon: 'bow' | 'sword'): FighterPawn;
-      pawnAI: { updateCombat(pawn: FighterPawn, dtMs: number, now: number): void };
+      pawnAI: {
+        postPoint(pawn: FighterPawn): { x: number; y: number };
+        updateCombat(pawn: FighterPawn, dtMs: number, now: number): void;
+      };
     };
     const economy = scene.economy as unknown as EconomyWithCombat;
     const archer = economy.spawnFighter('bow');
-    const postX = economy.castleX + 70;
-    const postY = economy.castleY + 80;
-    archer.setPosition(postX + 500, postY);
     archer.weapon = 'bow';
+    const post = economy.pawnAI.postPoint(archer);
+    const postX = post.x;
+    const postY = post.y;
+    archer.setPosition(postX + 500, postY);
     archer.order = null;
     archer.attackCd = 0;
 
@@ -3643,7 +3647,7 @@ test('phase M: field healing rescues a bleeding pawn at 50% HP without spending 
       };
     };
     const economy = scene.economy as unknown as EconomyWithHealer;
-    const victim = economy.pawns.find(p => p.kind === 'collector');
+    const victim = economy.pawns.find(p => p.kind === 'collector') as (PawnRuntime & { arrivalMs: number }) | undefined;
     const monk = economy.spawnPawn('healer', economy.castleX, economy.castleY, false);
     if (!victim || !monk) throw new Error('Could not create healer rescue fixtures');
 
@@ -3652,6 +3656,7 @@ test('phase M: field healing rescues a bleeding pawn at 50% HP without spending 
     monk.healTarget = null;
     monk.healHeroPoint = null;
     victim.setPosition(economy.castleX + 180, economy.castleY);
+    victim.arrivalMs = 0;
     victim.hp = 0;
     victim.state = 'wounded';
     victim.bleedTimer = 0;
@@ -3734,13 +3739,16 @@ test('phase M: monastery collapse announces occupied beds and waits three active
     monastery.finishConstruction();
     economy.buildJobs.splice(economy.buildJobs.findIndex(job => job.building === monastery), 1);
 
-    monastery.claimHealSlot({});
-    monastery.claimHealSlot({});
+    const occupiedPawns = economy.pawns.filter(p => p.kind === 'collector').slice(0, 2);
+    if (occupiedPawns.length !== 2) throw new Error('Two valid monastery occupants are required');
+    monastery.claimHealSlot(occupiedPawns[0]);
+    monastery.claimHealSlot(occupiedPawns[1]);
     const announcements: string[] = [];
     scene.hud.announce = (text) => announcements.push(text);
 
     monastery.damage(260, 0); // ниже 30% HP: первое предупреждение
     monastery.damage(monastery.hp, 0); // ниже 10% HP: критическое предупреждение и окно реакции
+    const warnings = [...announcements];
     const critical = {
       hp: monastery.hp,
       alive: monastery.alive,
@@ -3752,17 +3760,366 @@ test('phase M: monastery collapse announces occupied beds and waits three active
     monastery.tickMonasteryCollapse(1);
 
     return {
-      announcements,
+      warnings,
       critical,
       beforeDeadline,
       afterDeadline: { hp: monastery.hp, alive: monastery.alive, pending: monastery.collapsePending },
     };
   });
 
-  expect(report.announcements).toHaveLength(2);
-  expect(report.announcements.every(message => message.includes('2'))).toBe(true);
+  expect(report.warnings).toHaveLength(2);
+  expect(report.warnings.every(message => message.includes('2'))).toBe(true);
   expect(report.critical).toEqual({ hp: 1, alive: true, pending: true, occupiedSlots: 2 });
   expect(report.beforeDeadline).toEqual({ hp: 1, alive: true, pending: true });
   expect(report.afterDeadline.alive).toBe(false);
   expect(report.afterDeadline.pending).toBe(false);
+});
+
+
+test('phase M: monastery healing never grants more HP than the available wood can fund', async ({ page }) => {
+  await startRun(page);
+  const report = await page.evaluate(() => {
+    const game = (window as RuntimeWindow).__tss;
+    if (!game) throw new Error('Phaser runtime is unavailable');
+    const scene = game.scene.getScene('Game') as GameSceneRuntime & {
+      hints?: { setEnabled(enabled: boolean): void };
+    };
+    scene.hints?.setEnabled(false);
+    scene.registry.set('tss-hint-overlay-paused', false);
+
+    type SlotPawn = PawnRuntime & {
+      monasterySlot: number | null;
+      monasteryBuilding: BuildingRuntime | null;
+      healBy(amount: number): void;
+    };
+    type MonasteryBuilding = BuildingRuntime & {
+      healSlots: Array<SlotPawn | null>;
+      claimHealSlot(unit: unknown): number | null;
+      releaseHealSlot(slot: number): void;
+    };
+    type EconomyWithMonastery = EconomyRuntime & {
+      monasteryHealTick(dtMs: number): void;
+    };
+    const economy = scene.economy as unknown as EconomyWithMonastery;
+    const builder = economy.pawns.find(p => p.kind === 'builder');
+    const spot = economy.freeSpots().find(s => s.kind === 'monastery');
+    const first = economy.pawns.find(p => p.kind === 'collector');
+    const second = economy.pawns.find(p => p.kind === 'collector' && p !== first);
+    if (!builder || !spot || !first || !second) throw new Error('Monastery healing fixtures are unavailable');
+    economy.resources.wood = 1_000;
+    if (!economy.tryStartBuild('monastery', builder, spot)) throw new Error('Could not start monastery fixture');
+    const monastery = economy.buildings.find(b => b.kind === 'monastery' && b.underConstruction) as MonasteryBuilding | undefined;
+    if (!monastery) throw new Error('Monastery was not registered');
+    monastery.finishConstruction();
+    const jobIndex = economy.buildJobs.findIndex(job => job.building === monastery);
+    if (jobIndex >= 0) economy.buildJobs.splice(jobIndex, 1);
+
+    const firstPawn = first as SlotPawn;
+    const secondPawn = second as SlotPawn;
+    const firstSlot = monastery.claimHealSlot(firstPawn);
+    const secondSlot = monastery.claimHealSlot(secondPawn);
+    if (firstSlot === null || secondSlot === null) throw new Error('Could not occupy two monastery slots');
+    firstPawn.monasterySlot = firstSlot;
+    firstPawn.monasteryBuilding = monastery;
+    secondPawn.monasterySlot = secondSlot;
+    secondPawn.monasteryBuilding = monastery;
+    firstPawn.hp = firstPawn.maxHp * 0.25;
+    secondPawn.hp = secondPawn.maxHp * 0.25;
+    firstPawn.state = 'wounded';
+    secondPawn.state = 'wounded';
+
+    // Дерева хватает на один полный тик (12 HP = 0.8 дерева) и только
+    // частичное лечение второй койки; оба слота не могут потратить один баланс.
+    economy.resources.wood = 0.9;
+    const woodBefore = economy.resources.wood;
+    const hpBefore = firstPawn.hp + secondPawn.hp;
+    economy.monasteryHealTick(1_000);
+    const hpAfter = firstPawn.hp + secondPawn.hp;
+    return {
+      woodBefore,
+      woodAfter: economy.resources.wood,
+      hpRestored: hpAfter - hpBefore,
+      occupiedSlots: monastery.occupiedSlots,
+      firstSlotOwner: firstPawn.monasteryBuilding === monastery,
+      secondSlotOwner: secondPawn.monasteryBuilding === monastery,
+    };
+  });
+
+  expect(report.hpRestored).toBeLessThanOrEqual(report.woodBefore * 15 + 0.01);
+  expect(report.woodAfter).toBeGreaterThanOrEqual(0);
+  expect(report.woodAfter).toBeLessThan(report.woodBefore);
+  expect(report.occupiedSlots).toBe(2);
+  expect(report.firstSlotOwner).toBe(true);
+  expect(report.secondSlotOwner).toBe(true);
+});
+
+test('phase M: field rescue releases only the assigned monastery slot when two monasteries use index zero', async ({ page }) => {
+  await startRun(page);
+  const report = await page.evaluate(() => {
+    const game = (window as RuntimeWindow).__tss;
+    if (!game) throw new Error('Phaser runtime is unavailable');
+    const scene = game.scene.getScene('Game') as GameSceneRuntime & {
+      hints?: { setEnabled(enabled: boolean): void };
+    };
+    scene.hints?.setEnabled(false);
+    scene.registry.set('tss-hint-overlay-paused', false);
+
+    type MonasteryFixture = BuildingRuntime & {
+      healSlots: Array<SlotPawn | null>;
+      occupiedSlots: number;
+      releaseHealSlot(slot: number): void;
+    };
+    type SlotPawn = PawnRuntime & {
+      weapon: string;
+      healTarget: SlotPawn | null;
+      healHeroPoint: { x: number; y: number } | null;
+      monasterySlot: number | null;
+      monasteryBuilding: MonasteryFixture | null;
+      bleedTimer: number;
+      updateBleedBadge(): void;
+    };
+    type EconomyWithHealer = EconomyRuntime & {
+      pawnAI: {
+        updateCombat(pawn: SlotPawn, dtMs: number, now: number): void;
+      };
+    };
+    const economy = scene.economy as unknown as EconomyWithHealer;
+    const target = economy.pawns.find(p => p.kind === 'collector') as SlotPawn | undefined;
+    const other = economy.pawns.find(p => p.kind === 'collector' && p !== target) as SlotPawn | undefined;
+    const monk = economy.pawns.find(p => p.kind === 'healer') as SlotPawn | undefined
+      ?? (economy as unknown as { spawnPawn(kind: 'healer', x?: number, y?: number, announce?: boolean): SlotPawn | null })
+        .spawnPawn('healer', economy.castleX, economy.castleY, false) ?? undefined;
+    if (!target || !other || !monk) throw new Error('Could not create two-monastery rescue fixtures');
+
+    const makeMonastery = (x: number, occupant: SlotPawn): MonasteryFixture => ({
+      kind: 'monastery',
+      x, y: economy.castleY,
+      hp: 360, maxHp: 360, alpha: 1, alive: true, underConstruction: false,
+      healSlots: [occupant],
+      get occupiedSlots() { return this.healSlots.filter(Boolean).length; },
+      finishConstruction: () => {},
+      damage: () => {},
+      releaseHealSlot(slot: number) {
+        if (slot >= 0 && slot < this.healSlots.length) this.healSlots[slot] = null;
+      },
+    }) as MonasteryFixture;
+
+    const firstMonastery = makeMonastery(economy.castleX - 100, target);
+    const secondMonastery = makeMonastery(economy.castleX + 100, other);
+    economy.buildings.push(firstMonastery, secondMonastery);
+    target.monasterySlot = 0;
+    target.monasteryBuilding = firstMonastery;
+    other.monasterySlot = 0;
+    other.monasteryBuilding = secondMonastery;
+
+    target.setPosition(economy.castleX + 20, economy.castleY);
+    target.state = 'bleeding';
+    target.bleedTimer = 20;
+    target.hp = target.maxHp * 0.5 - 2;
+    monk.setPosition(target.x + 10, target.y);
+    monk.weapon = 'staff';
+    monk.state = 'idle';
+    monk.healTarget = target;
+    monk.healHeroPoint = null;
+
+    economy.pawnAI.updateCombat(monk, 1_000, scene.time.now + 1_000);
+    return {
+      rescuedState: target.state,
+      hp: target.hp,
+      maxHp: target.maxHp,
+      firstSlot: firstMonastery.healSlots[0] === null ? null : 'occupied',
+      secondSlotStillOwned: secondMonastery.healSlots[0] === other,
+      targetSlot: target.monasterySlot,
+      targetBuilding: target.monasteryBuilding,
+      monkTargetCleared: monk.healTarget === null,
+    };
+  });
+
+  expect(report.rescuedState).toBe('idle');
+  expect(report.hp).toBeGreaterThanOrEqual(report.maxHp * 0.5);
+  expect(report.firstSlot).toBeNull();
+  expect(report.secondSlotStillOwned).toBe(true);
+  expect(report.targetSlot).toBeNull();
+  expect(report.targetBuilding).toBeNull();
+  expect(report.monkTargetCleared).toBe(true);
+});
+
+
+test('phase M: one wounded pawn reserves exactly one monastery bed across repeated AI ticks', async ({ page }) => {
+  await startRun(page);
+  const report = await page.evaluate(() => {
+    const game = (window as RuntimeWindow).__tss;
+    if (!game) throw new Error('Phaser runtime is unavailable');
+    const scene = game.scene.getScene('Game') as GameSceneRuntime & {
+      hints?: { setEnabled(enabled: boolean): void };
+    };
+    scene.hints?.setEnabled(false);
+    scene.registry.set('tss-hint-overlay-paused', false);
+
+    type SlotPawn = PawnRuntime & {
+      monasterySlot: number | null;
+      monasteryBuilding: BuildingRuntime | null;
+      arrivalMs: number;
+    };
+    type MonasteryBuilding = BuildingRuntime & {
+      healSlots: Array<SlotPawn | null>;
+      occupiedSlots: number;
+      claimHealSlot(unit: unknown): number | null;
+    };
+    const economy = scene.economy;
+    const victim = economy.pawns.find(p => p.kind === 'collector') as SlotPawn | undefined;
+    const builder = economy.pawns.find(p => p.kind === 'builder');
+    const spot = economy.freeSpots().find(s => s.kind === 'monastery');
+    if (!victim || !builder || !spot) throw new Error('Monastery slot fixture is unavailable');
+    economy.resources.wood = 1_000;
+    economy.resources.ore = 1_000;
+    if (!economy.tryStartBuild('monastery', builder, spot)) throw new Error('Could not build monastery fixture');
+    const monastery = economy.buildings.find(b => b.kind === 'monastery' && b.underConstruction) as MonasteryBuilding | undefined;
+    if (!monastery) throw new Error('Monastery fixture is missing');
+    monastery.finishConstruction();
+    const jobIndex = economy.buildJobs.findIndex(job => job.building === monastery);
+    if (jobIndex >= 0) economy.buildJobs.splice(jobIndex, 1);
+
+    victim.setPosition(monastery.x + 20, monastery.y);
+    victim.arrivalMs = 0;
+    victim.hp = victim.maxHp * 0.2;
+    victim.state = 'wounded';
+    victim.monasterySlot = null;
+    victim.monasteryBuilding = null;
+    for (let i = 0; i < 5; i++) {
+      economy.pawnAI.updateCivilian(victim, 150, scene.time.now + i * 150);
+    }
+    const owners = monastery.healSlots.filter(slot => slot === victim).length;
+    return {
+      occupiedSlots: monastery.occupiedSlots,
+      referencesToVictim: owners,
+      slotIndex: victim.monasterySlot,
+      ownerMatches: victim.monasteryBuilding === monastery,
+    };
+  });
+
+  expect(report.occupiedSlots).toBe(1);
+  expect(report.referencesToVictim).toBe(1);
+  expect(report.slotIndex).toBe(0);
+  expect(report.ownerMatches).toBe(true);
+});
+
+
+test('phase M: tower does not grant succession, but monastery and archery do', async ({ page }) => {
+  await startRun(page);
+  const report = await page.evaluate(() => {
+    const game = (window as RuntimeWindow).__tss;
+    if (!game) throw new Error('Phaser runtime is unavailable');
+    const scene = game.scene.getScene('Game') as GameSceneRuntime & {
+      settlement: { hasSuccessionSource(): boolean };
+    };
+    const economy = scene.economy;
+    // Изолируем проверку источников преемника от зданий, с которыми начался раунд.
+    for (const building of economy.buildings) {
+      if (building.kind === 'barracks' || building.kind === 'archery' || building.kind === 'monastery') {
+        building.alive = false;
+      }
+    }
+    const fixture = (kind: string): BuildingRuntime => ({
+      kind, x: economy.castleX + 400, y: economy.castleY,
+      hp: 200, maxHp: 200, alpha: 1, alive: true, underConstruction: false,
+      finishConstruction: () => {},
+      damage: () => {},
+    });
+    const tower = fixture('tower');
+    economy.buildings.push(tower);
+    const towerOnlyHasSource = scene.settlement.hasSuccessionSource();
+    tower.alive = false;
+
+    const monastery = fixture('monastery');
+    economy.buildings.push(monastery);
+    const monasteryHasSource = scene.settlement.hasSuccessionSource();
+    monastery.alive = false;
+
+    const archery = fixture('archery');
+    economy.buildings.push(archery);
+    const archeryHasSource = scene.settlement.hasSuccessionSource();
+    return { towerOnlyHasSource, monasteryHasSource, archeryHasSource };
+  });
+
+  expect(report.towerOnlyHasSource).toBe(false);
+  expect(report.monasteryHasSource).toBe(true);
+  expect(report.archeryHasSource).toBe(true);
+});
+
+
+test('phase M: field healer does not bypass the wood cost for a pawn already admitted to a monastery', async ({ page }) => {
+  await startRun(page);
+  const report = await page.evaluate(() => {
+    const game = (window as RuntimeWindow).__tss;
+    if (!game) throw new Error('Phaser runtime is unavailable');
+    const scene = game.scene.getScene('Game') as GameSceneRuntime & {
+      hints?: { setEnabled(enabled: boolean): void };
+    };
+    scene.hints?.setEnabled(false);
+    scene.registry.set('tss-hint-overlay-paused', false);
+
+    type SlotPawn = PawnRuntime & {
+      monasterySlot: number | null;
+      monasteryBuilding: MonasteryFixture | null;
+      arrivalMs: number;
+      healTarget: SlotPawn | null;
+      healHeroPoint: { x: number; y: number } | null;
+      weapon: string;
+    };
+    type MonasteryFixture = BuildingRuntime & {
+      healSlots: Array<SlotPawn | null>;
+      releaseHealSlot(slot: number): void;
+    };
+    type EconomyWithHealer = EconomyRuntime & {
+      garrison: SlotPawn[];
+      pawns: SlotPawn[];
+      healerAI: { update(now: number): void };
+      spawnPawn(kind: 'healer', x?: number, y?: number, announce?: boolean): SlotPawn | null;
+    };
+    const economy = scene.economy as unknown as EconomyWithHealer;
+    const target = economy.pawns.find(p => p.kind === 'collector') as SlotPawn | undefined;
+    let monk = economy.garrison.find(p => p.kind === 'healer');
+    if (!monk) monk = economy.spawnPawn('healer', economy.castleX, economy.castleY, false) ?? undefined;
+    if (!target || !monk) throw new Error('Could not create the occupied-bed healer fixture');
+
+    const monastery = {
+      kind: 'monastery',
+      x: economy.castleX + 20, y: economy.castleY,
+      hp: 360, maxHp: 360, alpha: 1, alive: true, underConstruction: false,
+      healSlots: [target],
+      finishConstruction: () => {},
+      damage: () => {},
+      releaseHealSlot(slot: number) {
+        if (slot >= 0 && slot < this.healSlots.length) this.healSlots[slot] = null;
+      },
+    } as MonasteryFixture;
+    economy.buildings.push(monastery);
+    target.setPosition(monastery.x + 10, monastery.y);
+    target.arrivalMs = 0;
+    target.hp = 0;
+    target.state = 'wounded';
+    target.monasterySlot = 0;
+    target.monasteryBuilding = monastery;
+    monk.setPosition(target.x + 30, target.y);
+    monk.state = 'idle';
+    monk.weapon = 'staff';
+    monk.healTarget = null;
+    monk.healHeroPoint = null;
+
+    for (const pawn of economy.pawns) {
+      if (pawn !== target) pawn.hp = pawn.maxHp;
+    }
+    economy.healerAI.update(scene.time.now + 1_000);
+    return {
+      targetAssignedToMonk: monk.healTarget === target,
+      slotStillOwned: monastery.healSlots[0] === target,
+      slotIndex: target.monasterySlot,
+      wood: economy.resources.wood,
+    };
+  });
+
+  expect(report.targetAssignedToMonk).toBe(false);
+  expect(report.slotStillOwned).toBe(true);
+  expect(report.slotIndex).toBe(0);
 });

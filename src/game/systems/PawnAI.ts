@@ -494,6 +494,20 @@ export class PawnAI {
       }
       return;
     }
+    // В монастыре состояние остаётся wounded до полного лечения. Повторная
+    // резервация на каждом AI-тике занимала несколько коек одной пешкой.
+    if (p.monasterySlot !== null) {
+      const owner = p.monasteryBuilding;
+      if (owner?.alive && owner.kind === 'monastery'
+        && owner.healSlots[p.monasterySlot] === p) {
+        p.playMove(false);
+        p.setVelocity(0, 0);
+        return;
+      }
+      // Удалённый/освобождённый слот больше не принадлежит пешке.
+      p.monasterySlot = null;
+      p.monasteryBuilding = null;
+    }
     // state === 'wounded'
     if (!mon) {
       // Монастыря нет вообще → сразу bleeding у ЗАМКА (§G.3)
@@ -511,6 +525,7 @@ export class PawnAI {
         this.toBleeding(p);
       } else {
         p.monasterySlot = slot;
+        p.monasteryBuilding = mon;
         p.state = 'wounded'; // лечится внутри; monasteryHealTick поднимет
         p.playMove(false);
         p.setVelocity(0, 0);
