@@ -3668,14 +3668,19 @@ test('phase M: field healing rescues a bleeding pawn at 50% HP without spending 
     // Без обители раненый переходит в bleeding, но монах может ещё успеть
     // поднять его до 50% — моделируем активное игровое время без ожидания браузера.
     economy.pawnAI.updateCivilian(victim, 16, now);
+    // Проверяем назначение после перехода wounded -> bleeding: очередное
+    // назначение каждые 500 мс не должно лишить монаха цели перед спасением.
+    economy.healerAI.update(now + 500);
+    const targetRetainedAfterBleed = monk.healTarget === victim;
     for (let i = 0; i < 180 && (victim.state === 'wounded' || victim.state === 'bleeding'); i++) {
-      const tickNow = now + (i + 1) * 150;
+      const tickNow = now + 500 + (i + 1) * 150;
       economy.pawnAI.updateCivilian(victim, 150, tickNow);
       economy.pawnAI.updateCombat(monk, 150, tickNow);
     }
 
     return {
       targetAssigned,
+      targetRetainedAfterBleed,
       state: victim.state,
       hp: victim.hp,
       maxHp: victim.maxHp,
@@ -3687,6 +3692,7 @@ test('phase M: field healing rescues a bleeding pawn at 50% HP without spending 
   });
 
   expect(report.targetAssigned).toBe(true);
+  expect(report.targetRetainedAfterBleed).toBe(true);
   expect(report.state).toBe('idle');
   expect(report.hp).toBeGreaterThanOrEqual(report.maxHp * 0.5);
   expect(report.bleedTimer).toBeGreaterThan(0);
