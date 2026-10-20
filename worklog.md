@@ -3306,3 +3306,9 @@ HUD-слота, `SuccessionScene`, `PauseScene` и новые статическ
 - CI Fast [run #39474453669](https://github.com/AiratGaliev/last-hero-medieval-survival/actions/runs/39474453669) прошёл на текущем SHA `bd2a0cfe4c9d8376142ce46022f0c1b55a2ac778`: route validation, `npm ci`, `npm run check`, `npm run build` и `npm run check:yg` — success.
 - Добавлен `npm run test:phase-smoke`; он выбирает I–L сценарии, pause regression, FTUE overlay и мобильный long-press в обоих Chromium-проектах. Скрипт и критерии описаны в `docs/ROADMAP.md`.
 - CI Fast не запускал Playwright, а локальный checkout в этой среде отсутствует; `npm run test:phase-smoke` фактически не выполнялся. Запускать его следует в окружении с установленными npm-зависимостями и Chromium; итог записывать с SHA и ссылкой на run. Не считать smoke зелёным по одной успешной сборке.
+
+
+## 2026-10-20 — Подтверждение CI после smoke-документации
+
+- Документационный commit [`f5c2fad9`](https://github.com/AiratGaliev/last-hero-medieval-survival/commit/f5c2fad9d5e5a8d9f373c08f783b37a07c7e0efc) прошёл CI Fast [run #39474658502](https://github.com/AiratGaliev/last-hero-medieval-survival/actions/runs/39474658502): route validation, `npm ci`, `npm run check`, `npm run build`, `npm run check:yg` — success.
+- Это не E2E: smoke-команда уже добавлена, но фактический Playwright-прогон не выполнялся. Последний подтверждённый быстрый CI не следует выдавать за поведенческую приёмку.
