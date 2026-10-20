@@ -836,8 +836,14 @@ export class Economy extends Phaser.Events.EventEmitter {
    *  игрок платил 10 дерева + 3 мяса за замену ушедшему добровольно.
    *  Сообщество при такой трактовке теряло смысл: сжигал дома — платил. */
   removePawn(pawn: Pawn, paid = true): void {
-    pawn.killFinal();
+    const monastery = pawn.monasteryBuilding;
+    const slot = pawn.monasterySlot;
+    if (slot !== null && monastery?.alive && monastery.kind === 'monastery') {
+      monastery.releaseHealSlot(slot);
+    }
     pawn.monasterySlot = null;
+    pawn.monasteryBuilding = null;
+    pawn.killFinal();
     const i = this.pawns.indexOf(pawn);
     if (i >= 0) this.pawns.splice(i, 1);
     pawn.destroy();
