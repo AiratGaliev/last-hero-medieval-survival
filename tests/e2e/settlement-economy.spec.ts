@@ -2643,6 +2643,7 @@ test('phase K: siege schedule warns five seconds before exact profile start time
       update(dtSec: number): void;
     };
     const scene = game.scene.getScene('Game') as GameSceneRuntime & { spawner: RuntimeSpawner };
+    scene.registry.set('tss-siege-warn', 0);
     const spawner = scene.spawner;
     const warnings: Array<{ at: number; text: string }> = [];
     const starts: Array<{ at: number; index: number; target: string; woundCap: number }> = [];
@@ -2693,6 +2694,153 @@ test('phase K: siege schedule warns five seconds before exact profile start time
   expect(report.indexes).toEqual([0, 1, 2, 3, 4]);
   expect(report.targets).toEqual(['houses', 'houses', 'monastery', 'houses', 'castle']);
   expect(report.woundCaps).toEqual([1, 1, 2, 2, 3]);
+});
+
+
+
+test('phase K: a 150 HP house survives ten flaming siege hits including burn damage', async ({ page }) => {
+  await startRun(page);
+  const report = await page.evaluate(() => {
+    const game = (window as RuntimeWindow).__tss;
+    if (!game) throw new Error('Phaser runtime is unavailable');
+    type BurningBuildingRuntime = BuildingRuntime & {
+      ignite(siegeIndex: number): void;
+      tickBurn(dtMs: number): number;
+      fireTimer: number;
+    };
+    type RuntimeEconomy = EconomyRuntime & { buildJobs: Array<{ building: BuildingRuntime }> };
+    type RuntimeSettlement = {
+      castle: BuildingRuntime;
+      beginSiege(index: number, woundCap: number, enemies: unknown[]): void;
+      damageBuilding(building: BuildingRuntime, raw: number, siegeIndex: number, isBoss?: boolean): void;
+      capApplied: boolean;
+    };
+    const scene = game.scene.getScene('Game') as GameSceneRuntime & {
+      settlement: RuntimeSettlement;
+    };
+    const economy = scene.economy as RuntimeEconomy;
+    economy.resources.wood = 10_000;
+    economy.resources.ore = 10_000;
+    economy.resources.meat = 10_000;
+    const builder = economy.pawns.find((pawn) => pawn.kind === 'builder');
+    const spot = economy.freeSpots().find((candidate) => candidate.kind === 'house');
+    if (!builder || !spot) throw new Error('Builder or house spot is unavailable');
+    if (!economy.tryStartBuild('house', builder, spot)) throw new Error('Could not start test house');
+    const house = economy.buildings.find((building) =>
+      building.kind === 'house' && building.underConstruction) as BuildingRuntime | undefined;
+    if (!house) throw new Error('House construction object was not registered');
+    for (let i = economy.buildJobs.length - 1; i >= 0; i--) {
+      if (economy.buildJobs[i].building === house) economy.buildJobs.splice(i, 1);
+    }
+    house.finishConstruction();
+    const burning = house as BurningBuildingRuntime;
+    scene.settlement.beginSiege(0, 1, []);
+    let directDamage = 0;
+    let dotDamage = 0;
+    for (let i = 0; i < 10; i++) {
+      scene.settlement.damageBuilding(house, 5, 0, false);
+      directDamage += 5;
+      burning.ignite(0);
+      // Prevent the test's synthetic large active-time steps from accumulating
+      // particle objects; the independent visual test checks the real FX lifecycle.
+      burning.fireTimer = 1_000_000;
+      const dot = burning.tickBurn(i === 9 ? 6_000 : 2_400);
+      dotDamage += dot;
+      scene.settlement.damageBuilding(house, dot, 0, false);
+    }
+    return {
+      maxHp: house.maxHp,
+      hp: house.hp,
+      directDamage,
+      dotDamage,
+      totalDamage: directDamage + dotDamage,
+      capApplied: scene.settlement.capApplied,
+      alive: house.alive,
+    };
+  });
+
+  expect(report.maxHp).toBe(150);
+  expect(report.directDamage).toBe(50);
+  expect(report.dotDamage).toBeCloseTo(13.8, 5);
+  expect(report.totalDamage).toBeLessThan(150);
+  expect(report.hp).toBeGreaterThan(0);
+  expect(report.alive).toBe(true);
+  expect(report.capApplied).toBe(false);
+});
+
+
+test('phase K: hero interception cancels a pig-rider charge before building impact', async ({ page }) => {
+  await startRun(page);
+  const report = await page.evaluate(() => {
+    const game = (window as RuntimeWindow).__tss;
+    if (!game) throw new Error('Phaser runtime is unavailable');
+    type SiegeEnemyRuntime = {
+      active: boolean;
+      kind: string;
+      siege: boolean;
+      buildingTarget: unknown;
+      attackWindowEnds: number;
+    };
+    type RuntimeScene = GameSceneRuntime & {
+      player: { x: number; y: number; setPosition(x: number, y: number): unknown };
+      settlement: { castle: BuildingRuntime };
+      spawnSiegeUnit(kind: string, x: number, y: number, firer: boolean): SiegeEnemyRuntime | null;
+      enemyGroup: { remove(child: unknown, removeFromScene?: boolean, destroyChild?: boolean): void };
+    };
+    type RuntimeEnemy = {
+      updateSiege(time: number, delta: number): void;
+      siegeChargeStage: 'idle' | 'windup' | 'charge' | 'recover';
+      siegeChargeTimerMs: number;
+      siegeChargeCooldownMs: number;
+      buildingAtkCd: number;
+      ctx: Record<string, unknown> & {
+        playerX: () => number;
+        playerY: () => number;
+        attackBuilding: (target: unknown, damage: number, fire?: boolean, isBoss?: boolean) => void;
+        siegeShoot: (...args: unknown[]) => void;
+        attackPawn: (...args: unknown[]) => void;
+        nearPawn?: (...args: unknown[]) => unknown;
+        siegeInterceptRadius?: () => number;
+      };
+    };
+    const scene = game.scene.getScene('Game') as unknown as RuntimeScene;
+    const castle = scene.settlement.castle;
+    const now = scene.time.now;
+    const enemy = scene.spawnSiegeUnit('pig-rider', castle.x + 100, castle.y, false);
+    if (!enemy) throw new Error('Could not spawn pig-rider interception fixture');
+    enemy.siege = true;
+    enemy.buildingTarget = castle;
+    enemy.attackWindowEnds = now + 10_000;
+    const damageEvents: number[] = [];
+    const runtime = enemy as unknown as RuntimeEnemy;
+    runtime.siegeChargeStage = 'windup';
+    runtime.siegeChargeTimerMs = 200;
+    runtime.buildingAtkCd = 100_000;
+    runtime.ctx = {
+      ...runtime.ctx,
+      playerX: () => enemy.x + 30,
+      playerY: () => enemy.y,
+      attackBuilding: (_target, damage) => damageEvents.push(damage),
+      siegeShoot: () => {},
+      attackPawn: () => {},
+      nearPawn: () => null,
+      siegeInterceptRadius: () => 260,
+    };
+    runtime.updateSiege(now + 100, 100);
+    const state = {
+      stage: runtime.siegeChargeStage,
+      timer: runtime.siegeChargeTimerMs,
+      cooldown: runtime.siegeChargeCooldownMs,
+      damageEvents,
+    };
+    scene.enemyGroup.remove(enemy, true, true);
+    return state;
+  });
+
+  expect(report.stage).toBe('idle');
+  expect(report.timer).toBe(0);
+  expect(report.cooldown).toBe(8_000);
+  expect(report.damageEvents).toEqual([]);
 });
 
 
