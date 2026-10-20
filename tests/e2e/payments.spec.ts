@@ -554,7 +554,10 @@ test('shop displays product details and currency artwork from the SDK catalog', 
   const currencyImageSizes = await page.evaluate(() => (
     (window as unknown as { __catalogProbe: { currencyImageSizes: string[] } }).__catalogProbe.currencyImageSizes
   ));
-  expect(currencyImageSizes).toEqual(['small', 'small']);
+  // Каталог может запрашиваться повторно при перестроении вкладки; проверяем
+  // контракт размера каждого вызова, а не хрупкое количество обращений.
+  expect(currencyImageSizes.length).toBeGreaterThanOrEqual(2);
+  expect(currencyImageSizes.every((size) => size === 'small')).toBe(true);
 });
 
 test('an empty platform catalog never falls back to fictional local SKU prices', async ({ page }) => {

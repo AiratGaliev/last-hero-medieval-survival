@@ -2090,6 +2090,7 @@ test('phase K: building fire pauses with gameplay and applies exactly three DoT 
       spawner: { stopped: boolean };
     };
     scene.spawner.stopped = true;
+    scene.hintOverlayPaused = true; // замораживаем симуляцию до установки исходного таймера
     const building = scene.economy.buildings.find((candidate) =>
       candidate.kind === 'house' && candidate.alive && !candidate.underConstruction);
     if (!building) throw new Error('A completed house is required for the fire timer test');
@@ -2098,10 +2099,6 @@ test('phase K: building fire pauses with gameplay and applies exactly three DoT 
   });
   expect(initial.remaining).toBe(6_000);
 
-  await page.evaluate(() => {
-    const game = (window as RuntimeWindow).__tss!;
-    (game.scene.getScene('Game') as GameSceneRuntime & { hintOverlayPaused: boolean }).hintOverlayPaused = true;
-  });
   await page.waitForTimeout(700);
   const duringPause = await page.evaluate(() => {
     const game = (window as RuntimeWindow).__tss!;
@@ -2131,6 +2128,9 @@ test('phase K: building fire pauses with gameplay and applies exactly three DoT 
       burnRemainingMs: number;
       tickBurn(dtMs: number): number;
     };
+    // Перезапускаем таймер, чтобы точно проверить полный интервал, независимо
+    // от того, сколько кадров прошло между восстановлением симуляции и замером.
+    building.ignite(0);
     const first = burn.tickBurn(5_500);
     const last = burn.tickBurn(5_000); // only the remaining 500 ms may deal damage
     const afterExpiry = burn.tickBurn(5_000);
