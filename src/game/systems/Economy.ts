@@ -693,7 +693,6 @@ export class Economy extends Phaser.Events.EventEmitter {
     this.settlementLevels[id] = nextLevel;
     // Каменное зодчество даёт +15% базового max HP за каждый ранг.
     if (id === 'masonry') {
-      const previousMult = 1 + 0.15 * previousLevel;
       const nextMult = 1 + 0.15 * nextLevel;
       for (const b of this.buildings) {
         if (!b.alive) continue;

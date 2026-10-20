@@ -116,7 +116,10 @@ type RuntimeWindow = Window & {
   __phaseEHouseSpot?: BuildSpotRuntime;
 };
 
-const startupTimeout = 30_000;
+// Холодный старт dev-сервера: Vite трансформирует весь граф модулей и ~570
+// ассетов. На загруженном CI это занимает больше 30 сек — тест падал с
+// «canvas не появился», хотя приложение стартует штатно.
+const startupTimeout = 60_000;
 
 async function startRun(page: Page): Promise<void> {
   await page.goto('/?lang=en&ysdk=mock');
@@ -2053,6 +2056,10 @@ test('phase K: siege profiles target outer houses and fall back from monastery t
 
 test('phase K: siege attack window expires even while the hero is intercepting the attackers', async ({ page }) => {
   await startRun(page);
+  // Enemy.preUpdate() намеренно замирает, пока открыт обучающий overlay FTUE:
+  // пауза сцены останавливает и AI осады. Без закрытия подсказки срок окна
+  // атаки не истекает и юнит остаётся в группе — проверять тут нечего.
+  await continueInitialTutorial(page);
 
   const report = await page.evaluate(() => {
     const game = (window as RuntimeWindow).__tss;
@@ -2566,7 +2573,10 @@ test('phase K: destroying the last barracks removes the settlement succession so
     type RuntimeEconomy = EconomyRuntime & { buildJobs: RuntimeJob[] };
     type RuntimeScene = GameSceneRuntime & {
       hints: { setEnabled(enabled: boolean): void };
-      settlement: { hasSuccessionSource(): boolean };
+      settlement: {
+        hasSuccessionSource(): boolean;
+        aliveBuildings: BuildingRuntime[];
+      };
     };
     const scene = game.scene.getScene('Game') as unknown as RuntimeScene;
     scene.hints.setEnabled(false);
@@ -2581,7 +2591,9 @@ test('phase K: destroying the last barracks removes the settlement succession so
         building.damage(building.maxHp + 1, -1);
       }
     }
-    const noSourceInitially = scene.settlement.hasSuccessionSource();
+    // После изоляции источника преемственности быть не должно: переменная
+    // хранит ОТСУТСТВИЕ источника, а не его наличие.
+    const noSourceInitially = !scene.settlement.hasSuccessionSource();
     const builder = economy.pawns.find((pawn) => pawn.kind === 'builder');
     const spot = economy.freeSpots().find((candidate) => candidate.kind === 'barracks');
     if (!builder || !spot) throw new Error('Builder or barracks spot is unavailable');
@@ -2598,11 +2610,21 @@ test('phase K: destroying the last barracks removes the settlement succession so
     const sourceWhileBarracksAlive = scene.settlement.hasSuccessionSource();
     barracks.damage(barracks.maxHp + 1, -1);
     const sourceAfterBarracksDestroyed = scene.settlement.hasSuccessionSource();
-    return { noSourceInitially, sourceWhileBarracksAlive, sourceAfterBarracksDestroyed, barracksAlive: barracks.alive };
+    return {
+      noSourceInitially,
+      sourceWhileBarracksAlive,
+      sourceAfterBarracksDestroyed,
+      // Разрушенные казармы становятся РУИНАМИ: alive остаётся true, но
+      // здание выпадает из Settlement.aliveBuildings (alive && !underConstruction),
+      // то есть больше не является ни источником преемственности, ни целью найма.
+      barracksStillActive: scene.settlement.aliveBuildings.includes(barracks),
+      barracksIsRuins: barracks.underConstruction,
+    };
   });
   expect(report.noSourceInitially).toBe(true);
   expect(report.sourceWhileBarracksAlive).toBe(true);
-  expect(report.barracksAlive).toBe(false);
+  expect(report.barracksIsRuins).toBe(true);
+  expect(report.barracksStillActive).toBe(false);
   expect(report.sourceAfterBarracksDestroyed).toBe(false);
 });
 

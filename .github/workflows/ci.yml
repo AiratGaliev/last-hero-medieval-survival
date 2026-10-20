@@ -17,7 +17,11 @@ jobs:
   verify:
     name: Typecheck, lint, builds and browser tests
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    # Браузерный набор (176 сценариев × desktop + mobile, один воркер) занимает
+    # около 23 минут локально, плюс установка зависимостей, сборка и проверка
+    # архива. Прежних 20 минут не хватало: джоб успевал умереть посреди
+    # browser smoke, и это выглядело как падение приложения.
+    timeout-minutes: 45
 
     steps:
       - name: Checkout repository

@@ -86,7 +86,10 @@ type PointerDiagnostic = {
 };
 type RuntimeWindow = Window & { __tss?: PhaserRuntime; __tssLastPointerDown?: PointerDiagnostic };
 
-const startupTimeout = 30_000;
+// Холодный старт dev-сервера: Vite трансформирует весь граф модулей и ~570
+// ассетов. На загруженном CI это занимает больше 30 сек — тест падал с
+// «canvas не появился», хотя приложение стартует штатно.
+const startupTimeout = 60_000;
 
 async function startRun(
   page: Page,
