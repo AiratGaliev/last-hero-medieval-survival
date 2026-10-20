@@ -234,3 +234,44 @@ test('intro overlay really pauses gameplay; monastery warnings and garrison dama
   });
   expect(damage).toEqual([25]);
 });
+
+test('phase J: low-FPS combat fallback is selected before checking the per-pawn accumulator', async ({ page }) => {
+  await startRun(page);
+  const report = await page.evaluate(() => {
+    const game = (window as RuntimeWindow).__tss;
+    if (!game) throw new Error('Phaser runtime is unavailable');
+    const scene = game.scene.getScene('Game') as GameSceneRuntime & {
+      game: { loop: { actualFps: number } };
+      economy: EconomyRuntime & {
+        pawns: Array<{ state: string }>;
+        pawnAI: {
+          curTickMs: number;
+          combatAcc: Map<object, number>;
+          updateCombat(pawn: object, dtMs: number, now: number): void;
+        };
+      };
+    };
+    const pawn = scene.economy.pawns[0];
+    if (!pawn) throw new Error('Initial settlement has no pawn');
+    const previousFps = scene.game.loop.actualFps;
+    const previousTick = scene.economy.pawnAI.curTickMs;
+    const previousState = pawn.state;
+    const ai = scene.economy.pawnAI;
+    scene.game.loop.actualFps = 30;
+    ai.curTickMs = 150;
+    ai.combatAcc.delete(pawn);
+    ai.updateCombat(pawn, 150, scene.time.now);
+    const result = {
+      selectedTickMs: ai.curTickMs,
+      accumulatorAfterFirstFrame: ai.combatAcc.get(pawn) ?? null,
+    };
+    ai.combatAcc.delete(pawn);
+    ai.curTickMs = previousTick;
+    scene.game.loop.actualFps = previousFps;
+    pawn.state = previousState;
+    return result;
+  });
+
+  expect(report.selectedTickMs).toBe(250);
+  expect(report.accumulatorAfterFirstFrame).toBe(150);
+});
