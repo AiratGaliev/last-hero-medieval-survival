@@ -62,7 +62,13 @@ type EconomyRuntime = {
   pawns: PawnRuntime[];
   nodes: ResourceNodeRuntime[];
   buildings: BuildingRuntime[];
-  pawnAI: { updateCivilian(pawn: PawnRuntime, dtMs: number, now: number): void };
+  buildJobs: Array<{ pawn: PawnRuntime; spot: BuildSpotRuntime; building: BuildingRuntime; progress: number }>;
+  repairJobs: Array<{ pawn: PawnRuntime; building: BuildingRuntime; progress: number; rebuild: boolean }>;
+  pawnAI: {
+    updateCivilian(pawn: PawnRuntime, dtMs: number, now: number): void;
+    pickBuildSpot(pawn: PawnRuntime): BuildSpotRuntime | null;
+  };
+  applySettlementCard(id: string): void;
   pawnLimit: number;
   castleX: number;
   castleY: number;
@@ -1554,6 +1560,138 @@ test('phase L: repair and siege callbacks award the specified XP and micro-score
   expect(report.defendedScore).toBe(150);
   expect(report.partialXp).toBe(20);
   expect(report.partialScore).toBe(75);
+});
+
+test('phase L: assembly construction helper keeps and completes its assigned job', async ({ page }) => {
+  await startRun(page);
+  const report = await page.evaluate(() => {
+    const game = (window as RuntimeWindow).__tss;
+    if (!game) throw new Error('Phaser runtime is unavailable');
+    const scene = game.scene.getScene('Game') as GameSceneRuntime & {
+      spawner: { stopped: boolean };
+      enemyGroup: { clear(removeFromScene?: boolean, destroyChildren?: boolean): void };
+    };
+    const economy = scene.economy;
+    scene.spawner.stopped = true;
+    scene.enemyGroup.clear(true, true);
+    economy.resources.wood = 1_000;
+    economy.resources.ore = 1_000;
+    economy.resources.meat = 1_000;
+    economy.applySettlementCard('assembly');
+
+    const builder = economy.pawns.find((pawn) => pawn.kind === 'builder');
+    const collector = economy.pawns.find((pawn) => pawn.kind === 'collector');
+    if (!builder || !collector) throw new Error('Builder or collector is missing');
+
+    const firstSpot = economy.pawnAI.pickBuildSpot(builder);
+    if (!firstSpot || !economy.tryStartBuild(firstSpot.kind, builder, firstSpot)) {
+      throw new Error('Could not reserve the builder job');
+    }
+    builder.setPosition(firstSpot.x, firstSpot.y);
+    builder.state = 'work';
+    builder.cooldown = 0;
+
+    // pickBuildSpot returns the same target the collector's helper policy will select.
+    const helperSpot = economy.pawnAI.pickBuildSpot(collector);
+    if (!helperSpot) throw new Error('No free spot remains for the assembly helper');
+    collector.setPosition(helperSpot.x, helperSpot.y);
+    collector.state = 'idle';
+    collector.cooldown = 0;
+    collector.arrivalMs = 0;
+    collector.order = null;
+    collector.carrying = null;
+    collector.carriedAmount = 0;
+    collector.workNode = null;
+    collector.taskProgress = 0;
+
+    const now = scene.time.now;
+    economy.pawnAI.updateCivilian(collector, 16, now + 16);
+    const helperJob = economy.buildJobs.find((job) => job.pawn === collector);
+    if (!helperJob) throw new Error('Assembly did not assign the collector to construction');
+
+    economy.pawnAI.updateCivilian(collector, 16, now + 32);
+    const stayedAssigned = economy.buildJobs.some((job) => job.pawn === collector
+      && job.building === helperJob.building) && collector.state === 'work';
+    economy.tick(60_000, now + 60_032);
+    const completed = helperJob.building.alive
+      && !helperJob.building.underConstruction
+      && helperJob.building.hp === helperJob.building.maxHp
+      && !economy.buildJobs.some((job) => job.pawn === collector);
+
+    return { stayedAssigned, completed };
+  });
+
+  expect(report.stayedAssigned).toBe(true);
+  expect(report.completed).toBe(true);
+});
+
+test('phase L: assembly repair helper keeps and completes its assigned job', async ({ page }) => {
+  await startRun(page);
+  const report = await page.evaluate(() => {
+    const game = (window as RuntimeWindow).__tss;
+    if (!game) throw new Error('Phaser runtime is unavailable');
+    const scene = game.scene.getScene('Game') as GameSceneRuntime & {
+      spawner: { stopped: boolean };
+      enemyGroup: { clear(removeFromScene?: boolean, destroyChildren?: boolean): void };
+    };
+    const economy = scene.economy;
+    scene.spawner.stopped = true;
+    scene.enemyGroup.clear(true, true);
+    economy.resources.wood = 1_000;
+    economy.resources.ore = 1_000;
+    economy.resources.meat = 1_000;
+
+    const builder = economy.pawns.find((pawn) => pawn.kind === 'builder');
+    const collector = economy.pawns.find((pawn) => pawn.kind === 'collector');
+    const repairer = economy.pawns.find((pawn) => pawn.kind === 'repairer');
+    const houseSpot = economy.freeSpots().find((spot) => spot.kind === 'house');
+    if (!builder || !collector || !repairer || !houseSpot) {
+      throw new Error('Builder, collector, repairer or house spot is missing');
+    }
+
+    const existingBuildings = new Set(economy.buildings);
+    if (!economy.tryStartBuild('house', builder, houseSpot)) throw new Error('House construction did not start');
+    builder.setPosition(houseSpot.x, houseSpot.y);
+    builder.state = 'work';
+    builder.cooldown = 0;
+    const now = scene.time.now;
+    economy.tick(20_001, now + 20_001);
+    const house = economy.buildings.find((building) => !existingBuildings.has(building)
+      && building.kind === 'house');
+    if (!house || house.underConstruction) throw new Error('Test house did not finish construction');
+
+    repairer.dead = true; // Force the «Вече» fallback to provide the repair labor.
+    house.damage(10, -1);
+    economy.applySettlementCard('assembly');
+    economy.resources.wood = 100;
+    collector.setPosition(house.x, house.y);
+    collector.state = 'idle';
+    collector.cooldown = 0;
+    collector.arrivalMs = 0;
+    collector.order = null;
+    collector.carrying = null;
+    collector.carriedAmount = 0;
+    collector.workNode = null;
+    collector.taskProgress = 0;
+
+    const woodBefore = economy.resources.wood;
+    economy.pawnAI.updateCivilian(collector, 16, now + 20_017);
+    const repairJob = economy.repairJobs.find((job) => job.pawn === collector && job.building === house);
+    const paid = economy.resources.wood === woodBefore - 30;
+    if (!repairJob) throw new Error('Assembly did not assign the collector to repair');
+
+    economy.pawnAI.updateCivilian(collector, 16, now + 20_033);
+    const stayedAssigned = economy.repairJobs.some((job) => job.pawn === collector
+      && job.building === house) && collector.state === 'work';
+    economy.tick(5_001, now + 25_034);
+    const completed = house.hp === house.maxHp && !economy.repairJobs.some((job) => job.pawn === collector);
+
+    return { paid, stayedAssigned, completed };
+  });
+
+  expect(report.paid).toBe(true);
+  expect(report.stayedAssigned).toBe(true);
+  expect(report.completed).toBe(true);
 });
 
 test('phase L: settlement cards unlock after the first house, support rank II, and stop at rank II', async ({ page }) => {

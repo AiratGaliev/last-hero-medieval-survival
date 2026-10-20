@@ -1,3 +1,12 @@
+## Текущий статус PR #20 — 2026-10-20
+
+- PR [#20](https://github.com/AiratGaliev/last-hero-medieval-survival/pull/20) открыт, ветка `feat/phases-i-l-completion-20261019`; изменения не влиты в `main`.
+- Последний завершённый успешный workflow — [run #39446096973](https://github.com/AiratGaliev/last-hero-medieval-survival/actions/runs/39446096973), SHA `eae4364d85701ad42d67b0493acaf183b681512b`: **success**, 173 passed, 1 flaky, 2 skipped. Этот run относится к более раннему SHA и сам по себе не подтверждает текущую ревизию.
+- На предыдущем HEAD `7ff3a06c49252e9de26ba09bda623bcf8f19a12b` workflow [#39452099745](https://github.com/AiratGaliev/last-hero-medieval-survival/actions/runs/39452099745) успел успешно выполнить typecheck/ESLint, production build и проверку Yandex Games archive; browser smoke ещё выполнялся, когда был найден дополнительный дефект владения работами карты «Вече». Эту ревизию не использовать для закрытия гейтов; проверять новый workflow на HEAD после интеграции исправления.
+- Автоматизированные фазовые гейты I–L остаются открытыми до полного browser smoke на актуальном SHA. Отдельно открыты ручные проверки: визуальная приёмка на реальных мобильных устройствах, замеры долгого баланса и фактические ads/IAP-потоки в Yandex Games Sandbox.
+
+---
+
 ## Актуальный статус main и фаз G–H — 2026-10-19
 
 - Последний подтверждённый CI базового `main`: [#155](https://github.com/AiratGaliev/last-hero-medieval-survival/actions/runs/39244349795), SHA `febae19e8f723fb8ecb73d15e1e1cf63113ea09d`, **success**. Это проверка старого `main`, не текущих изменений фаз I–L.

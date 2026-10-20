@@ -132,26 +132,40 @@ export class PawnAI {
       return;
     }
 
+    // Уже оплаченная стройка или ремонт закреплены за пешкой до завершения.
+    // Ранее эти jobs продолжались только в отдельных ветках builder/repairer
+    // или при приказе BUILD: помощник-сборщик по карте «Вече» возвращался к
+    // обычному сбору на следующем тике, оставляя оплаченный job незавершённым.
+    const activeBuildJob = eco.buildJobs.find((job) => job.pawn === p);
+    if (activeBuildJob) {
+      const d = Phaser.Math.Distance.Between(p.x, p.y, activeBuildJob.spot.x, activeBuildJob.spot.y);
+      if (d < 90) {
+        p.state = 'work';
+        p.playWork('hammer');
+        p.setVelocity(0, 0);
+      } else {
+        p.state = 'walk';
+        this.walkTo(p, activeBuildJob.spot.x, activeBuildJob.spot.y, dtMs);
+      }
+      return;
+    }
+
+    const activeRepairJob = eco.repairJobs.find((job) => job.pawn === p);
+    if (activeRepairJob) {
+      const d = Phaser.Math.Distance.Between(p.x, p.y, activeRepairJob.building.x, activeRepairJob.building.y);
+      if (d < 100) {
+        p.state = 'work';
+        p.playWork('hammer');
+        p.setVelocity(0, 0);
+      } else {
+        p.state = 'walk';
+        this.walkTo(p, activeRepairJob.building.x, activeRepairJob.building.y, dtMs);
+      }
+      return;
+    }
+
     // --- 3. Приказы игрока (перебивают автоприоритеты, §B.6) ---
     if (p.order === 'build') {
-      // ⚠️ Если стройка УЖЕ оплачена этой пешкой — продолжаем её, а не берём
-      // новое пятно. `nearestFreeSpot` на следующем тике вернул бы уже другое
-      // пятно (первое занято markSpot), строитель ушёл бы, оплаченная стройка
-      // зависла бы навсегда — и пешка заплатила бы за ВТОРОЕ здание.
-      const mine = eco.buildJobs.find((j) => j.pawn === p);
-      if (mine) {
-        const d = Phaser.Math.Distance.Between(p.x, p.y, mine.spot.x, mine.spot.y);
-        if (d > 90) {
-          p.state = 'walk';
-          this.walkTo(p, mine.spot.x, mine.spot.y, dtMs);
-        } else {
-          p.state = 'work';
-          p.playWork('hammer');
-          p.setVelocity(0, 0);
-          p.taskProgress = 0;
-        }
-        return;
-      }
       const spot = this.nearestFreeSpot(p);
       if (spot) {
         if (Phaser.Math.Distance.Between(p.x, p.y, spot.x, spot.y) < 70) {
@@ -192,19 +206,6 @@ export class PawnAI {
     // ⚠️ Сначала продолжаем НАЧАТУЮ стройку — иначе строитель закладывал бы
     // новое здание каждый кадр (двойное списание, риск §D.2).
     if (p.kind === 'builder') {
-      const job = eco.buildJobs.find((j) => j.pawn === p);
-      if (job) {
-        const d = Phaser.Math.Distance.Between(p.x, p.y, job.spot.x, job.spot.y);
-        if (d < 90) {
-          p.state = 'work';
-          p.playWork('hammer');
-          p.setVelocity(0, 0);
-        } else {
-          p.state = 'walk';
-          this.walkTo(p, job.spot.x, job.spot.y, dtMs);
-        }
-        return;
-      }
       const spot = this.pickBuildSpot(p);
       let target = spot;
       if (spot && spot.kind !== 'house') {
@@ -250,20 +251,6 @@ export class PawnAI {
 
     // --- 5. Ремонтник: повреждённое здание (активировано фазой L) ---
     if (p.kind === 'repairer') {
-      // Продолжаем начатый ремонт
-      const job = eco.repairJobs.find((j) => j.pawn === p);
-      if (job) {
-        const d = Phaser.Math.Distance.Between(p.x, p.y, job.building.x, job.building.y);
-        if (d < 100) {
-          p.state = 'work';
-          p.playWork('hammer');
-          p.setVelocity(0, 0);
-        } else {
-          p.state = 'walk';
-          this.walkTo(p, job.building.x, job.building.y, dtMs);
-        }
-        return;
-      }
       const b = this.mostDamagedBuilding();
       if (b && eco.resources.wood >= 30 && eco.repair(b, p)) {
         p.state = 'work';
