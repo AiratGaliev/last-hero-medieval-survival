@@ -290,15 +290,16 @@ export class Settlement {
     // каждые пару минут и обещает игроку бесперспективность.
     if (b.kind === 'monastery') {
       // Каждое разрушение обители убивает находящихся внутри. Флаг хранит факт
-      // первого обрушения для обучения/хроники, но не отменяет правило G.5 для
+      // первого обрушения для хроники, но не отменяет правило G.5 для
       // второй обители, построенной позже.
+      const firstCollapse = !this.monasteryCollapsed;
       this.monasteryCollapsed = true;
       // Слот — локальный индекс здания. Дедуплицируем возможные старые ссылки:
       // одна пешка умирает и учитывается один раз, даже если была в двух местах.
       const victims = [...new Set(
-        b.healSlots.filter((slot): slot is Pawn => slot !== null) as Pawn[],
+        b.healSlots.filter((slot): slot is Pawn => slot instanceof Pawn),
       )];
-      if (this.facts.monasteryFallenAt === null) {
+      if (firstCollapse && this.facts.monasteryFallenAt === null) {
         this.facts.monasteryFallenAt = this.fmtTime();
       }
       this.facts.monasteryVictims += victims.length;
