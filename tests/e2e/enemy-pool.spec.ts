@@ -404,6 +404,25 @@ test('phase I: harpoon shark completes its throw animation and creates the confi
   });
   await expect.poll(() => page.evaluate(() => {
     const game = (window as unknown as { __tss?: RuntimeGame }).__tss;
+    if (!game) return null;
+    const scene = game.scene.getScene('Game');
+    return scene.enemyGroup.getChildren().find((candidate) =>
+      candidate.active && candidate.kind === 'harpoon-shark')?.anims.currentAnim?.key ?? null;
+  }), { timeout: 3_000 }).toBe('harpoon-shark-atk');
+
+  // После начала броска отводим героя дальше: снаряд остаётся активным достаточно
+  // долго, чтобы одинаково наблюдаться в desktop и mobile браузерных прогонах.
+  await page.evaluate(() => {
+    const game = (window as unknown as { __tss?: RuntimeGame }).__tss;
+    if (!game) throw new Error('Phaser runtime is unavailable');
+    const scene = game.scene.getScene('Game');
+    const shark = scene.enemyGroup.getChildren().find((candidate) =>
+      candidate.active && candidate.kind === 'harpoon-shark');
+    if (!shark) throw new Error('Harpoon shark disappeared during windup');
+    scene.player.setPosition(shark.x - 800, shark.y);
+  });
+  await expect.poll(() => page.evaluate(() => {
+    const game = (window as unknown as { __tss?: RuntimeGame }).__tss;
     if (!game) return false;
     const scene = game.scene.getScene('Game') as RuntimeScene & {
       projectiles: {

@@ -518,6 +518,7 @@ test('phase J: ?debug DPS panel and pawn retreat/wounded badges are visible', as
       dpsDebugRawDamage: number;
       dpsDebugAppliedDamage: number;
       heroDpsAtTenMinutes: number | null;
+      lastDpsDebugUpdate: number;
       updateDpsDebug(time: number): void;
       time: { now: number };
     };
@@ -525,7 +526,8 @@ test('phase J: ?debug DPS panel and pawn retreat/wounded badges are visible', as
     scene.heroDpsAtTenMinutes = 100;
     scene.dpsDebugRawDamage = 30;
     scene.dpsDebugAppliedDamage = 20;
-    scene.updateDpsDebug(scene.time.now + 1_001);
+    scene.lastDpsDebugUpdate = scene.time.now;
+    scene.updateDpsDebug(scene.lastDpsDebugUpdate + 1_000);
     const pawn = scene.economy.pawns[0] as PawnRuntime & {
       preUpdate(time: number, delta: number): void;
       stateBadge: { text: string; active: boolean } | null;

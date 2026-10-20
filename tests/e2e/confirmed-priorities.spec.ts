@@ -289,10 +289,15 @@ test('phase J: enemies switch from a nearby pawn back to the hero when the hero 
       x: number;
       y: number;
       aimedPawn: unknown;
+      pickTarget(): void;
       setVelocity(x: number, y: number): unknown;
     };
     const scene = game.scene.getScene('Game') as unknown as {
-      economy: { castleX: number; castleY: number };
+      economy: {
+        castleX: number;
+        castleY: number;
+        pawns: Array<{ active: boolean; dead: boolean; state: string; setPosition(x: number, y: number): unknown }>;
+      };
       player: { setPosition(x: number, y: number): unknown };
       spawner: { stopped: boolean };
       spawnEnemy(kind: string, x: number, y: number): boolean;
@@ -308,35 +313,29 @@ test('phase J: enemies switch from a nearby pawn back to the hero when the hero 
         && Math.hypot(candidate.x - x, candidate.y - y) < 5);
     if (!enemy) throw new Error('Spawned goblin could not be found');
     enemy.setVelocity(0, 0);
+    const pawn = scene.economy.pawns.find((candidate) =>
+      candidate.active && !candidate.dead && candidate.state !== 'wounded' && candidate.state !== 'bleeding');
+    if (!pawn) throw new Error('No living pawn is available for target-selection test');
+    // Выводим жителя за безопасный радиус 360 px, чтобы он участвовал в выборе цели.
+    pawn.setPosition(x + 60, y);
+    enemy.pickTarget();
+    if (enemy.aimedPawn !== pawn) throw new Error('Enemy did not select the nearby pawn');
     (window as RuntimeWindow & { __phaseJEnemy?: EnemyTarget }).__phaseJEnemy = enemy;
   });
 
-  await page.waitForTimeout(450);
-  const selectedPawn = await page.evaluate(() => {
-    const enemy = (window as RuntimeWindow & {
-      __phaseJEnemy?: { aimedPawn: unknown };
-    }).__phaseJEnemy;
-    return Boolean(enemy?.aimedPawn);
-  });
-  expect(selectedPawn).toBe(true);
-
-  await page.evaluate(() => {
+  const heroPriority = await page.evaluate(() => {
     const game = (window as RuntimeWindow).__tss;
     const enemy = (window as RuntimeWindow & {
-      __phaseJEnemy?: { x: number; y: number };
+      __phaseJEnemy?: { x: number; y: number; aimedPawn: unknown; pickTarget(): void };
     }).__phaseJEnemy;
     if (!game || !enemy) throw new Error('Target-selection fixture was lost');
     const scene = game.scene.getScene('Game') as GameSceneRuntime & {
       player: GameSceneRuntime['player'] & { setPosition(x: number, y: number): unknown };
     };
     scene.player.setPosition(enemy.x + 100, enemy.y);
-  });
-  await page.waitForTimeout(450);
-  const heroPriority = await page.evaluate(() => {
-    const enemy = (window as RuntimeWindow & {
-      __phaseJEnemy?: { aimedPawn: unknown };
-    }).__phaseJEnemy;
-    return enemy?.aimedPawn === null;
+    // Вызываем реальный selector напрямую, без гонки с таймером pick раз в 400 мс.
+    enemy.pickTarget();
+    return enemy.aimedPawn === null;
   });
   expect(heroPriority).toBe(true);
 });

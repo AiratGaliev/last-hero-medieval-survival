@@ -1100,8 +1100,7 @@ test('phases E-F: construction uses the approached spot and repair costs are gua
 test('phase K: flaming siege arrows use a bounded pool, visible trail and arrival callback', async ({ page }) => {
   const pageErrors: string[] = [];
   page.on('pageerror', (error) => pageErrors.push(error.message));
-  await openApp(page);
-  await startGameplay(page);
+  await startRun(page);
 
   const report = await page.evaluate(() => {
     const game = (window as unknown as { __tss?: PhaserRuntime }).__tss;
@@ -1175,7 +1174,11 @@ test('phase J: barracks hiring spends resources immediately and reserves slots w
   const report = await page.evaluate(() => {
     const game = (window as RuntimeWindow).__tss;
     if (!game) throw new Error('Phaser runtime is unavailable');
-    const scene = game.scene.getScene('Game') as GameSceneRuntime & { xp: number; score: number };
+    const scene = game.scene.getScene('Game') as GameSceneRuntime & {
+      xp: number;
+      score: number;
+      addXp(value: number): void;
+    };
     const economy = scene.economy as unknown as {
       resources: { wood: number; ore: number; meat: number };
       pawns: Array<PawnRuntime & { weapon?: string; cls?: string }>;
@@ -1199,10 +1202,15 @@ test('phase J: barracks hiring spends resources immediately and reserves slots w
     if (!started || !barracks) throw new Error('Barracks construction could not start');
     builder.setPosition(spot.x, spot.y);
     builder.state = 'work';
-    const xpBeforeBarracks = scene.xp;
+    const buildXpAwards: number[] = [];
+    const originalAddXp = scene.addXp.bind(scene);
+    scene.addXp = (value: number) => {
+      buildXpAwards.push(value);
+      originalAddXp(value);
+    };
     const scoreBeforeBarracks = scene.score;
     economy.tick(20_001, scene.time.now + 20_001);
-    const barracksBuildXp = scene.xp - xpBeforeBarracks;
+    scene.addXp = originalAddXp;
     const barracksBuildScore = scene.score - scoreBeforeBarracks;
 
     const completed = barracks.alive && !barracks.underConstruction;
@@ -1226,7 +1234,7 @@ test('phase J: barracks hiring spends resources immediately and reserves slots w
       .sort();
     return {
       completed,
-      barracksBuildXp,
+      buildXpAwards,
       barracksBuildScore,
       limit,
       firstAvailable,
@@ -1251,7 +1259,7 @@ test('phase J: barracks hiring spends resources immediately and reserves slots w
   });
 
   expect(report.completed).toBe(true);
-  expect(report.barracksBuildXp).toBe(15);
+  expect(report.buildXpAwards).toEqual([15]);
   expect(report.barracksBuildScore).toBe(50);
   expect(report.limit).toBe(2);
   expect(report.firstAvailable).toBe(true);
