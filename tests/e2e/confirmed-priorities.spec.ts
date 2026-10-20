@@ -130,6 +130,65 @@ test('urgent FTUE hints bypass cooldown and anchor layouts stay within desktop/m
   expect(policy.mobile.textWidth).toBeLessThan(policy.mobile.width);
 });
 
+test('mobile FTUE long-press cannot open an order menu on the same touch', async ({ page }) => {
+  const viewport = page.viewportSize();
+  test.skip(!viewport || viewport.width > 600, 'Touch-specific regression');
+
+  await startRun(page);
+  await expect.poll(
+    () => page.evaluate(() => {
+      const game = (window as RuntimeWindow).__tss;
+      if (!game?.scene.isActive('Game')) return null;
+      return (game.scene.getScene('Game') as GameSceneRuntime).hints.current?.id ?? null;
+    }),
+    { timeout: 10_000 },
+  ).toBe('move');
+
+  // Ставим жителя прямо под точку касания, чтобы pointerdown мог запустить long-press.
+  const center = await page.evaluate(() => {
+    const game = (window as RuntimeWindow).__tss;
+    if (!game) throw new Error('Phaser runtime is unavailable');
+    const scene = game.scene.getScene('Game') as unknown as {
+      cameras: { main: { midPoint: { x: number; y: number } } };
+      economy: {
+        pawns: Array<{ active: boolean; dead: boolean; cls: string; setPosition(x: number, y: number): void }>;
+      };
+    };
+    const pawn = scene.economy.pawns.find((candidate) =>
+      candidate.active && !candidate.dead && candidate.cls === 'civilian');
+    if (!pawn) throw new Error('No living civilian is available for the overlay touch test');
+    const x = scene.cameras.main.midPoint.x;
+    const y = scene.cameras.main.midPoint.y;
+    pawn.setPosition(x, y);
+    return { x, y };
+  });
+
+  const canvas = page.locator('#game canvas');
+  const bounds = await canvas.boundingBox();
+  if (!bounds) throw new Error('Game canvas has no bounds');
+  const x = bounds.x + bounds.width / 2;
+  const y = bounds.y + bounds.height / 2;
+  const cdp = await page.context().newCDPSession(page);
+  await cdp.send('Input.dispatchTouchEvent', {
+    type: 'touchStart',
+    touchPoints: [{ x, y, id: 1, radiusX: 4, radiusY: 4, force: 1 }],
+  });
+  try {
+    // Overlay закрывается на pointerdown; удержание не должно продолжить
+    // тот же жест в игровой слой и открыть radial order menu через 500 мс.
+    await page.waitForTimeout(650);
+    const orderMenuOpen = await page.evaluate(() => {
+      const game = (window as RuntimeWindow).__tss!;
+      const scene = game.scene.getScene('Game') as unknown as { orderMenu: { isOpen: boolean } };
+      return scene.orderMenu.isOpen;
+    });
+    expect(orderMenuOpen).toBe(false);
+  } finally {
+    await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+    await cdp.detach();
+  }
+});
+
 test('intro overlay really pauses gameplay; monastery warnings and garrison damage cap are wired end-to-end', async ({ page }) => {
   await startRun(page);
   await expect.poll(
