@@ -4,6 +4,7 @@ type Point = { x: number; y: number };
 type Bounds = { x: number; y: number; width: number; height: number };
 type PawnRuntime = {
   kind: string;
+  cls: string;
   x: number;
   y: number;
   state: string;
@@ -354,6 +355,54 @@ test('phase G: command menu is explicit, closable and BUILD order ends after con
   expect(result.targetAfterCompletion).toBeNull();
   expect(result.resourcesAvailableForResume).toBe(true);
   expect(result.autoResumed, JSON.stringify(result)).toBe(true);
+});
+
+test('phase J: a persistent garrison order can be reset to autonomous behavior', async ({ page }) => {
+  await startRun(page);
+  const point = await preparePawn(page);
+  await page.evaluate(() => {
+    const game = (window as RuntimeWindow).__tss!;
+    const scene = game.scene.getScene('Game') as GameSceneRuntime;
+    const pawn = scene.economy.pawns.find(p => p.kind === 'collector')!;
+    // Подменяем роль тестового юнита, не запуская отдельный дорогой цикл найма.
+    pawn.cls = 'garrison';
+    pawn.kind = 'fighter';
+    pawn.order = 'hold';
+    pawn.orderTarget = { x: pawn.x, y: pawn.y };
+  });
+
+  const isOpen = () => page.evaluate(() => {
+    const game = (window as RuntimeWindow).__tss!;
+    return (game.scene.getScene('Game') as GameSceneRuntime).orderMenu.isOpen;
+  });
+  await shiftClick(page, point.x, point.y);
+  await expect.poll(isOpen).toBe(true);
+
+  const entries = await page.evaluate(() => {
+    const game = (window as RuntimeWindow).__tss!;
+    const scene = game.scene.getScene('Game') as GameSceneRuntime;
+    const pawn = scene.economy.pawns.find(p => p.kind === 'fighter')!;
+    return scene.orderMenu.entriesFor(pawn).map(entry => entry.key);
+  });
+  expect(entries).toEqual(['follow', 'post', 'hold', 'reset']);
+
+  // Четвёртый сектор находится слева от центра выбранного юнита.
+  await page.mouse.click(point.x - 74, point.y);
+  await expect.poll(() => page.evaluate(() => {
+    const game = (window as RuntimeWindow).__tss!;
+    const scene = game.scene.getScene('Game') as GameSceneRuntime;
+    const pawn = scene.economy.pawns.find(p => p.kind === 'fighter')!;
+    return pawn.order;
+  })).toBeNull();
+
+  const result = await page.evaluate(() => {
+    const game = (window as RuntimeWindow).__tss!;
+    const scene = game.scene.getScene('Game') as GameSceneRuntime;
+    const pawn = scene.economy.pawns.find(p => p.kind === 'fighter')!;
+    return { target: pawn.orderTarget, menuOpen: scene.orderMenu.isOpen };
+  });
+  expect(result.target).toBeNull();
+  expect(result.menuOpen).toBe(false);
 });
 
 test('phase G: carry phase deposits first and only then applies BUILD', async ({ page }) => {
