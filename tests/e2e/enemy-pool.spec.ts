@@ -6,6 +6,8 @@ type AnimationProbe = { repeat: number; frameRate?: number };
 type RuntimeEnemy = {
   kind: string;
   active: boolean;
+  x: number;
+  y: number;
   anims: {
     currentAnim?: { key: string } | null;
     currentFrame?: { index: number } | null;
@@ -336,7 +338,7 @@ test('phase I: every reserved creature spawns under the cap with runtime animati
 
 
 
-test('phase I: reserved creatures move in combat and harpoon shark releases a live harpoon projectile', async ({ page }) => {
+test('phase I: every reserved creature enters its combat movement state', async ({ page }) => {
   const pageErrors: string[] = [];
   page.on('pageerror', (error) => pageErrors.push(error.message));
   await openApp(page);
@@ -381,18 +383,6 @@ test('phase I: reserved creatures move in combat and harpoon shark releases a li
   }, initial);
   expect(movement.every((result) => result.spawned && result.distance > 1)).toBe(true);
 
-  const harpoon = await page.evaluate(() => {
-    const game = (window as unknown as { __tss?: RuntimeGame }).__tss;
-    if (!game) throw new Error('Phaser runtime is unavailable');
-    const scene = game.scene.getScene('Game') as RuntimeScene & {
-      projectiles: {
-        enemyShots: { getChildren(): Array<{ active: boolean; shotKind?: string; texture: { key: string } }> };
-      };
-    };
-    const shots = scene.projectiles.enemyShots.getChildren();
-    return shots.some((shot) => shot.active && shot.shotKind === 'harpoon' && shot.texture.key === 'proj-harpoon');
-  });
-  expect(harpoon).toBe(false); // no shark attack was forced in this movement-only sample
   expect(pageErrors).toEqual([]);
 });
 
