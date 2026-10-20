@@ -177,7 +177,7 @@ export class Settlement {
       if (sword) {
         const share = Math.min(amount * TAUNT.SHARE, sword.hp);
         amount -= share;
-        this.eco.woundPawn(sword, share, this.scene.time.now);
+        this.eco.woundPawn(sword, share, this.simulationTimeMs);
         this.flashTaunt(sword);
         // Телеметрия §K.2: таунт перетянул долю урона на себя
         track('garrison_taunt', { weapon: sword.weapon ?? 'sword', building_kind: b.kind, dmg_redirected: Math.round(share * 10) / 10 });
@@ -258,8 +258,8 @@ export class Settlement {
    * «поставить мечника под осаду», ради которого таунт и придуман.
    */
   private flashTaunt(sword: Pawn): void {
-    if (sword.tauntFlashUntil > this.scene.time.now) return;
-    sword.tauntFlashUntil = this.scene.time.now + 700;
+    if (sword.tauntFlashUntil > this.simulationTimeMs) return;
+    sword.tauntFlashUntil = this.simulationTimeMs + 700;
     sword.showTauntBadge();
     audio.play('hit');
   }
@@ -314,8 +314,13 @@ export class Settlement {
       }
   }
 
+  private get simulationTimeMs(): number {
+    const value = this.scene.registry.get('tss-active-time-ms');
+    return typeof value === 'number' && Number.isFinite(value) ? value : this.scene.time.now;
+  }
+
   private fmtTime(): string {
-    const s = Math.floor(this.scene.time.now / 1000);
+    const s = Math.floor(this.simulationTimeMs / 1000);
     return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
   }
 

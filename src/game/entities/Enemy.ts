@@ -724,14 +724,14 @@ export class Enemy extends Phaser.Physics.Arcade.Sprite {
             if (e === this || !e.active) continue;
             // Босса аура не разгоняет: его скорость калибруется отдельно
             if (e.def.isBoss) continue;
-            e.hasteUntil = time + 750;
+            e.hasteUntil = activeTime + 750;
             e.hasteMult = 1.3;
           }
         }
         // Кольцо ауры следует за шаманом
         if (this.auraRing) {
           this.auraRing.setPosition(this.x, this.y + 6);
-          const pulse = 0.22 + Math.abs(Math.sin(time / 320)) * 0.2;
+          const pulse = 0.22 + Math.abs(Math.sin(activeTime / 320)) * 0.2;
           this.auraRing.setAlpha(pulse);
         }
         if (this.shootCd <= 0 && dist < 520 && this.aiState === 'chase') {
@@ -853,7 +853,7 @@ export class Enemy extends Phaser.Physics.Arcade.Sprite {
     this.knockX *= decay; this.knockY *= decay;
 
     // Ускорение от ауры Шамана — применяется к итоговой скорости
-    if (time < this.hasteUntil) {
+    if (activeTime < this.hasteUntil) {
       vx *= this.hasteMult;
       vy *= this.hasteMult;
     }

@@ -301,7 +301,7 @@ export class GameScene extends Phaser.Scene {
     const heroTint = heroSkinTint();
     if (heroTint !== null) this.player.setTint(heroTint);
     // «Вторые ворота» (§H.16): щит героя на 5 сек в начале матча
-    if (this.fx.heroShieldMs > 0) this.player.iframesUntil = this.time.now + this.fx.heroShieldMs;
+    if (this.fx.heroShieldMs > 0) this.player.iframesUntil = this.activeTimeMs + this.fx.heroShieldMs;
     // Зум камеры выставлен выше (до сборки мира) — HUD и подсказки
     // компенсируют его обратным масштабом.
     this.scale.on('resize', this.resizeZoom, this);
@@ -1336,7 +1336,7 @@ export class GameScene extends Phaser.Scene {
       if (!hitPawn && !hitBuilding) return;
       this.pressState = {
         x: wp, y: wy, screenX: pointer.x, screenY: pointer.y,
-        t: this.time.now, pointer, pawn: hitPawn, building: hitBuilding,
+        t: this.activeTimeMs, pointer, pawn: hitPawn, building: hitBuilding,
       };
       if (shift && hitPawn) {
         this.openOrderMenu(hitPawn, wp, wy);
@@ -1540,7 +1540,7 @@ private ordersUnlocked(): boolean {
     // Все атаки гарнизона после этого момента расходуют общий токен-бакет.
     if (this.elapsed >= 600 && this.heroDpsAtTenMinutes === null) {
       this.heroDpsAtTenMinutes = this.weapons.estimateTheoreticalDps();
-      this.garrisonDpsBudget.reset(time);
+      this.garrisonDpsBudget.reset(this.activeTimeMs);
     }
 
     // Движение игрока
@@ -1581,11 +1581,11 @@ private ordersUnlocked(): boolean {
     this.siegeTick();
 
     // Условие поражения №3 — вымирание, пересчёт раз в 60 сек (§E.3)
-    if (this.settlement.checkExtinction(time) && this.extinctAt === null) {
-      this.extinctAt = time;
+    if (this.settlement.checkExtinction(this.activeTimeMs) && this.extinctAt === null) {
+      this.extinctAt = this.activeTimeMs;
       this.hud.announce(t('over.extinct'), '#ff5544');
     }
-    if (this.extinctAt !== null && time - this.extinctAt > 3000) {
+    if (this.extinctAt !== null && this.activeTimeMs - this.extinctAt > 3000) {
       // 3-секундный экран перед GameOverScene (§E.3)
       this.loseCause = 'population';
       this.gameOver(false);
@@ -1612,7 +1612,7 @@ private ordersUnlocked(): boolean {
       }
     }
     if (this.pressState && !this.orderMenu.isOpen) {
-      const held = time - this.pressState.t;
+      const held = this.activeTimeMs - this.pressState.t;
       if (held >= LONGPRESS_MS) {
         this.orderMenu.hideRing();
         if (this.pressState.pawn) this.openOrderMenu(this.pressState.pawn, this.pressState.x, this.pressState.y);
@@ -1620,7 +1620,7 @@ private ordersUnlocked(): boolean {
         this.pressState = null;
       } else if (held > 120) {
         this.orderMenu.showRing(this.pressState.x, this.pressState.y, this.pressState.t);
-        this.orderMenu.updateRing(time, LONGPRESS_MS);
+        this.orderMenu.updateRing(this.activeTimeMs, LONGPRESS_MS);
       }
     }
 
@@ -1641,7 +1641,7 @@ private ordersUnlocked(): boolean {
     // Магнит комбо-вехи 200 живёт 10 секунд (§H.4) — радиус пересчитываем
     // каждый кадр, потому что он не входит в recomputeStats (там он был бы
     // перетёрт снятием пассивки).
-    const magnetNow = this.time.now < this.xpMagnetUntil
+    const magnetNow = this.activeTimeMs < this.xpMagnetUntil
       ? this.magnetRadius * 6
       : this.magnetRadius;
     this.pickups.update(delta, this.player.x, this.player.y, magnetNow, time);
@@ -1815,9 +1815,9 @@ private ordersUnlocked(): boolean {
   private hurtPlayer(amount: number): void {
     if (this.gameEnded || this.victoryPending || this.defeatPending) return;
     // Эффекты урона (звук/тряска/хитстоп) — только когда удар реально прошёл
-    if (this.time.now < this.player.iframesUntil) return;
+    if (this.activeTimeMs < this.player.iframesUntil) return;
     const dmg = Math.max(1, Math.round(amount * this.armorMult));
-    const dead = this.player.damage(dmg, this.time.now);
+    const dead = this.player.damage(dmg, this.activeTimeMs);
     audio.play('hurt');
     this.cameras.main.shake(120, 0.0035);
     this.cameras.main.flash(110, 190, 40, 30, false);
@@ -2344,7 +2344,7 @@ private ordersUnlocked(): boolean {
           // Магнит даём временным расширением радиуса — иначе игрок,
           // доведший серию до 200, должен был вручную собирать кристаллы.
           this.player.heal(999);
-          this.xpMagnetUntil = this.time.now + 10_000;
+          this.xpMagnetUntil = this.activeTimeMs + 10_000;
           this.economy.deposit('wood', 25);
           this.economy.deposit('ore', 15);
           this.economy.deposit('meat', 15);
@@ -2374,7 +2374,7 @@ private bossDeathSequence(e: Enemy): boolean {
     const rawDamage = Math.max(1, Math.round(dmg * (1 + 0.25 * this.economy.card('militia'))));
     const final = this.heroDpsAtTenMinutes === null
       ? rawDamage
-      : this.garrisonDpsBudget.apply(rawDamage, this.time.now, this.heroDpsAtTenMinutes);
+      : this.garrisonDpsBudget.apply(rawDamage, this.activeTimeMs, this.heroDpsAtTenMinutes);
     if (this.dpsDebugText) {
       this.dpsDebugRawDamage += rawDamage;
       this.dpsDebugAppliedDamage += final;
@@ -2539,7 +2539,7 @@ private bossDeathSequence(e: Enemy): boolean {
     this.weapons.add(this.heroDef.startWeapon);
     this.hud.setIcon(this.heroDef.startWeapon, WEAPONS[this.heroDef.startWeapon].icon, 1, false);
     this.recomputeStats();
-    this.player.iframesUntil = this.time.now + 3000; // ровно 3 сек (§F.9)
+    this.player.iframesUntil = this.activeTimeMs + 3000; // ровно 3 сек (§F.9)
     // Сохранённый опыт возвращается после сброса (может сразу дать карточки)
     if (keptXp > 0) {
       this.xp += keptXp;
@@ -3533,14 +3533,14 @@ private bossDeathSequence(e: Enemy): boolean {
       // Враг ранит пешку (§A.5): обычный бой — напрямую, осада — по лимиту профиля
       attackPawn: (pawn, dmg, siege) => {
         if (pawn.dead) return;
-        if (siege) this.settlement.siegeWoundPawn(pawn, dmg, this.time.now);
+        if (siege) this.settlement.siegeWoundPawn(pawn, dmg, this.activeTimeMs);
         else {
           // Таунт мечника перетягивает и урон по гражданскому (§B.7.1).
           // Раньше он работал только по зданиям — половина правила молчала.
           const dmgToPawn = this.settlement.siegeIdx >= 0
             ? this.settlement.tauntCivilian(pawn, dmg, this.settlement.siegeIdx)
             : dmg;
-          const wounded = this.economy.woundPawn(pawn, dmgToPawn, this.time.now);
+          const wounded = this.economy.woundPawn(pawn, dmgToPawn, this.activeTimeMs);
           if (wounded) track('pawn_wounded', { name_role: `${pawn.kind}:${pawn.name}`, cause: 'regular' });
         }
         this.effects.hitSound(this.time.now);

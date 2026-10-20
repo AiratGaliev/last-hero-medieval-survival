@@ -2270,6 +2270,8 @@ test('phase K: siege deadlines use active gameplay time across an FTUE overlay p
     };
     const scene = game.scene.getScene('Game') as GameSceneRuntime & {
       activeTimeMs: number;
+      player: { x: number; y: number; hp: number; iframesUntil: number };
+      hurtPlayer(amount: number): void;
       siegeAlive: boolean;
       spawnSiegeUnit(kind: string, x: number, y: number, firer: boolean): SiegeEnemyRuntime | null;
       enemyGroup: { getChildren(): SiegeEnemyRuntime[] };
@@ -2280,6 +2282,8 @@ test('phase K: siege deadlines use active gameplay time across an FTUE overlay p
       };
     };
     const activeNow = scene.activeTimeMs;
+    const playerHpBefore = scene.player.hp;
+    scene.player.iframesUntil = activeNow + 3000;
     const registeredActiveNow = Number(scene.registry.get('tss-active-time-ms'));
     const castle = scene.settlement.castle;
     const windowEnemy = scene.spawnSiegeUnit('skull', castle.x + 150, castle.y, false);
@@ -2305,6 +2309,8 @@ test('phase K: siege deadlines use active gameplay time across an FTUE overlay p
     scene.time.paused = true;
     scene.physics.world.pause();
     const futureTime = activeNow + 120_000;
+    const originalWallTime = scene.time.now;
+    scene.time.now = futureTime + 16;
     windowEnemy.preUpdate(futureTime, 16);
     lifetimeEnemy.preUpdate(futureTime, 16);
 
@@ -2316,9 +2322,16 @@ test('phase K: siege deadlines use active gameplay time across an FTUE overlay p
     // Дополнительный аргумент отражает wall-clock timestamp движка; production
     // siegeTick обязан игнорировать его и брать значение activeTimeMs.
     scene.siegeTick(futureTime + 16);
+    scene.hurtPlayer(10);
+    const playerHpAfterResume = scene.player.hp;
+    const iframeStillActive = scene.player.iframesUntil > scene.activeTimeMs;
+    scene.time.now = originalWallTime;
 
     return {
       activeNow,
+      playerHpBefore,
+      playerHpAfterResume,
+      iframeStillActive,
       registeredActiveNow,
       activeTimeAfter: scene.activeTimeMs,
       attackWindowStillActive: windowEnemy.siege,
@@ -2328,6 +2341,8 @@ test('phase K: siege deadlines use active gameplay time across an FTUE overlay p
   });
 
   expect(report.registeredActiveNow).toBe(report.activeNow);
+  expect(report.playerHpAfterResume).toBe(report.playerHpBefore);
+  expect(report.iframeStillActive).toBe(true);
   expect(report.activeTimeAfter).toBe(report.activeNow);
   expect(report.attackWindowStillActive).toBe(true);
   expect(report.windowEnemyInGroup).toBe(true);

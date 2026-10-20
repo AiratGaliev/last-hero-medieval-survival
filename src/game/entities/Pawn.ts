@@ -402,8 +402,11 @@ export class Pawn extends Phaser.Physics.Arcade.Sprite {
       this.updateBleedBadge();
     }
     this.updateStateBadge();
-    this.tickTauntBadge(time);
-    void time;
+    const activeTimeValue = this.scene.registry.get('tss-active-time-ms');
+    const activeTime = typeof activeTimeValue === 'number' && Number.isFinite(activeTimeValue)
+      ? activeTimeValue
+      : time;
+    this.tickTauntBadge(activeTime);
     void delta;
   }
 
