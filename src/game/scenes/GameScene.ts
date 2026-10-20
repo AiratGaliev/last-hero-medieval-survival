@@ -1444,11 +1444,14 @@ private ordersUnlocked(): boolean {
     const appliedDps = this.dpsDebugAppliedDamage * 1_000 / windowMs;
     const heroDps = this.heroDpsAtTenMinutes;
     const capDps = heroDps === null ? null : heroDps * GARRISON_DPS_CAP;
+    const rawShare = heroDps !== null && heroDps > 0 ? rawDps / heroDps * 100 : null;
+    const appliedShare = heroDps !== null && heroDps > 0 ? appliedDps / heroDps * 100 : null;
     this.dpsDebugText.setText([
       'DPS QA · window 1s',
       `hero@10m: ${heroDps === null ? 'not captured' : heroDps.toFixed(1)} /s`,
       `garrison: ${rawDps.toFixed(1)} → ${appliedDps.toFixed(1)} /s`,
-      `cap: ${capDps === null ? 'not active' : capDps.toFixed(1) + ' /s'} · bank ${this.garrisonDpsBudget.availableDamage.toFixed(1)}`,
+      `share of hero DPS: raw ${rawShare === null ? 'n/a' : rawShare.toFixed(1) + '%'} → applied ${appliedShare === null ? 'n/a' : appliedShare.toFixed(1) + '%'}`,
+      `cap: ${capDps === null ? 'not active' : capDps.toFixed(1) + ' /s (' + (GARRISON_DPS_CAP * 100).toFixed(0) + '% hero)'} · bank ${this.garrisonDpsBudget.availableDamage.toFixed(1)}`,
     ].join('\n'));
     this.dpsDebugRawDamage = 0;
     this.dpsDebugAppliedDamage = 0;

@@ -216,7 +216,7 @@ export class Settlement {
   private tauntingSword(b: Building): Pawn | null {
     for (const p of this.eco.garrison) {
       if (p.kind !== 'fighter' || p.weapon !== 'sword' || p.dead) continue;
-      if (p.state !== 'fight') continue;
+      if (p.state !== 'fight' || p.order !== 'hold' || !p.orderTarget) continue;
       if (Math.hypot(p.x - b.x, p.y - b.y) <= TAUNT.RADIUS) return p;
     }
     return null;
@@ -242,7 +242,7 @@ export class Settlement {
   private tauntingSwordAt(victim: Pawn): Pawn | null {
     for (const p of this.eco.garrison) {
       if (p.kind !== 'fighter' || p.weapon !== 'sword' || p.dead) continue;
-      if (p.state !== 'fight') continue;
+      if (p.state !== 'fight' || p.order !== 'hold' || !p.orderTarget) continue;
       if (Math.hypot(p.x - victim.x, p.y - victim.y) <= TAUNT.RADIUS) return p;
     }
     return null;

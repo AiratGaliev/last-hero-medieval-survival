@@ -1355,3 +1355,72 @@ test('phases K-L: siege wound caps, extinction delay, settlement score and ideal
   expect(report.idealWithBoss).toBe(false);
   expect(report.castleAlive).toBe(true);
 });
+
+test('phase J: sword taunt redirects siege damage only while HOLD is explicitly ordered', async ({ page }) => {
+  await startRun(page);
+
+  const report = await page.evaluate(() => {
+    const game = (window as RuntimeWindow).__tss;
+    if (!game) throw new Error('Phaser runtime is unavailable');
+    const scene = game.scene.getScene('Game') as GameSceneRuntime & {
+      settlement: {
+        castle: BuildingRuntime;
+        beginSiege(index: number, woundCap: number, enemies: unknown[]): void;
+        damageBuilding(building: BuildingRuntime, raw: number, siegeIndex: number, isBoss?: boolean): void;
+      };
+      economy: EconomyRuntime & {
+        pawns: Array<PawnRuntime & { weapon?: string; cls?: string; orderTarget?: { x: number; y: number } | null }>;
+        hire(weapon: 'sword', building: BuildingRuntime): boolean;
+      };
+    };
+    const economy = scene.economy;
+    const builder = economy.pawns.find((pawn) => pawn.kind === 'builder');
+    const spot = economy.freeSpots().find((candidate) => candidate.kind === 'barracks');
+    if (!builder || !spot) throw new Error('Builder or barracks spot is missing');
+    economy.resources.wood = 1_000;
+    economy.resources.ore = 1_000;
+    economy.resources.meat = 1_000;
+    const buildStarted = economy.tryStartBuild('barracks', builder, spot);
+    const barracks = economy.buildings.find((building) => building.kind === 'barracks');
+    if (!buildStarted || !barracks) throw new Error('Barracks construction did not start');
+    builder.setPosition(spot.x, spot.y);
+    builder.state = 'work';
+    economy.tick(20_001, scene.time.now + 20_001);
+    const hired = economy.hire('sword', barracks);
+    economy.tick(8_001, scene.time.now + 28_002);
+    const sword = economy.pawns.find((pawn) => pawn.kind === 'fighter' && pawn.weapon === 'sword');
+    if (!hired || !sword) throw new Error('Sword garrison was not recruited');
+
+    const castle = scene.settlement.castle;
+    sword.setPosition(castle.x + 100, castle.y);
+    sword.state = 'fight';
+    sword.hp = sword.maxHp;
+    sword.order = null;
+    sword.orderTarget = null;
+    castle.hp = castle.maxHp;
+    scene.settlement.beginSiege(0, 1, []);
+    scene.settlement.damageBuilding(castle, 100, 0, false);
+    const noOrder = {
+      fighterDamage: sword.maxHp - sword.hp,
+      buildingDamage: castle.maxHp - castle.hp,
+    };
+
+    sword.hp = sword.maxHp;
+    sword.order = 'hold';
+    sword.orderTarget = { x: castle.x, y: castle.y };
+    castle.hp = castle.maxHp;
+    scene.settlement.beginSiege(0, 1, []);
+    scene.settlement.damageBuilding(castle, 100, 0, false);
+    const holdOrder = {
+      fighterDamage: sword.maxHp - sword.hp,
+      buildingDamage: castle.maxHp - castle.hp,
+    };
+
+    return { noOrder, holdOrder };
+  });
+
+  expect(report.noOrder.fighterDamage).toBe(0);
+  expect(report.noOrder.buildingDamage).toBeGreaterThan(0);
+  expect(report.holdOrder.fighterDamage).toBeGreaterThan(0);
+  expect(report.holdOrder.buildingDamage).toBeLessThan(report.noOrder.buildingDamage);
+});

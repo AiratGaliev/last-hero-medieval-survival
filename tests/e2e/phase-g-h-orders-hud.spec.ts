@@ -515,10 +515,16 @@ test('phase J: ?debug DPS panel and pawn retreat/wounded badges are visible', as
     if (!runtime) throw new Error('Phaser runtime is unavailable');
     const scene = runtime.scene.getScene('Game') as GameSceneRuntime & {
       dpsDebugText: { active: boolean; visible: boolean; text: string } | null;
+      dpsDebugRawDamage: number;
+      dpsDebugAppliedDamage: number;
+      heroDpsAtTenMinutes: number | null;
       updateDpsDebug(time: number): void;
       time: { now: number };
     };
     if (!scene.dpsDebugText) throw new Error('Debug panel was not created for ?debug=1');
+    scene.heroDpsAtTenMinutes = 100;
+    scene.dpsDebugRawDamage = 30;
+    scene.dpsDebugAppliedDamage = 20;
     scene.updateDpsDebug(scene.time.now + 1_001);
     const pawn = scene.economy.pawns[0] as PawnRuntime & {
       preUpdate(time: number, delta: number): void;
@@ -544,6 +550,8 @@ test('phase J: ?debug DPS panel and pawn retreat/wounded badges are visible', as
 
   expect(report.debugVisible).toBe(true);
   expect(report.debugText).toContain('DPS QA');
+  expect(report.debugText).toContain('share of hero DPS: raw 30.0% → applied 20.0%');
+  expect(report.debugText).toContain('25% hero');
   expect(report.retreatLabel).toBe('RETREAT');
   expect(report.woundedLabel).toBe('WOUNDED');
 });
