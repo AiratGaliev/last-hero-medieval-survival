@@ -482,11 +482,37 @@ export class PawnAI {
     const eco = this.eco;
     const mon = eco.nearestMonastery(p);
     if (p.state === 'bleeding') {
+      // Без очереди: кровоточащая пешка самостоятельно пробует занять место
+      // только при новом доступном слоте. Это реализует §G.3: освобождение
+      // койки или достройка монастыря спасает NPC до истечения 45 секунд.
+      // Если монастырь только появился далеко от ворот, пешка хромает к нему,
+      // пока таймер продолжает идти.
+      if (mon) {
+        const distance = Phaser.Math.Distance.Between(p.x, p.y, mon.x, mon.y);
+        if (distance < 110) {
+          const slot = mon.claimHealSlot(p);
+          if (slot !== null) {
+            p.monasterySlot = slot;
+            p.monasteryBuilding = mon;
+            p.state = 'wounded';
+            p.bleedTimer = 0;
+            p.updateStarBadge();
+            p.playMove(false);
+            p.setVelocity(0, 0);
+            return;
+          }
+          p.playMove(false);
+          p.setVelocity(0, 0);
+        } else {
+          this.walkTo(p, mon.x, mon.y, dtMs, 0.55);
+        }
+      } else {
+        // До появления монастыря кровоточащий лежит там, где его настигло
+        // ранение; у ворот замка — если лечебницы ещё нет.
+        p.playMove(false);
+        p.setVelocity(0, 0);
+      }
       p.bleedTimer -= dtMs / 1000;
-      // Раненый не работает (§G.3) — но и не «висит» в воздухе: он лежит
-      // на месте, куда его свалили. `bleedBanner` однажды назван пешке.
-      p.playMove(false);
-      p.setVelocity(0, 0);
       p.updateStarBadge();
       if (p.bleedTimer <= 0) {
         // Окончательная гибель (§G.3)
