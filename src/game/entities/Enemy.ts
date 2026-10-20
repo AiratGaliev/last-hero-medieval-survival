@@ -12,6 +12,8 @@ export type EnemyShotKind = 'bone' | 'hex' | 'harpoon';
 export interface EnemyContext {
   playerX(): number;
   playerY(): number;
+  /** Ранг «Ополчения» увеличивает радиус перехвата осады. */
+  siegeInterceptRadius?(): number;
   /** Гнолл, шаман или гарпун-акула завершают анимацию броска. */
   onEnemyShoot(x: number, y: number, proj: EnemyShotKind): void;
   /** Огр бьёт клубом в землю: ударная волна по радиусу */
@@ -218,7 +220,8 @@ export class Enemy extends Phaser.Physics.Arcade.Sprite {
     const heroD = Math.hypot(hx - this.x, hy - this.y);
 
     // Игрок рядом перехватывает осаду — она бьёт его, не постройку (§E.4.2)
-    if (heroD < SIEGE.INTERCEPT_R) {
+    const interceptRadius = this.ctx.siegeInterceptRadius?.() ?? SIEGE.INTERCEPT_R;
+    if (heroD < interceptRadius) {
       // обычный погон за игроком
       const dx = hx - this.x, dy = hy - this.y;
       const d = Math.max(1, Math.hypot(dx, dy));
