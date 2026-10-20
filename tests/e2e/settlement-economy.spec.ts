@@ -919,6 +919,45 @@ test('phases E-F: construction uses the approached spot and repair costs are gua
     const automaticRepairStarted = house.underConstruction && economy.resources.wood === woodBeforeAutoRepair - 30;
     economy.tick(5_001, scene.time.now + 35_016);
     const automaticRepairFinished = !house.underConstruction && house.hp === house.maxHp;
+
+    const prepareRepairer = (building: BuildingRuntime): void => {
+      repairer.setPosition(building.x, building.y);
+      repairer.state = 'idle';
+      repairer.order = null;
+      repairer.cooldown = 0;
+      repairer.carrying = null;
+      repairer.carriedAmount = 0;
+      repairer.workNode = null;
+      repairer.taskProgress = 0;
+    };
+
+    // Полное разрушение ставит underConstruction=true и hp=0, но не создаёт
+    // buildJob. Автоматический ремонтник обязан отличить руины от активной стройки.
+    house.damage(house.maxHp + 10, -1);
+    economy.resources.wood = 100;
+    const woodBeforeAutomaticHouseRebuild = economy.resources.wood;
+    prepareRepairer(house);
+    economy.pawnAI.updateCivilian(repairer, 16, scene.time.now + 36_000);
+    const automaticHouseRebuildStarted = house.underConstruction
+      && economy.resources.wood === woodBeforeAutomaticHouseRebuild - 60;
+    economy.tick(10_001, scene.time.now + 36_016);
+    const automaticHouseRebuildFinished = house.alive && !house.underConstruction && house.hp === house.maxHp;
+
+    // Казармы требуют те же 60 дерева и ещё 15 руды, причём ресурсы списываются
+    // атомарно до добавления repairJob.
+    barracks.damage(barracks.maxHp + 10, -1);
+    economy.resources.wood = 100;
+    economy.resources.ore = 15;
+    const woodBeforeAutomaticBarracksRebuild = economy.resources.wood;
+    const oreBeforeAutomaticBarracksRebuild = economy.resources.ore;
+    prepareRepairer(barracks);
+    economy.pawnAI.updateCivilian(repairer, 16, scene.time.now + 47_000);
+    const automaticBarracksRebuildStarted = barracks.underConstruction
+      && economy.resources.wood === woodBeforeAutomaticBarracksRebuild - 60
+      && economy.resources.ore === oreBeforeAutomaticBarracksRebuild - 15;
+    economy.tick(10_001, scene.time.now + 47_016);
+    const automaticBarracksRebuildFinished = barracks.alive
+      && !barracks.underConstruction && barracks.hp === barracks.maxHp;
     builder.order = null;
 
     // Phase E fallback: gather inputs when the next structure is unaffordable,
@@ -1035,6 +1074,10 @@ test('phases E-F: construction uses the approached spot and repair costs are gua
       rebuiltUnderConstruction: house.underConstruction,
       automaticRepairStarted,
       automaticRepairFinished,
+      automaticHouseRebuildStarted,
+      automaticHouseRebuildFinished,
+      automaticBarracksRebuildStarted,
+      automaticBarracksRebuildFinished,
       builderFallbackBeforeThreshold,
       builderFallbackCarry,
       builderFallbackAmount,
@@ -1087,6 +1130,10 @@ test('phases E-F: construction uses the approached spot and repair costs are gua
   expect(report.rebuiltUnderConstruction).toBe(false);
   expect(report.automaticRepairStarted).toBe(true);
   expect(report.automaticRepairFinished).toBe(true);
+  expect(report.automaticHouseRebuildStarted).toBe(true);
+  expect(report.automaticHouseRebuildFinished).toBe(true);
+  expect(report.automaticBarracksRebuildStarted).toBe(true);
+  expect(report.automaticBarracksRebuildFinished).toBe(true);
   expect(report.builderFallbackBeforeThreshold).toBeNull();
   expect(report.builderFallbackCarry).toBe('wood');
   expect(report.builderFallbackAmount).toBe(5);
@@ -1547,7 +1594,7 @@ test('phase L: settlement cards unlock after the first house, support rank II, a
   expect(report.cardOfferedAfterRankTwo).toBe(false);
 });
 
-test('phase L: the 100-kill combo milestone grants settlement resources but no match score', async ({ page }) => {
+test('phase L: all combo milestones grant their rewards without match-score inflation', async ({ page }) => {
   await startRun(page);
   const scoreBefore = await page.evaluate(() => {
     const game = (window as RuntimeWindow).__tss;
@@ -1556,6 +1603,8 @@ test('phase L: the 100-kill combo milestone grants settlement resources but no m
       score: number;
       comboMilestones: readonly number[];
       comboMilestone(combo: number, x: number, y: number): void;
+      runRng(): number;
+      xpMagnetUntil: number;
       spawner: { stopped: boolean };
       enemyGroup: { clear(removeFromScene?: boolean, destroyChildren?: boolean): void };
     };
@@ -1565,27 +1614,43 @@ test('phase L: the 100-kill combo milestone grants settlement resources but no m
     scene.economy.resources.ore = 0;
     scene.economy.resources.meat = 0;
     scene.comboMilestones = [25, 50, 100, 200];
-    scene.comboMilestone(100, scene.player.x, scene.player.y);
-    return scene.score;
+    // Фиксируем ветку 50/50: первые две вехи всегда выдают ресурсы.
+    scene.runRng = () => 0.1;
+    const hero = scene.player as unknown as { hp: number; maxHp: number };
+    hero.hp = 1;
+    const initialScore = scene.score;
+    for (const milestone of scene.comboMilestones) {
+      scene.comboMilestone(milestone, scene.player.x, scene.player.y);
+    }
+    return initialScore;
   });
+
   await page.waitForTimeout(1_400);
   const result = await page.evaluate(() => {
     const game = (window as RuntimeWindow).__tss;
     if (!game) throw new Error('Phaser runtime is unavailable');
-    const scene = game.scene.getScene('Game') as GameSceneRuntime & { score: number };
+    const scene = game.scene.getScene('Game') as GameSceneRuntime & {
+      score: number;
+      xpMagnetUntil: number;
+      time: { now: number };
+    };
+    const hero = scene.player as unknown as { hp: number; maxHp: number };
     return {
       wood: scene.economy.resources.wood,
       ore: scene.economy.resources.ore,
       meat: scene.economy.resources.meat,
       score: scene.score,
+      xpMagnetActive: scene.xpMagnetUntil > scene.time.now,
+      heroFullyHealed: hero.hp === hero.maxHp,
     };
   });
-  expect(result.wood).toBe(25);
-  expect(result.ore).toBe(15);
-  expect(result.meat).toBe(15);
+  expect(result.wood).toBe(70);
+  expect(result.ore).toBe(40);
+  expect(result.meat).toBe(30);
   expect(result.score).toBe(scoreBefore);
+  expect(result.xpMagnetActive).toBe(true);
+  expect(result.heroFullyHealed).toBe(true);
 });
-
 test('phase L: rank II doubles numeric settlement-card effects and rank III cannot stack them', async ({ page }) => {
   await startRun(page);
   const report = await page.evaluate(() => {
@@ -1611,14 +1676,30 @@ test('phase L: rank II doubles numeric settlement-card effects and rank III cann
     };
     const economy = scene.economy;
     const castle = economy.buildings.find((building) => building.kind === 'castle');
-    if (!castle) throw new Error('Castle missing');
+    const builder = economy.pawns.find((pawn) => pawn.kind === 'builder');
+    const houseSpot = economy.freeSpots().find((spot) => spot.kind === 'house');
+    if (!castle || !builder || !houseSpot) throw new Error('Castle, builder or house spot missing');
+    economy.resources.wood = 100;
+    economy.resources.ore = 100;
+    economy.resources.meat = 100;
+    if (!economy.tryStartBuild('house', builder, houseSpot)) throw new Error('House construction did not start');
+    const house = economy.buildings.find((building) => building.kind === 'house' && building.underConstruction);
+    if (!house) throw new Error('House was not registered');
+    builder.setPosition(houseSpot.x, houseSpot.y);
+    builder.state = 'work';
+    economy.tick(10_001, scene.time.now + 10_001);
+    if (house.underConstruction || !house.alive) throw new Error('House did not finish construction');
     const masonryBaseHp = castle.maxHp;
+    const masonryHouseBaseHp = house.maxHp;
     economy.applySettlementCard('masonry');
     const masonryRankOneHp = castle.maxHp;
+    const masonryHouseRankOneHp = house.maxHp;
     economy.applySettlementCard('masonry');
     const masonryRankTwoHp = castle.maxHp;
+    const masonryHouseRankTwoHp = house.maxHp;
     economy.applySettlementCard('masonry');
     const masonryRankThreeHp = castle.maxHp;
+    const masonryHouseRankThreeHp = house.maxHp;
 
     const assemblyBaseLimit = economy.pawnLimit;
     economy.applySettlementCard('assembly');
@@ -1686,6 +1767,7 @@ test('phase L: rank II doubles numeric settlement-card effects and rank III cann
 
     return {
       masonryBaseHp, masonryRankOneHp, masonryRankTwoHp, masonryRankThreeHp,
+      masonryHouseBaseHp, masonryHouseRankOneHp, masonryHouseRankTwoHp, masonryHouseRankThreeHp,
       assemblyBaseLimit, assemblyRankOneLimit, assemblyRankTwoLimit, assemblyRankThreeLimit,
       woodBase, forestryRankOne, forestryRankTwo,
       meatBase, provisionsRankOne, provisionsRankTwo,
@@ -1699,6 +1781,9 @@ test('phase L: rank II doubles numeric settlement-card effects and rank III cann
   expect(report.masonryRankOneHp).toBe(Math.round(report.masonryBaseHp * 1.15));
   expect(report.masonryRankTwoHp).toBe(Math.round(report.masonryBaseHp * 1.3));
   expect(report.masonryRankThreeHp).toBe(report.masonryRankTwoHp);
+  expect(report.masonryHouseRankOneHp).toBe(Math.round(report.masonryHouseBaseHp * 1.15));
+  expect(report.masonryHouseRankTwoHp).toBe(Math.round(report.masonryHouseBaseHp * 1.3));
+  expect(report.masonryHouseRankThreeHp).toBe(report.masonryHouseRankTwoHp);
   expect(report.assemblyRankOneLimit).toBe(report.assemblyBaseLimit + 1);
   expect(report.assemblyRankTwoLimit).toBe(report.assemblyBaseLimit + 2);
   expect(report.assemblyRankThreeLimit).toBe(report.assemblyRankTwoLimit);

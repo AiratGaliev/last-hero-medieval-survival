@@ -694,7 +694,10 @@ export class Economy extends Phaser.Events.EventEmitter {
       const nextMult = 1 + 0.15 * nextLevel;
       for (const b of this.buildings) {
         if (!b.alive) continue;
-        const baseMaxHp = b.maxHp / previousMult;
+        const baseMultiplier = b.kind === 'castle'
+          ? 1
+          : b.kind === 'house' ? this.tune.houseHp : this.tune.buildingHp;
+        const baseMaxHp = BUILDING_PLANS[b.kind].hp * baseMultiplier;
         const oldMaxHp = b.maxHp;
         b.maxHp = Math.max(1, Math.round(baseMaxHp * nextMult));
         if (!b.underConstruction) {

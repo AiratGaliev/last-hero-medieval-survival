@@ -465,10 +465,24 @@ export class PawnAI {
   private mostDamagedBuilding(): Building | null {
     let best: Building | null = null;
     let bestFrac = 1;
+    let bestIsRuins = false;
     for (const b of this.eco.buildings) {
       if (!b.alive || b.kind === 'castle' || b.plan.noRepair) continue;
-      // Строящееся здание (hp=0 при стройке) — не «повреждённое» (§B.4)
-      if (b.underConstruction) continue;
+      // Активная стройка не является целью ремонта. Руины тоже помечены
+      // underConstruction, но у них нет buildJob и hp=0 — их надо восстановить.
+      if (this.eco.buildJobs.some((job) => job.building === b)) continue;
+      const isRuins = b.hp <= 0;
+      if (b.underConstruction && !isRuins) continue;
+      if (isRuins) {
+        // Восстановление руин приоритетнее починки повреждённого здания.
+        if (!bestIsRuins) {
+          best = b;
+          bestFrac = -1;
+          bestIsRuins = true;
+        }
+        continue;
+      }
+      if (bestIsRuins) continue;
       const frac = b.hp / b.maxHp;
       if (frac < 1 && frac < bestFrac) { bestFrac = frac; best = b; }
     }

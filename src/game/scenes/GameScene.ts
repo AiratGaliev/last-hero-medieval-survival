@@ -2056,12 +2056,12 @@ private ordersUnlocked(): boolean {
     this.addXp(15);
     this.score += 50;
     this.economy.emit('change');
-    track(kind === 'house' ? 'first_house' : kind === 'barracks' ? 'first_barracks' : 'economy_stuck', { t_sec: Math.floor(this.elapsed) });
+    // Метрики first_house/first_barracks отправляет единственный listener
+    // Economy.on('built'); не дублируем событие из XP-callback.
     if (kind === 'house' && !this.registry.get('tss-first-house')) {
       this.registry.set('tss-first-house', true);
       this.hints?.show('barracks');
     }
-    void kind;
   }
 
   private pawnTitle(pawn: Pawn): string {
