@@ -96,7 +96,10 @@ export class Settlement {
   get infrastructureMax(): number {
     let hp = 0;
     for (const b of this.eco.buildings) {
-      if (b.alive) hp += b.maxHp;
+      // Незавершённые стройки и руины не могут принимать урон и не должны
+      // увеличивать знаменатель потолка осады. Иначе игрок получает скрытый
+      // бонус к лимиту урона, просто начав строить/потеряв дом.
+      if (b.alive && !b.underConstruction) hp += b.maxHp;
     }
     return Math.max(1, hp);
   }

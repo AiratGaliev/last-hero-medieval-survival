@@ -2189,3 +2189,84 @@ test('phase K: ranged siege units start the ten-second attack window at their fi
   expect(report.distance).toBeLessThan(330);
   expect(report.deadline).toBe(report.now + 10_000);
 });
+
+
+test('phase K: siege infrastructure caps exclude unfinished and ruined buildings and clamp damage at 12%/6%', async ({ page }) => {
+  await startRun(page);
+  const report = await page.evaluate(() => {
+    const game = (window as RuntimeWindow).__tss;
+    if (!game) throw new Error('Phaser runtime is unavailable');
+    type SettlementBudgetRuntime = {
+      castle: BuildingRuntime;
+      infrastructureMax: number;
+      infrastructureHp: number;
+      capApplied: boolean;
+      beginSiege(index: number, woundCap: number, enemies: unknown[]): void;
+      damageBuilding(building: BuildingRuntime, raw: number, siegeIndex: number, isBoss?: boolean): void;
+    };
+    const scene = game.scene.getScene('Game') as GameSceneRuntime & {
+      settlement: SettlementBudgetRuntime;
+      spawner: { stopped: boolean };
+    };
+    scene.spawner.stopped = true;
+    const economy = scene.economy;
+    economy.resources.wood = 1_000;
+    economy.resources.ore = 1_000;
+    economy.resources.meat = 1_000;
+    const builder = economy.pawns.find((pawn) => pawn.kind === 'builder');
+    const spot = economy.freeSpots().find((candidate) => candidate.kind === 'house');
+    if (!builder || !spot) throw new Error('Builder or house spot unavailable');
+
+    const castle = scene.settlement.castle;
+    const initialMax = scene.settlement.infrastructureMax;
+    if (!economy.tryStartBuild('house', builder, spot)) throw new Error('House construction did not start');
+    const house = economy.buildings.find((candidate) => candidate.kind === 'house' && candidate.underConstruction);
+    if (!house) throw new Error('House construction object missing');
+    const maxDuringConstruction = scene.settlement.infrastructureMax;
+    builder.setPosition(spot.x, spot.y);
+    builder.state = 'work';
+    economy.tick(10_001, scene.time.now + 10_001);
+    const maxAfterConstruction = scene.settlement.infrastructureMax;
+    if (!house.alive || house.underConstruction) throw new Error('House did not finish');
+    house.damage(house.maxHp, -1);
+    const maxAfterRuin = scene.settlement.infrastructureMax;
+
+    // На базе из одного замка потолок равен 12% × 500 = 60 HP за осаду.
+    castle.hp = castle.maxHp;
+    scene.settlement.beginSiege(0, 1, []);
+    const highStart = castle.hp;
+    scene.settlement.damageBuilding(castle, 100, 0);
+    scene.settlement.damageBuilding(castle, 100, 0);
+    const highLoss = highStart - castle.hp;
+    const highCapApplied = scene.settlement.capApplied;
+
+    // При инфраструктуре <60% HP применяется страховочный потолок 6% × 500 = 30.
+    castle.hp = castle.maxHp;
+    scene.settlement.damageBuilding(castle, 250, -1);
+    scene.settlement.beginSiege(0, 1, []);
+    const lowStart = castle.hp;
+    scene.settlement.damageBuilding(castle, 100, 0);
+    const lowLoss = lowStart - castle.hp;
+    const lowCapApplied = scene.settlement.capApplied;
+
+    return {
+      initialMax,
+      maxDuringConstruction,
+      maxAfterConstruction,
+      houseMaxHp: house.maxHp,
+      maxAfterRuin,
+      highLoss,
+      highCapApplied,
+      lowLoss,
+      lowCapApplied,
+    };
+  });
+
+  expect(report.maxDuringConstruction).toBe(report.initialMax);
+  expect(report.maxAfterConstruction).toBe(report.initialMax + report.houseMaxHp);
+  expect(report.maxAfterRuin).toBe(report.initialMax);
+  expect(report.highLoss).toBeCloseTo(report.initialMax * 0.12, 5);
+  expect(report.highCapApplied).toBe(true);
+  expect(report.lowLoss).toBeCloseTo(report.initialMax * 0.06, 5);
+  expect(report.lowCapApplied).toBe(true);
+});
