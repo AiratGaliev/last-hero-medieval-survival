@@ -297,7 +297,11 @@ export class Settlement {
       // Слот — локальный индекс здания. Дедуплицируем возможные старые ссылки:
       // одна пешка умирает и учитывается один раз, даже если была в двух местах.
       const victims = [...new Set(
-        b.healSlots.filter((slot): slot is Pawn => slot instanceof Pawn),
+        b.healSlots.filter((slot): slot is Pawn =>
+          typeof slot === 'object' && slot !== null
+          && 'monasterySlot' in slot && typeof (slot as Pawn).killFinal === 'function'
+          && typeof (slot as Pawn).destroy === 'function',
+        ),
       )];
       if (firstCollapse && this.facts.monasteryFallenAt === null) {
         this.facts.monasteryFallenAt = this.fmtTime();
