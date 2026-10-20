@@ -4253,6 +4253,9 @@ test('phase M: every monastery collapse kills its own occupants and clears its b
       return building;
     };
     const first = createDestroyedMonastery(victims[0], economy.castleX + 100);
+    // Защитный случай старого/повреждённого состояния: один юнит случайно
+    // продублирован в двух слотах, но считается одной жертвой.
+    first.healSlots.push(victims[0]);
     const second = createDestroyedMonastery(victims[1], economy.castleX + 200);
     economy.buildings.push(first, second);
 
