@@ -456,13 +456,13 @@ export class Enemy extends Phaser.Physics.Arcade.Sprite {
     }
 
     let vx = 0, vy = 0;
+    // Резервные виды фазы I используют полноценный FSM боя; их ниша задаётся
+    // скоростью, дистанцией атаки и защитой в отдельных ENEMIES defs.
     switch (this.kind) {
       case 'goblin':
       case 'thief':
       case 'skull':
       case 'bear':
-      // Девять резервных видов фазы I тоже используют полноценный FSM боя.
-      // Их скорость, дальность атаки и прочность задаются отдельными ENEMIES defs.
       case 'spider':
       case 'snake':
       case 'lizard':

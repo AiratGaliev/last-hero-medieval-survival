@@ -347,7 +347,6 @@ test('phases C-D: harvesting delivers resources and depleted veins can recharge'
     context.enemies = () => [];
 
     // Reserve every other resource so the actual AI selects this tree deterministically.
-    const previousClaims = economy.nodes.map(n => n.claimedBy);
     for (const node of economy.nodes) {
       if (node !== tree && node.available) node.claimedBy = blocker;
     }
