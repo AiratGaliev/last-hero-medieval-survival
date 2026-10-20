@@ -3533,3 +3533,81 @@ test('phase M: a monk follows the rear of an engaged fighter and never enters co
   expect(Math.abs(Math.abs(report.velocityX) - Math.abs(report.velocityY))).toBeLessThan(3);
   expect(report.attackCalls).toBe(0);
 });
+
+
+test('phase M: all new buildings and unit animations have loaded textures', async ({ page }) => {
+  await startRun(page);
+  const report = await page.evaluate(() => {
+    const game = (window as RuntimeWindow).__tss;
+    if (!game) throw new Error('Phaser runtime is unavailable');
+    const runtime = game as unknown as PhaserRuntime & {
+      textures: { exists(key: string): boolean };
+    };
+    const textureKeys = [
+      'archery', 'monastery', 'tower',
+      'pawn-archer-idle', 'pawn-archer-run', 'pawn-archer-atk',
+      'pawn-monk-idle', 'pawn-monk-run', 'pawn-monk-atk',
+    ];
+    const animationKeys = [
+      'pawn-archer-idle', 'pawn-archer-run', 'pawn-archer-atk',
+      'pawn-monk-idle', 'pawn-monk-run', 'pawn-monk-atk',
+    ];
+    return {
+      textures: Object.fromEntries(textureKeys.map(key => [key, runtime.textures.exists(key)])),
+      animations: Object.fromEntries(animationKeys.map(key => [key, runtime.anims.exists(key)])),
+    };
+  });
+
+  expect(Object.values(report.textures).every(Boolean)).toBe(true);
+  expect(Object.values(report.animations).every(Boolean)).toBe(true);
+});
+
+test('phase M: tower fires at a siege target before a closer ordinary enemy', async ({ page }) => {
+  await startRun(page);
+  const report = await page.evaluate(() => {
+    const game = (window as RuntimeWindow).__tss;
+    if (!game) throw new Error('Phaser runtime is unavailable');
+    const scene = game.scene.getScene('Game') as unknown as GameSceneRuntime & {
+      towerTick(now: number): void;
+      activeEnemies(): Array<{
+        active: boolean;
+        dead: boolean;
+        kind: string;
+        siege: boolean;
+        x: number;
+        y: number;
+      }>;
+      projectiles: {
+        fireFriendlyArrow(x: number, y: number, angle: number, damage: number): void;
+      };
+    };
+
+    const tower = {
+      kind: 'tower', x: 500, y: 500, hp: 200, maxHp: 200,
+      alpha: 1, alive: true, underConstruction: false,
+      finishConstruction: () => {}, damage: () => {},
+    };
+    scene.economy.buildings.push(tower);
+    const ordinary = {
+      active: true, dead: false, kind: 'skull', siege: false,
+      x: tower.x + 40, y: tower.y - 40,
+    };
+    const siegeShaman = {
+      active: true, dead: false, kind: 'shaman', siege: true,
+      x: tower.x + 100, y: tower.y + 60,
+    };
+    scene.activeEnemies = () => [ordinary, siegeShaman];
+
+    const shots: Array<{ x: number; y: number; angle: number; damage: number }> = [];
+    scene.projectiles.fireFriendlyArrow = (x, y, angle, damage) => {
+      shots.push({ x, y, angle, damage });
+    };
+    scene.towerTick(scene.time.now + 1_000);
+    return { shot: shots[0] ?? null, shots: shots.length };
+  });
+
+  expect(report.shots).toBe(1);
+  expect(report.shot).not.toBeNull();
+  expect(Math.abs(report.shot!.angle - Math.PI / 4)).toBeLessThan(0.1);
+  expect(report.shot!.damage).toBeGreaterThan(0);
+});
