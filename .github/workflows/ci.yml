@@ -1,23 +1,23 @@
-name: CI
+name: CI Fast
 
 on:
-  push:
-    branches: [main]
   pull_request:
+    branches: [dev, test, main]
+    types: [opened, synchronize, reopened, ready_for_review]
   workflow_dispatch:
 
 permissions:
   contents: read
 
 concurrency:
-  group: ci-${{ github.workflow }}-${{ github.ref }}
+  group: ci-fast-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 jobs:
-  verify:
-    name: Typecheck, lint, builds and browser tests
+  fast:
+    name: fast-checks
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 15
 
     steps:
       - name: Checkout repository
@@ -29,32 +29,55 @@ jobs:
           node-version: 22
           cache: npm
 
-      # npm install reconciles package.json with the lockfile, including Playwright.
-      - name: Install dependencies
-        run: npm install --no-audit --no-fund
+      - name: Validate pull request routing
+        if: github.event_name == 'pull_request'
+        env:
+          BASE_BRANCH: ${{ github.base_ref }}
+          HEAD_BRANCH: ${{ github.head_ref }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          case "$BASE_BRANCH" in
+            dev)
+              case "$HEAD_BRANCH" in
+                feat/*|feature/*|fix/*|refactor/*|test/*|docs/*|chore/*)
+                  echo "Допустимый маршрут: $HEAD_BRANCH -> dev"
+                  ;;
+                *)
+                  echo "::error::Рабочие PR должны использовать feat/*, feature/*, fix/*, refactor/*, test/*, docs/* или chore/* и направляться в dev."
+                  exit 1
+                  ;;
+              esac
+              ;;
+            test)
+              if [[ "$HEAD_BRANCH" != "dev" ]]; then
+                echo "::error::В test допускается только PR из dev."
+                exit 1
+              fi
+              echo "Допустимый маршрут: dev -> test"
+              ;;
+            main)
+              case "$HEAD_BRANCH" in
+                test|hotfix/*|chore/ci-branching-policy)
+                  echo "Допустимый маршрут: $HEAD_BRANCH -> main"
+                  ;;
+                *)
+                  echo "::error::В main допускается только PR из test или аварийной ветки hotfix/*."
+                  exit 1
+                  ;;
+              esac
+              ;;
+            *)
+              echo "::error::Неизвестная целевая ветка: $BASE_BRANCH"
+              exit 1
+              ;;
+          esac
 
-      - name: Install Playwright Chromium
-        run: npx playwright install --with-deps chromium
+      - name: Install locked dependencies
+        run: npm ci
 
       - name: Typecheck and lint
         run: npm run check
 
       - name: Production build
         run: npm run build
-
-      - name: Build and validate Yandex Games archive
-        run: npm run build:yg
-
-      - name: Browser smoke tests
-        run: npm run test:e2e
-
-      - name: Upload Playwright diagnostics
-        if: failure()
-        uses: actions/upload-artifact@v4
-        with:
-          name: playwright-diagnostics
-          path: |
-            playwright-report/
-            test-results/
-          if-no-files-found: ignore
-          retention-days: 7
