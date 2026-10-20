@@ -1303,7 +1303,9 @@ export class GameScene extends Phaser.Scene {
         (target as Phaser.GameObjects.GameObject & { __tssOrderMenuTarget?: boolean }).__tssOrderMenuTarget === true
       ));
       if (hitsOrderMenu) return;
-      if (this.gameEnded || this.overlayOpen) return;
+      // FTUE-overlay имеет собственный pointerdown для закрытия; игровой ввод
+      // не должен начинать long-press/приказ на том же касании, пока overlay активен.
+      if (this.gameEnded || this.overlayOpen || this.hintOverlayPaused) return;
       // Нативный MouseEvent — основной источник, Phaser Keyboard — резерв:
       // часть браузеров/сценариев передаёт pointer.event уже после keyup Shift.
       const nativeShift = (pointer.event as unknown as { shiftKey?: boolean })?.shiftKey === true;
