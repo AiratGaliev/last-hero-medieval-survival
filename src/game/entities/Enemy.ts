@@ -223,6 +223,8 @@ export class Enemy extends Phaser.Physics.Arcade.Sprite {
   private fireHarpoon(): void {
     if (!this.active || this.aiState !== 'windup' || this.harpoonShotFired) return;
     this.harpoonShotFired = true;
+    // Сбрасываем маркер даже при таймерном fallback: завершённая атака не должна оставлять спрайт в последнем кадре.
+    this.lastAnim = '';
     this.ctx.onEnemyShoot(this.x, this.y, 'harpoon');
     this.shootCd = 2400;
     this.aiState = 'chase';
