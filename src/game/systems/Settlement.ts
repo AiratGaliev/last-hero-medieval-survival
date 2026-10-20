@@ -234,7 +234,7 @@ export class Settlement {
     const sword = this.tauntingSwordAt(victim);
     if (!sword) return raw;
     const share = Math.min(raw * TAUNT.SHARE, sword.hp);
-    this.eco.woundPawn(sword, share, this.scene.time.now);
+    this.eco.woundPawn(sword, share, this.simulationTimeMs);
     this.flashTaunt(sword);
     track('garrison_taunt', {
       weapon: sword.weapon ?? 'sword', building_kind: 'pawn', dmg_redirected: Math.round(share * 10) / 10,

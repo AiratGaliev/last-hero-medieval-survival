@@ -391,6 +391,7 @@ export class Pawn extends Phaser.Physics.Arcade.Sprite {
   }
 
   preUpdate(time: number, delta: number): void {
+    if (!this.active || this.scene.registry.get('tss-hint-overlay-paused') === true) return;
     super.preUpdate(time, delta);
     if (!this.active) return;
     this.shadow.setPosition(this.x, this.y + 8);

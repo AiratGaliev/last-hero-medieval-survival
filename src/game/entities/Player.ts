@@ -94,6 +94,7 @@ export class Player extends Phaser.Physics.Arcade.Sprite {
   }
 
   preUpdate(time: number, delta: number): void {
+    if (this.scene.registry.get('tss-hint-overlay-paused') === true) return;
     super.preUpdate(time, delta);
     this.shadow.setPosition(this.x, this.y + (this.hero.frameW === 320 ? 36 : 6));
     this.setDepth(DEPTH.ENTITY_BASE + this.y);

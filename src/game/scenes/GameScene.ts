@@ -1574,7 +1574,7 @@ private ordersUnlocked(): boolean {
     this.spawner.update(dt);
 
     // Экономика поселения: пешки, стройка, ремонт, найм, обитель (TZ §B)
-    this.economy.tick(dtMs, time);
+    this.economy.tick(dtMs, this.activeTimeMs);
     this.economy.monasteryHealTick(dtMs);
 
     // Осада: таймер отступления 60 сек и исход (§E.4.2)
@@ -1644,7 +1644,7 @@ private ordersUnlocked(): boolean {
     const magnetNow = this.activeTimeMs < this.xpMagnetUntil
       ? this.magnetRadius * 6
       : this.magnetRadius;
-    this.pickups.update(delta, this.player.x, this.player.y, magnetNow, time);
+    this.pickups.update(delta, this.player.x, this.player.y, magnetNow, this.activeTimeMs);
 
     // Регенерация
     if (this.regen > 0 && this.player.hp < this.player.maxHp) {
@@ -1776,7 +1776,7 @@ private ordersUnlocked(): boolean {
     this.effects.damage(e.x, e.y - 40 * e.def.scale, final, crit);
     if (Math.random() < 0.6) this.effects.hitSpark(e.x, e.y - 26 * e.def.scale);
     if (force > 0) e.knockback(kx, ky, force);
-    this.effects.hitSound(this.time.now);
+    this.effects.hitSound(this.activeTimeMs);
     const died = e.takeDamage(final);
     if (src) {
       const st = this.weaponStats.get(src) ?? { dmg: 0, kills: 0 };
@@ -2231,8 +2231,8 @@ private ordersUnlocked(): boolean {
 
     this.effects.explosion(x, y, big ? 1.7 : e.def.scale * 1.15, big ? 2 : 1);
     if (big) this.hitstop(110);
-    if (this.time.now - this.lastDieSound > 120) {
-      this.lastDieSound = this.time.now;
+    if (this.activeTimeMs - this.lastDieSound > 120) {
+      this.lastDieSound = this.activeTimeMs;
       audio.play('die');
     }
     // Дроп. Крупные роняют несколько кристаллов вместо одного (крупный дроп
@@ -3543,7 +3543,7 @@ private bossDeathSequence(e: Enemy): boolean {
           const wounded = this.economy.woundPawn(pawn, dmgToPawn, this.activeTimeMs);
           if (wounded) track('pawn_wounded', { name_role: `${pawn.kind}:${pawn.name}`, cause: 'regular' });
         }
-        this.effects.hitSound(this.time.now);
+        this.effects.hitSound(this.activeTimeMs);
       },
       // Осада бьёт здание: потолок и таунт внутри Settlement (§E.4.2, §B.7.1)
       attackBuilding: (b, dmg, fire, isBoss) => {
