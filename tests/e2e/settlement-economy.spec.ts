@@ -2605,6 +2605,97 @@ test('phase K: destroying the last barracks removes the settlement succession so
 });
 
 
+
+test('phase K: siege schedule warns five seconds before exact profile start times', async ({ page }) => {
+  await startRun(page);
+  const report = await page.evaluate(async () => {
+    const game = (window as RuntimeWindow).__tss;
+    if (!game) throw new Error('Phaser runtime is unavailable');
+    const root = window.location.origin;
+    const [data, constants] = await Promise.all([
+      import(/* @vite-ignore */ new URL('/src/game/data.ts', root).href) as Promise<{
+        SIEGE_SCHEDULE: Array<{ t: number; target: string; woundCap: number; name: string }>;
+        WAVE_EVENTS: unknown[];
+      }>,
+      import(/* @vite-ignore */ new URL('/src/game/constants.ts', root).href) as Promise<{
+        SIEGE: { ANNOUNCE_SEC: number };
+      }>,
+    ]);
+    type SiegeRuntimeProfile = { t: number; target: string; woundCap: number; name: string };
+    type RuntimeSpawner = {
+      elapsed: number;
+      eventIdx: number;
+      siegeIdx: number;
+      siegeAnnounced: boolean;
+      stopped: boolean;
+      timer: number;
+      o: {
+        endless?: boolean;
+        siegeIntervalSec?: number | null;
+        extraSiege?: boolean;
+        contractQuiet?: boolean;
+        alarmLevel?: () => number;
+      };
+      ctx: {
+        announce(text: string, color?: string): void;
+        beginSiege(profile: SiegeRuntimeProfile, index: number): void;
+      };
+      update(dtSec: number): void;
+    };
+    const scene = game.scene.getScene('Game') as GameSceneRuntime & { spawner: RuntimeSpawner };
+    const spawner = scene.spawner;
+    const warnings: Array<{ at: number; text: string }> = [];
+    const starts: Array<{ at: number; index: number; target: string; woundCap: number }> = [];
+
+    // Изолируем расписание от обычных spawn events; исполняется публичный update(0),
+    // без ожидания 15 минут и без таймеров реального времени.
+    spawner.stopped = false;
+    spawner.o.endless = false;
+    spawner.o.siegeIntervalSec = null;
+    spawner.o.extraSiege = false;
+    spawner.o.contractQuiet = false;
+    spawner.o.alarmLevel = () => 0;
+    spawner.eventIdx = data.WAVE_EVENTS.length;
+    spawner.elapsed = 0;
+    spawner.siegeIdx = 0;
+    spawner.siegeAnnounced = false;
+    spawner.timer = 1_200;
+    spawner.ctx.announce = (text) => warnings.push({ at: spawner.elapsed, text });
+    spawner.ctx.beginSiege = (profile, index) => starts.push({
+      at: spawner.elapsed,
+      index,
+      target: profile.target,
+      woundCap: profile.woundCap,
+    });
+
+    const alarmSeconds = constants.SIEGE.ANNOUNCE_SEC;
+    for (const profile of data.SIEGE_SCHEDULE) {
+      spawner.elapsed = profile.t - alarmSeconds;
+      spawner.siegeAnnounced = false;
+      spawner.update(0);
+      spawner.elapsed = profile.t;
+      spawner.update(0);
+    }
+    spawner.stopped = true;
+    return {
+      warningTimes: warnings.map((warning) => warning.at),
+      warningCount: warnings.length,
+      startTimes: starts.map((start) => start.at),
+      indexes: starts.map((start) => start.index),
+      targets: starts.map((start) => start.target),
+      woundCaps: starts.map((start) => start.woundCap),
+    };
+  });
+
+  expect(report.warningCount).toBe(5);
+  expect(report.warningTimes).toEqual([355, 475, 595, 715, 805]);
+  expect(report.startTimes).toEqual([360, 480, 600, 720, 810]);
+  expect(report.indexes).toEqual([0, 1, 2, 3, 4]);
+  expect(report.targets).toEqual(['houses', 'houses', 'monastery', 'houses', 'castle']);
+  expect(report.woundCaps).toEqual([1, 1, 2, 2, 3]);
+});
+
+
 test('phase K: siege infrastructure caps exclude unfinished and ruined buildings and clamp damage at 12%/6%', async ({ page }) => {
   await startRun(page);
   const report = await page.evaluate(() => {
