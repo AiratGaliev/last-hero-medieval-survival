@@ -177,7 +177,9 @@ export class Enemy extends Phaser.Physics.Arcade.Sprite {
   private playOnce(key: string): void {
     if (!this.scene.anims.exists(key)) return;
     this.lastAnim = key;
-    this.play(key, true);
+    // Однократная анимация обязана завершаться: loop=true блокирует
+    // animationcomplete, из-за чего гарпун/выстрел и прочие FSM-переходы зависают.
+    this.play(key);
     this.once('animationcomplete', (anim: Phaser.Animations.Animation) => {
       if (anim.key === key && this.active) this.lastAnim = '';
     });
