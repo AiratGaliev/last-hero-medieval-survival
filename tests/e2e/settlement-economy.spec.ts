@@ -3748,6 +3748,7 @@ test('phase M: monastery collapse announces occupied beds and waits three active
 
     monastery.damage(260, 0); // ниже 30% HP: первое предупреждение
     monastery.damage(monastery.hp, 0); // ниже 10% HP: критическое предупреждение и окно реакции
+    const warnings = [...announcements];
     const critical = {
       hp: monastery.hp,
       alive: monastery.alive,
@@ -3759,15 +3760,15 @@ test('phase M: monastery collapse announces occupied beds and waits three active
     monastery.tickMonasteryCollapse(1);
 
     return {
-      announcements,
+      warnings,
       critical,
       beforeDeadline,
       afterDeadline: { hp: monastery.hp, alive: monastery.alive, pending: monastery.collapsePending },
     };
   });
 
-  expect(report.announcements).toHaveLength(2);
-  expect(report.announcements.every(message => message.includes('2'))).toBe(true);
+  expect(report.warnings).toHaveLength(2);
+  expect(report.warnings.every(message => message.includes('2'))).toBe(true);
   expect(report.critical).toEqual({ hp: 1, alive: true, pending: true, occupiedSlots: 2 });
   expect(report.beforeDeadline).toEqual({ hp: 1, alive: true, pending: true });
   expect(report.afterDeadline.alive).toBe(false);
