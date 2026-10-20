@@ -195,9 +195,8 @@ export class Spawner {
   /** Ранг «Набата» даёт +3 секунды предупреждения за уровень: 5 → 8 → 11. */
   private siegeAlarmSeconds(): number {
     const rank = Math.max(0, Math.min(2, Math.floor(this.o.alarmLevel?.() ?? 0)));
-    return rank > 0
-      ? SIEGE.ANNOUNCE_SEC + 3 * rank
-      : SIEGE.ANNOUNCE_SEC + Math.max(0, Number(this.scene.registry.get('tss-siege-warn') ?? 0));
+    const externalBonus = Math.max(0, Number(this.scene.registry.get('tss-siege-warn') ?? 0));
+    return SIEGE.ANNOUNCE_SEC + 3 * rank + externalBonus;
   }
 
   /** Осады по расписанию §E.4.3 или по фиксированному интервалу-оверрайду. */
