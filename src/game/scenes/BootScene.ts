@@ -513,6 +513,13 @@ export class BootScene extends Phaser.Scene {
     this.once('fx-explosion2', 'fx-explosion2', 10, 16);
     this.once('fx-dust', 'fx-dust', 8, 14);
     this.once('fx-fire', 'fx-fire', 8, 12);
+    // Отдельный цикл для длительного горения построек; hit-FX выше остаётся одноразовым.
+    this.anims.create({
+      key: 'building-fire-loop',
+      frames: this.anims.generateFrameNumbers('fx-fire', { start: 0, end: 7 }),
+      frameRate: 10,
+      repeat: -1,
+    });
     this.anims.create({
       key: 'fire-arrow-trail',
       frames: this.anims.generateFrameNumbers('fx-fire', { start: 0, end: 7 }),

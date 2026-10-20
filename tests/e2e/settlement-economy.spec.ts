@@ -2479,8 +2479,9 @@ test('phase K: building fire displays the loaded dynamite and fire assets and cl
       dynamiteAnimation: castle.burnSprite?.anims.currentAnim?.key ?? null,
       fireKey: castle.fireFx?.texture.key ?? null,
       fireVisible: castle.fireFx?.active === true && castle.fireFx.visible,
+      fireAnimation: castle.fireFx?.anims.currentAnim?.key ?? null,
       burnAnimationRegistered: game.anims.exists('barrel-burn'),
-      fireAnimationRegistered: game.anims.exists('fx-fire'),
+      fireAnimationRegistered: game.anims.exists('building-fire-loop'),
     };
     const dotDamage = castle.tickBurn(6_000);
     return {
@@ -2496,6 +2497,7 @@ test('phase K: building fire displays the loaded dynamite and fire assets and cl
   expect(report.dynamiteAnimation).toBe('barrel-burn');
   expect(report.fireKey).toBe('fx-fire');
   expect(report.fireVisible).toBe(true);
+  expect(report.fireAnimation).toBe('building-fire-loop');
   expect(report.burnAnimationRegistered).toBe(true);
   expect(report.fireAnimationRegistered).toBe(true);
   expect(report.dotDamage).toBe(3);

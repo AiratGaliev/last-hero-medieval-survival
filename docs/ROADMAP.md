@@ -630,9 +630,9 @@ emit `change`) → `cooldown` (0.5 сек) → `walk`.
       Огонь — не множитель, а отдельный тип снаряда
 - [x] `src/game/systems/Projectiles.ts` — отдельный ограниченный `fireArrowPool`: исходная `arrow.png` летит со шлейфом из трёх переиспользуемых `fire-01`-спрайтов; tint не применяется. Ожидание/прибытие/освобождение и clear() обрабатывают и пул огненных стрел. E2E добавлен.
 - [x] `src/game/entities/Building.ts` — реализованы состояние горения/DoT:
-      ключ `barrel` (`barrel-burn`) на корпусе, `fx-fire` для FX, 3 HP за 6 сек;
-      урон проходит через `Settlement` и потолок осады. Runtime-видимость/баланс
-      всё ещё открыты в gate K.
+      ключ `barrel` (`barrel-burn`) на корпусе, циклическая анимация
+      `building-fire-loop` из `fx-fire`, 3 HP за 6 сек; урон проходит через
+      `Settlement` и потолок осады. Остались ручная визуальная и балансная приёмка.
 - [x] `src/game/scenes/BootScene.ts` — загружены спрайт-лист динамита (`barrel`, исходник `units/extra/dynamite/dynamite.png`), `fx-fire` из `fire-01.png` и loop-анимация `fire-arrow-trail`. Путь к dynamite синхронизирован с реально существующим ассетом.
 - [x] `src/game/data.ts` / `constants.ts` — расписание `SIEGE_SCHEDULE` читает
       `Spawner.scheduleSiegeTick()`; профили/составы хранятся в данных, а

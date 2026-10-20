@@ -206,6 +206,7 @@ export class Building extends Phaser.GameObjects.Image {
     if (!this.fireFx || !this.fireFx.active) {
       this.fireFx = this.scene_.add.sprite(this.x, this.y - 20, 'fx-fire')
         .setScale(1.1).setDepth(DEPTH.FX - 5).setAlpha(0.9);
+      this.fireFx.play('building-fire-loop');
     }
   }
 
