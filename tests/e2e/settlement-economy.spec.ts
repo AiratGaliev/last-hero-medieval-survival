@@ -1971,8 +1971,26 @@ test('phase K: siege profiles target outer houses and fall back from monastery t
       candidate.active && candidate.kind === 'skull');
     if (!enemy) throw new Error('Spawned skull was not found');
 
-    scene.assignSiegeTarget(data.SIEGE_SCHEDULE[0], [enemy]);
-    const scoutTargetsHouse = enemy.buildingTarget === house;
+    const secondHouseSpot = economy.freeSpots().find((spot) => spot.kind === 'house');
+    if (!secondHouseSpot || !economy.tryStartBuild('house', builder, secondHouseSpot)) {
+      throw new Error('Could not start second house for reconnaissance split');
+    }
+    const secondHouse = economy.buildings.find((building) =>
+      building.kind === 'house' && building.underConstruction && building !== house);
+    if (!secondHouse) throw new Error('Second house was not registered');
+    builder.setPosition(secondHouseSpot.x, secondHouseSpot.y);
+    builder.state = 'work';
+    economy.tick(10_001, scene.time.now + 20_002);
+    if (!secondHouse.alive || secondHouse.underConstruction) throw new Error('Second house did not finish');
+
+    const scoutUnits = Array.from({ length: 3 }, () => ({
+      active: true,
+      kind: 'skull',
+      buildingTarget: null as unknown,
+    }));
+    scene.assignSiegeTarget(data.SIEGE_SCHEDULE[0], scoutUnits);
+    const scoutTargetsTwoHouses = scoutUnits.filter((unit) => unit.buildingTarget === house).length === 2
+      && scoutUnits.filter((unit) => unit.buildingTarget === secondHouse).length === 1;
 
     const barracksSpot = economy.freeSpots().find((spot) => spot.kind === 'barracks');
     if (!barracksSpot || !economy.tryStartBuild('barracks', builder, barracksSpot)) {
@@ -2021,10 +2039,10 @@ test('phase K: siege profiles target outer houses and fall back from monastery t
     scene.assignSiegeTarget(data.SIEGE_SCHEDULE[4], [enemy]);
     const assaultTargetsCastle = enemy.buildingTarget === scene.settlement.castle;
 
-    return { scoutTargetsHouse, raidTargetSplit, pincerTargetSplit, burnFallsBackToHouse, burnTargetsMonastery, assaultTargetsCastle };
+    return { scoutTargetsTwoHouses, raidTargetSplit, pincerTargetSplit, burnFallsBackToHouse, burnTargetsMonastery, assaultTargetsCastle };
   });
 
-  expect(report.scoutTargetsHouse).toBe(true);
+  expect(report.scoutTargetsTwoHouses).toBe(true);
   expect(report.raidTargetSplit).toBe(true);
   expect(report.pincerTargetSplit).toBe(true);
   expect(report.burnFallsBackToHouse).toBe(true);
@@ -2322,4 +2340,101 @@ test('phase K: HUD exposes castle HP separately from aggregate infrastructure an
   expect(report.castleTexture).toBe('bar-fill-red');
   expect(report.castleHpFraction).toBe(0.25);
   expect(report.barsHaveHeight).toBe(true);
+});
+
+
+test('phase K: siege wound cap counts only newly wounded pawns and skips wounded targets', async ({ page }) => {
+  await startRun(page);
+  const report = await page.evaluate(() => {
+    const game = (window as RuntimeWindow).__tss;
+    if (!game) throw new Error('Phaser runtime is unavailable');
+    const scene = game.scene.getScene('Game') as GameSceneRuntime & {
+      settlement: {
+        beginSiege(index: number, woundCap: number, enemies: unknown[]): void;
+        siegeWoundPawn(pawn: PawnRuntime, dmg: number, now: number): void;
+        canWoundInSiege(): boolean;
+      };
+      economy: EconomyRuntime & {
+        spawnPawn(kind: string, x?: number, y?: number, announce?: boolean): PawnRuntime | null;
+        woundPawn(pawn: PawnRuntime, dmg: number, now: number): boolean;
+      };
+    };
+    scene.spawner.stopped = true;
+    const now = scene.time.now;
+    const alreadyWounded = scene.economy.spawnPawn('collector', scene.economy.castleX, scene.economy.castleY, false);
+    const firstAvailable = scene.economy.spawnPawn('collector', scene.economy.castleX + 20, scene.economy.castleY, false);
+    const secondAvailable = scene.economy.spawnPawn('collector', scene.economy.castleX + 40, scene.economy.castleY, false);
+    if (!alreadyWounded || !firstAvailable || !secondAvailable) {
+      throw new Error('Could not create pawn fixtures for siege wound-cap test');
+    }
+    const preWoundApplied = scene.economy.woundPawn(alreadyWounded, alreadyWounded.maxHp + 1, now);
+    if (!preWoundApplied || alreadyWounded.state !== 'wounded') {
+      throw new Error('Could not prepare an already-wounded pawn');
+    }
+
+    scene.settlement.beginSiege(0, 1, []);
+    scene.settlement.siegeWoundPawn(alreadyWounded, alreadyWounded.maxHp + 1, now);
+    const slotAvailableAfterRejectedTarget = scene.settlement.canWoundInSiege();
+    scene.settlement.siegeWoundPawn(firstAvailable, firstAvailable.maxHp + 1, now);
+    scene.settlement.siegeWoundPawn(secondAvailable, secondAvailable.maxHp + 1, now);
+    return {
+      alreadyWoundedState: alreadyWounded.state,
+      firstAvailableState: firstAvailable.state,
+      secondAvailableState: secondAvailable.state,
+      firstAvailableHp: firstAvailable.hp,
+      secondAvailableHp: secondAvailable.hp,
+      slotAvailableAfterRejectedTarget,
+      capExhausted: !scene.settlement.canWoundInSiege(),
+    };
+  });
+
+  expect(report.alreadyWoundedState).toBe('wounded');
+  expect(report.slotAvailableAfterRejectedTarget).toBe(true);
+  expect(report.firstAvailableState).toBe('wounded');
+  expect(report.secondAvailableState).not.toBe('wounded');
+  expect(report.secondAvailableHp).toBeGreaterThan(0);
+  expect(report.capExhausted).toBe(true);
+});
+
+
+test('phase K: destroying the castle sets the castle defeat cause and announces the loss', async ({ page }) => {
+  await startRun(page);
+  const report = await page.evaluate(() => {
+    const game = (window as RuntimeWindow).__tss;
+    if (!game) throw new Error('Phaser runtime is unavailable');
+    const scene = game.scene.getScene('Game') as GameSceneRuntime & {
+      gameEnded: boolean;
+      loseCause: string | null;
+      settlement: {
+        castle: BuildingRuntime;
+        damageBuilding(building: BuildingRuntime, raw: number, siegeIndex: number, isBoss?: boolean): void;
+      };
+      hud: {
+        announce(message: string, color?: string): void;
+        feed(message: string, color?: string): void;
+      };
+    };
+    // The test checks the immediate defeat route; prevent its delayed game-over
+    // transition from navigating away while Playwright reads the result.
+    scene.gameEnded = true;
+    scene.loseCause = null;
+    const announcements: string[] = [];
+    scene.hud.announce = (message: string): void => announcements.push(message);
+    scene.hud.feed = (): void => {};
+    const castle = scene.settlement.castle;
+    scene.settlement.damageBuilding(castle, castle.hp + 1, -1, true);
+    return {
+      castleAlive: castle.alive,
+      castleHp: castle.hp,
+      loseCause: scene.loseCause,
+      announcementCount: announcements.length,
+      lastAnnouncement: announcements.at(-1) ?? '',
+    };
+  });
+
+  expect(report.castleAlive).toBe(false);
+  expect(report.castleHp).toBe(0);
+  expect(report.loseCause).toBe('castle');
+  expect(report.announcementCount).toBeGreaterThanOrEqual(2);
+  expect(report.lastAnnouncement.toLowerCase()).toContain('castle');
 });

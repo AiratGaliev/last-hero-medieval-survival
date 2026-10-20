@@ -549,7 +549,7 @@ export interface SiegeProfile {
 }
 
 export const SIEGE_SCHEDULE: SiegeProfile[] = [
-  { t: 360,  name: 'siege.profile.scout',  squad: [{ kind: 'skull', n: 3 }],                          target: 'houses',    woundCap: 1 },
+  { t: 360,  name: 'siege.profile.scout',  squad: [{ kind: 'skull', n: 3 }],                          target: 'houses', secondaryTarget: 'houses', woundCap: 1 },
   { t: 480,  name: 'siege.profile.raid',   squad: [{ kind: 'skull', n: 5 }],                          target: 'houses', secondaryTarget: 'barracks', woundCap: 1 },
   { t: 600,  name: 'siege.profile.burn',   squad: [{ kind: 'skull', n: 4 }, { kind: 'shaman', n: 2, firer: true }], target: 'monastery', woundCap: 2 },
   { t: 720,  name: 'siege.profile.pincer', squad: [{ kind: 'skull', n: 6 }, { kind: 'pig-rider', n: 4 }],           target: 'houses', secondaryTarget: 'barracks', formation: 'pincer', woundCap: 2 },

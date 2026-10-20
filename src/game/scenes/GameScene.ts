@@ -1923,18 +1923,16 @@ private ordersUnlocked(): boolean {
   private assignSiegeTarget(profile: SiegeProfile, enemies: Enemy[]): void {
     const pick = (kind: BuildingKind): Building | null =>
       this.economy.buildings.find((b) => b.alive && b.kind === kind && !b.underConstruction) ?? null;
-    const outerHouse = (): Building | null => {
-      let target: Building | null = null;
-      let bestD = -1;
-      for (const b of this.economy.buildings) {
-        if (b.kind !== 'house' || !b.alive || b.underConstruction) continue;
-        const d = Math.hypot(b.x - this.castleX, b.y - this.castleY);
-        if (d > bestD) { bestD = d; target = b; }
-      }
-      return target;
+    const outerHouse = (exclude?: Building | null): Building | null => {
+      const houses = this.economy.buildings
+        .filter((b) => b.kind === 'house' && b.alive && !b.underConstruction && b !== exclude)
+        .sort((a, b) =>
+          Math.hypot(b.x - this.castleX, b.y - this.castleY)
+          - Math.hypot(a.x - this.castleX, a.y - this.castleY));
+      return houses[0] ?? null;
     };
-    const directTarget = (kind: SiegeProfile['target']): Building | null =>
-      kind === 'houses' ? outerHouse() : pick(kind);
+    const directTarget = (kind: SiegeProfile['target'], exclude?: Building | null): Building | null =>
+      kind === 'houses' ? outerHouse(exclude) : pick(kind);
     const priorityOrder: BuildingKind[] = ['castle', 'monastery', 'barracks', 'house', 'tower', 'archery'];
     let target = directTarget(profile.target);
     if (!target && profile.target === 'houses') {
@@ -1965,7 +1963,7 @@ private ordersUnlocked(): boolean {
     // вторичный объект — казармы. У «Клещей» чередование в массиве совпадает
     // с чередованием флангов SiegeFormation (baseAngle / baseAngle + PI).
     const secondary = profile.secondaryTarget
-      ? directTarget(profile.secondaryTarget)
+      ? directTarget(profile.secondaryTarget, target)
       : null;
     const splitTargets = secondary !== null && target !== null && secondary !== target;
     for (const [index, enemy] of enemies.entries()) {
@@ -3554,7 +3552,9 @@ private bossDeathSequence(e: Enemy): boolean {
         let best: Pawn | null = null;
         let bestD = r;
         for (const p of this.economy.pawns) {
-          if (p.dead || !p.active) continue;
+          // Уже раненые не могут получить второе ранение и не должны блокировать
+          // поиск следующей цели осады.
+          if (p.dead || !p.active || p.state === 'wounded' || p.state === 'bleeding') continue;
           // Герой — не пешка, его ранение идёт обычным путём (§A.5)
           const d = Math.hypot(p.x - x, p.y - y);
           if (d < bestD) { bestD = d; best = p; }

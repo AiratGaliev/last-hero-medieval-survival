@@ -273,11 +273,10 @@ export class Settlement {
     this.siegeWounds++;
   }
 
-  /** Осадный враг ранит пешку: только по лимиту профиля (§E.4). */
+  /** Осадный враг ранит пешку: лимит расходуется только на реальный переход в wounded (§E.4). */
   siegeWoundPawn(pawn: Pawn, dmg: number, now: number): void {
     if (!this.canWoundInSiege()) return;
-    this.registerWound();
-    this.eco.woundPawn(pawn, dmg, now);
+    if (this.eco.woundPawn(pawn, dmg, now)) this.registerWound();
   }
 
   // ================= РАЗРУШЕНИЕ =================
