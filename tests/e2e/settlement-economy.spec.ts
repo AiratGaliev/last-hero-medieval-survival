@@ -1410,7 +1410,7 @@ test('phases K-L: siege wound caps, extinction delay, settlement score and ideal
       populationScoreDelta: scoreWithResidents.population - score.population,
       aliveBuildings: scene.settlement.aliveBuildings.length,
       idealWithBoss: idealWithoutResidents,
-      idealWithoutBoss: scene.settlement.isIdealVictory(false) && false,
+      idealWithoutBoss: scene.settlement.isIdealVictory(false),
       idealWithBossAndThree,
       idealWithoutBossAndThree,
       castleAlive: scene.settlement.castle.alive,

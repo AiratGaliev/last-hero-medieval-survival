@@ -282,7 +282,7 @@ test('phase J: low-FPS combat fallback is selected before checking the per-pawn 
   expect(report.accumulatorAfterFirstFrame).toBe(150);
 });
 
-test('phase J: enemies switch from a nearby pawn back to the hero when the hero enters aggro range', async ({ page }) => {
+test('phase J: enemy target priority is hero, then garrison, then civilian', async ({ page }) => {
   await startRun(page);
   await continueInitialTutorial(page);
 
@@ -302,7 +302,19 @@ test('phase J: enemies switch from a nearby pawn back to the hero when the hero 
       economy: {
         castleX: number;
         castleY: number;
-        pawns: Array<{ active: boolean; dead: boolean; state: string; setPosition(x: number, y: number): unknown }>;
+        pawns: Array<{
+          active: boolean;
+          dead: boolean;
+          state: string;
+          cls: 'civilian' | 'garrison';
+          setPosition(x: number, y: number): unknown;
+        }>;
+        spawnPawn(
+          kind: string,
+          nearX?: number,
+          nearY?: number,
+          announce?: boolean,
+        ): { setPosition(x: number, y: number): unknown } | null;
       };
       player: { setPosition(x: number, y: number): unknown };
       spawner: { stopped: boolean };
@@ -319,13 +331,26 @@ test('phase J: enemies switch from a nearby pawn back to the hero when the hero 
         && Math.hypot(candidate.x - x, candidate.y - y) < 5);
     if (!enemy) throw new Error('Spawned goblin could not be found');
     enemy.setVelocity(0, 0);
+    // Убираем прочий гарнизон за радиус агро и оставляем гражданского рядом.
+    for (const existing of scene.economy.pawns) {
+      if (existing.cls === 'garrison') existing.setPosition(x - 950, y);
+    }
     const pawn = scene.economy.pawns.find((candidate) =>
-      candidate.active && !candidate.dead && candidate.state !== 'wounded' && candidate.state !== 'bleeding');
-    if (!pawn) throw new Error('No living pawn is available for target-selection test');
-    // Выводим жителя за безопасный радиус 360 px, чтобы он участвовал в выборе цели.
+      candidate.active && !candidate.dead && candidate.cls === 'civilian'
+        && candidate.state !== 'wounded' && candidate.state !== 'bleeding');
+    if (!pawn) throw new Error('No living civilian is available for target-selection test');
+    // Гражданский находится вне safe-core, поэтому может быть выбран.
     pawn.setPosition(x + 60, y);
     enemy.pickTarget();
-    if (enemy.aimedPawn !== pawn) throw new Error('Enemy did not select the nearby pawn');
+    if (enemy.aimedPawn !== pawn) throw new Error('Enemy did not fall back to a civilian when no garrison is in aggro range');
+
+    // Гарнизон дальше ближайшего гражданского, но в радиусе агро: его категория
+    // обязана победить независимо от дистанции до гражданского.
+    const garrison = scene.economy.spawnPawn('fighter', x + 700, y, false);
+    if (!garrison) throw new Error('Could not create a garrison target');
+    garrison.setPosition(x + 700, y);
+    enemy.pickTarget();
+    if (enemy.aimedPawn !== garrison) throw new Error('Enemy preferred a closer civilian over a garrison');
     (window as RuntimeWindow & { __phaseJEnemy?: EnemyTarget }).__phaseJEnemy = enemy;
   });
 

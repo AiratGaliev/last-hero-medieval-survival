@@ -911,19 +911,32 @@ export class GameScene extends Phaser.Scene {
     // у разбега нет гарнизона, и без этого первая же волна вычищает
     // экономику за минуту. Осада — единственный механизм угрозы базе (§D.1).
     this.registry.set('tss-picktarget', (e: Enemy): Pawn | null => {
-      let best: Pawn | null = null;
-      let bestScore = Infinity;
+      let nearestGarrison: Pawn | null = null;
+      let nearestCivilian: Pawn | null = null;
+      let garrisonDistance = Infinity;
+      let civilianDistance = Infinity;
       for (const p of this.economy.pawns) {
         if (p.dead || !p.active) continue;
         if (p.state === 'wounded' || p.state === 'bleeding') continue;
         const d = Math.hypot(p.x - e.x, p.y - e.y);
         if (d > AGGRO.NPC) continue;
+        // Документированный safe-core раунда 3: обычные волны не выбирают
+        // гражданских в радиусе 360 px от замка; у осад отдельный путь.
         if (p.cls === 'civilian'
           && Math.hypot(p.x - this.castleX, p.y - this.castleY) < 360) continue;
-        const score = p.cls === 'garrison' ? d : d + 500; // гарнизон ближе к врагу в приоритете
-        if (score < bestScore) { bestScore = score; best = p; }
+        // Приоритет категорий строгий: гарнизон важнее гражданских независимо
+        // от расстояния; внутри категории выбирается ближайшая доступная цель.
+        if (p.cls === 'garrison') {
+          if (d < garrisonDistance) {
+            garrisonDistance = d;
+            nearestGarrison = p;
+          }
+        } else if (d < civilianDistance) {
+          civilianDistance = d;
+          nearestCivilian = p;
+        }
       }
-      return best;
+      return nearestGarrison ?? nearestCivilian;
     });
 
     const spawnCtx: SpawnerCtx = {
