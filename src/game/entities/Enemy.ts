@@ -176,8 +176,6 @@ export class Enemy extends Phaser.Physics.Arcade.Sprite {
     this.play(key, true);
   }
 
-  private animationCompleteHandler: ((anim: Phaser.Animations.Animation) => void) | null = null;
-
   private playOnce(key: string, onComplete?: () => void): void {
     if (!this.scene.anims.exists(key)) {
       // Отсутствующая анимация не должна навсегда блокировать боевой FSM.
