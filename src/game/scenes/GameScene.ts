@@ -1988,7 +1988,12 @@ private ordersUnlocked(): boolean {
       // фактический урон по базе в разы выше расчётного.
       if (e.attackWindowEnds === 0) {
         const b = e.buildingTarget as { x: number; y: number } | null;
-        if (b && Math.hypot(e.x - b.x, e.y - b.y) < 220) {
+        const ranged = e.kind === 'gnoll' || e.kind === 'shaman';
+        // updateSiege() halts ranged units at ~330px (300 + 30), melee at ~140px.
+        // If this radius is smaller than the AI's stop distance, ranged sieges never
+        // open the 10-second window and can attack for their entire 60-second lifetime.
+        const firingRadius = ranged ? 330 : 220;
+        if (b && Math.hypot(e.x - b.x, e.y - b.y) < firingRadius) {
           e.attackWindowEnds = now + SIEGE.ATTACK_WINDOW * 1000;
         }
       }

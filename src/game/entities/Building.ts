@@ -36,7 +36,8 @@ export class Building extends Phaser.GameObjects.Image {
   /** Монастырь: занятые места (индексы 0..9, null = свободно). */
   healSlots: (unknown | null)[] = [];
   /** Горение: DoT поджога (§E.4.1). */
-  private burnUntil = 0;
+  /** Остаток активного игрового времени горения; пауза симуляции его не тратит. */
+  private burnRemainingMs = 0;
   private burnSprite: Phaser.GameObjects.Sprite | null = null;
   private fireFx: Phaser.GameObjects.Sprite | null = null;
   private fireTimer = 0;
@@ -139,7 +140,7 @@ export class Building extends Phaser.GameObjects.Image {
   /** Руины: стоит сгоревший каркас, лимит не даёт, чинится через repair(). */
   private enterRuins(): void {
     this.underConstruction = true; // блокирует урон и найм
-    this.burnUntil = 0;
+    this.burnRemainingMs = 0;
     this.burnSprite?.destroy();
     this.burnSprite = null;
     this.fireFx?.destroy();
@@ -177,7 +178,7 @@ export class Building extends Phaser.GameObjects.Image {
    */
   tickMonasteryCollapse(dtMs: number): void {
     if (this.monasteryCollapseRemainingMs === null) return;
-    if (!this.alive || !this.active) {
+    if (!this.alive) {
       this.monasteryCollapseRemainingMs = null;
       return;
     }
@@ -194,7 +195,7 @@ export class Building extends Phaser.GameObjects.Image {
   /** Поджог: DoT SIEGE.BURN_DMG за SIEGE.BURN_MS (TZ §E.4.1). */
   ignite(siegeIdx: number): void {
     if (!this.alive || this.underConstruction) return;
-    this.burnUntil = Math.max(this.burnUntil, this.scene_.time.now + SIEGE.BURN_MS);
+    this.burnRemainingMs = Math.max(this.burnRemainingMs, SIEGE.BURN_MS);
     this.lastSiegeIdx = siegeIdx;
     if (!this.burnSprite || !this.burnSprite.active) {
       // Динамит на корпусе: горящий фитиль (§E.4.1)
@@ -208,17 +209,19 @@ export class Building extends Phaser.GameObjects.Image {
     }
   }
 
-  /** Тик горения; возвращает урон DoT за кадр (вызывает Economy). */
+  /** Тик горения; возвращает урон только за реально прошедшее игровое время. */
   tickBurn(dtMs: number): number {
-    if (!this.alive || this.scene_.time.now >= this.burnUntil) {
-      if (this.burnSprite?.active) this.burnSprite.destroy();
-      this.burnSprite = null;
-      if (this.fireFx?.active) this.fireFx.destroy();
-      this.fireFx = null;
+    if (!this.alive || this.burnRemainingMs <= 0) {
+      this.clearBurnEffects();
       return 0;
     }
-    this.fireTimer -= dtMs;
-    if (this.fireTimer <= 0) {
+
+    // Не наносим лишний DoT, если dt пересекает конец горения. dtMs поступает
+    // из Economy.tick(), который вызывается только для активной симуляции.
+    const activeMs = Math.min(Math.max(0, dtMs), this.burnRemainingMs);
+    this.burnRemainingMs = Math.max(0, this.burnRemainingMs - activeMs);
+    this.fireTimer -= activeMs;
+    if (this.fireTimer <= 0 && this.burnRemainingMs > 0) {
       this.fireTimer = 500;
       const f = this.scene_.add.sprite(
         this.x + Phaser.Math.Between(-24, 24), this.y - Phaser.Math.Between(0, 40), 'fx-fire',
@@ -226,8 +229,17 @@ export class Building extends Phaser.GameObjects.Image {
       f.play('fx-fire');
       f.once('animationcomplete', () => f.destroy());
     }
-    // DoT — равномерно за всё время горения
-    return (SIEGE.BURN_DMG * dtMs) / SIEGE.BURN_MS;
+
+    if (this.burnRemainingMs === 0) this.clearBurnEffects();
+    // DoT — 3 HP ровно за 6 секунд активной игры; последний тик ограничен остатком.
+    return (SIEGE.BURN_DMG * activeMs) / SIEGE.BURN_MS;
+  }
+
+  private clearBurnEffects(): void {
+    if (this.burnSprite?.active) this.burnSprite.destroy();
+    this.burnSprite = null;
+    if (this.fireFx?.active) this.fireFx.destroy();
+    this.fireFx = null;
   }
 
   /** Слот лечения: null если свободных нет (FIFO по приходу, §G.4). */
@@ -282,6 +294,7 @@ export class Building extends Phaser.GameObjects.Image {
     this.alive = false;
     this.burnSprite?.destroy();
     this.fireFx?.destroy();
+    this.burnRemainingMs = 0;
     this.slotLabel?.destroy();
     this.ctx.onDestroyed(this, false);
     // Облако щепы при разрушении (juice №5 §H.13)

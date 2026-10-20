@@ -2077,3 +2077,115 @@ test('phase K: siege attack window expires even while the hero is intercepting t
   expect(report.siege).toBe(false);
   expect(report.remainsInGroup).toBe(false);
 });
+
+
+test('phase K: building fire pauses with gameplay and applies exactly three DoT over six active seconds', async ({ page }) => {
+  await startRun(page);
+  await continueInitialTutorial(page);
+
+  const initial = await page.evaluate(() => {
+    const game = (window as RuntimeWindow).__tss;
+    if (!game) throw new Error('Phaser runtime is unavailable');
+    const scene = game.scene.getScene('Game') as GameSceneRuntime & {
+      spawner: { stopped: boolean };
+    };
+    scene.spawner.stopped = true;
+    const building = scene.economy.buildings.find((candidate) =>
+      candidate.kind === 'house' && candidate.alive && !candidate.underConstruction);
+    if (!building) throw new Error('A completed house is required for the fire timer test');
+    building.ignite(0);
+    return { remaining: (building as unknown as { burnRemainingMs: number }).burnRemainingMs };
+  });
+  expect(initial.remaining).toBe(6_000);
+
+  await page.evaluate(() => {
+    const game = (window as RuntimeWindow).__tss!;
+    (game.scene.getScene('Game') as GameSceneRuntime & { hintOverlayPaused: boolean }).hintOverlayPaused = true;
+  });
+  await page.waitForTimeout(700);
+  const duringPause = await page.evaluate(() => {
+    const game = (window as RuntimeWindow).__tss!;
+    const scene = game.scene.getScene('Game') as GameSceneRuntime;
+    const building = scene.economy.buildings.find((candidate) => candidate.kind === 'house');
+    return building ? (building as unknown as { burnRemainingMs: number }).burnRemainingMs : -1;
+  });
+  expect(duringPause).toBe(6_000);
+
+  await page.evaluate(() => {
+    const game = (window as RuntimeWindow).__tss!;
+    (game.scene.getScene('Game') as GameSceneRuntime & { hintOverlayPaused: boolean }).hintOverlayPaused = false;
+  });
+  await expect.poll(async () => page.evaluate(() => {
+    const game = (window as RuntimeWindow).__tss!;
+    const scene = game.scene.getScene('Game') as GameSceneRuntime;
+    const building = scene.economy.buildings.find((candidate) => candidate.kind === 'house');
+    return building ? (building as unknown as { burnRemainingMs: number }).burnRemainingMs : -1;
+  }), { timeout: 3_000 }).toBeLessThan(6_000);
+
+  const damageTotal = await page.evaluate(() => {
+    const game = (window as RuntimeWindow).__tss!;
+    const scene = game.scene.getScene('Game') as GameSceneRuntime;
+    const building = scene.economy.buildings.find((candidate) => candidate.kind === 'house');
+    if (!building) throw new Error('House disappeared during fire timer test');
+    const burn = building as unknown as {
+      burnRemainingMs: number;
+      tickBurn(dtMs: number): number;
+    };
+    const first = burn.tickBurn(5_500);
+    const last = burn.tickBurn(5_000); // only the remaining 500 ms may deal damage
+    const afterExpiry = burn.tickBurn(5_000);
+    return {
+      first,
+      last,
+      afterExpiry,
+      remaining: burn.burnRemainingMs,
+      total: first + last + afterExpiry,
+    };
+  });
+  expect(damageTotal.first).toBeCloseTo(2.75, 5);
+  expect(damageTotal.last).toBeCloseTo(0.25, 5);
+  expect(damageTotal.afterExpiry).toBe(0);
+  expect(damageTotal.remaining).toBe(0);
+  expect(damageTotal.total).toBeCloseTo(3, 5);
+});
+
+
+test('phase K: ranged siege units start the ten-second attack window at their firing distance', async ({ page }) => {
+  await startRun(page);
+  const report = await page.evaluate(() => {
+    const game = (window as RuntimeWindow).__tss;
+    if (!game) throw new Error('Phaser runtime is unavailable');
+    type SiegeEnemyRuntime = {
+      active: boolean;
+      kind: string;
+      siege: boolean;
+      buildingTarget: unknown;
+      attackWindowEnds: number;
+      spawnedAt: number;
+      setPosition(x: number, y: number): unknown;
+    };
+    const scene = game.scene.getScene('Game') as GameSceneRuntime & {
+      spawner: { stopped: boolean };
+      siegeAlive: boolean;
+      spawnSiegeUnit(kind: string, x: number, y: number, firer: boolean): SiegeEnemyRuntime | null;
+      siegeTick(now: number): void;
+      settlement: {
+        castle: BuildingRuntime;
+        siegeIdx: number;
+        beginSiege(index: number, woundCap: number, enemies: SiegeEnemyRuntime[]): void;
+      };
+    };
+    scene.spawner.stopped = true;
+    const castle = scene.settlement.castle;
+    const now = scene.time.now;
+    const ranged = scene.spawnSiegeUnit('shaman', castle.x + 320, castle.y, true);
+    if (!ranged) throw new Error('Could not spawn ranged siege fixture');
+    ranged.buildingTarget = castle;
+    scene.settlement.beginSiege(2, 2, [ranged]);
+    scene.siegeAlive = true;
+    scene.siegeTick(now);
+    return { deadline: ranged.attackWindowEnds, now, distance: Math.hypot(ranged.x - castle.x, ranged.y - castle.y) };
+  });
+  expect(report.distance).toBeLessThan(330);
+  expect(report.deadline).toBe(report.now + 10_000);
+});
