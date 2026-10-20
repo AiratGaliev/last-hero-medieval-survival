@@ -3995,3 +3995,46 @@ test('phase M: one wounded pawn reserves exactly one monastery bed across repeat
   expect(report.slotIndex).toBe(0);
   expect(report.ownerMatches).toBe(true);
 });
+
+
+test('phase M: tower does not grant succession, but monastery and archery do', async ({ page }) => {
+  await startRun(page);
+  const report = await page.evaluate(() => {
+    const game = (window as RuntimeWindow).__tss;
+    if (!game) throw new Error('Phaser runtime is unavailable');
+    const scene = game.scene.getScene('Game') as GameSceneRuntime & {
+      settlement: { hasSuccessionSource(): boolean };
+    };
+    const economy = scene.economy;
+    // Изолируем проверку источников преемника от зданий, с которыми начался раунд.
+    for (const building of economy.buildings) {
+      if (building.kind === 'barracks' || building.kind === 'archery' || building.kind === 'monastery') {
+        building.alive = false;
+      }
+    }
+    const fixture = (kind: string): BuildingRuntime => ({
+      kind, x: economy.castleX + 400, y: economy.castleY,
+      hp: 200, maxHp: 200, alpha: 1, alive: true, underConstruction: false,
+      finishConstruction: () => {},
+      damage: () => {},
+    });
+    const tower = fixture('tower');
+    economy.buildings.push(tower);
+    const towerOnlyHasSource = scene.settlement.hasSuccessionSource();
+    tower.alive = false;
+
+    const monastery = fixture('monastery');
+    economy.buildings.push(monastery);
+    const monasteryHasSource = scene.settlement.hasSuccessionSource();
+    monastery.alive = false;
+
+    const archery = fixture('archery');
+    economy.buildings.push(archery);
+    const archeryHasSource = scene.settlement.hasSuccessionSource();
+    return { towerOnlyHasSource, monasteryHasSource, archeryHasSource };
+  });
+
+  expect(report.towerOnlyHasSource).toBe(false);
+  expect(report.monasteryHasSource).toBe(true);
+  expect(report.archeryHasSource).toBe(true);
+});
