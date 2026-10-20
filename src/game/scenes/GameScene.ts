@@ -1046,6 +1046,7 @@ export class GameScene extends Phaser.Scene {
     this.economy.on('change', () => {
       this.hud.updateResources(this.economy.resources);
       this.hud.updateSettlement(
+        this.settlement.castle.hp / Math.max(1, this.settlement.castle.maxHp),
         this.settlement.infrastructureHp / this.settlement.infrastructureMax,
         this.economy.pawns.length / Math.max(1, this.economy.pawnLimit),
         this.garrisonHudLabel(),
@@ -1659,6 +1660,7 @@ private ordersUnlocked(): boolean {
     if (time - this.lastSettleHud > 700) {
       this.lastSettleHud = time;
       this.hud.updateSettlement(
+        this.settlement.castle.hp / Math.max(1, this.settlement.castle.maxHp),
         this.settlement.infrastructureHp / this.settlement.infrastructureMax,
         this.economy.pawns.length / Math.max(1, this.economy.pawnLimit),
         this.garrisonHudLabel(),

@@ -2284,3 +2284,42 @@ test('phase K: siege infrastructure caps exclude unfinished and ruined buildings
   expect(report.lowLoss).toBeCloseTo(report.initialMax * 0.06, 5);
   expect(report.lowCapApplied).toBe(true);
 });
+
+
+test('phase K: HUD exposes castle HP separately from aggregate infrastructure and population', async ({ page }) => {
+  await startRun(page);
+  const report = await page.evaluate(() => {
+    const game = (window as RuntimeWindow).__tss;
+    if (!game) throw new Error('Phaser runtime is unavailable');
+    const scene = game.scene.getScene('Game') as GameSceneRuntime & {
+      hud: {
+        updateSettlement(castle: number, infra: number, population: number, garrison: string): void;
+        settleCastleBar: { displayWidth: number; displayHeight: number; texture: { key: string } };
+        settleInfraBar: { displayWidth: number; displayHeight: number; texture: { key: string } };
+        settlePopBar: { displayWidth: number; displayHeight: number; texture: { key: string } };
+      };
+      settlement: { castle: BuildingRuntime };
+    };
+    const hud = scene.hud;
+    const castle = scene.settlement.castle;
+    const previousHp = castle.hp;
+    castle.hp = castle.maxHp * 0.25;
+    hud.updateSettlement(0.25, 0.8, 0.75, 'Garrison 1/4');
+    const result = {
+      castleWidth: hud.settleCastleBar.displayWidth,
+      infrastructureWidth: hud.settleInfraBar.displayWidth,
+      populationWidth: hud.settlePopBar.displayWidth,
+      castleTexture: hud.settleCastleBar.texture.key,
+      castleHpFraction: castle.hp / castle.maxHp,
+      barsHaveHeight: hud.settleCastleBar.displayHeight > 0
+        && hud.settleInfraBar.displayHeight > 0 && hud.settlePopBar.displayHeight > 0,
+    };
+    castle.hp = previousHp;
+    return result;
+  });
+  expect(report.castleWidth).toBeLessThan(report.infrastructureWidth);
+  expect(report.castleWidth).toBeLessThan(report.populationWidth);
+  expect(report.castleTexture).toBe('bar-fill-red');
+  expect(report.castleHpFraction).toBe(0.25);
+  expect(report.barsHaveHeight).toBe(true);
+});
