@@ -836,10 +836,20 @@ export class Economy extends Phaser.Events.EventEmitter {
    *  игрок платил 10 дерева + 3 мяса за замену ушедшему добровольно.
    *  Сообщество при такой трактовке теряло смысл: сжигал дома — платил. */
   removePawn(pawn: Pawn, paid = true): void {
-    const monastery = pawn.monasteryBuilding;
-    const slot = pawn.monasterySlot;
-    if (slot !== null && monastery?.alive && monastery.kind === 'monastery') {
-      monastery.releaseHealSlot(slot);
+    // Слоты проверяются по ссылке на пешку, а не только по её локальному
+    // индексу: после старого/повреждённого состояния один Pawn мог оказаться
+    // в нескольких местах. Не очищаем слот другого жильца с тем же индексом.
+    for (const building of this.buildings) {
+      if (building.kind !== 'monastery') continue;
+      for (let slot = 0; slot < building.healSlots.length; slot++) {
+        if (building.healSlots[slot] !== pawn) continue;
+        if (building.alive) {
+          building.releaseHealSlot(slot);
+        } else {
+          // У разрушенного здания не вызываем UI-обновление индикатора.
+          building.healSlots[slot] = null;
+        }
+      }
     }
     pawn.monasterySlot = null;
     pawn.monasteryBuilding = null;
