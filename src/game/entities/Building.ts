@@ -67,6 +67,11 @@ export class Building extends Phaser.GameObjects.Image {
     return BUILDING_PLANS[this.kind];
   }
 
+  /** Во время трёхсекундного предупреждения обитель уже нельзя чинить. */
+  get collapsePending(): boolean {
+    return this.monasteryCollapseTimer !== null;
+  }
+
   /** Завершение стройки: твин scaleY 0→1 + полное HP (TZ §B.4). */
   finishConstruction(): void {
     this.underConstruction = false;

@@ -21,6 +21,7 @@ type BuildingRuntime = {
   hp: number;
   maxHp: number;
   underConstruction: boolean;
+  collapsePending: boolean;
   healSlots: (unknown | null)[];
   warned30: boolean;
   warned10: boolean;
@@ -31,6 +32,7 @@ type EconomyRuntime = {
   pawns: unknown[];
   buildings: BuildingRuntime[];
   tryStartBuild(kind: string, pawn: unknown): boolean;
+  repair(building: BuildingRuntime, pawn: unknown | null): boolean;
 };
 type GameSceneRuntime = {
   elapsed: number;
@@ -238,27 +240,36 @@ test('intro overlay really pauses gameplay; monastery warnings and garrison dama
       warnings.push(message);
       originalAnnounce(message, color);
     };
-    building.damage(building.maxHp * 0.71, -1); // 29% HP: 30% warning
-    building.damage(building.maxHp * 0.21, -1); // 8% HP: 10% warning
+    building.damage(building.maxHp * 0.71, -1); // 29% HP: предупреждение 30%
+    building.damage(building.maxHp * 0.30, -1); // Смертельный удар пересекает и 10%, оба предупреждения обязательны.
+    const woodBeforeRepair = economy.resources.wood;
+    const repairAccepted = economy.repair(building, economy.pawns[0] ?? null);
     return {
       started,
       found: true,
       hpFraction: building.hp / building.maxHp,
       warned30: building.warned30,
       warned10: building.warned10,
+      collapsePending: building.collapsePending,
       aliveAtWarning: building.alive,
+      repairAccepted,
+      woodBeforeRepair,
+      woodAfterRepair: economy.resources.wood,
       warnings,
     };
   });
 
   expect(monastery.started).toBe(true);
   expect(monastery.found).toBe(true);
-  expect(monastery.hpFraction).toBeGreaterThan(0.07);
-  expect(monastery.hpFraction).toBeLessThan(0.09);
+  expect(monastery.hpFraction).toBeGreaterThan(0);
+  expect(monastery.hpFraction).toBeLessThan(0.01);
   expect(monastery.warned30).toBe(true);
   expect(monastery.warned10).toBe(true);
+  expect(monastery.collapsePending).toBe(true);
   expect(monastery.warnings).toHaveLength(2);
   expect(monastery.aliveAtWarning).toBe(true);
+  expect(monastery.repairAccepted).toBe(false);
+  expect(monastery.woodAfterRepair).toBe(monastery.woodBeforeRepair);
 
   const aliveDuringCollapseWindow = async (): Promise<boolean> => page.evaluate(() => {
     const game = (window as RuntimeWindow).__tss!;

@@ -603,6 +603,9 @@ export class Economy extends Phaser.Events.EventEmitter {
   repair(building: Building, pawn: Pawn | null): boolean {
     if (this.tune.repairDisabled) return false;
     if (!building.alive || building.kind === 'castle' || building.plan.noRepair) return false;
+    // Критическое окно монастыря — предупреждение для эвакуации раненых,
+    // а не скрытая стройка, которая не успеет завершиться до обрушения.
+    if (building.collapsePending) return false;
     if (building.underConstruction && building.hp > 0) return false;
     if (this.buildJobs.some((j) => j.building === building)) return false; // ещё строится
     if (this.repairJobs.some((j) => j.building === building)) return false;

@@ -467,7 +467,7 @@ export class PawnAI {
     let bestFrac = 1;
     let bestIsRuins = false;
     for (const b of this.eco.buildings) {
-      if (!b.alive || b.kind === 'castle' || b.plan.noRepair) continue;
+      if (!b.alive || b.kind === 'castle' || b.plan.noRepair || b.collapsePending) continue;
       // Активная стройка не является целью ремонта. Руины тоже помечены
       // underConstruction, но у них нет buildJob и hp=0 — их надо восстановить.
       if (this.eco.buildJobs.some((job) => job.building === b)) continue;
