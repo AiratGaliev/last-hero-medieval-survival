@@ -275,3 +275,68 @@ test('phase J: low-FPS combat fallback is selected before checking the per-pawn 
   expect(report.selectedTickMs).toBe(250);
   expect(report.accumulatorAfterFirstFrame).toBe(150);
 });
+
+test('phase J: enemies switch from a nearby pawn back to the hero when the hero enters aggro range', async ({ page }) => {
+  await startRun(page);
+  await continueInitialTutorial(page);
+
+  await page.evaluate(() => {
+    const game = (window as RuntimeWindow).__tss;
+    if (!game) throw new Error('Phaser runtime is unavailable');
+    type EnemyTarget = {
+      active: boolean;
+      kind: string;
+      x: number;
+      y: number;
+      aimedPawn: unknown;
+      setVelocity(x: number, y: number): unknown;
+    };
+    const scene = game.scene.getScene('Game') as unknown as {
+      economy: { castleX: number; castleY: number };
+      player: { setPosition(x: number, y: number): unknown };
+      spawner: { stopped: boolean };
+      spawnEnemy(kind: string, x: number, y: number): boolean;
+      enemyGroup: { getChildren(): EnemyTarget[] };
+    };
+    scene.spawner.stopped = true;
+    scene.player.setPosition(scene.economy.castleX - 1_200, scene.economy.castleY - 200);
+    const x = scene.economy.castleX + 650;
+    const y = scene.economy.castleY + 120;
+    if (!scene.spawnEnemy('goblin', x, y)) throw new Error('Could not create target-selection enemy');
+    const enemy = scene.enemyGroup.getChildren().find((candidate) =>
+      candidate.active && candidate.kind === 'goblin'
+        && Math.hypot(candidate.x - x, candidate.y - y) < 5);
+    if (!enemy) throw new Error('Spawned goblin could not be found');
+    enemy.setVelocity(0, 0);
+    (window as RuntimeWindow & { __phaseJEnemy?: EnemyTarget }).__phaseJEnemy = enemy;
+  });
+
+  await page.waitForTimeout(450);
+  const selectedPawn = await page.evaluate(() => {
+    const enemy = (window as RuntimeWindow & {
+      __phaseJEnemy?: { aimedPawn: unknown };
+    }).__phaseJEnemy;
+    return Boolean(enemy?.aimedPawn);
+  });
+  expect(selectedPawn).toBe(true);
+
+  await page.evaluate(() => {
+    const game = (window as RuntimeWindow).__tss;
+    const enemy = (window as RuntimeWindow & {
+      __phaseJEnemy?: { x: number; y: number };
+    }).__phaseJEnemy;
+    if (!game || !enemy) throw new Error('Target-selection fixture was lost');
+    const scene = game.scene.getScene('Game') as GameSceneRuntime & {
+      player: GameSceneRuntime['player'] & { setPosition(x: number, y: number): unknown };
+    };
+    scene.player.setPosition(enemy.x + 100, enemy.y);
+  });
+  await page.waitForTimeout(450);
+  const heroPriority = await page.evaluate(() => {
+    const enemy = (window as RuntimeWindow & {
+      __phaseJEnemy?: { aimedPawn: unknown };
+    }).__phaseJEnemy;
+    return enemy?.aimedPawn === null;
+  });
+  expect(heroPriority).toBe(true);
+});

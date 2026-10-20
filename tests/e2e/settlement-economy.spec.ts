@@ -1264,3 +1264,95 @@ test('phase J: barracks hiring spends resources immediately and reserves slots w
   expect(report.noCostForRejectedHire).toBe(true);
   expect(report.soldiers).toEqual(['lance', 'sword']);
 });
+
+test('phases K-L: siege wound caps, extinction delay, settlement score and ideal-victory gates match the rules', async ({ page }) => {
+  await startRun(page);
+
+  const report = await page.evaluate(async () => {
+    const game = (window as RuntimeWindow).__tss;
+    if (!game) throw new Error('Phaser runtime is unavailable');
+    const root = window.location.origin;
+    const [data, constants] = await Promise.all([
+      import(/* @vite-ignore */ new URL('/src/game/data.ts', root).href) as Promise<{
+        SIEGE_SCHEDULE: Array<{ woundCap: number }>;
+      }>,
+      import(/* @vite-ignore */ new URL('/src/game/constants.ts', root).href) as Promise<{
+        SCORE: { SETTLEMENT: number; POPULATION: number; RATING: number };
+      }>,
+    ]);
+    type PawnRef = { kind: string; dead: boolean };
+    type SettlementRef = {
+      aliveBuildings: Array<unknown>;
+      castle: { alive: boolean };
+      settlementScore(): { defence: number; population: number; buildings: number; pawns: number };
+      isIdealVictory(bossKilled: boolean): boolean;
+      beginSiege(index: number, woundCap: number, enemies: unknown[]): void;
+      canWoundInSiege(): boolean;
+      registerWound(): void;
+      checkExtinction(now: number): boolean;
+      extinctAt: number | null;
+    };
+    const scene = game.scene.getScene('Game') as GameSceneRuntime & {
+      settlement: SettlementRef;
+      economy: EconomyRuntime & {
+        pawns: PawnRef[];
+        resources: { wood: number; ore: number; meat: number };
+        houses: number;
+        removePawn(pawn: PawnRef, paid?: boolean): void;
+      };
+    };
+
+    const caps = data.SIEGE_SCHEDULE.map((profile) => profile.woundCap);
+    const woundResults = caps.map((cap, index) => {
+      scene.settlement.beginSiege(index, cap, []);
+      const allowed: boolean[] = [];
+      for (let n = 0; n < cap + 1; n++) {
+        allowed.push(scene.settlement.canWoundInSiege());
+        scene.settlement.registerWound();
+      }
+      return allowed;
+    });
+
+    // Удаление населения не должно само по себе начислять замену добровольно ушедшим;
+    // здесь моделируется именно окончательная смерть, а не эмиграция из-за потери дома.
+    for (const pawn of [...scene.economy.pawns]) scene.economy.removePawn(pawn, false);
+    scene.economy.resources.wood = 30;
+    const now = scene.time.now + 120_000;
+    const atHomePrice = scene.settlement.checkExtinction(now);
+    scene.economy.resources.wood = 29;
+    const beforeNextCheck = scene.settlement.checkExtinction(now + 59_999);
+    const atNextCheck = scene.settlement.checkExtinction(now + 60_000);
+
+    const score = scene.settlement.settlementScore();
+    return {
+      caps,
+      woundResults,
+      houses: scene.economy.houses,
+      pawns: scene.economy.pawns.length,
+      atHomePrice,
+      beforeNextCheck,
+      atNextCheck,
+      extinctAtSet: scene.settlement.extinctAt !== null,
+      score,
+      aliveBuildings: scene.settlement.aliveBuildings.length,
+      idealWithBoss: scene.settlement.isIdealVictory(true),
+      idealWithoutBoss: scene.settlement.isIdealVictory(false),
+      castleAlive: scene.settlement.castle.alive,
+      scoreConstants: data.SIEGE_SCHEDULE.length > 0 ? constants.SCORE : null,
+    };
+  });
+
+  expect(report.caps).toEqual([1, 1, 2, 2, 3]);
+  expect(report.woundResults).toEqual([[true, false], [true, false], [true, true, false], [true, true, false], [true, true, true, false]]);
+  expect(report.houses).toBe(0);
+  expect(report.pawns).toBe(0);
+  expect(report.atHomePrice).toBe(false);
+  expect(report.beforeNextCheck).toBe(false);
+  expect(report.atNextCheck).toBe(true);
+  expect(report.extinctAtSet).toBe(true);
+  expect(report.score.defence).toBe(report.aliveBuildings * report.scoreConstants!.SETTLEMENT);
+  expect(report.score.population).toBe(0);
+  expect(report.idealWithoutBoss).toBe(false);
+  expect(report.idealWithBoss).toBe(false);
+  expect(report.castleAlive).toBe(true);
+});
