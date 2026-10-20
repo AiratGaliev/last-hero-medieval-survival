@@ -1973,6 +1973,36 @@ test('phase K: siege profiles target outer houses and fall back from monastery t
 
     scene.assignSiegeTarget(data.SIEGE_SCHEDULE[0], [enemy]);
     const scoutTargetsHouse = enemy.buildingTarget === house;
+
+    const barracksSpot = economy.freeSpots().find((spot) => spot.kind === 'barracks');
+    if (!barracksSpot || !economy.tryStartBuild('barracks', builder, barracksSpot)) {
+      throw new Error('Could not start barracks for split-target siege profiles');
+    }
+    const barracks = economy.buildings.find((building) => building.kind === 'barracks' && building.underConstruction);
+    if (!barracks) throw new Error('Barracks was not registered');
+    builder.setPosition(barracksSpot.x, barracksSpot.y);
+    builder.state = 'work';
+    economy.tick(30_001, scene.time.now + 40_002);
+    if (!barracks.alive || barracks.underConstruction) throw new Error('Barracks did not finish');
+
+    const raidUnits = Array.from({ length: 5 }, () => ({
+      active: true,
+      kind: 'skull',
+      buildingTarget: null as unknown,
+    }));
+    scene.assignSiegeTarget(data.SIEGE_SCHEDULE[1], raidUnits);
+    const raidTargetSplit = raidUnits.filter((unit) => unit.buildingTarget === house).length === 3
+      && raidUnits.filter((unit) => unit.buildingTarget === barracks).length === 2;
+
+    const pincerUnits = Array.from({ length: 10 }, () => ({
+      active: true,
+      kind: 'skull',
+      buildingTarget: null as unknown,
+    }));
+    scene.assignSiegeTarget(data.SIEGE_SCHEDULE[3], pincerUnits);
+    const pincerTargetSplit = pincerUnits.filter((unit) => unit.buildingTarget === house).length === 5
+      && pincerUnits.filter((unit) => unit.buildingTarget === barracks).length === 5;
+
     scene.assignSiegeTarget(data.SIEGE_SCHEDULE[2], [enemy]);
     const burnFallsBackToHouse = enemy.buildingTarget === house;
 
@@ -1991,10 +2021,12 @@ test('phase K: siege profiles target outer houses and fall back from monastery t
     scene.assignSiegeTarget(data.SIEGE_SCHEDULE[4], [enemy]);
     const assaultTargetsCastle = enemy.buildingTarget === scene.settlement.castle;
 
-    return { scoutTargetsHouse, burnFallsBackToHouse, burnTargetsMonastery, assaultTargetsCastle };
+    return { scoutTargetsHouse, raidTargetSplit, pincerTargetSplit, burnFallsBackToHouse, burnTargetsMonastery, assaultTargetsCastle };
   });
 
   expect(report.scoutTargetsHouse).toBe(true);
+  expect(report.raidTargetSplit).toBe(true);
+  expect(report.pincerTargetSplit).toBe(true);
   expect(report.burnFallsBackToHouse).toBe(true);
   expect(report.burnTargetsMonastery).toBe(true);
   expect(report.assaultTargetsCastle).toBe(true);

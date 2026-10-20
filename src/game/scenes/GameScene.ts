@@ -1917,58 +1917,61 @@ private ordersUnlocked(): boolean {
     return e;
   }
 
-  /** Цель профиля осады с фолбэком §G.7 (замок > монастырь > казармы > прочее). */
+  /** Цель профиля осады с фолбэком §G.7; в профилях с двумя целями отряды разделяются. */
   private assignSiegeTarget(profile: SiegeProfile, enemies: Enemy[]): void {
     const pick = (kind: BuildingKind): Building | null =>
       this.economy.buildings.find((b) => b.alive && b.kind === kind && !b.underConstruction) ?? null;
-    const priorityOrder: BuildingKind[] = ['castle', 'monastery', 'barracks', 'house', 'tower', 'archery'];
-    let target: Building | null = null;
-    if (profile.target === 'houses') {
-      // Дома внешнего кольца: самый дальний от замка дом
+    const outerHouse = (): Building | null => {
+      let target: Building | null = null;
       let bestD = -1;
       for (const b of this.economy.buildings) {
         if (b.kind !== 'house' || !b.alive || b.underConstruction) continue;
         const d = Math.hypot(b.x - this.castleX, b.y - this.castleY);
         if (d > bestD) { bestD = d; target = b; }
       }
-      // ⚠️ Фолбэк для «домашних» профилей идёт по §G.7, но БЕЗ замка:
-      // §E.4.3 прямо говорит, что «Разведка» в 6:00 замок НЕ трогает —
-      // игрок учится правилам на малой ставке. Раньше падая в общий порядок
-      // она могла ударить по замку и обесценить саму идею профилей.
-      if (!target) {
-        for (const k of ['monastery', 'barracks', 'house', 'tower', 'archery'] as BuildingKind[]) {
-          target = pick(k);
-          if (target) break;
-        }
+      return target;
+    };
+    const directTarget = (kind: SiegeProfile['target']): Building | null =>
+      kind === 'houses' ? outerHouse() : pick(kind);
+    const priorityOrder: BuildingKind[] = ['castle', 'monastery', 'barracks', 'house', 'tower', 'archery'];
+    let target = directTarget(profile.target);
+    if (!target && profile.target === 'houses') {
+      // Домашние профили предпочитают не-замковые здания, чтобы первая осада
+      // обучала защите поселения без немедленного давления на замок.
+      for (const k of ['monastery', 'barracks', 'house', 'tower', 'archery'] as BuildingKind[]) {
+        target = pick(k);
+        if (target) break;
       }
-    } else {
-      target = pick(profile.target);
-      if (!target && profile.target === 'monastery') {
-        // Специфичный fallback профиля «Поджигатели» (§E.4.3): если обители
-        // нет, сначала атакуют внешний дом, а не замок. Это первая осада,
-        // где игрок должен получить понятный сигнал к постройке монастыря.
-        let bestD = -1;
-        for (const b of this.economy.buildings) {
-          if (b.kind !== 'house' || !b.alive || b.underConstruction) continue;
-          const d = Math.hypot(b.x - this.castleX, b.y - this.castleY);
-          if (d > bestD) { bestD = d; target = b; }
-        }
-        if (!target) {
-          for (const k of ['barracks', 'house', 'tower', 'archery'] as BuildingKind[]) {
-            target = pick(k);
-            if (target) break;
-          }
-        }
-      }
+    } else if (!target && profile.target === 'monastery') {
+      // «Поджигатели»: если обители нет, сначала атакуют внешний дом.
+      target = outerHouse();
       if (!target) {
-        for (const k of priorityOrder) {
+        for (const k of ['barracks', 'house', 'tower', 'archery'] as BuildingKind[]) {
           target = pick(k);
           if (target) break;
         }
       }
     }
-    for (const e of enemies) e.buildingTarget = target ?? this.settlement.castle;
-    if (target?.kind === 'monastery') {
+    if (!target) {
+      for (const k of priorityOrder) {
+        target = pick(k);
+        if (target) break;
+      }
+    }
+
+    // Для «Налёта» и «Клещей» цель по умолчанию — внешний дом,
+    // вторичный объект — казармы. У «Клещей» чередование в массиве совпадает
+    // с чередованием флангов SiegeFormation (baseAngle / baseAngle + PI).
+    const secondary = profile.secondaryTarget
+      ? directTarget(profile.secondaryTarget)
+      : null;
+    const splitTargets = secondary !== null && target !== null && secondary !== target;
+    for (const [index, enemy] of enemies.entries()) {
+      enemy.buildingTarget = splitTargets && index % 2 === 1
+        ? secondary
+        : target ?? this.settlement.castle;
+    }
+    if (target?.kind === 'monastery' || secondary?.kind === 'monastery') {
       this.hud.announce(t('siege.monastery'), '#ff5544');
     }
   }
