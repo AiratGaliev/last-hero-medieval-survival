@@ -47,6 +47,11 @@ export class HealerAI {
     for (const p of eco.pawns) {
       if (p.dead || !p.active) continue;
       if (p.hp >= p.maxHp) continue;
+      // Пешка, уже лежащая на койке, лечится оплачиваемой системой монастыря.
+      // Полевой монах не должен обходить стоимость обители и освобождать слот
+      // после достижения 50% HP у цели, которую уже приняли на лечение.
+      if (p.monasterySlot !== null && p.monasteryBuilding?.alive
+        && p.monasteryBuilding.healSlots[p.monasterySlot] === p) continue;
       // ⚠️ Только в радиусе лечения (§B.7.2). Без фильтра монах уходил
       // за две тысячи пикселей к раненому за краем карты — «лечение» было
       // неуправляемым, а не «скорая помощь».
