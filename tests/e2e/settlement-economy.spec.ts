@@ -3364,17 +3364,19 @@ test('phase M: autonomous archers prioritize siege shamans over closer enemies',
       attackCd: number;
     };
     type EconomyWithCombat = {
-      castleX: number;
-      castleY: number;
       spawnFighter(weapon: 'bow' | 'sword'): FighterPawn;
-      pawnAI: { updateCombat(pawn: FighterPawn, dtMs: number, now: number): void };
+      pawnAI: {
+        postPoint(pawn: FighterPawn): { x: number; y: number };
+        updateCombat(pawn: FighterPawn, dtMs: number, now: number): void;
+      };
     };
     const economy = scene.economy as unknown as EconomyWithCombat;
     const archer = economy.spawnFighter('bow');
-    const postX = economy.castleX + 70;
-    const postY = economy.castleY + 80;
-    archer.setPosition(postX, postY);
     archer.weapon = 'bow';
+    const post = economy.pawnAI.postPoint(archer);
+    const postX = post.x;
+    const postY = post.y;
+    archer.setPosition(postX, postY);
     archer.order = null;
     archer.attackCd = 0;
 
@@ -3423,17 +3425,19 @@ test('phase M: an archer beyond the 420 px leash returns to its post before atta
       body: { velocity: { x: number; y: number } };
     };
     type EconomyWithCombat = {
-      castleX: number;
-      castleY: number;
       spawnFighter(weapon: 'bow' | 'sword'): FighterPawn;
-      pawnAI: { updateCombat(pawn: FighterPawn, dtMs: number, now: number): void };
+      pawnAI: {
+        postPoint(pawn: FighterPawn): { x: number; y: number };
+        updateCombat(pawn: FighterPawn, dtMs: number, now: number): void;
+      };
     };
     const economy = scene.economy as unknown as EconomyWithCombat;
     const archer = economy.spawnFighter('bow');
-    const postX = economy.castleX + 70;
-    const postY = economy.castleY + 80;
-    archer.setPosition(postX + 500, postY);
     archer.weapon = 'bow';
+    const post = economy.pawnAI.postPoint(archer);
+    const postX = post.x;
+    const postY = post.y;
+    archer.setPosition(postX + 500, postY);
     archer.order = null;
     archer.attackCd = 0;
 
