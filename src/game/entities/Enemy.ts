@@ -56,6 +56,10 @@ export class Enemy extends Phaser.Physics.Arcade.Sprite {
   private shootCd = 0;
   /** Защита от повторного выпуска, если callback анимации и таймер совпадут. */
   private harpoonShotFired = false;
+  /** Бросок остаётся ожидающим даже при пропущенном animationcomplete. */
+  private harpoonWindupActive = false;
+  /** Независимый fallback броска: AI tick не должен быть единственным таймером. */
+  private harpoonWindupTimer: Phaser.Time.TimerEvent | null = null;
   private atkCd = 0;
   private summonCd = 8000; // мс до первого зова свиты
   private chargeDirX = 0;
@@ -221,9 +225,18 @@ export class Enemy extends Phaser.Physics.Arcade.Sprite {
 
   /** Выпускает гарпун ровно один раз даже при пропущенном animationcomplete. */
   private fireHarpoon(): void {
-    if (!this.active || this.aiState !== 'windup' || this.harpoonShotFired) return;
+    if (!this.active || this.dead || !this.harpoonWindupActive || this.harpoonShotFired) return;
     this.harpoonShotFired = true;
-    // Сбрасываем маркер даже при таймерном fallback: завершённая атака не должна оставлять спрайт в последнем кадре.
+    this.harpoonWindupActive = false;
+    this.harpoonWindupTimer?.remove(false);
+    this.harpoonWindupTimer = null;
+    // Таймерный fallback может завершиться раньше animationcomplete. Снимаем
+    // старый обработчик, чтобы он не висел до следующей одноразовой анимации.
+    if (this.animationCompleteHandler) {
+      this.off('animationcomplete', this.animationCompleteHandler);
+      this.animationCompleteHandler = null;
+    }
+    // Сбрасываем маркер: следующая итерация AI сможет вернуть idle/run.
     this.lastAnim = '';
     this.ctx.onEnemyShoot(this.x, this.y, 'harpoon');
     this.shootCd = 2400;
@@ -539,8 +552,16 @@ export class Enemy extends Phaser.Physics.Arcade.Sprite {
         }
         if (this.shootCd <= 0 && dist < 520 && this.aiState === 'chase') {
           this.aiState = 'windup';
-          this.stateTimer = 900; // Длительность анимации с запасом для пропущенного события.
+          this.stateTimer = 900; // Совместимый fallback внутри AI tick.
           this.harpoonShotFired = false;
+          this.harpoonWindupActive = true;
+          this.harpoonWindupTimer?.remove(false);
+          // Scene Clock надёжнее одного animationcomplete и продолжает отсчёт,
+          // даже если анимация была прервана или AI временно сменил состояние.
+          this.harpoonWindupTimer = this.scene.time.delayedCall(900, () => {
+            this.harpoonWindupTimer = null;
+            this.fireHarpoon();
+          });
           this.playOnce('harpoon-shark-atk', () => this.fireHarpoon());
         }
         break;
@@ -860,6 +881,9 @@ export class Enemy extends Phaser.Physics.Arcade.Sprite {
 
   destroy(fromScene?: boolean): void {
     this.clearDeathCleanupTimer();
+    this.harpoonWindupTimer?.remove(false);
+    this.harpoonWindupTimer = null;
+    this.harpoonWindupActive = false;
     this.shadow.destroy();
     this.hpBar?.destroy();
     this.auraRing?.destroy();

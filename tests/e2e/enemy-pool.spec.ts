@@ -424,7 +424,7 @@ test('phase I: every reserved creature enters its combat movement state', async 
   expect(pageErrors).toEqual([]);
 });
 
-test('phase I: harpoon shark completes its throw animation and creates the configured projectile', async ({ page }) => {
+test('phase I: harpoon shark still fires when its throw animation is interrupted', async ({ page }) => {
   const pageErrors: string[] = [];
   page.on('pageerror', (error) => pageErrors.push(error.message));
   await openApp(page);
@@ -458,6 +458,10 @@ test('phase I: harpoon shark completes its throw animation and creates the confi
       candidate.active && candidate.kind === 'harpoon-shark');
     if (!shark) throw new Error('Harpoon shark disappeared during windup');
     scene.player.setPosition(shark.x - 800, shark.y);
+    // Прерываем throw-анимацию намеренно: fallback обязан выпустить гарпун,
+    // даже если callback animationcomplete для исходного клипа не придёт.
+    (shark as RuntimeEnemy & { play: (key: string, ignoreIfPlaying?: boolean) => unknown })
+      .play('harpoon-shark-run', true);
   });
   await expect.poll(() => page.evaluate(() => {
     const game = (window as unknown as { __tss?: RuntimeGame }).__tss;
