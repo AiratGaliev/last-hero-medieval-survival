@@ -592,7 +592,13 @@ export class Economy extends Phaser.Events.EventEmitter {
     this.markSpot(spot.x, spot.y);
     this.buildings.push(b);
     this.buildJobs.push({ spot: { kind, x: spot.x, y: spot.y }, building: b, progress: 0, pawn });
-    if (pawn) pawn.workNode = b;
+    if (pawn) {
+      // Пешка могла переходить на помощь со своего ресурсного узла. Снимаем
+      // его claim до замены workNode зданием, иначе узел остаётся навсегда
+      // заблокирован прежним работником.
+      if (pawn.workNode instanceof ResourceNode) pawn.workNode.release(pawn);
+      pawn.workNode = b;
+    }
     return true;
   }
 
@@ -622,7 +628,10 @@ export class Economy extends Phaser.Events.EventEmitter {
     building.underConstruction = true;
     if (rebuild) building.setScale(building.scaleX, 0.02);
     this.repairJobs.push({ building, progress: 0, pawn, rebuild });
-    if (pawn) pawn.workNode = building;
+    if (pawn) {
+      if (pawn.workNode instanceof ResourceNode) pawn.workNode.release(pawn);
+      pawn.workNode = building;
+    }
     return true;
   }
 

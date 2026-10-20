@@ -1603,6 +1603,9 @@ test('phase L: assembly construction helper keeps and completes its assigned job
     collector.carriedAmount = 0;
     collector.workNode = null;
     collector.taskProgress = 0;
+    const claimedNode = economy.nodes.find((node) => node.available && !node.claimedBy);
+    if (!claimedNode || !claimedNode.claim(collector)) throw new Error('Could not reserve a resource node for claim-release test');
+    collector.workNode = claimedNode;
 
     const now = scene.time.now;
     economy.pawnAI.updateCivilian(collector, 16, now + 16);
@@ -1618,11 +1621,12 @@ test('phase L: assembly construction helper keeps and completes its assigned job
       && helperJob.building.hp === helperJob.building.maxHp
       && !economy.buildJobs.some((job) => job.pawn === collector);
 
-    return { stayedAssigned, completed };
+    return { stayedAssigned, completed, resourceClaimReleased: claimedNode.claimedBy === null };
   });
 
   expect(report.stayedAssigned).toBe(true);
   expect(report.completed).toBe(true);
+  expect(report.resourceClaimReleased).toBe(true);
 });
 
 test('phase L: assembly repair helper keeps and completes its assigned job', async ({ page }) => {
@@ -1673,6 +1677,9 @@ test('phase L: assembly repair helper keeps and completes its assigned job', asy
     collector.carriedAmount = 0;
     collector.workNode = null;
     collector.taskProgress = 0;
+    const claimedNode = economy.nodes.find((node) => node.available && !node.claimedBy);
+    if (!claimedNode || !claimedNode.claim(collector)) throw new Error('Could not reserve a resource node for repair claim-release test');
+    collector.workNode = claimedNode;
 
     const woodBefore = economy.resources.wood;
     economy.pawnAI.updateCivilian(collector, 16, now + 20_017);
@@ -1686,12 +1693,13 @@ test('phase L: assembly repair helper keeps and completes its assigned job', asy
     economy.tick(5_001, now + 25_034);
     const completed = house.hp === house.maxHp && !economy.repairJobs.some((job) => job.pawn === collector);
 
-    return { paid, stayedAssigned, completed };
+    return { paid, stayedAssigned, completed, resourceClaimReleased: claimedNode.claimedBy === null };
   });
 
   expect(report.paid).toBe(true);
   expect(report.stayedAssigned).toBe(true);
   expect(report.completed).toBe(true);
+  expect(report.resourceClaimReleased).toBe(true);
 });
 
 test('phase L: settlement cards unlock after the first house, support rank II, and stop at rank II', async ({ page }) => {
