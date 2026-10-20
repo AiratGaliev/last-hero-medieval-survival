@@ -212,12 +212,31 @@ test('intro overlay really pauses gameplay; monastery warnings and garrison dama
     const game = (window as RuntimeWindow).__tss!;
     return (game.scene.getScene('Game') as GameSceneRuntime).elapsed;
   });
+  await page.evaluate(() => {
+    const game = (window as RuntimeWindow).__tss;
+    if (!game) throw new Error('Phaser runtime is unavailable');
+    const scene = game.scene.getScene('Game') as GameSceneRuntime & {
+      registry: { set(key: string, value: unknown): void };
+      time: { delayedCall(delay: number, callback: () => void): unknown };
+    };
+    scene.registry.set('e2e-hint-timer-fired', false);
+    scene.time.delayedCall(250, () => scene.registry.set('e2e-hint-timer-fired', true));
+  });
   await page.waitForTimeout(500);
   const elapsedDuringOverlay = await page.evaluate(() => {
     const game = (window as RuntimeWindow).__tss!;
     return (game.scene.getScene('Game') as GameSceneRuntime).elapsed;
   });
   expect(elapsedDuringOverlay).toBe(elapsedBefore);
+  const timerFiredDuringOverlay = await page.evaluate(() => {
+    const game = (window as RuntimeWindow).__tss!;
+    const scene = game.scene.getScene('Game') as GameSceneRuntime & {
+      registry: { get(key: string): unknown };
+    };
+    return scene.registry.get('e2e-hint-timer-fired');
+  });
+  expect(timerFiredDuringOverlay).toBe(false);
+
   const pausedCombat = await page.evaluate(() => {
     const game = (window as RuntimeWindow).__tss;
     if (!game) throw new Error('Phaser runtime is unavailable');
@@ -268,6 +287,13 @@ test('intro overlay really pauses gameplay; monastery warnings and garrison dama
   expect(castleHpDuringOverlay).toBe(pausedCombat.castleHp);
 
   await continueInitialTutorial(page);
+  await expect.poll(() => page.evaluate(() => {
+    const game = (window as RuntimeWindow).__tss!;
+    const scene = game.scene.getScene('Game') as GameSceneRuntime & {
+      registry: { get(key: string): unknown };
+    };
+    return scene.registry.get('e2e-hint-timer-fired');
+  }), { timeout: 3_000 }).toBe(true);
 
   // Проверка выше уже подтвердила паузу стартового overlay. Отключаем последующие
   // подсказки, чтобы очередь FTUE не ставила на паузу отдельный трёхсекундный

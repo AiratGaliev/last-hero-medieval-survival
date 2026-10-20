@@ -346,6 +346,7 @@ export class GameScene extends Phaser.Scene {
     this.dpsDebugAppliedDamage = 0;
     this.hintOverlayPaused = false;
     this.registry.set('tss-hint-overlay-paused', false);
+    this.time.paused = false;
     this.houseHintArmed = true;
     this.pawnsHintArmed = true;
     this.elapsed = 0; this.kills = 0; this.level = 1;
@@ -623,6 +624,9 @@ export class GameScene extends Phaser.Scene {
     this.hints = new Hints(this, (paused) => {
       this.hintOverlayPaused = paused;
       this.registry.set('tss-hint-overlay-paused', paused);
+      // Заморозить Timer Events: иначе delayedCall (например fallback гарпуна)
+      // может сработать под overlay, а абсолютные дедлайны продолжат истекать.
+      this.time.paused = paused;
       if (paused) this.physics.world.pause();
       else this.physics.world.resume();
     });
