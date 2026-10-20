@@ -314,12 +314,32 @@ test('phase I: every reserved creature spawns under the cap with runtime animati
       hasAttack: game.anims.exists(`${kind}-atk`),
       hasPortrait: game.textures.exists(`face-${kind}`),
     }));
+    // Проверяем реальную границу, а не тривиальное условие «9 меньше 220».
+    // Пул заполняется синхронно в одном evaluate, до следующего физического тика.
+    while (scene.enemyGroup.getLength() < constants.ENEMY_CAP) {
+      const accepted = scene.spawnEnemy(
+        'goblin',
+        scene.player.x + 180,
+        scene.player.y + 100,
+      );
+      if (!accepted) break;
+    }
+    const groupCountAtCap = scene.enemyGroup.getLength();
+    const extraSpawnAccepted = scene.spawnEnemy(
+      'goblin',
+      scene.player.x + 180,
+      scene.player.y + 100,
+    );
+    const groupCountAfterRejected = scene.enemyGroup.getLength();
     const active = scene.enemyGroup.getChildren().filter((enemy) => enemy.active);
     const pool = data.pickDailyPool('2026-10-19');
     return {
       results,
       activeCount: active.length,
       cap: constants.ENEMY_CAP,
+      groupCountAtCap,
+      extraSpawnAccepted,
+      groupCountAfterRejected,
       dailyPoolValid: pool.every((kind) => kind in data.ENEMIES
         && !data.ENEMIES[kind].isElite && !data.ENEMIES[kind].isBoss),
     };
@@ -330,6 +350,9 @@ test('phase I: every reserved creature spawns under the cap with runtime animati
     'spider', 'snake', 'lizard', 'turtle', 'gnome', 'panda',
     'spear-goblin', 'harpoon-shark', 'paddle-shark',
   ]);
+  expect(report.groupCountAtCap).toBe(report.cap);
+  expect(report.extraSpawnAccepted).toBe(false);
+  expect(report.groupCountAfterRejected).toBe(report.cap);
   expect(report.activeCount).toBeLessThanOrEqual(report.cap);
   expect(report.dailyPoolValid).toBe(true);
   expect(pageErrors).toEqual([]);
