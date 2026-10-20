@@ -1004,6 +1004,7 @@ export class GameScene extends Phaser.Scene {
       // Вызов дня использует повторяемый пул по дате — обычные и бесконечные
       // матчи не меняют свой состав врагов.
       dailyPool: this.mods.challenge ? pickDailyPool(rollMetaDay().quests.date) : undefined,
+      alarmLevel: () => this.economy.card('alarm'),
     });
 
     const weaponCtx: WeaponCtx = {
@@ -1851,6 +1852,10 @@ private ordersUnlocked(): boolean {
    * На 3 секунды показывает направление осадного отряда к его текущей цели.
    * Это короткая подсказка поверх карты, а не постоянный навигационный слой.
    */
+  private siegeArrowDurationMs(): number {
+    return 3_000 + 2_000 * this.economy.card('alarm');
+  }
+
   private showSiegeTargetIndicators(enemies: Enemy[]): void {
     if (enemies.length === 0) return;
     const marker = this.add.graphics().setDepth(DEPTH.FX + 1);
@@ -1876,7 +1881,7 @@ private ordersUnlocked(): boolean {
       const py = ux * 8;
       marker.fillTriangle(tipX, tipY, baseX + px, baseY + py, baseX - px, baseY - py);
     }
-    this.time.delayedCall(3_000, () => {
+    this.time.delayedCall(this.siegeArrowDurationMs(), () => {
       if (marker.active) marker.destroy();
     });
   }
@@ -2302,7 +2307,7 @@ private bossDeathSequence(e: Enemy): boolean {
   /** Убийство врага гарнизоном: KILL растёт, комбо игрока — нет (§B.7.1). */
   private damageEnemyByPawn(e: Enemy, dmg: number, weapon: string): void {
     if (!e.active || e.dead) return;
-    const rawDamage = Math.max(1, Math.round(dmg * (this.economy.card('militia') > 0 ? 1.25 : 1)));
+    const rawDamage = Math.max(1, Math.round(dmg * (1 + 0.25 * this.economy.card('militia'))));
     const final = this.heroDpsAtTenMinutes === null
       ? rawDamage
       : this.garrisonDpsBudget.apply(rawDamage, this.time.now, this.heroDpsAtTenMinutes);
@@ -2890,7 +2895,6 @@ private bossDeathSequence(e: Enemy): boolean {
         const id = String(card.id);
         this.economy.applySettlementCard(id);
         this.cardsPicked.push(id); // кодекс/сводка рана (§H.10, §K.2)
-        if (id === 'alarm') this.registry.set('tss-alarm', true);
         this.hud.announce(`${t('settle.subtitle')}: ${card.title}`, '#9fd8ff');
         track('levelup_card_picked', { card_id: id, settlement_card: true });
         break;
@@ -3420,6 +3424,7 @@ private bossDeathSequence(e: Enemy): boolean {
     return {
       playerX: () => this.player.x,
       playerY: () => this.player.y,
+      siegeInterceptRadius: () => SIEGE.INTERCEPT_R + 40 * this.economy.card('militia'),
       onEnemyShoot: (x, y, proj) => {
         // Бросок выполняется по ТЕКУЩЕЙ позиции игрока в момент выпуска
         const tx = this.player.x, ty = this.player.y;
