@@ -3345,3 +3345,424 @@ test('phase K: destroying the castle sets the castle defeat cause and announces 
   expect(report.announcementCount).toBeGreaterThanOrEqual(2);
   expect(report.lastAnnouncement.toLowerCase()).toContain('castle');
 });
+
+
+test('phase M: autonomous archers prioritize siege shamans over closer enemies', async ({ page }) => {
+  await startRun(page);
+  const report = await page.evaluate(() => {
+    const game = (window as RuntimeWindow).__tss;
+    if (!game) throw new Error('Phaser runtime is unavailable');
+    const scene = game.scene.getScene('Game') as GameSceneRuntime & {
+      hints?: { setEnabled(enabled: boolean): void };
+    };
+    scene.hints?.setEnabled(false);
+    scene.registry.set('tss-hint-overlay-paused', false);
+
+    type FighterPawn = PawnRuntime & {
+      weapon: string;
+      order: string | null;
+      attackCd: number;
+    };
+    type EconomyWithCombat = {
+      castleX: number;
+      castleY: number;
+      spawnFighter(weapon: 'bow' | 'sword'): FighterPawn;
+      pawnAI: { updateCombat(pawn: FighterPawn, dtMs: number, now: number): void };
+    };
+    const economy = scene.economy as unknown as EconomyWithCombat;
+    const archer = economy.spawnFighter('bow');
+    const postX = economy.castleX + 70;
+    const postY = economy.castleY + 80;
+    archer.setPosition(postX, postY);
+    archer.weapon = 'bow';
+    archer.order = null;
+    archer.attackCd = 0;
+
+    const closerEnemy = {
+      active: true, dead: false, kind: 'skull', siege: false,
+      x: postX + 40, y: postY,
+    };
+    const siegeShaman = {
+      active: true, dead: false, kind: 'shaman', siege: true,
+      x: postX + 200, y: postY,
+    };
+    const context = scene.registry.get('tss-pawnai-ctx') as {
+      enemies: () => unknown[];
+      shootArrow: (from: unknown, target: unknown) => void;
+    };
+    context.enemies = () => [closerEnemy, siegeShaman];
+    const shots: string[] = [];
+    context.shootArrow = (_from, target) => {
+      const enemy = target as { kind: string; siege: boolean };
+      shots.push(enemy.kind + ':' + String(enemy.siege));
+    };
+
+    economy.pawnAI.updateCombat(archer, 1_000, scene.time.now + 1_000);
+    return { shots, state: archer.state };
+  });
+
+  expect(report.shots[0]).toBe('shaman:true');
+  expect(report.state).toBe('fight');
+});
+
+test('phase M: an archer beyond the 420 px leash returns to its post before attacking', async ({ page }) => {
+  await startRun(page);
+  const report = await page.evaluate(() => {
+    const game = (window as RuntimeWindow).__tss;
+    if (!game) throw new Error('Phaser runtime is unavailable');
+    const scene = game.scene.getScene('Game') as GameSceneRuntime & {
+      hints?: { setEnabled(enabled: boolean): void };
+    };
+    scene.hints?.setEnabled(false);
+    scene.registry.set('tss-hint-overlay-paused', false);
+
+    type FighterPawn = PawnRuntime & {
+      weapon: string;
+      order: string | null;
+      attackCd: number;
+      body: { velocity: { x: number; y: number } };
+    };
+    type EconomyWithCombat = {
+      castleX: number;
+      castleY: number;
+      spawnFighter(weapon: 'bow' | 'sword'): FighterPawn;
+      pawnAI: { updateCombat(pawn: FighterPawn, dtMs: number, now: number): void };
+    };
+    const economy = scene.economy as unknown as EconomyWithCombat;
+    const archer = economy.spawnFighter('bow');
+    const postX = economy.castleX + 70;
+    const postY = economy.castleY + 80;
+    archer.setPosition(postX + 500, postY);
+    archer.weapon = 'bow';
+    archer.order = null;
+    archer.attackCd = 0;
+
+    const enemy = {
+      active: true, dead: false, kind: 'skull', siege: false,
+      x: postX + 450, y: postY,
+    };
+    const context = scene.registry.get('tss-pawnai-ctx') as {
+      enemies: () => unknown[];
+      shootArrow: (from: unknown, target: unknown) => void;
+    };
+    context.enemies = () => [enemy];
+    let shots = 0;
+    context.shootArrow = () => { shots++; };
+
+    economy.pawnAI.updateCombat(archer, 1_000, scene.time.now + 1_000);
+    const velocity = archer.body.velocity;
+    return {
+      state: archer.state,
+      velocityX: velocity.x,
+      towardPost: (postX - archer.x) * velocity.x + (postY - archer.y) * velocity.y,
+      shots,
+    };
+  });
+
+  expect(report.state).toBe('walk');
+  expect(report.velocityX).toBeLessThan(0);
+  expect(report.towardPost).toBeGreaterThan(0);
+  expect(report.shots).toBe(0);
+});
+
+test('phase M: a monk follows the rear of an engaged fighter and never enters combat state', async ({ page }) => {
+  await startRun(page);
+  const report = await page.evaluate(() => {
+    const game = (window as RuntimeWindow).__tss;
+    if (!game) throw new Error('Phaser runtime is unavailable');
+    const scene = game.scene.getScene('Game') as GameSceneRuntime & {
+      hints?: { setEnabled(enabled: boolean): void };
+    };
+    scene.hints?.setEnabled(false);
+    scene.registry.set('tss-hint-overlay-paused', false);
+
+    type FighterPawn = PawnRuntime & {
+      weapon: string;
+      order: string | null;
+      attackCd: number;
+      body: { velocity: { x: number; y: number } };
+      healTarget: PawnRuntime | null;
+      healHeroPoint: { x: number; y: number } | null;
+    };
+    type EconomyWithCombat = {
+      castleX: number;
+      castleY: number;
+      spawnFighter(weapon: 'bow' | 'sword'): FighterPawn;
+      spawnPawn(kind: 'healer', nearX?: number, nearY?: number, announce?: boolean): FighterPawn | null;
+      pawnAI: { updateCombat(pawn: FighterPawn, dtMs: number, now: number): void };
+    };
+    const economy = scene.economy as unknown as EconomyWithCombat;
+    const fighter = economy.spawnFighter('sword');
+    const monk = economy.spawnPawn('healer', economy.castleX, economy.castleY, false);
+    if (!monk) throw new Error('Could not create the monk fixture');
+
+    fighter.setPosition(economy.castleX + 200, economy.castleY);
+    fighter.state = 'fight';
+    fighter.weapon = 'sword';
+    monk.setPosition(economy.castleX - 100, economy.castleY + 100);
+    monk.weapon = 'staff';
+    monk.order = null;
+    monk.healTarget = null;
+    monk.healHeroPoint = null;
+
+    const enemy = {
+      active: true, dead: false, kind: 'skull', siege: true,
+      x: fighter.x + 100, y: fighter.y,
+    };
+    const context = scene.registry.get('tss-pawnai-ctx') as {
+      enemies: () => unknown[];
+      pawnAttackEnemy: (...args: unknown[]) => void;
+    };
+    context.enemies = () => [enemy];
+    let attackCalls = 0;
+    context.pawnAttackEnemy = () => { attackCalls++; };
+
+    economy.pawnAI.updateCombat(monk, 1_000, scene.time.now + 1_000);
+    const velocity = monk.body.velocity;
+    return {
+      state: monk.state,
+      velocityX: velocity.x,
+      velocityY: velocity.y,
+      attackCalls,
+    };
+  });
+
+  expect(report.state).not.toBe('fight');
+  expect(report.velocityX).toBeGreaterThan(0);
+  expect(report.velocityY).toBeLessThan(0);
+  expect(Math.abs(Math.abs(report.velocityX) - Math.abs(report.velocityY))).toBeLessThan(3);
+  expect(report.attackCalls).toBe(0);
+});
+
+
+test('phase M: all new buildings and unit animations have loaded textures', async ({ page }) => {
+  await startRun(page);
+  const report = await page.evaluate(() => {
+    const game = (window as RuntimeWindow).__tss;
+    if (!game) throw new Error('Phaser runtime is unavailable');
+    const runtime = game as unknown as PhaserRuntime & {
+      textures: { exists(key: string): boolean };
+    };
+    const textureKeys = [
+      'archery', 'monastery', 'tower',
+      'pawn-archer-idle', 'pawn-archer-run', 'pawn-archer-atk',
+      'pawn-monk-idle', 'pawn-monk-run', 'pawn-monk-atk',
+    ];
+    const animationKeys = [
+      'pawn-archer-idle', 'pawn-archer-run', 'pawn-archer-atk',
+      'pawn-monk-idle', 'pawn-monk-run', 'pawn-monk-atk',
+    ];
+    return {
+      textures: Object.fromEntries(textureKeys.map(key => [key, runtime.textures.exists(key)])),
+      animations: Object.fromEntries(animationKeys.map(key => [key, runtime.anims.exists(key)])),
+    };
+  });
+
+  expect(Object.values(report.textures).every(Boolean)).toBe(true);
+  expect(Object.values(report.animations).every(Boolean)).toBe(true);
+});
+
+test('phase M: tower fires at a siege target before a closer ordinary enemy', async ({ page }) => {
+  await startRun(page);
+  const report = await page.evaluate(() => {
+    const game = (window as RuntimeWindow).__tss;
+    if (!game) throw new Error('Phaser runtime is unavailable');
+    const scene = game.scene.getScene('Game') as unknown as GameSceneRuntime & {
+      towerTick(now: number): void;
+      activeEnemies(): Array<{
+        active: boolean;
+        dead: boolean;
+        kind: string;
+        siege: boolean;
+        x: number;
+        y: number;
+      }>;
+      projectiles: {
+        fireFriendlyArrow(x: number, y: number, angle: number, damage: number): void;
+      };
+    };
+
+    const tower = {
+      kind: 'tower', x: 500, y: 500, hp: 200, maxHp: 200,
+      alpha: 1, alive: true, underConstruction: false,
+      finishConstruction: () => {}, damage: () => {},
+    };
+    scene.economy.buildings.push(tower);
+    const ordinary = {
+      active: true, dead: false, kind: 'skull', siege: false,
+      x: tower.x + 40, y: tower.y - 40,
+    };
+    const siegeShaman = {
+      active: true, dead: false, kind: 'shaman', siege: true,
+      x: tower.x + 100, y: tower.y + 60,
+    };
+    scene.activeEnemies = () => [ordinary, siegeShaman];
+
+    const shots: Array<{ x: number; y: number; angle: number; damage: number }> = [];
+    scene.projectiles.fireFriendlyArrow = (x, y, angle, damage) => {
+      shots.push({ x, y, angle, damage });
+    };
+    scene.towerTick(scene.time.now + 1_000);
+    return { shot: shots[0] ?? null, shots: shots.length };
+  });
+
+  expect(report.shots).toBe(1);
+  expect(report.shot).not.toBeNull();
+  expect(Math.abs(report.shot!.angle - Math.PI / 4)).toBeLessThan(0.1);
+  expect(report.shot!.damage).toBeGreaterThan(0);
+});
+
+
+test('phase M: field healing rescues a bleeding pawn at 50% HP without spending wood', async ({ page }) => {
+  await startRun(page);
+  const report = await page.evaluate(() => {
+    const game = (window as RuntimeWindow).__tss;
+    if (!game) throw new Error('Phaser runtime is unavailable');
+    const scene = game.scene.getScene('Game') as GameSceneRuntime & {
+      hints?: { setEnabled(enabled: boolean): void };
+    };
+    scene.hints?.setEnabled(false);
+    scene.registry.set('tss-hint-overlay-paused', false);
+
+    type HealerPawn = PawnRuntime & {
+      weapon: string;
+      healTarget: PawnRuntime | null;
+      healHeroPoint: { x: number; y: number } | null;
+      body: { velocity: { x: number; y: number } };
+    };
+    type EconomyWithHealer = {
+      castleX: number;
+      castleY: number;
+      resources: { wood: number };
+      pawns: PawnRuntime[];
+      spawnPawn(kind: 'healer', nearX?: number, nearY?: number, announce?: boolean): HealerPawn | null;
+      healerAI: { update(now: number): void };
+      pawnAI: {
+        updateCivilian(pawn: PawnRuntime, dtMs: number, now: number): void;
+        updateCombat(pawn: HealerPawn, dtMs: number, now: number): void;
+      };
+    };
+    const economy = scene.economy as unknown as EconomyWithHealer;
+    const victim = economy.pawns.find(p => p.kind === 'collector');
+    const monk = economy.spawnPawn('healer', economy.castleX, economy.castleY, false);
+    if (!victim || !monk) throw new Error('Could not create healer rescue fixtures');
+
+    monk.setPosition(economy.castleX + 100, economy.castleY);
+    monk.weapon = 'staff';
+    monk.healTarget = null;
+    monk.healHeroPoint = null;
+    victim.setPosition(economy.castleX + 180, economy.castleY);
+    victim.hp = 0;
+    victim.state = 'wounded';
+    victim.bleedTimer = 0;
+    victim.cooldown = 0;
+
+    const context = scene.registry.get('tss-pawnai-ctx') as { enemies: () => unknown[] };
+    context.enemies = () => [];
+    economy.resources.wood = 1_000;
+    const woodBefore = economy.resources.wood;
+    const now = scene.time.now + 1_000;
+    economy.healerAI.update(now);
+    const targetAssigned = monk.healTarget === victim;
+
+    // Без обители раненый переходит в bleeding, но монах может ещё успеть
+    // поднять его до 50% — моделируем активное игровое время без ожидания браузера.
+    economy.pawnAI.updateCivilian(victim, 16, now);
+    // Проверяем назначение после перехода wounded -> bleeding: очередное
+    // назначение каждые 500 мс не должно лишить монаха цели перед спасением.
+    economy.healerAI.update(now + 500);
+    const targetRetainedAfterBleed = monk.healTarget === victim;
+    for (let i = 0; i < 180 && (victim.state === 'wounded' || victim.state === 'bleeding'); i++) {
+      const tickNow = now + 500 + (i + 1) * 150;
+      economy.pawnAI.updateCivilian(victim, 150, tickNow);
+      economy.pawnAI.updateCombat(monk, 150, tickNow);
+    }
+
+    return {
+      targetAssigned,
+      targetRetainedAfterBleed,
+      state: victim.state,
+      hp: victim.hp,
+      maxHp: victim.maxHp,
+      bleedTimer: victim.bleedTimer,
+      monkTargetCleared: monk.healTarget === null,
+      woodBefore,
+      woodAfter: economy.resources.wood,
+    };
+  });
+
+  expect(report.targetAssigned).toBe(true);
+  expect(report.targetRetainedAfterBleed).toBe(true);
+  expect(report.state).toBe('idle');
+  expect(report.hp).toBeGreaterThanOrEqual(report.maxHp * 0.5);
+  expect(report.bleedTimer).toBeGreaterThan(0);
+  expect(report.monkTargetCleared).toBe(true);
+  expect(report.woodAfter).toBe(report.woodBefore);
+});
+
+
+test('phase M: monastery collapse announces occupied beds and waits three active seconds', async ({ page }) => {
+  await startRun(page);
+  const report = await page.evaluate(() => {
+    const game = (window as RuntimeWindow).__tss;
+    if (!game) throw new Error('Phaser runtime is unavailable');
+    const scene = game.scene.getScene('Game') as GameSceneRuntime & {
+      hints?: { setEnabled(enabled: boolean): void };
+      hud: HUDRuntime & { announce(text: string, color?: string): void };
+    };
+    scene.hints?.setEnabled(false);
+    scene.registry.set('tss-hint-overlay-paused', false);
+
+    type MonasteryRuntime = BuildingRuntime & {
+      occupiedSlots: number;
+      collapsePending: boolean;
+      claimHealSlot(unit: unknown): number | null;
+      tickMonasteryCollapse(dtMs: number): void;
+    };
+    const economy = scene.economy;
+    const builder = economy.pawns.find(p => p.kind === 'builder');
+    const spot = economy.freeSpots().find(s => s.kind === 'monastery');
+    if (!builder || !spot) throw new Error('Builder or monastery build spot is missing');
+    economy.resources.wood = 1_000;
+    economy.resources.ore = 1_000;
+    economy.resources.meat = 1_000;
+    if (!economy.tryStartBuild('monastery', builder, spot)) {
+      throw new Error('Could not create the monastery fixture');
+    }
+    const monastery = economy.buildings.find(b => b.kind === 'monastery') as MonasteryRuntime | undefined;
+    if (!monastery) throw new Error('Monastery fixture is missing');
+    monastery.finishConstruction();
+    economy.buildJobs.splice(economy.buildJobs.findIndex(job => job.building === monastery), 1);
+
+    monastery.claimHealSlot({});
+    monastery.claimHealSlot({});
+    const announcements: string[] = [];
+    scene.hud.announce = (text) => announcements.push(text);
+
+    monastery.damage(260, 0); // ниже 30% HP: первое предупреждение
+    monastery.damage(monastery.hp, 0); // ниже 10% HP: критическое предупреждение и окно реакции
+    const critical = {
+      hp: monastery.hp,
+      alive: monastery.alive,
+      pending: monastery.collapsePending,
+      occupiedSlots: monastery.occupiedSlots,
+    };
+    monastery.tickMonasteryCollapse(2_999);
+    const beforeDeadline = { hp: monastery.hp, alive: monastery.alive, pending: monastery.collapsePending };
+    monastery.tickMonasteryCollapse(1);
+
+    return {
+      announcements,
+      critical,
+      beforeDeadline,
+      afterDeadline: { hp: monastery.hp, alive: monastery.alive, pending: monastery.collapsePending },
+    };
+  });
+
+  expect(report.announcements).toHaveLength(2);
+  expect(report.announcements.every(message => message.includes('2'))).toBe(true);
+  expect(report.critical).toEqual({ hp: 1, alive: true, pending: true, occupiedSlots: 2 });
+  expect(report.beforeDeadline).toEqual({ hp: 1, alive: true, pending: true });
+  expect(report.afterDeadline.alive).toBe(false);
+  expect(report.afterDeadline.pending).toBe(false);
+});

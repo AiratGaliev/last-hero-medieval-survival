@@ -657,9 +657,32 @@ export class PawnAI {
       return;
     }
     if (p.order === 'monastery' && p.kind === 'healer') {
-      // Режим обители: стоит рядом и лечит по тарифу §G.3 (без слота)
+      // Режим обители: остаётся у здания, не вступает в бой (§B.7.2).
       const mon = eco.nearestMonastery(p);
       if (mon) this.fightAround(p, enemies, mon.x, mon.y, 140, now, false);
+      return;
+    }
+
+    // Монах по умолчанию следует за фронтом, оставаясь за своим воином.
+    // Он не выбирает врагов как цель и никогда не входит в state='fight'.
+    if (p.kind === 'healer') {
+      const point = this.healerFollowPoint(p, enemies);
+      if (Phaser.Math.Distance.Between(p.x, p.y, point.x, point.y) <= 14) {
+        p.state = 'idle';
+        p.playMove(false);
+        p.setVelocity(0, 0);
+      } else {
+        p.state = 'walk';
+        this.walkTo(p, point.x, point.y, tickMs);
+      }
+      return;
+    }
+
+    // Лучник использует свой пост даже в автономном режиме: выбор цели,
+    // кайтинг и поводок не должны отличаться от ручного приказа «НА ПОСТ».
+    if (p.weapon === 'bow') {
+      const post = this.postPoint(p);
+      this.fightAround(p, enemies, post.x, post.y, 160, now, false);
       return;
     }
 
@@ -706,17 +729,6 @@ export class PawnAI {
     }
 
     // Патруль вокруг замка: точка смены каждые 6–10 сек (§B.6)
-    if (p.kind === 'healer') {
-      // Монах без цели: за линией боя, у замка (§B.7.2 — отступ 200 px).
-      const fighters = eco.garrison.filter((f) => f.kind === 'fighter' && f.state === 'fight');
-      const anchor = fighters[0];
-      if (anchor) {
-        this.walkTo(p, anchor.x + HEALER.FOLLOW_OFFSET, anchor.y + HEALER.FOLLOW_OFFSET, tickMs);
-      } else {
-        this.walkTo(p, sx + 60, sy + 80, tickMs);
-      }
-      return;
-    }
     const swapIn = this.patrolSwap.get(p) ?? 0;
     if (now > swapIn || !this.patrolPoints.get(p)) {
       const a = Math.random() * Math.PI * 2;
@@ -780,26 +792,77 @@ export class PawnAI {
   /** Бой вокруг точки (пост/герой/точка ДЕРЖАТЬ). */
   private fightAround(p: Pawn, enemies: Enemy[], cx: number, cy: number, keep: number, now: number, allowTaunt: boolean): void {
     void allowTaunt; // таунт читается Settlement по состоянию fight+близости
-    let target: Enemy | null = null;
-    let bestD = Infinity;
-    const priority = FIGHTERS[p.weapon ?? 'sword'].prioritise;
-    for (const e of enemies) {
-      if (!e.active || e.dead) continue;
-      const d = Math.hypot(e.x - cx, e.y - cy);
-      // Лучник бьёт приоритетно осадных шаманов (§B.7.1)
-      const bonus = priority && e.kind === priority && e.siege ? -250 : 0;
-      if (d + bonus < bestD) { bestD = d + bonus; target = e; }
-    }
     const leashD = Math.hypot(p.x - cx, p.y - cy);
-    if (target && bestD < GARRISON.RALLY) {
-      p.state = 'fight';
-      this.approachAndAttack(p, target, now);
-      return;
-    }
-    // Лучник не уходит дальше 420 px от поста (§B.7.1)
-    if (leashD > (p.weapon === 'bow' ? KITE.MAX_LEASH : keep + 40)) {
+
+    // Поводок проверяется ДО выбора/атаки цели: лучник за 420 px обязан
+    // вернуться к посту, а не продолжать стрелять и уводить врагов с базы.
+    if (p.weapon === 'bow' && leashD > KITE.MAX_LEASH) {
       p.state = 'walk';
       this.walkTo(p, cx, cy, this.curTickMs);
+      return;
+    }
+
+    // Гарнизонный монах выполняет приказ позиционирования, но не выбирает
+    // противников и не получает состояние fight — только heal/idle/walk.
+    if (p.weapon === 'staff') {
+      let destinationX = cx;
+      let destinationY = cy;
+      if (p.order === 'follow') {
+        // При явном приказе следовать не накладывается на героя: сохраняет
+        // дистанцию keep с его тыльной стороны, включая нулевую начальную дистанцию.
+        let dx = p.x - cx;
+        let dy = p.y - cy;
+        let length = Math.hypot(dx, dy);
+        if (length < 1) { dx = 0; dy = -1; length = 1; }
+        destinationX = cx + (dx / length) * keep;
+        destinationY = cy + (dy / length) * keep;
+      }
+      if (Phaser.Math.Distance.Between(p.x, p.y, destinationX, destinationY) > 14) {
+        p.state = 'walk';
+        this.walkTo(p, destinationX, destinationY, this.curTickMs);
+      } else {
+        p.state = 'idle';
+        p.playMove(false);
+        p.setVelocity(0, 0);
+      }
+      return;
+    }
+
+    let target: Enemy | null = null;
+    if (p.weapon === 'bow') {
+      // Осадный шаман — безусловный приоритет в радиусе обороны. Штраф к
+      // расстоянию был недостаточен: обычный враг всё ещё мог выигрывать.
+      const priority = FIGHTERS.bow.prioritise;
+      let priorityTarget: Enemy | null = null;
+      let priorityD = Infinity;
+      let nearestTarget: Enemy | null = null;
+      let nearestD = Infinity;
+      for (const e of enemies) {
+        if (!e.active || e.dead) continue;
+        const d = Math.hypot(e.x - cx, e.y - cy);
+        if (d >= GARRISON.RALLY) continue;
+        if (d < nearestD) {
+          nearestD = d;
+          nearestTarget = e;
+        }
+        if (priority && e.kind === priority && e.siege && d < priorityD) {
+          priorityD = d;
+          priorityTarget = e;
+        }
+      }
+      target = priorityTarget ?? nearestTarget;
+    } else {
+      let bestD = Infinity;
+      for (const e of enemies) {
+        if (!e.active || e.dead) continue;
+        const d = Math.hypot(e.x - cx, e.y - cy);
+        if (d < bestD) { bestD = d; target = e; }
+      }
+    }
+
+    if (target && Math.hypot(target.x - cx, target.y - cy) < GARRISON.RALLY) {
+      p.state = 'fight';
+      this.approachAndAttack(p, target, now);
       return;
     }
     p.state = 'idle';
@@ -812,13 +875,13 @@ export class PawnAI {
     const def = FIGHTERS[w];
     const d = Phaser.Math.Distance.Between(p.x, p.y, e.x, e.y);
 
-    // ⚠️ Монах НЕ БЬЁТ (§B.2, §B.7.2) — его работа только лечение. Раньше
-    // `staff` проваливался в ветку мечника, а `pawnAttackEnemy` с `dmg = 0`
-    // в GameScene делает `Math.max(1, …)` — получался урон 1 за 150 мс.
+    // Защитный инвариант: монах не атакует и не преследует врага даже при
+    // ошибочном вызове этой функции из будущего кода (§B.7.2).
     if (w === 'staff') {
-      p.state = 'fight';
-      if (d > HEALER.FOLLOW_OFFSET) this.walkTo(p, e.x, e.y, this.curTickMs);
-      else { p.playMove(false); p.setVelocity(0, 0); }
+      p.state = 'idle';
+      p.playMove(false);
+      p.setVelocity(0, 0);
+      void d;
       void now;
       return;
     }
@@ -996,9 +1059,62 @@ export class PawnAI {
     return false;
   }
 
+  /** Позиция монаха: 200 px за ближайшим бойцом относительно врага. */
+  private healerFollowPoint(p: Pawn, enemies: Enemy[]): { x: number; y: number } {
+    const eco = this.eco;
+    const fallback = { x: eco.castleX + 60, y: eco.castleY + 80 };
+    const fighters = eco.garrison.filter((f) => f.kind === 'fighter'
+      && f.weapon !== 'bow' && f.weapon !== 'staff'
+      && !f.dead && f.active
+      && Phaser.Math.Distance.Between(f.x, f.y, eco.castleX, eco.castleY) <= GARRISON.LEASH
+      && f.state !== 'wounded' && f.state !== 'bleeding' && f.state !== 'retreat');
+
+    let anchor: Pawn | null = null;
+    let threat: Enemy | null = null;
+    let bestScore = Infinity;
+    for (const fighter of fighters) {
+      let nearest: Enemy | null = null;
+      let nearestD: number = GARRISON.RALLY;
+      for (const enemy of enemies) {
+        if (!enemy.active || enemy.dead) continue;
+        const d = Phaser.Math.Distance.Between(fighter.x, fighter.y, enemy.x, enemy.y);
+        if (d < nearestD) {
+          nearestD = d;
+          nearest = enemy;
+        }
+      }
+      // Важнее прикрыть бойца, который уже engaged; при равном приоритете —
+      // тот, к кому монаху ближе добраться.
+      const distance = Phaser.Math.Distance.Between(p.x, p.y, fighter.x, fighter.y);
+      const score = distance - (nearest ? 800 : 0) - (fighter.state === 'fight' ? 200 : 0);
+      if (score < bestScore) {
+        bestScore = score;
+        anchor = fighter;
+        threat = nearest;
+      }
+    }
+    if (!anchor) return fallback;
+
+    // Линия «боец → враг» определяет фронт. Монах остаётся на 200 px
+    // с противоположной стороны; при отсутствии врага он возвращается
+    // к стороне замка, а не уходит по фиксированной диагонали.
+    const dx = threat ? anchor.x - threat.x : eco.castleX - anchor.x;
+    const dy = threat ? anchor.y - threat.y : eco.castleY - anchor.y;
+    const length = Math.hypot(dx, dy);
+    if (length < 1) return { x: anchor.x + HEALER.FOLLOW_OFFSET, y: anchor.y };
+    return {
+      x: anchor.x + (dx / length) * HEALER.FOLLOW_OFFSET,
+      y: anchor.y + (dy / length) * HEALER.FOLLOW_OFFSET,
+    };
+  }
+
   private postPoint(p: Pawn): { x: number; y: number } {
     const eco = this.eco;
-    const order: Building['kind'][] = p.kind === 'healer' ? ['monastery', 'barracks', 'archery', 'castle'] : ['barracks', 'archery', 'monastery', 'castle'];
+    const order: Building['kind'][] = p.kind === 'healer'
+      ? ['monastery', 'barracks', 'archery', 'castle']
+      : p.weapon === 'bow'
+        ? ['archery', 'barracks', 'monastery', 'castle']
+        : ['barracks', 'archery', 'monastery', 'castle'];
     for (const k of order) {
       const b = eco.buildings.find((bb) => bb.alive && bb.kind === k && !bb.underConstruction);
       if (b) return { x: b.x + 60, y: b.y + 70 };
