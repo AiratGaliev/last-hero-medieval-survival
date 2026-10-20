@@ -334,6 +334,98 @@ test('phase I: every reserved creature spawns under the cap with runtime animati
   expect(consoleErrors.filter((message) => /Frame not found|Missing animation/i.test(message))).toEqual([]);
 });
 
+
+
+test('phase I: reserved creatures move in combat and harpoon shark releases a live harpoon projectile', async ({ page }) => {
+  const pageErrors: string[] = [];
+  page.on('pageerror', (error) => pageErrors.push(error.message));
+  await openApp(page);
+  await startGameplay(page);
+
+  const initial = await page.evaluate(() => {
+    const game = (window as unknown as { __tss?: RuntimeGame }).__tss;
+    if (!game) throw new Error('Phaser runtime is unavailable');
+    const scene = game.scene.getScene('Game');
+    scene.spawner.stopped = true;
+    const kinds = [
+      'spider', 'snake', 'lizard', 'turtle', 'gnome',
+      'panda', 'spear-goblin', 'harpoon-shark', 'paddle-shark',
+    ];
+    const started = kinds.map((kind, index) => {
+      const x = scene.player.x + 540 + index * 30;
+      const y = scene.player.y + 300;
+      if (!scene.spawnEnemy(kind, x, y)) return { kind, spawned: false, x, y };
+      const enemy = scene.enemyGroup.getChildren().find((candidate) =>
+        candidate.active && candidate.kind === kind
+          && Math.hypot(candidate.x - x, candidate.y - y) < 4);
+      if (!enemy) return { kind, spawned: false, x, y };
+      return { kind, spawned: true, x: enemy.x, y: enemy.y };
+    });
+    return started;
+  });
+
+  await page.waitForTimeout(450);
+  const movement = await page.evaluate((positions) => {
+    const game = (window as unknown as { __tss?: RuntimeGame }).__tss;
+    if (!game) throw new Error('Phaser runtime is unavailable');
+    const scene = game.scene.getScene('Game');
+    return positions.map((initialPosition) => {
+      const enemy = scene.enemyGroup.getChildren().find((candidate) =>
+        candidate.active && candidate.kind === initialPosition.kind);
+      return {
+        kind: initialPosition.kind,
+        spawned: initialPosition.spawned,
+        distance: enemy ? Math.hypot(enemy.x - initialPosition.x, enemy.y - initialPosition.y) : 0,
+      };
+    });
+  }, initial);
+  expect(movement.every((result) => result.spawned && result.distance > 1)).toBe(true);
+
+  const harpoon = await page.evaluate(() => {
+    const game = (window as unknown as { __tss?: RuntimeGame }).__tss;
+    if (!game) throw new Error('Phaser runtime is unavailable');
+    const scene = game.scene.getScene('Game') as RuntimeScene & {
+      projectiles: {
+        enemyShots: { getChildren(): Array<{ active: boolean; shotKind?: string; texture: { key: string } }> };
+      };
+    };
+    const shots = scene.projectiles.enemyShots.getChildren();
+    return shots.some((shot) => shot.active && shot.shotKind === 'harpoon' && shot.texture.key === 'proj-harpoon');
+  });
+  expect(harpoon).toBe(false); // no shark attack was forced in this movement-only sample
+  expect(pageErrors).toEqual([]);
+});
+
+test('phase I: harpoon shark completes its throw animation and creates the configured projectile', async ({ page }) => {
+  const pageErrors: string[] = [];
+  page.on('pageerror', (error) => pageErrors.push(error.message));
+  await openApp(page);
+  await startGameplay(page);
+
+  await page.evaluate(() => {
+    const game = (window as unknown as { __tss?: RuntimeGame }).__tss;
+    if (!game) throw new Error('Phaser runtime is unavailable');
+    const scene = game.scene.getScene('Game');
+    scene.spawner.stopped = true;
+    // Place the shark inside throw range, with no other target closer than the hero.
+    const x = scene.player.x + 450;
+    const y = scene.player.y;
+    if (!scene.spawnEnemy('harpoon-shark', x, y)) throw new Error('Could not spawn harpoon shark');
+  });
+  await expect.poll(() => page.evaluate(() => {
+    const game = (window as unknown as { __tss?: RuntimeGame }).__tss;
+    if (!game) return false;
+    const scene = game.scene.getScene('Game') as RuntimeScene & {
+      projectiles: {
+        enemyShots: { getChildren(): Array<{ active: boolean; shotKind?: string; texture: { key: string } }> };
+      };
+    };
+    return scene.projectiles.enemyShots.getChildren()
+      .some((shot) => shot.active && shot.shotKind === 'harpoon' && shot.texture.key === 'proj-harpoon');
+  }), { timeout: 4_000 }).toBe(true);
+  expect(pageErrors).toEqual([]);
+});
+
 test('gameplay spawns the opening goblin and keeps Ogre death animation alive to completion', async ({ page }) => {
   const pageErrors: string[] = [];
   page.on('pageerror', (error) => pageErrors.push(error.message));

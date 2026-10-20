@@ -3421,7 +3421,9 @@ private bossDeathSequence(e: Enemy): boolean {
         // Бросок выполняется по ТЕКУЩЕЙ позиции игрока в момент выпуска
         const tx = this.player.x, ty = this.player.y;
         const a = Math.atan2(ty - y, tx - x);
-        const srcDmg = proj === 'bone' ? ENEMIES.gnoll.damage : ENEMIES.shaman.damage;
+        const srcDmg = proj === 'bone' ? ENEMIES.gnoll.damage
+          : proj === 'hex' ? ENEMIES.shaman.damage
+            : ENEMIES['harpoon-shark'].damage;
         this.projectiles.shootEnemy(proj, x, y, a, Math.round(srcDmg * this.spawner.dmgMult));
       },
       onBossSlam: (x, y) => {

@@ -43,10 +43,11 @@ interface Bomb {
   mini?: boolean;
 }
 
-/** Параметры снарядов врагов (кость гнолла / шар шамана) */
-const ENEMY_SHOTS: Record<EnemyShotKind, { tex: string; anim: string; speed: number; life: number; body: number; scale: number }> = {
-  bone: { tex: 'proj-bone', anim: 'proj-bone-spin', speed: 340, life: 2200, body: 26, scale: 1 },
-  hex:  { tex: 'proj-hex',  anim: 'proj-hex-orb',  speed: 300, life: 2600, body: 30, scale: 1 },
+/** Параметры снарядов существ: кость, магический шар и гарпун. */
+const ENEMY_SHOTS: Record<EnemyShotKind, { tex: string; anim?: string; speed: number; life: number; body: number; scale: number }> = {
+  bone:    { tex: 'proj-bone', anim: 'proj-bone-spin', speed: 340, life: 2200, body: 26, scale: 1 },
+  hex:     { tex: 'proj-hex',  anim: 'proj-hex-orb',  speed: 300, life: 2600, body: 30, scale: 1 },
+  harpoon: { tex: 'proj-harpoon', speed: 320, life: 2400, body: 22, scale: 0.72 },
 };
 
 export interface ProjectileCtx {
@@ -171,6 +172,7 @@ export class Projectiles {
     p.fire = false;
     p.setPosition(x, y);
     p.setVelocity(Math.cos(angle) * cfg.speed, Math.sin(angle) * cfg.speed);
+    p.setRotation(angle);
     p.dmg = dmg;
     p.pierceLeft = 0;
     p.life = cfg.life;
@@ -378,7 +380,8 @@ export class Projectiles {
     b.setAllowGravity(false);
     p.clearTint();
     p.setScale(cfg.scale);
-    p.play(cfg.anim, true);
+    if (cfg.anim) p.play(cfg.anim, true);
+    else p.stop();
     return p;
   }
 

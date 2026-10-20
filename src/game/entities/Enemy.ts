@@ -7,12 +7,12 @@ import type { Pawn } from './Pawn';
 // ============ Враг — существо из пака enemies/ (TZ §A) ============
 
 /** Тип снаряда, который враг выдаёт через контекст сцены */
-export type EnemyShotKind = 'bone' | 'hex';
+export type EnemyShotKind = 'bone' | 'hex' | 'harpoon';
 
 export interface EnemyContext {
   playerX(): number;
   playerY(): number;
-  /** Гнолл (кость) или шаман (шар) завершают анимацию броска */
+  /** Гнолл, шаман или гарпун-акула завершают анимацию броска. */
   onEnemyShoot(x: number, y: number, proj: EnemyShotKind): void;
   /** Огр бьёт клубом в землю: ударная волна по радиусу */
   onBossSlam(x: number, y: number): void;
@@ -328,12 +328,16 @@ export class Enemy extends Phaser.Physics.Arcade.Sprite {
   takeDamage(dmg: number): boolean {
     if (this.dead) return false;
     let final = dmg;
-    // Скелет: пока щит цел, гасит 45% урона. Слом щита при 40% HP
-    if (this.kind === 'skull' && !this.enraged && this.def.armorFront) {
+    // Защита по виду: щит скелета снимается на ярости, панцирь черепахи и
+    // стойка панды уменьшают входящий урон постоянно.
+    const hasArmor = this.def.armorFront && (this.kind !== 'skull' || !this.enraged);
+    if (hasArmor) {
       final = Math.max(1, final * (1 - this.def.armorFront));
-      // Звон щита — блок заметен и без чтения чисел урона
-      if (Math.random() < 0.3) audio.play('hit');
+      // Звон щита скелета — блок заметен и без чтения чисел урона.
+      if (this.kind === 'skull' && Math.random() < 0.3) audio.play('hit');
     }
+    // Ящер заметно реагирует на попадание: hit-лист есть только у этого вида.
+    if (this.kind === 'lizard' && !this.dead) this.playOnce('lizard-hit');
     this.hp -= final;
     // Вспышка урона (белая заливка в Phaser 4: setTint + FILL режим)
     this.setTint(0xffffff);
@@ -456,6 +460,16 @@ export class Enemy extends Phaser.Physics.Arcade.Sprite {
       case 'thief':
       case 'skull':
       case 'bear':
+      // Девять резервных видов фазы I тоже используют полноценный FSM боя.
+      // Их скорость, дальность атаки и прочность задаются отдельными ENEMIES defs.
+      case 'spider':
+      case 'snake':
+      case 'lizard':
+      case 'turtle':
+      case 'gnome':
+      case 'panda':
+      case 'spear-goblin':
+      case 'paddle-shark':
         // Простой погон; вблизи — косметический замах (урон наносит overlap)
         vx = nx * this.speed; vy = ny * this.speed;
         this.atkCd -= delta;
@@ -464,6 +478,38 @@ export class Enemy extends Phaser.Physics.Arcade.Sprite {
           this.playOnce(`${this.kind}-atk`);
         }
         break;
+
+      case 'harpoon-shark': {
+        // Гарпун-акула — отдельный дальнобойный тип: держит дистанцию,
+        // прекращает движение на время броска и стреляет после окончания throw-анимации.
+        this.shootCd -= delta;
+        const want = 300;
+        if (this.aiState === 'windup') {
+          vx = 0;
+          vy = 0;
+        } else if (dist > want + 45) {
+          vx = nx * this.speed;
+          vy = ny * this.speed;
+        } else if (dist < want - 55) {
+          vx = -nx * this.speed;
+          vy = -ny * this.speed;
+        } else {
+          vx = -ny * this.speed * 0.55;
+          vy = nx * this.speed * 0.55;
+        }
+        if (this.shootCd <= 0 && dist < 520 && this.aiState === 'chase') {
+          this.aiState = 'windup';
+          this.playOnce('harpoon-shark-atk');
+          this.once('animationcomplete', (anim: Phaser.Animations.Animation) => {
+            if (anim.key === 'harpoon-shark-atk' && this.active && this.aiState === 'windup') {
+              this.ctx.onEnemyShoot(this.x, this.y, 'harpoon');
+              this.shootCd = 2400;
+              this.aiState = 'chase';
+            }
+          });
+        }
+        break;
+      }
 
       case 'gnoll': {
         // Метатель костей: держит дистанцию 300 px

@@ -164,6 +164,7 @@ export class BootScene extends Phaser.Scene {
     // плюс FX взрыва шара (все — из того же пака enemies/)
     this.load.spritesheet('proj-bone', asset('tiny-swords', 'enemies/gnoll/gnoll-bone.png'), { frameWidth: 64, frameHeight: 64 });
     this.load.spritesheet('proj-hex', asset('tiny-swords', 'enemies/goblin-raiders/hex-shaman/hex-shaman-projectile.png'), { frameWidth: 128, frameHeight: 128 });
+    this.load.image('proj-harpoon', asset('tiny-swords', 'enemies/pirate-fish/harpoon-shark/harpoon.png'));
     this.load.spritesheet('fx-hex', asset('tiny-swords', 'enemies/goblin-raiders/hex-shaman/hex-shaman-explosion.png'), { frameWidth: 128, frameHeight: 128 });
     // Аватары существ для кино-заставок элит и босса (HUD.bossIntro)
     for (const [kind, file] of CREATURE_FACES) {

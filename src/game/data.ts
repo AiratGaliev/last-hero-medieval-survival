@@ -347,7 +347,7 @@ export interface EnemyDef {
   isBoss?: boolean;
   explodeDmg?: number;   // для рыбы-бомбы
   explodeRadius?: number;
-  armorFront?: number;   // Скелет: доля урона, блокируемая щитом
+  armorFront?: number;   // Доля входящего урона, которую гасит защита вида
   auraSpeed?: number;    // Шаман: радиус ауры ускорения союзников
   /** Урон по зданиям за удар (TZ §E.4.1, вариант A ×0.65) — НЕ производное от damage */
   buildingDmg?: number;
@@ -425,7 +425,7 @@ export const ENEMIES: Record<EnemyKind, EnemyDef> = {
     kind: 'turtle', name: t('enemy.turtle.name'), frameW: 320, scale: 0.6,
     body: { cx: 160, cy: 210, r: 29 }, groundY: 239,
     hp: 90, speed: 38, damage: 16, xp: 8, gem: 'gem-green',
-    armorFront: 0.2,
+    armorFront: 0.2, // Панцирь уменьшает любой входящий урон.
   },
   gnome: {
     kind: 'gnome', name: t('enemy.gnome.name'), frameW: 192, scale: 0.53,
@@ -436,7 +436,7 @@ export const ENEMIES: Record<EnemyKind, EnemyDef> = {
     kind: 'panda', name: t('enemy.panda.name'), frameW: 256, scale: 0.82,
     body: { cx: 128, cy: 160, r: 30 }, groundY: 188, facesRight: false,
     hp: 75, speed: 65, damage: 15, xp: 8, gem: 'gem-green',
-    armorFront: 0.1,
+    armorFront: 0.1, // Плотная стойка панды снижает входящий урон.
   },
   'spear-goblin': {
     kind: 'spear-goblin', name: t('enemy.spearGoblin.name'), frameW: 256, scale: 0.55,
