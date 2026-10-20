@@ -40,6 +40,8 @@ export class Building extends Phaser.GameObjects.Image {
   private burnSprite: Phaser.GameObjects.Sprite | null = null;
   private fireFx: Phaser.GameObjects.Sprite | null = null;
   private fireTimer = 0;
+  /** Окно реакции: обитель рушится через 3 с после порога 10% HP (§G.5.1). */
+  private monasteryCollapseTimer: Phaser.Time.TimerEvent | null = null;
   private slotLabel: Phaser.GameObjects.Text | null = null;
   private readonly scene_: Phaser.Scene;
   private readonly ctx: BuildingCtx;
@@ -104,19 +106,27 @@ export class Building extends Phaser.GameObjects.Image {
     if (this.kind === 'monastery') {
       const frac = this.hp / this.maxHp;
       const victims = this.healSlots.filter((s) => s !== null).length;
-      if (frac <= 0.1 && !this.warned10) {
-        this.warned10 = true;
-        this.ctx.onMonasteryFalling(this, victims);
-      } else if (frac <= 0.3 && !this.warned30) {
+      // Раздельные проверки нужны, чтобы один большой удар, пересёкший сразу
+      // оба порога, не пропустил предупреждение 30% перед критическим 10%.
+      if (frac <= 0.3 && !this.warned30) {
         this.warned30 = true;
         this.ctx.onMonasteryFalling(this, victims);
       }
+      if (frac <= 0.1 && !this.warned10) {
+        this.warned10 = true;
+        this.ctx.onMonasteryFalling(this, victims);
+        this.scheduleMonasteryCollapse();
+      }
     }
     if (this.hp <= 0) {
-      // Замок и обитель гибнут полностью (§E.3, §G.5); прочие — руины,
-      // которые ремонтник восстанавливает за 60 дерева / 10 сек (§E.5).
-      if (this.kind === 'castle' || this.kind === 'monastery') this.destroy();
-      else this.enterRuins();
+      // Замок погибает сразу. Обитель сохраняет минимум 1 HP до конца
+      // трёхсекундного окна реакции после предупреждения на пороге 10% (§G.5.1).
+      // Прочие здания превращаются в руины и восстанавливаются за 60 дерева.
+      if (this.kind === 'castle') this.destroy();
+      else if (this.kind === 'monastery') {
+        if (this.monasteryCollapseTimer) this.hp = 1;
+        else this.destroy();
+      } else this.enterRuins();
     }
   }
 
@@ -143,8 +153,21 @@ export class Building extends Phaser.GameObjects.Image {
 
   /** Сброс порогов предупреждений после ремонта (обитель достроена). */
   warnedReset(): void {
+    this.monasteryCollapseTimer?.remove(false);
+    this.monasteryCollapseTimer = null;
     this.warned30 = false;
     this.warned10 = false;
+  }
+
+  /** Отложенное обрушение оставляет игроку три секунды на спасение раненых. */
+  private scheduleMonasteryCollapse(): void {
+    if (this.kind !== 'monastery' || this.monasteryCollapseTimer) return;
+    this.monasteryCollapseTimer = this.scene_.time.delayedCall(3_000, () => {
+      this.monasteryCollapseTimer = null;
+      if (!this.alive || !this.active) return;
+      this.hp = 0;
+      this.destroy();
+    });
   }
 
   /** Поджог: DoT SIEGE.BURN_DMG за SIEGE.BURN_MS (TZ §E.4.1). */
@@ -219,6 +242,8 @@ export class Building extends Phaser.GameObjects.Image {
   }
 
   destroy(fromScene?: boolean): void {
+    this.monasteryCollapseTimer?.remove(false);
+    this.monasteryCollapseTimer = null;
     // Phaser вызывает destroy() у всех детей при шатдауне/уничтожении сцены.
     // Это НЕ игровое разрушение: колбэки осад/жильцов били бы по уже
     // уничтоженному HUD (setText на уничтоженном кадре — «Cannot read

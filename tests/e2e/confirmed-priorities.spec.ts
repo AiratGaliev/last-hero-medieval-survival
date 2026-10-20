@@ -17,6 +17,7 @@ type HintRuntime = {
 };
 type BuildingRuntime = {
   kind: string;
+  alive: boolean;
   hp: number;
   maxHp: number;
   underConstruction: boolean;
@@ -245,6 +246,7 @@ test('intro overlay really pauses gameplay; monastery warnings and garrison dama
       hpFraction: building.hp / building.maxHp,
       warned30: building.warned30,
       warned10: building.warned10,
+      aliveAtWarning: building.alive,
       warnings,
     };
   });
@@ -256,6 +258,17 @@ test('intro overlay really pauses gameplay; monastery warnings and garrison dama
   expect(monastery.warned30).toBe(true);
   expect(monastery.warned10).toBe(true);
   expect(monastery.warnings).toHaveLength(2);
+  expect(monastery.aliveAtWarning).toBe(true);
+
+  const aliveDuringCollapseWindow = async (): Promise<boolean> => page.evaluate(() => {
+    const game = (window as RuntimeWindow).__tss!;
+    const scene = game.scene.getScene('Game') as GameSceneRuntime;
+    return scene.economy.buildings.find((building) => building.kind === 'monastery')?.alive ?? false;
+  });
+  await page.waitForTimeout(1_000);
+  expect(await aliveDuringCollapseWindow()).toBe(true);
+  await page.waitForTimeout(2_200);
+  expect(await aliveDuringCollapseWindow()).toBe(false);
 
   const expectedDpsAtTenMinutes = await page.evaluate(() => {
     const game = (window as RuntimeWindow).__tss!;
