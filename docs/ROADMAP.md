@@ -1,10 +1,11 @@
 ## Текущий статус PR #20 — 2026-10-20
 
-- PR [#20](https://github.com/AiratGaliev/last-hero-medieval-survival/pull/20) открыт, target — `dev`; PR не влит. Рабочая ветка синхронизирована с актуальным `dev` (GitHub: `behind_by: 0`, `mergeable: true`).
-- Кодовый head [`1a75973b`](https://github.com/AiratGaliev/last-hero-medieval-survival/commit/1a75973b5d199d347a886edb34ca38caf1496d46) прошёл CI Fast [run #39473754983](https://github.com/AiratGaliev/last-hero-medieval-survival/actions/runs/39473754983): проверка маршрута, `npm ci`, `npm run check`, `npm run build` и `npm run check:yg` — success.
-- Реализована единая шкала активного игрового времени. Под блокирующим FTUE overlay не расходуются окна атаки/жизни осады, hitstop, неуязвимость героя, временный магнит опыта, кулдауны гарнизона/лечения, taunt feedback, ускорение от ауры, долгие нажатия и таймер вымирания. Анимации героя и пешек также останавливаются до закрытия overlay.
-- Playwright-регрессия теперь моделирует 120 секунд системного времени, вызывает `GameScene.update()` при включённом блокирующем overlay и проверяет, что активные часы стоят; после снятия overlay часы продолжаются на фактический delta. Отдельно проверяются срок осады и неуязвимость героя.
-- Статус «реализация завершена» отделён от статуса smoke-прогона. Существующие I–L сценарии отмечены ниже по конкретным именам; отсутствие запуска Playwright не используется как доказательство отсутствия самой механики и не считается зелёным runtime-результатом.
+- PR [#20](https://github.com/AiratGaliev/last-hero-medieval-survival/pull/20) открыт, target — `dev`; не влит. Feature-ветка синхронизирована с текущим `dev`; GitHub сообщает `mergeable: true`, `behind_by: 0`.
+- Текущий head [`bd2a0cfe`](https://github.com/AiratGaliev/last-hero-medieval-survival/commit/bd2a0cfe4c9d8376142ce46022f0c1b55a2ac778) прошёл CI Fast [run #39474453669](https://github.com/AiratGaliev/last-hero-medieval-survival/actions/runs/39474453669): маршрут PR, `npm ci`, `npm run check`, `npm run build`, `npm run check:yg` — success.
+- Кодовая регрессия активного времени находится в предшествующей code/test ревизии [`1a75973b`](https://github.com/AiratGaliev/last-hero-medieval-survival/commit/1a75973b5d199d347a886edb34ca38caf1496d46) и входит в текущую ветку. Под FTUE overlay единые active-time часы останавливают осадные дедлайны, iframe героя, временный магнит опыта, кулдауны гарнизона/лечения, long-press, taunt, haste и таймер вымирания; анимации героя/пешек тоже приостанавливаются.
+- Команда `npm run test:phase-smoke` добавлена для выборочного запуска проверок фаз I–L, FTUE overlay и мобильного long-press в Chromium desktop/mobile.
+- **Smoke run на текущем head пока не выполнялся.** CI Fast не запускает Playwright, поэтому его success подтверждает typecheck/lint, production build и архив Yandex Games, но не browser smoke. Конкретные smoke-кейсы и их статус указаны в секциях I–L и общей матрице ниже; наличие кейсов не считается их прохождением.
+- Физические мобильные устройства, длительный балансный матч и ads/IAP-сценарии в Yandex Games Sandbox требуют отдельной ручной приёмки.
 
 
 ---

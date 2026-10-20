@@ -3299,3 +3299,10 @@ HUD-слота, `SuccessionScene`, `PauseScene` и новые статическ
 - Добавлен npm-скрипт `test:phase-smoke`, который выбирает Playwright-сценарии фаз I–L, паузы FTUE и мобильного long-press в обоих настроенных Chromium-проектах (desktop/mobile). Это позволяет запустить smoke отдельно от полного `npm run test:e2e`.
 - Команда внесена в `docs/ROADMAP.md` рядом с конкретными сценариями и отдельным статусом фактического выполнения. Наличие сценариев и зелёный запуск остаются разными фактами.
 - Добавление команды в manifest не исполняет Playwright; необходимо проверить новый script-аргумент через CI Fast и отдельно выполнить `npm run test:phase-smoke` на доступной среде с установленным Chromium.
+
+
+## 2026-10-20 — Проверка текущего head и статуса smoke-команды
+
+- CI Fast [run #39474453669](https://github.com/AiratGaliev/last-hero-medieval-survival/actions/runs/39474453669) прошёл на текущем SHA `bd2a0cfe4c9d8376142ce46022f0c1b55a2ac778`: route validation, `npm ci`, `npm run check`, `npm run build` и `npm run check:yg` — success.
+- Добавлен `npm run test:phase-smoke`; он выбирает I–L сценарии, pause regression, FTUE overlay и мобильный long-press в обоих Chromium-проектах. Скрипт и критерии описаны в `docs/ROADMAP.md`.
+- CI Fast не запускал Playwright, а локальный checkout в этой среде отсутствует; `npm run test:phase-smoke` фактически не выполнялся. Запускать его следует в окружении с установленными npm-зависимостями и Chromium; итог записывать с SHA и ссылкой на run. Не считать smoke зелёным по одной успешной сборке.
