@@ -288,20 +288,25 @@ export class Settlement {
     // Гейт §G.11 п.19: за матч обрушение происходит НЕ ЧАЩЕ РАЗА. Второе
     // разрушение — уже не «событие», а рутина, которая выбивает население
     // каждые пару минут и обещает игроку бесперспективность.
-    if (b.kind === 'monastery' && !this.monasteryCollapsed) {
+    if (b.kind === 'monastery') {
+      // Каждое разрушение обители убивает находящихся внутри. Флаг хранит факт
+      // первого обрушения для обучения/хроники, но не отменяет правило G.5 для
+      // второй обители, построенной позже.
       this.monasteryCollapsed = true;
-      // Слот — локальный индекс здания. Защищаемся от повторной ссылки на
-      // одну пешку в нескольких местах: одна жертва учитывается один раз.
+      // Слот — локальный индекс здания. Дедуплицируем возможные старые ссылки:
+      // одна пешка умирает и учитывается один раз, даже если была в двух местах.
       const victims = [...new Set(
         b.healSlots.filter((slot): slot is Pawn => slot !== null) as Pawn[],
       )];
-      this.facts.monasteryFallenAt = this.fmtTime();
+      if (this.facts.monasteryFallenAt === null) {
+        this.facts.monasteryFallenAt = this.fmtTime();
+      }
       this.facts.monasteryVictims += victims.length;
 
       // Building уже помечен destroyed при вызове callback. removePawn()
       // корректно не вызывает UI-освобождение слота у мёртвого здания, поэтому
-      // обнуляем его массив без создания новых slot-label-ов на разрушенном
-      // спрайте и очищаем owner-ссылки до обработки окончательной смерти.
+      // обнуляем массив без создания новых slot-label-ов на разрушенном спрайте
+      // и убираем owner-ссылки до обработки окончательной смерти.
       b.healSlots.fill(null);
       for (const victim of victims) {
         if (victim.monasteryBuilding === b) {
@@ -310,8 +315,9 @@ export class Settlement {
         }
         this.eco.removePawn(victim);
       }
-      if (victims.length > 0) this.ctx.onMonasteryCollapsed(victims.length);
-      track('monastery_collapsed', { victims_n: victims.length });
+      // Этот callback отвечает и за объявление числа жертв, и за единственное
+      // событие аналитики. Он нужен для каждого обрушения, не только первого.
+      this.ctx.onMonasteryCollapsed(victims.length);
     }
     // Дом падает — лимит рабочих уменьшается; лишние пешки уходят (§B.4).
       // Уход — не смерть: восстановление за дерево и мясо не запускается.
