@@ -261,6 +261,18 @@ export class Enemy extends Phaser.Physics.Arcade.Sprite {
 
   /** Осадный враг: идёт к зданию, бьёт его; игрок в 260 px перехватывает. */
   private updateSiege(time: number, delta: number): void {
+    const body = this.body as Phaser.Physics.Arcade.Body;
+    // Срок атаки проверяется ДО перехвата героем: близость игрока не должна
+    // продлевать десятисекундное окно у стены (§E.4.2).
+    if (this.attackWindowEnds > 0 && time >= this.attackWindowEnds) {
+      this.siege = false;
+      this.buildingTarget = null;
+      body.setVelocity(0, 0);
+      this.playMove(false);
+      this.ctx.onSiegeWindowEnd?.(this);
+      return;
+    }
+
     const b = this.buildingTarget as { x: number; y: number } | null;
     if (!b) { this.siege = false; return; }
     const hx = this.ctx.playerX(), hy = this.ctx.playerY();
@@ -272,7 +284,6 @@ export class Enemy extends Phaser.Physics.Arcade.Sprite {
       // обычный погон за игроком
       const dx = hx - this.x, dy = hy - this.y;
       const d = Math.max(1, Math.hypot(dx, dy));
-      const body = this.body as Phaser.Physics.Arcade.Body;
       const vx = (dx / d) * this.speed, vy = (dy / d) * this.speed;
       body.setVelocity(vx + this.knockX, vy + this.knockY);
       if (Math.abs(body.velocity.x) > 8) {
@@ -284,7 +295,6 @@ export class Enemy extends Phaser.Physics.Arcade.Sprite {
 
     const dx = b.x - this.x, dy = b.y - this.y;
     const dist = Math.max(1, Math.hypot(dx, dy));
-    const body = this.body as Phaser.Physics.Arcade.Body;
     const ranged = this.kind === 'gnoll' || this.kind === 'shaman';
     const stopDist = ranged ? 300 : 110;
 
@@ -296,18 +306,6 @@ export class Enemy extends Phaser.Physics.Arcade.Sprite {
       }
       if (!this.lastAnim || this.lastAnim === `${this.kind}-idle`) this.playMove(true);
     } else {
-      // Окно атаки: у стены (§E.4.2). По умолчанию бой длится до гибели
-      // осады; окно в 10 секунд держит вызов из GameScene (§E.4.2 — именно
-      // из него выведены все числа §E.4.1/§E.4.3).
-      if (this.attackWindowEnds > 0 && time >= this.attackWindowEnds) {
-        // Окно истекло — осада отходит за край карты (§E.4.2 «отступает»)
-        this.siege = false;
-        this.buildingTarget = null;
-        body.setVelocity(0, 0);
-        this.playMove(false);
-        this.ctx.onSiegeWindowEnd?.(this);
-        return;
-      }
       body.setVelocity(0, 0);
       this.setFlipX(this.faceDir(dx));
       // Пробившийся внутрь осады враг РАНИТ пешек, которых достиг (§E.4).

@@ -1999,3 +1999,49 @@ test('phase K: siege profiles target outer houses and fall back from monastery t
   expect(report.burnTargetsMonastery).toBe(true);
   expect(report.assaultTargetsCastle).toBe(true);
 });
+
+
+test('phase K: siege attack window expires even while the hero is intercepting the attackers', async ({ page }) => {
+  await startRun(page);
+
+  const report = await page.evaluate(() => {
+    const game = (window as RuntimeWindow).__tss;
+    if (!game) throw new Error('Phaser runtime is unavailable');
+    type SiegeEnemyRuntime = {
+      active: boolean;
+      kind: string;
+      siege: boolean;
+      buildingTarget: unknown;
+      attackWindowEnds: number;
+      spawnedAt: number;
+      setPosition(x: number, y: number): unknown;
+      preUpdate(time: number, delta: number): void;
+    };
+    const scene = game.scene.getScene('Game') as GameSceneRuntime & {
+      spawner: { stopped: boolean };
+      spawnSiegeUnit(kind: string, x: number, y: number, firer: boolean): SiegeEnemyRuntime | null;
+      enemyGroup: { getChildren(): SiegeEnemyRuntime[] };
+      settlement: { castle: BuildingRuntime };
+    };
+    scene.spawner.stopped = true;
+    const enemy = scene.spawnSiegeUnit('skull', scene.player.x + 40, scene.player.y, false);
+    if (!enemy) throw new Error('Could not spawn siege interception fixture');
+    enemy.buildingTarget = scene.settlement.castle;
+    enemy.siege = true;
+    enemy.spawnedAt = scene.time.now - 20_000;
+    enemy.attackWindowEnds = scene.time.now - 1;
+
+    // Враг находится внутри радиуса перехвата. Просроченное окно всё равно
+    // должно завершить осаду раньше, чем AI выберет погоню за героем.
+    enemy.preUpdate(scene.time.now, 16);
+    return {
+      active: enemy.active,
+      siege: enemy.siege,
+      remainsInGroup: scene.enemyGroup.getChildren().includes(enemy),
+    };
+  });
+
+  expect(report.active).toBe(false);
+  expect(report.siege).toBe(false);
+  expect(report.remainsInGroup).toBe(false);
+});
