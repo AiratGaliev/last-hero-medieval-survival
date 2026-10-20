@@ -2349,6 +2349,7 @@ test('phase K: siege wound cap counts only newly wounded pawns and skips wounded
     const game = (window as RuntimeWindow).__tss;
     if (!game) throw new Error('Phaser runtime is unavailable');
     const scene = game.scene.getScene('Game') as GameSceneRuntime & {
+      spawner: { stopped: boolean };
       settlement: {
         beginSiege(index: number, woundCap: number, enemies: unknown[]): void;
         siegeWoundPawn(pawn: PawnRuntime, dmg: number, now: number): void;
@@ -2419,7 +2420,7 @@ test('phase K: destroying the castle sets the castle defeat cause and announces 
     scene.gameEnded = true;
     scene.loseCause = null;
     const announcements: string[] = [];
-    scene.hud.announce = (message: string): void => announcements.push(message);
+    scene.hud.announce = (message: string): void => { announcements.push(message); };
     scene.hud.feed = (): void => {};
     const castle = scene.settlement.castle;
     scene.settlement.damageBuilding(castle, castle.hp + 1, -1, true);
@@ -2428,7 +2429,7 @@ test('phase K: destroying the castle sets the castle defeat cause and announces 
       castleHp: castle.hp,
       loseCause: scene.loseCause,
       announcementCount: announcements.length,
-      lastAnnouncement: announcements.at(-1) ?? '',
+      lastAnnouncement: announcements.length > 0 ? announcements[announcements.length - 1] : '',
     };
   });
 
