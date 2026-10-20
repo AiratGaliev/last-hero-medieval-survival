@@ -3,6 +3,7 @@ import { DEPTH, SHADOW_SCALE, SHADOW_BOX, SHADOW_SRC, FONT } from '../constants'
 import { FS } from '../systems/Text';
 import { t } from '../../i18n';
 import { PAWNS, FIGHTERS, type PawnKind, type PawnState, type PawnWeapon, type ResourceKind, type PawnDef } from '../data';
+import type { Building } from './Building';
 
 // ============ Пешка поселения: гражданские и гарнизон (TZ §B.2) ============
 //
@@ -50,6 +51,8 @@ export class Pawn extends Phaser.Physics.Arcade.Sprite {
   chargeWindup = 0;
   /** Слот монастыря: индекс места, пока лечится в обители. */
   monasterySlot: number | null = null;
+  /** Конкретная обитель-владелец слота; одного индекса недостаточно при нескольких зданиях. */
+  monasteryBuilding: Building | null = null;
   /** Лечение монахом на поле: цель-пешка. */
   healTarget: Pawn | null = null;
   /** Лечение монахом на поле: цель-герой (герой не `Pawn`, §B.7.2). */
