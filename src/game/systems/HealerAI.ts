@@ -107,7 +107,18 @@ export class HealerAI {
    * в ветке healer — здесь только числитель: снятие wounded при 50%.
    */
   static fieldHealTick(monk: Pawn, target: Pawn, dtMs: number, eco: Economy): void {
-    if (target.dead || !target.active) { monk.healTarget = null; return; }
+    if (target.dead || !target.active) {
+      if (target.monasterySlot !== null) {
+        const building = target.monasteryBuilding;
+        if (building?.alive && building.kind === 'monastery') {
+          building.releaseHealSlot(target.monasterySlot);
+        }
+        target.monasterySlot = null;
+        target.monasteryBuilding = null;
+      }
+      monk.healTarget = null;
+      return;
+    }
     const d = Phaser.Math.Distance.Between(monk.x, monk.y, target.x, target.y);
     if (d > HEALER.RADIUS) return; // подойти — движение делает PawnAI
     const amount = (HEALER.HPS + HealerAI.hpsBonus) * (dtMs / 1000);
@@ -124,11 +135,14 @@ export class HealerAI {
       target.cooldown = 0.5;
       target.updateBleedBadge();
       if (target.monasterySlot !== null) {
-        const freedIdx = target.monasterySlot;
-        for (const b of eco.buildings) {
-          if (b.kind === 'monastery' && b.alive) b.releaseHealSlot(freedIdx);
+        const building = target.monasteryBuilding;
+        // Индекс слота локален для здания: освобождаем только обитель,
+        // которая действительно держит эту пешку, а не тот же индекс в других.
+        if (building?.alive && building.kind === 'monastery') {
+          building.releaseHealSlot(target.monasterySlot);
         }
         target.monasterySlot = null;
+        target.monasteryBuilding = null;
       }
       // Телеметрия §K.2: полевое спасение освобождает слот (§B.7.2)
       track('field_heal_save', { target_kind: target.kind, hp_restored: Math.round(target.hp), monastery_slot_freed: slotFreed });
