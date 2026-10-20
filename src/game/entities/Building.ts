@@ -41,7 +41,8 @@ export class Building extends Phaser.GameObjects.Image {
   private fireFx: Phaser.GameObjects.Sprite | null = null;
   private fireTimer = 0;
   /** Окно реакции: обитель рушится через 3 с после порога 10% HP (§G.5.1). */
-  private monasteryCollapseTimer: Phaser.Time.TimerEvent | null = null;
+  /** Остаток активного игрового времени до обрушения обители. */
+  private monasteryCollapseRemainingMs: number | null = null;
   private slotLabel: Phaser.GameObjects.Text | null = null;
   private readonly scene_: Phaser.Scene;
   private readonly ctx: BuildingCtx;
@@ -69,7 +70,7 @@ export class Building extends Phaser.GameObjects.Image {
 
   /** Во время трёхсекундного предупреждения обитель уже нельзя чинить. */
   get collapsePending(): boolean {
-    return this.monasteryCollapseTimer !== null;
+    return this.monasteryCollapseRemainingMs !== null;
   }
 
   /** Завершение стройки: твин scaleY 0→1 + полное HP (TZ §B.4). */
@@ -158,21 +159,36 @@ export class Building extends Phaser.GameObjects.Image {
 
   /** Сброс порогов предупреждений после ремонта (обитель достроена). */
   warnedReset(): void {
-    this.monasteryCollapseTimer?.remove(false);
-    this.monasteryCollapseTimer = null;
+    this.monasteryCollapseRemainingMs = null;
     this.warned30 = false;
     this.warned10 = false;
   }
 
   /** Отложенное обрушение оставляет игроку три секунды на спасение раненых. */
   private scheduleMonasteryCollapse(): void {
-    if (this.kind !== 'monastery' || this.monasteryCollapseTimer) return;
-    this.monasteryCollapseTimer = this.scene_.time.delayedCall(3_000, () => {
-      this.monasteryCollapseTimer = null;
-      if (!this.alive || !this.active) return;
-      this.hp = 0;
-      this.destroy();
-    });
+    if (this.kind !== 'monastery' || this.monasteryCollapseRemainingMs !== null) return;
+    this.monasteryCollapseRemainingMs = 3_000;
+  }
+
+  /**
+   * Продвигает окно обрушения только активным игровым тиком.
+   * Во время паузы GameScene не вызывает Economy.tick(), поэтому обратный
+   * отсчёт приостанавливается вместе с остальной симуляцией.
+   */
+  tickMonasteryCollapse(dtMs: number): void {
+    if (this.monasteryCollapseRemainingMs === null) return;
+    if (!this.alive || !this.active) {
+      this.monasteryCollapseRemainingMs = null;
+      return;
+    }
+    this.monasteryCollapseRemainingMs = Math.max(
+      0,
+      this.monasteryCollapseRemainingMs - Math.max(0, dtMs),
+    );
+    if (this.monasteryCollapseRemainingMs > 0) return;
+    this.monasteryCollapseRemainingMs = null;
+    this.hp = 0;
+    this.destroy();
   }
 
   /** Поджог: DoT SIEGE.BURN_DMG за SIEGE.BURN_MS (TZ §E.4.1). */
@@ -247,8 +263,7 @@ export class Building extends Phaser.GameObjects.Image {
   }
 
   destroy(fromScene?: boolean): void {
-    this.monasteryCollapseTimer?.remove(false);
-    this.monasteryCollapseTimer = null;
+    this.monasteryCollapseRemainingMs = null;
     // Phaser вызывает destroy() у всех детей при шатдауне/уничтожении сцены.
     // Это НЕ игровое разрушение: колбэки осад/жильцов били бы по уже
     // уничтоженному HUD (setText на уничтоженном кадре — «Cannot read

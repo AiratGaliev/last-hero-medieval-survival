@@ -853,9 +853,14 @@ export class Economy extends Phaser.Events.EventEmitter {
       }
     }
 
-    // Горение зданий: DoT через Settlement — потолок осады и таунт (§E.4.2)
-    for (const b of this.buildings) {
+    // Окно обрушения монастыря продвигается тем же игровым временем, что и экономика.
+    // Копия массива нужна: при истечении срока callback удаления может убрать здание из реестра.
+    for (const b of [...this.buildings]) {
       if (!b.alive) continue;
+      b.tickMonasteryCollapse(dtMs);
+      if (!b.alive) continue;
+
+      // Горение зданий: DoT через Settlement — потолок осады и таунт (§E.4.2)
       const dot = b.tickBurn(dtMs);
       if (dot > 0) {
         if (this.opts.onBurnDamage) this.opts.onBurnDamage(b, dot);
