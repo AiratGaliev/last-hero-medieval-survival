@@ -1928,6 +1928,23 @@ private ordersUnlocked(): boolean {
       }
     } else {
       target = pick(profile.target);
+      if (!target && profile.target === 'monastery') {
+        // Специфичный fallback профиля «Поджигатели» (§E.4.3): если обители
+        // нет, сначала атакуют внешний дом, а не замок. Это первая осада,
+        // где игрок должен получить понятный сигнал к постройке монастыря.
+        let bestD = -1;
+        for (const b of this.economy.buildings) {
+          if (b.kind !== 'house' || !b.alive || b.underConstruction) continue;
+          const d = Math.hypot(b.x - this.castleX, b.y - this.castleY);
+          if (d > bestD) { bestD = d; target = b; }
+        }
+        if (!target) {
+          for (const k of ['barracks', 'house', 'tower', 'archery'] as BuildingKind[]) {
+            target = pick(k);
+            if (target) break;
+          }
+        }
+      }
       if (!target) {
         for (const k of priorityOrder) {
           target = pick(k);

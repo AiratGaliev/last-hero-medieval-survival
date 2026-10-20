@@ -1929,3 +1929,73 @@ test('phase L: resident respawn requires a house, waits 25 seconds, and retries 
   expect(report.livingAtExactDeadline).toBe(report.livingBeforeExactDeadline + 1);
   expect(report.resourcesAfterExactRespawn).toEqual({ wood: 0, meat: 0 });
 });
+
+test('phase K: siege profiles target outer houses and fall back from monastery to houses', async ({ page }) => {
+  await startRun(page);
+  const report = await page.evaluate(async () => {
+    const game = (window as RuntimeWindow).__tss;
+    if (!game) throw new Error('Phaser runtime is unavailable');
+    const root = window.location.origin;
+    const data = await import(/* @vite-ignore */ new URL('/src/game/data.ts', root).href) as {
+      SIEGE_SCHEDULE: Array<{ target: string }>;
+    };
+    type SiegeUnit = { active: boolean; kind: string; buildingTarget: unknown };
+    const scene = game.scene.getScene('Game') as GameSceneRuntime & {
+      spawner: { stopped: boolean };
+      settlement: { castle: BuildingRuntime };
+      assignSiegeTarget(profile: { target: string }, enemies: SiegeUnit[]): void;
+      spawnEnemy(kind: string, x: number, y: number): boolean;
+      enemyGroup: { getChildren(): SiegeUnit[] };
+    };
+    const economy = scene.economy;
+    scene.spawner.stopped = true;
+    economy.resources.wood = 1_000;
+    economy.resources.ore = 1_000;
+    economy.resources.meat = 1_000;
+
+    const builder = economy.pawns.find((pawn) => pawn.kind === 'builder');
+    const houseSpot = economy.freeSpots().find((spot) => spot.kind === 'house');
+    if (!builder || !houseSpot) throw new Error('Builder or house spot is missing');
+    if (!economy.tryStartBuild('house', builder, houseSpot)) throw new Error('Could not start outer house');
+    const house = economy.buildings.find((building) => building.kind === 'house' && building.underConstruction);
+    if (!house) throw new Error('House was not registered');
+    builder.setPosition(houseSpot.x, houseSpot.y);
+    builder.state = 'work';
+    economy.tick(10_001, scene.time.now + 10_001);
+    if (!house.alive || house.underConstruction) throw new Error('House did not finish');
+
+    if (!scene.spawnEnemy('skull', scene.player.x + 450, scene.player.y + 320)) {
+      throw new Error('Could not spawn siege-target test enemy');
+    }
+    const enemy = scene.enemyGroup.getChildren().find((candidate) =>
+      candidate.active && candidate.kind === 'skull');
+    if (!enemy) throw new Error('Spawned skull was not found');
+
+    scene.assignSiegeTarget(data.SIEGE_SCHEDULE[0], [enemy]);
+    const scoutTargetsHouse = enemy.buildingTarget === house;
+    scene.assignSiegeTarget(data.SIEGE_SCHEDULE[2], [enemy]);
+    const burnFallsBackToHouse = enemy.buildingTarget === house;
+
+    const monasterySpot = economy.freeSpots().find((spot) => spot.kind === 'monastery');
+    if (!monasterySpot) throw new Error('Monastery spot is missing');
+    if (!economy.tryStartBuild('monastery', builder, monasterySpot)) throw new Error('Could not start monastery');
+    const monastery = economy.buildings.find((building) => building.kind === 'monastery' && building.underConstruction);
+    if (!monastery) throw new Error('Monastery was not registered');
+    builder.setPosition(monasterySpot.x, monasterySpot.y);
+    builder.state = 'work';
+    economy.tick(25_001, scene.time.now + 35_002);
+    if (!monastery.alive || monastery.underConstruction) throw new Error('Monastery did not finish');
+
+    scene.assignSiegeTarget(data.SIEGE_SCHEDULE[2], [enemy]);
+    const burnTargetsMonastery = enemy.buildingTarget === monastery;
+    scene.assignSiegeTarget(data.SIEGE_SCHEDULE[4], [enemy]);
+    const assaultTargetsCastle = enemy.buildingTarget === scene.settlement.castle;
+
+    return { scoutTargetsHouse, burnFallsBackToHouse, burnTargetsMonastery, assaultTargetsCastle };
+  });
+
+  expect(report.scoutTargetsHouse).toBe(true);
+  expect(report.burnFallsBackToHouse).toBe(true);
+  expect(report.burnTargetsMonastery).toBe(true);
+  expect(report.assaultTargetsCastle).toBe(true);
+});
