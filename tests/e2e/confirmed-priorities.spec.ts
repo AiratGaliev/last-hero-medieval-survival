@@ -31,6 +31,8 @@ type EconomyRuntime = {
   resources: { wood: number; ore: number; meat: number };
   pawns: unknown[];
   buildings: BuildingRuntime[];
+  buildJobs: Array<{ building: BuildingRuntime }>;
+  repairJobs: Array<{ building: BuildingRuntime }>;
   tryStartBuild(kind: string, pawn: unknown): boolean;
   repair(building: BuildingRuntime, pawn: unknown | null): boolean;
 };
@@ -228,7 +230,12 @@ test('intro overlay really pauses gameplay; monastery warnings and garrison dama
     const building = economy.buildings.find((candidate) => candidate.kind === 'monastery');
     if (!started || !building) return { started, found: Boolean(building), warnings: [] as string[] };
 
-    // Finish this test building immediately; exercise the production callback, not a mock.
+    // Фикстура должна быть построенной, а не одновременно оставаться активным
+    // buildJob: иначе фоновая стройка могла бы завершить и восстановить HP во
+    // время проверяемого трёхсекундного окна.
+    for (let i = economy.buildJobs.length - 1; i >= 0; i--) {
+      if (economy.buildJobs[i].building === building) economy.buildJobs.splice(i, 1);
+    }
     building.underConstruction = false;
     building.hp = building.maxHp;
     building.healSlots[0] = economy.pawns[0] ?? {};
@@ -253,6 +260,7 @@ test('intro overlay really pauses gameplay; monastery warnings and garrison dama
       collapsePending: building.collapsePending,
       aliveAtWarning: building.alive,
       repairAccepted,
+      repairJobAfterAttempt: economy.repairJobs.some((job) => job.building === building),
       woodBeforeRepair,
       woodAfterRepair: economy.resources.wood,
       warnings,
@@ -269,17 +277,26 @@ test('intro overlay really pauses gameplay; monastery warnings and garrison dama
   expect(monastery.warnings).toHaveLength(2);
   expect(monastery.aliveAtWarning).toBe(true);
   expect(monastery.repairAccepted).toBe(false);
+  expect(monastery.repairJobAfterAttempt).toBe(false);
   expect(monastery.woodAfterRepair).toBe(monastery.woodBeforeRepair);
 
-  const aliveDuringCollapseWindow = async (): Promise<boolean> => page.evaluate(() => {
+  const collapseWindowState = async (): Promise<{ alive: boolean; hasRepairJob: boolean }> => page.evaluate(() => {
     const game = (window as RuntimeWindow).__tss!;
     const scene = game.scene.getScene('Game') as GameSceneRuntime;
-    return scene.economy.buildings.find((building) => building.kind === 'monastery')?.alive ?? false;
+    const building = scene.economy.buildings.find((candidate) => candidate.kind === 'monastery');
+    return {
+      alive: building?.alive ?? false,
+      hasRepairJob: building
+        ? scene.economy.repairJobs.some((job) => job.building === building)
+        : false,
+    };
   });
   await page.waitForTimeout(1_000);
-  expect(await aliveDuringCollapseWindow()).toBe(true);
+  const duringWindow = await collapseWindowState();
+  expect(duringWindow.alive).toBe(true);
+  expect(duringWindow.hasRepairJob).toBe(false);
   await page.waitForTimeout(2_200);
-  expect(await aliveDuringCollapseWindow()).toBe(false);
+  expect((await collapseWindowState()).alive).toBe(false);
 
   const expectedDpsAtTenMinutes = await page.evaluate(() => {
     const game = (window as RuntimeWindow).__tss!;
