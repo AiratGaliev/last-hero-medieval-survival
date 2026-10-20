@@ -3611,3 +3611,85 @@ test('phase M: tower fires at a siege target before a closer ordinary enemy', as
   expect(Math.abs(report.shot!.angle - Math.PI / 4)).toBeLessThan(0.1);
   expect(report.shot!.damage).toBeGreaterThan(0);
 });
+
+
+test('phase M: field healing rescues a bleeding pawn at 50% HP without spending wood', async ({ page }) => {
+  await startRun(page);
+  const report = await page.evaluate(() => {
+    const game = (window as RuntimeWindow).__tss;
+    if (!game) throw new Error('Phaser runtime is unavailable');
+    const scene = game.scene.getScene('Game') as GameSceneRuntime & {
+      hints?: { setEnabled(enabled: boolean): void };
+    };
+    scene.hints?.setEnabled(false);
+    scene.registry.set('tss-hint-overlay-paused', false);
+
+    type HealerPawn = PawnRuntime & {
+      weapon: string;
+      healTarget: PawnRuntime | null;
+      healHeroPoint: { x: number; y: number } | null;
+      body: { velocity: { x: number; y: number } };
+    };
+    type EconomyWithHealer = {
+      castleX: number;
+      castleY: number;
+      resources: { wood: number };
+      pawns: PawnRuntime[];
+      spawnPawn(kind: 'healer', nearX?: number, nearY?: number, announce?: boolean): HealerPawn | null;
+      healerAI: { update(now: number): void };
+      pawnAI: {
+        updateCivilian(pawn: PawnRuntime, dtMs: number, now: number): void;
+        updateCombat(pawn: HealerPawn, dtMs: number, now: number): void;
+      };
+    };
+    const economy = scene.economy as unknown as EconomyWithHealer;
+    const victim = economy.pawns.find(p => p.kind === 'collector');
+    const monk = economy.spawnPawn('healer', economy.castleX, economy.castleY, false);
+    if (!victim || !monk) throw new Error('Could not create healer rescue fixtures');
+
+    monk.setPosition(economy.castleX + 100, economy.castleY);
+    monk.weapon = 'staff';
+    monk.healTarget = null;
+    monk.healHeroPoint = null;
+    victim.setPosition(economy.castleX + 180, economy.castleY);
+    victim.hp = 0;
+    victim.state = 'wounded';
+    victim.bleedTimer = 0;
+    victim.cooldown = 0;
+
+    const context = scene.registry.get('tss-pawnai-ctx') as { enemies: () => unknown[] };
+    context.enemies = () => [];
+    economy.resources.wood = 1_000;
+    const woodBefore = economy.resources.wood;
+    const now = scene.time.now + 1_000;
+    economy.healerAI.update(now);
+    const targetAssigned = monk.healTarget === victim;
+
+    // Без обители раненый переходит в bleeding, но монах может ещё успеть
+    // поднять его до 50% — моделируем активное игровое время без ожидания браузера.
+    economy.pawnAI.updateCivilian(victim, 16, now);
+    for (let i = 0; i < 180 && (victim.state === 'wounded' || victim.state === 'bleeding'); i++) {
+      const tickNow = now + (i + 1) * 150;
+      economy.pawnAI.updateCivilian(victim, 150, tickNow);
+      economy.pawnAI.updateCombat(monk, 150, tickNow);
+    }
+
+    return {
+      targetAssigned,
+      state: victim.state,
+      hp: victim.hp,
+      maxHp: victim.maxHp,
+      bleedTimer: victim.bleedTimer,
+      monkTargetCleared: monk.healTarget === null,
+      woodBefore,
+      woodAfter: economy.resources.wood,
+    };
+  });
+
+  expect(report.targetAssigned).toBe(true);
+  expect(report.state).toBe('idle');
+  expect(report.hp).toBeGreaterThanOrEqual(report.maxHp * 0.5);
+  expect(report.bleedTimer).toBeGreaterThan(0);
+  expect(report.monkTargetCleared).toBe(true);
+  expect(report.woodAfter).toBe(report.woodBefore);
+});
