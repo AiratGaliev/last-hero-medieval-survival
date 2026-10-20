@@ -1402,9 +1402,17 @@ private ordersUnlocked(): boolean {
     }
     this.orderMenu.open(pawn, wx, wy, (key) => {
       if (!this.orderMenu.openPawn) return;
-      // Приказ не перебивает carry-фазу — PawnAI применит после сдачи (§B.6)
+      // Сброс — возврат к автоповедению, а не новый игровой приказ.
+      if (key === 'reset') {
+        pawn.order = null;
+        pawn.orderTarget = null;
+        return;
+      }
+      // Приказ не перебивает carry-фазу — PawnAI применит после сдачи (§B.6).
+      // Точка нужна только HOLD: у FOLLOW/POST/MONASTERY старую координату
+      // нельзя хранить после смены режима.
       pawn.order = key;
-      if (key === 'hold') pawn.orderTarget = { x: wx, y: wy };
+      pawn.orderTarget = key === 'hold' ? { x: wx, y: wy } : null;
       track('first_order_used', { order: key });
       if (pawn.cls === 'civilian') this.hints?.show('orders');
     });
