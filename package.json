@@ -16,7 +16,8 @@
     "db:push": "exit 0",
     "check": "npm run typecheck && npm run lint",
     "test:e2e": "playwright test --workers=1",
-    "test:e2e:ui": "playwright test --ui --workers=1"
+    "test:e2e:ui": "playwright test --ui --workers=1",
+    "test:phase-smoke": "playwright test --workers=1 --grep=\"phase I:|phase J:|phase K:|phase L:|phases K-L:|phase G: touch long-press opens the same menu|phase H: resource HUD labels stock|intro overlay really pauses gameplay\""
   },
   "dependencies": {
     "phaser": "^4.2.1"

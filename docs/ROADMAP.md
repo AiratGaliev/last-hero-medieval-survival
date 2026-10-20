@@ -699,10 +699,10 @@ emit `change`) → `cooldown` (0.5 сек) → `walk`.
 **Smoke run на текущем SHA:** [ ] не выполнен в рамках CI Fast. Быстрый run проверяет маршрут PR, установку зависимостей, typecheck/lint, production build и архив Yandex Games; он не запускает Playwright. Целевой smoke-командой для Chromium desktop/mobile служит:
 
 ```bash
-npm run test:e2e -- --grep "phase I:|phase J:|phase K:|phase L:|phases K-L:|phase G: touch long-press opens the same menu|phase H: resource HUD labels stock|intro overlay really pauses gameplay"
+npm run test:phase-smoke
 ```
 
-В конфигурации Playwright есть два проекта — Chromium desktop и mobile; запуск считается пройденным только после успешного завершения выбранных тестов на актуальном SHA. Ветки feature → `dev` намеренно запускают CI Fast, поэтому успешный CI Fast нельзя выдавать за browser smoke; сам факт того, что smoke-набор существует, тоже не означает, что он прошёл. Это раздельные статусы реализации, наличия проверок и их фактического запуска.
+Скрипт `test:phase-smoke` запускает выбранные тесты фаз I–L, FTUE overlay и мобильного long-press. В конфигурации Playwright два проекта — Chromium desktop и mobile; запуск считается пройденным только после успешного завершения выбранных тестов на актуальном SHA. Ветки feature → `dev` намеренно запускают CI Fast, поэтому успешный CI Fast нельзя выдавать за browser smoke; сам факт того, что smoke-набор существует, тоже не означает, что он прошёл. Это раздельные статусы реализации, наличия проверок и их фактического запуска.
 
 - [x] CI Fast [run #39473754983](https://github.com/AiratGaliev/last-hero-medieval-survival/actions/runs/39473754983) на кодовом SHA `1a75973b5d199d347a886edb34ca38caf1496d46`: route validation, `npm ci`, `npm run check`, `npm run build`, `npm run check:yg` — success.
 - [ ] Smoke-команда выше должна быть запущена на текущем candidate SHA и фактический результат внесён сюда/в worklog; до этого не записывать Browser smoke как успешный.
