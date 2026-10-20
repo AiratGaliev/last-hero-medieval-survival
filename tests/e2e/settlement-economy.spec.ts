@@ -3693,3 +3693,70 @@ test('phase M: field healing rescues a bleeding pawn at 50% HP without spending 
   expect(report.monkTargetCleared).toBe(true);
   expect(report.woodAfter).toBe(report.woodBefore);
 });
+
+
+test('phase M: monastery collapse announces occupied beds and waits three active seconds', async ({ page }) => {
+  await startRun(page);
+  const report = await page.evaluate(() => {
+    const game = (window as RuntimeWindow).__tss;
+    if (!game) throw new Error('Phaser runtime is unavailable');
+    const scene = game.scene.getScene('Game') as GameSceneRuntime & {
+      hints?: { setEnabled(enabled: boolean): void };
+      hud: HUDRuntime & { announce(text: string, color?: string): void };
+    };
+    scene.hints?.setEnabled(false);
+    scene.registry.set('tss-hint-overlay-paused', false);
+
+    type MonasteryRuntime = BuildingRuntime & {
+      occupiedSlots: number;
+      collapsePending: boolean;
+      claimHealSlot(unit: unknown): number | null;
+      tickMonasteryCollapse(dtMs: number): void;
+    };
+    const economy = scene.economy;
+    const builder = economy.pawns.find(p => p.kind === 'builder');
+    const spot = economy.freeSpots().find(s => s.kind === 'monastery');
+    if (!builder || !spot) throw new Error('Builder or monastery build spot is missing');
+    economy.resources.wood = 1_000;
+    economy.resources.ore = 1_000;
+    economy.resources.meat = 1_000;
+    if (!economy.tryStartBuild('monastery', builder, spot)) {
+      throw new Error('Could not create the monastery fixture');
+    }
+    const monastery = economy.buildings.find(b => b.kind === 'monastery') as MonasteryRuntime | undefined;
+    if (!monastery) throw new Error('Monastery fixture is missing');
+    monastery.finishConstruction();
+    economy.buildJobs.splice(economy.buildJobs.findIndex(job => job.building === monastery), 1);
+
+    monastery.claimHealSlot({});
+    monastery.claimHealSlot({});
+    const announcements: string[] = [];
+    scene.hud.announce = (text) => announcements.push(text);
+
+    monastery.damage(260, 0); // ниже 30% HP: первое предупреждение
+    monastery.damage(monastery.hp, 0); // ниже 10% HP: критическое предупреждение и окно реакции
+    const critical = {
+      hp: monastery.hp,
+      alive: monastery.alive,
+      pending: monastery.collapsePending,
+      occupiedSlots: monastery.occupiedSlots,
+    };
+    monastery.tickMonasteryCollapse(2_999);
+    const beforeDeadline = { hp: monastery.hp, alive: monastery.alive, pending: monastery.collapsePending };
+    monastery.tickMonasteryCollapse(1);
+
+    return {
+      announcements,
+      critical,
+      beforeDeadline,
+      afterDeadline: { hp: monastery.hp, alive: monastery.alive, pending: monastery.collapsePending },
+    };
+  });
+
+  expect(report.announcements).toHaveLength(2);
+  expect(report.announcements.every(message => message.includes('2'))).toBe(true);
+  expect(report.critical).toEqual({ hp: 1, alive: true, pending: true, occupiedSlots: 2 });
+  expect(report.beforeDeadline).toEqual({ hp: 1, alive: true, pending: true });
+  expect(report.afterDeadline.alive).toBe(false);
+  expect(report.afterDeadline.pending).toBe(false);
+});
