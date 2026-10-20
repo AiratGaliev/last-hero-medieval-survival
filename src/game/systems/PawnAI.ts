@@ -805,9 +805,21 @@ export class PawnAI {
     // Гарнизонный монах выполняет приказ позиционирования, но не выбирает
     // противников и не получает состояние fight — только heal/idle/walk.
     if (p.weapon === 'staff') {
-      if (leashD > keep || Phaser.Math.Distance.Between(p.x, p.y, cx, cy) > 14) {
+      let destinationX = cx;
+      let destinationY = cy;
+      if (p.order === 'follow') {
+        // При явном приказе следовать не накладывается на героя: сохраняет
+        // дистанцию keep с его тыльной стороны, включая нулевую начальную дистанцию.
+        let dx = p.x - cx;
+        let dy = p.y - cy;
+        let length = Math.hypot(dx, dy);
+        if (length < 1) { dx = 0; dy = -1; length = 1; }
+        destinationX = cx + (dx / length) * keep;
+        destinationY = cy + (dy / length) * keep;
+      }
+      if (Phaser.Math.Distance.Between(p.x, p.y, destinationX, destinationY) > 14) {
         p.state = 'walk';
-        this.walkTo(p, cx, cy, this.curTickMs);
+        this.walkTo(p, destinationX, destinationY, this.curTickMs);
       } else {
         p.state = 'idle';
         p.playMove(false);
@@ -1054,6 +1066,7 @@ export class PawnAI {
     const fighters = eco.garrison.filter((f) => f.kind === 'fighter'
       && f.weapon !== 'bow' && f.weapon !== 'staff'
       && !f.dead && f.active
+      && Phaser.Math.Distance.Between(f.x, f.y, eco.castleX, eco.castleY) <= GARRISON.LEASH
       && f.state !== 'wounded' && f.state !== 'bleeding' && f.state !== 'retreat');
 
     let anchor: Pawn | null = null;
