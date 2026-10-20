@@ -108,13 +108,15 @@ export class Pawn extends Phaser.Physics.Arcade.Sprite {
 
     scene.add.existing(this);
     scene.physics.add.existing(this);
-    this.setScale(0.42);
+    const scale = Pawn.spriteScale(prefix);
+    this.setScale(scale);
     this.setDepth(DEPTH.ENTITY_BASE + y);
     this.lastAnim = `${prefix}-idle`;
     this.play(this.lastAnim);
 
-    // Тело у ног (кадр 192)
-    const r = 16 / 0.42;
+    // Тело у ног (кадр 192). Радиус в МИРОВЫХ единицах не зависит от
+    // масштаба спрайта: 16 px — тело пешки, как и у героя.
+    const r = 16 / scale;
     this.setCircle(r, 96 - r, 150 - r);
     this.setCollideWorldBounds(false);
 
@@ -126,6 +128,19 @@ export class Pawn extends Phaser.Physics.Arcade.Sprite {
 
     this.hpBar = scene.add.graphics().setDepth(DEPTH.HPBAR);
     this.hpBar.setVisible(false);
+  }
+
+  /**
+   * Масштаб спрайта пешки.
+   *
+   *  Рабочие и гарнизон берут те же листы, что и герой (units/*), поэтому
+   *  масштаб должен совпадать с геройским (0.55) — иначе рабочий выглядит
+   *  муравьём: при 0.42 содержание кадра (≈55×72 px) давало на экране
+   *  23×30 px против 43×49 у героя, и поселение читалось как пустое поле.
+   *  Копейщик — лист 320 px, как у героя-копейщика: 0.34.
+   */
+  static spriteScale(prefix: string): number {
+    return prefix === 'pawn-lancer' ? 0.34 : 0.55;
   }
 
   /** Префикс анимаций: pawn/pawny для рабочих, pawn-warrior/lancer/archer/monk для гарнизона. */

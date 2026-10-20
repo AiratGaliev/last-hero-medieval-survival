@@ -486,7 +486,7 @@ export const ru = {
   'speedup.heal': 'ИСЦЕЛИТЬ ВСЕХ',
   'speedup.cost': '{v} золота',
   'speedup.ad': 'за ролик',
-  'speedup.noTarget': 'нечего ускорять',
+  'speedup.noTarget': 'НЕТ ЦЕЛИ',
   'speedup.poor': 'не хватает золота кошелька',
   'speedup.adUnavailable': 'РОЛИК НЕДОСТУПЕН',
   'speedup.done': 'Ускорение применено',

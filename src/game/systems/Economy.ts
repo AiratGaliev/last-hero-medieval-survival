@@ -1,9 +1,10 @@
 import Phaser from 'phaser';
 import {
   NEW_VILLAGER, REPAIR, VEIN_YIELD, VEIN_CHARGES, HIRE_COST, HIRE_TIME_MS,
+  SETTLEMENT_CORE, SETTLEMENT_SPOT_ZONE,
 } from '../constants';
 import {
-  RESOURCES, BUILDING_PLANS, BUILD_SPOTS, TOOL_BY_RESOURCE,
+  RESOURCES, BUILDING_PLANS, BUILD_SPOTS, BUILD_PLAN, TOOL_BY_RESOURCE,
   type PawnKind, type PawnWeapon, type ResourceKind, type ResourceCost, type BuildingKind,
   PAWN_NAMES, PAWN_NAMES_RU, garrisonSourceOf,
 } from '../data';
@@ -229,6 +230,10 @@ export class Economy extends Phaser.Events.EventEmitter {
     this.pawnAI = new PawnAI(scene, this);
     this.healerAI = new HealerAI(this);
     this.monastery = new Monastery(this);
+    for (const s of BUILD_SPOTS) {
+      this.baseSpots.push({ kind: s.kind, x: this.castleX + s.dx, y: this.castleY + s.dy });
+    }
+    this.ensureSpots();
   }
 
   /** Система обители (§G.10): места, лечение, выписка. */
@@ -296,6 +301,61 @@ export class Economy extends Phaser.Events.EventEmitter {
   /** Всего слотов гарнизона во всех источниках — для HUD (§B.2). */
   totalGarrisonSlots(): number {
     return this.garrisonLimit('barracks') + this.garrisonLimit('archery') + this.garrisonLimit('monastery');
+  }
+
+  /**
+   * План расхода на стройку: текущая цель и следующий шаг (TZ §B.6).
+   *
+   *  Сборщики берут ресурсы «под два следующих здания»: так руда под
+   *  казармы добывается заранее, а не после того, как дерево уже есть.
+   */
+  plannedBuildCost(): ResourceCost {
+    const out: ResourceCost = {};
+    let steps = 0;
+    for (const step of BUILD_PLAN) {
+      const built = this.buildings.filter((b) => b.kind === step.kind && b.alive).length;
+      if (built >= step.count) continue;
+      for (const [k, v] of Object.entries(BUILDING_PLANS[step.kind].cost)) {
+        const key = k as ResourceKind;
+        out[key] = (out[key] ?? 0) + v;
+      }
+      steps++;
+      if (steps >= 2) break;
+    }
+    return out;
+  }
+
+  /**
+   * Следующее здание по плану автостройки (null — план исчерпан).
+   *
+   *  План — статичный список шагов (data.ts BUILD_PLAN): шаг считается
+   *  выполненным, когда построено достаточно зданий его вида. Поэтому
+   *  порядок не ломается, если игрок или другая пешка построили что-то
+   *  раньше (например, приказ «СТРОИТЬ»).
+   *
+   *  ⚠️ Раньше строитель всегда брал первое свободное КРУПНОЕ пятно, то есть
+   *  казармы (40 дерева + 15 руды). Дом не строился вообще: за 3,5 минуты
+   *  матча поселение не получало ни одного жилища, лимит рабочих оставался
+   *  равным 4, а гейт фазы E «первый дом на 30–45 секунде» был недостижим.
+   */
+  nextBuildKind(): BuildingKind | null {
+    const built = (kind: BuildingKind): number =>
+      this.buildings.filter((b) => b.kind === kind && b.alive).length;
+    const hasSpot = (kind: BuildingKind): boolean => this.spotFor(kind) !== null;
+    // Срочное исключение: раненые без обителя истекают кровью (§G.3).
+    // Обитель важнее любого следующего шага плана.
+    if (built('monastery') === 0 && hasSpot('monastery')
+      && this.pawns.some((p) => !p.dead && (p.state === 'wounded' || p.state === 'bleeding'))) {
+      return 'monastery';
+    }
+    for (const step of BUILD_PLAN) {
+      if (built(step.kind) >= step.count) continue;
+      // Пятен этого вида больше нет — шаг пропускаем (план не должен
+      // блокировать стройку из-за отсутствующего места).
+      if (!hasSpot(step.kind)) continue;
+      return step.kind;
+    }
+    return null;
   }
 
   /** Занято слотов по источнику (живые + вербуются). Для плана расхода. */
@@ -489,11 +549,11 @@ export class Economy extends Phaser.Events.EventEmitter {
     // Дополнительные пятна согласованы с базовыми BUILD_SPOTS: бонусы
     // должны расширять поселение, а не ставить дома поверх крупных зданий.
     const pts: Array<{ dx: number; dy: number }> = [
-      { dx: -420, dy: -330 },
-      { dx: 350, dy: -350 },
-      { dx: 500, dy: 500 },
-      { dx: -250, dy: -420 },
-      { dx: 580, dy: 300 },
+      { dx: -780, dy: 400 },
+      { dx: 780, dy: 400 },
+      { dx: 900, dy: 0 },
+      { dx: -900, dy: 0 },
+      { dx: 250, dy: -880 },
     ];
     const out: Array<{ kind: BuildingKind; dx: number; dy: number }> = [];
     for (let i = 0; i < this.tune.extraHouseSpots && i < pts.length; i++) {
@@ -502,13 +562,29 @@ export class Economy extends Phaser.Events.EventEmitter {
     return out;
   }
 
+
+  /** Базовые пятна стройки (кольцо деревни) — не меняются за матч. */
+  private readonly baseSpots: Array<{ kind: BuildingKind; x: number; y: number }> = [];
+  /** Бонусные пятна — зависят от tune.extraHouseSpots, поэтому кешируются отдельно. */
+  private extraSpotCache: Array<{ kind: BuildingKind; x: number; y: number }> = [];
+  private extraSpotCount = -1;
+
+  /** Обновить кеш пятен, если изменилось число бонусных слотов. */
+  private ensureSpots(): void {
+    if (this.extraSpotCount === this.tune.extraHouseSpots) return;
+    this.extraSpotCount = this.tune.extraHouseSpots;
+    this.extraSpotCache = this.extraSpots().map((s) => ({
+      kind: s.kind, x: this.castleX + s.dx, y: this.castleY + s.dy,
+    }));
+  }
+
   spotFor(kind: BuildingKind): { x: number; y: number } | null {
-    for (const s of [...BUILD_SPOTS, ...this.extraSpots()]) {
+    this.ensureSpots();
+    for (const s of [...this.baseSpots, ...this.extraSpotCache]) {
       if (s.kind !== kind) continue;
-      const key = `${this.castleX + s.dx}:${this.castleY + s.dy}`;
-      if (!this.usedSpots.has(key)) {
+      if (!this.usedSpots.has(`${s.x}:${s.y}`)) {
         // Место свободно физически (нет здания)
-        return { x: this.castleX + s.dx, y: this.castleY + s.dy };
+        return { x: s.x, y: s.y };
       }
     }
     return null;
@@ -523,12 +599,35 @@ export class Economy extends Phaser.Events.EventEmitter {
   }
 
   freeSpots(): Array<{ kind: BuildingKind; x: number; y: number }> {
+    this.ensureSpots();
     const out: Array<{ kind: BuildingKind; x: number; y: number }> = [];
-    for (const s of [...BUILD_SPOTS, ...this.extraSpots()]) {
-      const x = this.castleX + s.dx, y = this.castleY + s.dy;
-      if (!this.usedSpots.has(`${x}:${y}`)) out.push({ kind: s.kind, x, y });
+    for (const s of [...this.baseSpots, ...this.extraSpotCache]) {
+      if (!this.usedSpots.has(`${s.x}:${s.y}`)) out.push({ kind: s.kind, x: s.x, y: s.y });
     }
     return out;
+  }
+
+  /**
+   * Точка внутри защищённой зоны поселения? (TZ §A.5)
+   *
+   *  Зона — это замок (SETTLEMENT_CORE) плюс окрестности точек стройки и
+   *  построенных зданий (SETTLEMENT_SPOT_ZONE). Внутри зоны гражданские
+   *  недостижимы для обычных волн: единственный механизм угрозы базе —
+   *  осада (§D.1). Без этого рабочие впадали в панику от каждого проходящего
+   *  гоблина, и вся экономика поселения вставала.
+   */
+  isSettlementCore(x: number, y: number): boolean {
+    if (Math.hypot(x - this.castleX, y - this.castleY) < SETTLEMENT_CORE) return true;
+    for (const b of this.buildings) {
+      if (!b.alive) continue;
+      if (Math.hypot(x - b.x, y - b.y) < SETTLEMENT_SPOT_ZONE) return true;
+    }
+    this.ensureSpots();
+    for (const s of [...this.baseSpots, ...this.extraSpotCache]) {
+      if (this.usedSpots.has(`${s.x}:${s.y}`)) continue;
+      if (Math.hypot(x - s.x, y - s.y) < SETTLEMENT_SPOT_ZONE) return true;
+    }
+    return false;
   }
 
   /** Стоимость постройки с мета-модификаторами: «Скидки казны» (§H.16),

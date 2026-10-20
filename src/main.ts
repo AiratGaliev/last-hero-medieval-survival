@@ -121,14 +121,6 @@ function start(createGame: typeof CreateGame): void {
   const game = createGame(host);
   window.__tss = game;
 
-  // Страховка: если BootScene так и не отрисовался, экран загрузки не
-  // исчезнет сам по себе.
-  window.setTimeout(() => {
-    if (document.getElementById(BOOT_ID) && !document.getElementById(BOOT_ID)?.classList.contains('error')) {
-      showBootError('Загрузка не завершилась — попробуйте перезагрузить страницу');
-    }
-  }, 30_000); // 30 секунд: не earlier, чем 20
-
   // Экран загрузки снимаем, когда BootScene реально отрисовал первый кадр:
   // раньше на его месте мигает пустой синий фон.
   game.events.once(Phaser.Core.Events.READY, removeBootScreen);
@@ -145,6 +137,17 @@ function start(createGame: typeof CreateGame): void {
  *      даже если игрок уйдёт со страницы загрузки.
  */
 const boot = async (): Promise<void> => {
+  // Страховка: экран загрузки не исчезнет сам по себе, если модуль игры не
+  // приедет (медленная сеть, сбой CDN) или BootScene не отрисовался.
+  // Таймер ставим ДО динамического импорта: иначе при зависшем импорте
+  // игрок висел бы на «Загружаем игру…» бесконечно и без кнопки перезагрузки.
+  window.setTimeout(() => {
+    const boot = document.getElementById(BOOT_ID);
+    if (boot && !boot.classList.contains('error')) {
+      showBootError('Загрузка не завершилась — попробуйте перезагрузить страницу');
+    }
+  }, 45_000);
+
   const startLang = await detectLanguage();
   document.documentElement.lang = startLang === 'en' ? 'en' : 'ru';
 

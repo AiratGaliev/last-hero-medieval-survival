@@ -3,7 +3,7 @@ import { Cursor } from '../systems/Cursor';
 import {
   WORLD, PLAYER_BASE, DEPTH, ENEMY_CAP, SCORE, XP_CURVE, COMBO, MAX_LEVEL,
   AGGRO, SIEGE, LONGPRESS_MS, VEIN_COUNT, VEIN_CHARGES, VEIN_YIELD,
-  TOWER, BOSS_GOLD, HEAL_HP_PER_SEC, GARRISON_DPS_CAP,
+  TOWER, BOSS_GOLD, HEAL_HP_PER_SEC, GARRISON_DPS_CAP, SETTLEMENT_CORE,
 } from '../constants';
 import {
   WEAPONS, PASSIVES, HEROES, ENEMIES, DIFFICULTIES, EVOLUTIONS,
@@ -530,7 +530,11 @@ export class GameScene extends Phaser.Scene {
     const cx = S / 2, cy = S / 2;
     const placed: { x: number; y: number; r: number }[] = [];
     const canPlace = (x: number, y: number, r: number): boolean => {
-      if (Math.hypot(x - cx, y - cy) < 380) return false; // зона спавна
+      // ⚠️ Чистая зона — вокруг ЗАМКА, а не вокруг центра карты. Раньше
+      // центр был зоной спавна героя (до появления поселения); теперь там
+      // стоит база, и запрет на 380 px выкашивал полкарты — деревьев
+      // оставалось 26, а половина рабочего радиуса была пустой.
+      if (Math.hypot(x - this.castleX, y - this.castleY) < 200) return false;
       for (const p of placed) {
         if (Math.hypot(x - p.x, y - p.y) < p.r + r) return false;
       }
@@ -541,6 +545,28 @@ export class GameScene extends Phaser.Scene {
       Phaser.Math.Clamp(rng.between(m + 80, S - m - 80), margin, S - margin),
       Phaser.Math.Clamp(rng.between(m + 80, S - m - 80), margin, S - margin),
     ];
+    /** Дерево-узел: спрайт + ResourceNode (§B.3). */
+    const TREE_KEYS = ['tree1', 'tree2', 'tree3', 'tree4'] as const;
+    const addTree = (x: number, y: number, radius = 70): void => {
+      const key = TREE_KEYS[rng.between(0, TREE_KEYS.length - 1)];
+      const sc = 0.75 + rng.frac() * 0.4;
+      const t = this.add.sprite(x, y, key).setScale(sc);
+      t.play(key + '-sway');
+      if (t.anims.currentAnim) t.setFrame(rng.between(0, 7));
+      t.setDepth(DEPTH.ENTITY_BASE + y);
+      place(x, y, radius);
+      this.economy.registerNode(new ResourceNode(this, 'tree', 'wood', x, y, 1, t));
+    };
+    /** Овца-узел: 3 мяса за цикл (§B.3). */
+    const addSheep = (x: number, y: number): void => {
+      const sh = this.add.sprite(x, y, 'sheep').setScale(0.8);
+      sh.play('sheep-idle');
+      sh.setDepth(DEPTH.ENTITY_BASE + y);
+      place(x, y, 50);
+      if (this.contractId !== 'c_hunger') {
+        this.economy.registerNode(new ResourceNode(this, 'sheep', 'meat', x, y, 1, sh));
+      }
+    };
 
     // ---- Экономика и поселение (TZ §B): до декора, чтобы узлы
     // ресурсов регистрировались сразу. Замок — Building с HP (§E). ----
@@ -641,8 +667,18 @@ export class GameScene extends Phaser.Scene {
     this.orderMenu = new OrderMenu(this);
     void cx; void cy;
 
-    // Замок — база поселения (Building с HP, создаётся в Settlement)
-    place(this.castleX, this.castleY, 200);
+    // Замок — база поселения (Building с HP, создаётся в Settlement).
+    // Радиус занятости 150 px: замок 288×230 (scale 0.9), и больше места
+    // занимать нельзя — иначе рабочий пояс у базы не помещается.
+    place(this.castleX, this.castleY, 150);
+    // ---- Рабочий пояс поселения (§B.3, §B.9) ----
+    //
+    // Собственный лес, пастбище и две жилы у самой базы. Пояс ставится
+    // ДО точек стройки (в промежутках между ними) и лежит ВНУТРИ ядра
+    // поселения (SETTLEMENT_CORE), поэтому сбор идёт без паники: иначе
+    // рабочим приходилось бегать через полкарты за каждым куском, и первый
+    // дом не появлялся даже за 3,5 минуты матча (гейт фазы E).
+    const belt = this.spawnSettlementBelt(rng, canPlace, place, addTree, addSheep);
     // Пятна стройки: мягкие маркеры на земле (§I.2 — игрок видит, где будет дом)
     for (const spot of BUILD_SPOTS) {
       const sx = this.castleX + spot.dx, sy = this.castleY + spot.dy;
@@ -650,12 +686,24 @@ export class GameScene extends Phaser.Scene {
         .setScale(0.85).setAlpha(0.16).setDepth(DEPTH.GEM);
       place(sx, sy, 96);
     }
-    this.add.image(cx - 240, cy - 420, 'house2').setScale(0.8).setDepth(DEPTH.ENTITY_BASE + cy - 420);
-    this.add.image(cx + 230, cy - 430, 'house1').setScale(0.8).setDepth(DEPTH.ENTITY_BASE + cy - 430);
-    this.add.image(cx - 320, cy - 300, 'tower').setScale(0.85).setDepth(DEPTH.ENTITY_BASE + cy - 300);
-    this.add.image(cx + 320, cy - 280, 'tower').setScale(0.85).setDepth(DEPTH.ENTITY_BASE + cy - 280);
-    this.add.image(cx + 60, cy + 470, 'monastery').setScale(0.8).setDepth(DEPTH.ENTITY_BASE + cy + 470);
-    place(cx + 60, cy + 470, 160);
+    // ---- Декоративные постройки других поселений ----
+    // ⚠️ Раньше они ставились относительно центра карты (±240…470 от него),
+    // то есть в 230–360 px от ЗАМКА — прямо на пятна стройки и на рабочий
+    // пояс. Теперь они отнесены на 900+ px от базы: это чужие деревни на
+    // карте, а не деталь, растущая сквозь казармы.
+    const decor: Array<[string, number, number, number]> = [
+      ['house2', -620, 700, 0.8],
+      ['house1', 640, 690, 0.8],
+      ['tower', -900, 260, 0.85],
+      ['tower', 880, -240, 0.85],
+      ['monastery', 120, 1150, 0.8],
+    ];
+    for (const [key, dx, dy, scale] of decor) {
+      const x = this.castleX + dx, y = this.castleY + dy;
+      if (x < m + 120 || x > S - m - 120 || y < m + 120 || y > S - m - 120) continue;
+      this.add.image(x, y, key).setScale(scale).setDepth(DEPTH.ENTITY_BASE + y);
+      place(x, y, key === 'monastery' ? 160 : 120);
+    }
 
     // Дома и башни по карте
     for (let i = 0; i < 8; i++) {
@@ -673,20 +721,57 @@ export class GameScene extends Phaser.Scene {
         place(x, y, 110);
       }
     }
+    // ---- Овечки: ресурс мяса — 3 за цикл, овца исчезает (§B.3) ----
+    // «Дефицит» (A2): овец ×2; контракт «Голодный год» (§H.9): овцы не доятся
+    //
+    // ⚠️ Овцы ставятся ДО деревьев, камней и кустов: раньше они шли
+    // последними и почти всегда попадали в уже занятое canPlace() место —
+    // на карте оказывалось 2 овцы вместо 10, то есть 6 мяса вместо 30
+    // (§B.5: «мясо — стоковый кран, ~30 мяса на матч, максимум ~6
+    // наймов/жителей»). Мясо — жёсткий лимит найма, его нельзя терять.
+    const sheepCount = (this.challengeMods.has('cm_scarcity') ? 20 : 10) - belt.sheep;
+    let sheepPlaced = 0;
+    for (let attempt = 0; attempt < 60 && sheepPlaced < sheepCount; attempt++) {
+      // Овцы — в рабочем радиусе: мясо нужно пешкам, а не декорации (§B.3).
+      const a = rng.realInRange(0, Math.PI * 2);
+      const r = rng.realInRange(230, 980);
+      const x = this.castleX + Math.cos(a) * r;
+      const y = this.castleY + Math.sin(a) * r;
+      if (x < m + 80 || x > S - m - 80 || y < m + 80 || y > S - m - 80) continue;
+      if (!canPlace(x, y, 50)) continue;
+      addSheep(x, y);
+      sheepPlaced++;
+    }
+    // ---- Золотые жилы: 10 штук, 4 цикла × 20 руды (§B.3) ----
+    // Благословение «+1 жила» (A2) добавляет одиннадцатую.
+    // Жилы ставятся ДО деревьев: одна жила — 80 руды, это треть плана
+    // поселения по руде, и терять её из-за переполнения лесом нельзя.
+    this.spawnVeins(
+      rng, canPlace, place,
+      VEIN_COUNT - belt.veins + (this.mods.blessing === 'bl_vein' ? 1 : 0),
+    );
     // ---- Деревья: четыре породы разной высоты ----
     // Каждое дерево — ResourceNode: пешка рубит его и уносит 5 дерева (§B.3).
-    const TREE_KEYS = ['tree1', 'tree2', 'tree3', 'tree4'] as const;
-    for (let i = 0; i < 96; i++) {
-      const [x, y] = randPos();
-      if (!canPlace(x, y, 80)) continue;
-      const key = TREE_KEYS[rng.between(0, TREE_KEYS.length - 1)];
-      const sc = 0.75 + rng.frac() * 0.4;
-      const t = this.add.sprite(x, y, key).setScale(sc);
-      t.play(key + '-sway');
-      if (t.anims.currentAnim) t.setFrame(rng.between(0, 7));
-      t.setDepth(DEPTH.ENTITY_BASE + y);
-      place(x, y, 80);
-      this.economy.registerNode(new ResourceNode(this, 'tree', 'wood', x, y, 1, t));
+    //
+    // ⚠️ Деревья сеются В РАБОЧЕМ РАДИУСЕ (220…980 px от замка) решёткой
+    // с разбросом: пешки дальше 1000 px не ходят (§B.3), а раньше лес
+    // высыпался по всей карте и большая часть его была недостижима. Случайная
+    // выборка давала 26 деревьев (130 дерева на матч — на дом и казармы едва
+    // хватало), решётка с шагом 190 px и разбросом ±30 даёт ~40 деревьев
+    // (~200 дерева) — ровно под план поселения (§B.4) и ровно столько,
+    // сколько нужно, чтобы лес не выглядел полем с кустами.
+    const TREE_STEP = 190;
+    const TREE_JITTER = 30;
+    for (let gx = this.castleX - 980; gx <= this.castleX + 980; gx += TREE_STEP) {
+      for (let gy = this.castleY - 980; gy <= this.castleY + 980; gy += TREE_STEP) {
+        const x = gx + rng.realInRange(-TREE_JITTER, TREE_JITTER);
+        const y = gy + rng.realInRange(-TREE_JITTER, TREE_JITTER);
+        if (x < m + 80 || x > S - m - 80 || y < m + 80 || y > S - m - 80) continue;
+        const d = Math.hypot(x - this.castleX, y - this.castleY);
+        if (d < 220 || d > 980) continue;
+        if (!canPlace(x, y, 70)) continue;
+        addTree(x, y, 70);
+      }
     }
     // Пни у опушек: закрывают пустоты, где полноценное дерево не влезает
     for (let i = 0; i < 22; i++) {
@@ -789,23 +874,6 @@ export class GameScene extends Phaser.Scene {
       this.settlement.castle.hp += 50;
     }
 
-    // ---- Овечки: ресурс мяса — 3 за цикл, овца исчезает (§B.3) ----
-    // «Дефицит» (A2): овец ×2; контракт «Голодный год» (§H.9): овцы не доятся
-    const sheepCount = this.challengeMods.has('cm_scarcity') ? 20 : 10;
-    for (let i = 0; i < sheepCount; i++) {
-      const [x, y] = randPos();
-      if (!canPlace(x, y, 50)) continue;
-      const sh = this.add.sprite(x, y, 'sheep').setScale(0.8);
-      sh.play('sheep-idle');
-      sh.setDepth(DEPTH.ENTITY_BASE + y);
-      place(x, y, 50);
-      if (this.contractId !== 'c_hunger') {
-        this.economy.registerNode(new ResourceNode(this, 'sheep', 'meat', x, y, 1, sh));
-      }
-    }
-    // ---- Золотые жилы: 10 штук, 4 цикла × 20 руды (§B.3) ----
-    // Благословение «+1 жила» (A2) добавляет одиннадцатую
-    this.spawnVeins(rng, canPlace, place, VEIN_COUNT + (this.mods.blessing === 'bl_vein' ? 1 : 0));
     // Облака (дрейф вправо, относительный твин с переносом)
     for (let i = 0; i < 10; i++) {
       const [x, y] = [rng.between(0, S), rng.between(0, S)];
@@ -825,7 +893,12 @@ export class GameScene extends Phaser.Scene {
   }
 
   private buildPlayer(): void {
-    this.player = new Player(this, WORLD.SIZE / 2, WORLD.SIZE / 2 + 260, this.heroDef);
+    // ⚠️ Герой начинает У ЗАМКА, а не в стороне от поселения (§0.1, §B.9).
+    // Раньше старт был на 720 px южнее базы: камера открывала пустую траву,
+    // поселение было за экраном, а волны, спавнящиеся кольцом вокруг героя,
+    // проходили прямо сквозь базу. Теперь первый экран матча — это дом,
+    // пешки и точки стройки, а игрок сразу видит, что защищает.
+    this.player = new Player(this, this.castleX, this.castleY + 150, this.heroDef);
     // QA-хук (?qa_hero_hp=N, dev-сборки): увеличенное HP героя — чтобы
     // проверять осады/волны/поражение поселения E2E без смерти героя.
     // Бонус применяется в recomputeStats — иначе он перетирался бы heroDef.
@@ -869,6 +942,87 @@ export class GameScene extends Phaser.Scene {
       created++;
     }
     void VEIN_YIELD;
+  }
+
+  /**
+   * Рабочий пояс поселения (§B.3, §B.9).
+   *
+   *  Собственный лес, пастбище и две жилы у самой базы. Пояс лежит ВНУТРИ
+   *  ядра поселения (SETTLEMENT_CORE) и в промежутках между точками стройки,
+   *  поэтому:
+   *  • сбор идёт без паники — рабочему не нужно бегать через полкарты;
+   *  • первый дом появляется в первую минуту матча (гейт фазы E);
+   *  • пояс не пересекается с будущими постройками.
+   *
+   *  Числа подобраны под план расхода: 10 деревьев — это 50 дерева, а
+   *  дом + казармы стоят 70 дерева; три овцы — 9 мяса (найм воина — 5),
+   *  две жилы — 160 руды (казармы нужны 15, обитель — 40). Фактические
+   *  количества возвращаются наружу: общий сток карты обязан остаться
+   *  ровно 10 овец и 10 жил (§B.3), иначе мясо перестаёт быть стоковым
+   *  краном найма (§B.5).
+   */
+  private spawnSettlementBelt(
+    rng: Phaser.Math.RandomDataGenerator,
+    canPlace: (x: number, y: number, r: number) => boolean,
+    place: (x: number, y: number, r: number) => void,
+    addTree: (x: number, y: number, radius?: number) => void,
+    addSheep: (x: number, y: number) => void,
+  ): { sheep: number; veins: number } {
+    const R_MIN = 250;
+    const R_MAX = SETTLEMENT_CORE - 60;
+    /** Точка пояса: угол + радиус, с проверкой занятости и точек стройки. */
+    const beltSpot = (radius: number, attempts = 60): { x: number; y: number } | null => {
+      for (let i = 0; i < attempts; i++) {
+        const a = rng.realInRange(0, Math.PI * 2);
+        const r = rng.realInRange(R_MIN, R_MAX);
+        const x = this.castleX + Math.cos(a) * r;
+        const y = this.castleY + Math.sin(a) * r;
+        if (x < WORLD.GRASS_MARGIN + 80 || x > WORLD.SIZE - WORLD.GRASS_MARGIN - 80) continue;
+        if (y < WORLD.GRASS_MARGIN + 80 || y > WORLD.SIZE - WORLD.GRASS_MARGIN - 80) continue;
+        if (!canPlace(x, y, radius)) continue;
+        // Точки стройки: пояс не должен лезть под будущую постройку.
+        let clear = true;
+        for (const spot of BUILD_SPOTS) {
+          const sx = this.castleX + spot.dx, sy = this.castleY + spot.dy;
+          if (Math.hypot(x - sx, y - sy) < 96 + radius) { clear = false; break; }
+        }
+        if (!clear) continue;
+        return { x, y };
+      }
+      return null;
+    };
+    // Лес поселения
+    for (let i = 0; i < 16; i++) {
+      const spot = beltSpot(70);
+      if (!spot) break;
+      addTree(spot.x, spot.y, 70);
+    }
+    // Пастбище
+    let sheep = 0;
+    for (let i = 0; i < 4; i++) {
+      const spot = beltSpot(50);
+      if (!spot) break;
+      addSheep(spot.x, spot.y);
+      sheep++;
+    }
+    // Две жилы у базы: руда под казармы и обитель добывается рядом с домом
+    let veins = 0;
+    for (let i = 0; i < 3; i++) {
+      const spot = beltSpot(70);
+      if (!spot) break;
+      const variant = rng.between(1, 5);
+      const img = this.add.sprite(spot.x, spot.y, `gold-vein-${variant}`).setScale(0.9)
+        .setDepth(DEPTH.ENTITY_BASE + spot.y);
+      const pulse = this.add.sprite(spot.x, spot.y, `gold-vein-pulse-${variant}`)
+        .setScale(0.9).setDepth(DEPTH.GEM + 1).setBlendMode(Phaser.BlendModes.ADD);
+      pulse.play(`gold-vein-pulse-${variant}`);
+      place(spot.x, spot.y, 70);
+      this.economy.registerNode(
+        new ResourceNode(this, 'vein', 'ore', spot.x, spot.y, this.economy.veinCharges(), img, pulse),
+      );
+      veins++;
+    }
+    return { sheep, veins };
   }
 
   /** Скин построек (§J.6.2): setTint на замок и все здания. */
@@ -917,9 +1071,9 @@ export class GameScene extends Phaser.Scene {
         : null,
     });
     // Выбор цели врагом §A.5: гарнизон приоритетнее гражданских.
-    // Гражданские в ядре поселения (≤360 px от замка) — вне досягаемости:
-    // у разбега нет гарнизона, и без этого первая же волна вычищает
-    // экономику за минуту. Осада — единственный механизм угрозы базе (§D.1).
+    // Гражданские в ядре поселения — вне досягаемости: у разбега нет
+    // гарнизона, и без этого первая же волна вычищает экономику за минуту.
+    // Осада — единственный механизм угрозы базе (§D.1).
     this.registry.set('tss-picktarget', (e: Enemy): Pawn | null => {
       let nearestGarrison: Pawn | null = null;
       let nearestCivilian: Pawn | null = null;
@@ -930,10 +1084,10 @@ export class GameScene extends Phaser.Scene {
         if (p.state === 'wounded' || p.state === 'bleeding') continue;
         const d = Math.hypot(p.x - e.x, p.y - e.y);
         if (d > AGGRO.NPC) continue;
-        // Документированный safe-core раунда 3: обычные волны не выбирают
-        // гражданских в радиусе 360 px от замка; у осад отдельный путь.
-        if (p.cls === 'civilian'
-          && Math.hypot(p.x - this.castleX, p.y - this.castleY) < 360) continue;
+        // Ядро поселения (TZ §A.5): обычные волны не выбирают гражданских
+        // в защищённой зоне — замок (560 px) плюс пояс вокруг точек стройки
+        // и построенных зданий; у осад отдельный путь.
+        if (p.cls === 'civilian' && this.economy.isSettlementCore(p.x, p.y)) continue;
         // Приоритет категорий строгий: гарнизон важнее гражданских независимо
         // от расстояния; внутри категории выбирается ближайшая доступная цель.
         if (p.cls === 'garrison') {

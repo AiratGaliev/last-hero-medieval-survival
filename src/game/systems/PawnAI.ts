@@ -126,7 +126,7 @@ export class PawnAI {
     }
 
     // --- 2. Враг рядом → паника, бег к замку (§A.5, PANIC 220) ---
-    if (this.enemyNear(p.x, p.y, AGGRO.PANIC)) {
+    if (this.shouldFlee(p)) {
       p.state = 'flee';
       this.walkTo(p, eco.castleX, eco.castleY, dtMs);
       return;
@@ -207,21 +207,12 @@ export class PawnAI {
     // новое здание каждый кадр (двойное списание, риск §D.2).
     if (p.kind === 'builder') {
       const spot = this.pickBuildSpot(p);
-      let target = spot;
-      if (spot && spot.kind !== 'house') {
-        const cost = BUILDING_PLANS[spot.kind].cost;
-        const affordBig = eco.resources.wood >= (cost.wood ?? 0) && eco.resources.ore >= (cost.ore ?? 0);
-        if (!affordBig) {
-          // Экономика в яме: крупная стройка не по карману. Фолбэк — дом:
-          // он даёт +1 лимит населения и новых жителей (§B.2, §E.5), иначе
-          // строитель простаивает вечно, а поселение не восстанавливается.
-          const house = this.nearestHouseSpot(p);
-          if (house) {
-            const hc = BUILDING_PLANS.house.cost;
-            if (eco.resources.wood >= (hc.wood ?? 0)) target = house;
-          }
-        }
-      }
+      // ⚠️ Раньше здесь был фолбэк «крупное здание не по карману → дом».
+      // Он ломал план поселения: строитель всегда уходил строить дом и
+      // казармы (нужны для преемственности, §F.3) не появлялись НИКОГДА.
+      // Теперь порядок задаёт Economy.nextBuildKind(), а если цель ещё
+      // недоступна по деньгам — строитель копит под неё (target ниже).
+      const target = spot;
       if (target) {
         const cost = BUILDING_PLANS[target.kind].cost;
         const afford = eco.resources.wood >= (cost.wood ?? 0) && eco.resources.ore >= (cost.ore ?? 0);
@@ -367,9 +358,25 @@ export class PawnAI {
   private pickNodeFor(p: Pawn, minimums?: Partial<Record<ResourceKind, number>>): ResourceNode | null {
     const eco = this.eco;
     const enemies = this.c.enemies();
-    // Дефицит: план расхода (стройки/ремонт/лечение/наём) против склада
-    // + базовый план старта (первый дом 30 дерева, казармы 40+15 — §B.4, §B.9)
-    const target: Record<string, number> = { wood: 30, ore: 15, meat: 3 };
+    // Дефицит: план расхода (стройки/ремонт/лечение/наём) против склада.
+    //
+    // ⚠️ Раньше здесь стоял жёсткий базовый план `{ wood: 30, ore: 15, meat: 3 }`
+    // и НЕ учитывалась цель автостройки. Из-за этого руда под казармы никогда
+    // не добывалась (дефицит руды был 15 против 30 дерева, и сборщики
+    // бесконечно таскали дерево), а после исчерпания базового плана все
+    // оценки становились нулевыми и сборщик вообще вставал. Теперь план
+    // расхода — это цель следующей постройки плюс активные стройки, ремонты
+    // и найм (§B.6: «target — план расхода»).
+    const target: Record<string, number> = { wood: 0, ore: 0, meat: 3 };
+    // План автостройки: цель и следующий шаг (§B.6 «target — план расхода»).
+    // Если такая стройка уже заложена, её цена учтена ниже по списку.
+    const plannedCost = eco.plannedBuildCost();
+    const plannedKind = eco.nextBuildKind();
+    if (plannedKind && !eco.buildJobs.some((j) => j.spot.kind === plannedKind)) {
+      for (const [k, v] of Object.entries(plannedCost)) {
+        target[k] = (target[k] ?? 0) + v;
+      }
+    }
     for (const j of eco.buildJobs) {
       for (const [k, v] of Object.entries(BUILDING_PLANS[j.spot.kind].cost)) {
         target[k] += v;
@@ -421,31 +428,23 @@ export class PawnAI {
     return best;
   }
 
-  /** Ближайшее свободное пятно именно под дом (фолбэк автостройки, §B.2). */
-  private nearestHouseSpot(p: Pawn): { kind: BuildingKind; x: number; y: number } | null {
-    const spots = this.eco.freeSpots().filter((s) => s.kind === 'house');
-    let best: { kind: BuildingKind; x: number; y: number } | null = null;
-    let bestD = Infinity;
-    for (const s of spots) {
-      const d = (s.x - p.x) ** 2 + (s.y - p.y) ** 2;
-      if (d < bestD) { bestD = d; best = s; }
-    }
-    return best;
-  }
-
   /**
-   * Пятно для автостройки строителя. Казармы имеют приоритет над домиками —
-   * «страховка от смерти строится раньше» (Фаза E ROADMAP, TZ §F.3).
+   * Пятно для автостройки строителя — по плану поселения (TZ §B.4, §B.9).
+   *
+   *  Порядок задаёт Economy.nextBuildKind(): сначала дом (цель первой
+   *  минуты), потом казармы (страховка от смерти героя), затем остальные
+   *  дома, обитель, башня и тир. Прежний порядок «крупное пятно первым»
+   *  держал строителя в ожидании руды до 107-й секунды матча, а дом
+   *  не появлялся вообще.
    */
   private pickBuildSpot(p: Pawn): { kind: BuildingKind; x: number; y: number } | null {
     const spots = this.eco.freeSpots();
-    const big = spots.filter((s) => s.kind !== 'house');
-    if (big.length > 0) {
-      // Казармы первыми (порядок BUILD_SPOTS), затем прочие крупные
-      const barracks = big.find((s) => s.kind === 'barracks');
-      if (barracks) return barracks;
-      return big[0];
+    const kind = this.eco.nextBuildKind();
+    if (kind) {
+      const spot = spots.find((s) => s.kind === kind);
+      if (spot) return spot;
     }
+    // Пятна нужного вида кончились (или план исчерпан) — берём ближайшее.
     return this.nearestFreeSpot(p);
   }
 
@@ -938,6 +937,60 @@ export class PawnAI {
   private enemyNear(x: number, y: number, r: number): boolean {
     for (const e of this.c.enemies()) {
       if (!e.active || e.dead) continue;
+      if (Math.hypot(e.x - x, e.y - y) < r) return true;
+    }
+    return false;
+  }
+
+  /**
+   * Паника гражданского (§B.2, §A.5).
+   *
+   *  Базовое правило: враг ближе AGGRO.PANIC — пешка бежит к замку.
+   *
+   *  ⚠️ **Два уточнения, без которых экономика не работала.**
+   *
+   *  1. **Ядро поселения** (авторизованное отклонение §A.5): гражданские
+   *     внутри ядра (замок + пояс вокруг строек, `Economy.isSettlementCore`)
+   *     недостижимы для обычных волн — враг их там не выбирает целью. Паниковать
+   *     из-за врага, который всё равно не дойдёт, бессмысленно: толпа гоблинов
+   *     у ворот вставала колом ВСЁ поселение, и экономика вставала вместе с
+   *     ним (в замере первый дом не появлялся и за 3,5 минуты матча). Осада —
+   *     единственный механизм угрозы базе (§D.1), поэтому от осадного врага
+   *     паника сохраняется в любой точке карты.
+   *
+   *  2. **Враг, занятый героем, — не личная угроза рабочему.** §A.5
+   *     отдаёт герою первую цель: пока игрок дерётся, толпа идёт за ним, и
+   *     рабочие не должны бросать работу из-за каждого проходящего гоблина.
+   *     Паника включается ровно тогда, когда враг переключился на
+   *     поселение (цель-пешка вместо героя) — это и есть «база в опасности»
+   *     из §B.2. Именно тогда игрок должен вернуться к базе.
+   */
+  private shouldFlee(p: Pawn): boolean {
+    const eco = this.eco;
+    if (!this.enemyNear(p.x, p.y, AGGRO.PANIC)) return false;
+    const inCore = eco.isSettlementCore(p.x, p.y);
+    // В ядре поселения обычная волна не достаёт до гражданских (§A.5) —
+    // паникует только осада, единственная угроза базе (§D.1).
+    if (inCore) return this.siegeNear(p.x, p.y, AGGRO.PANIC);
+    // Враг идёт за героем — угрозы лично для рабочему нет. Паника
+    // включается, когда враг переключился на поселение.
+    return this.hunterNear(p.x, p.y, AGGRO.PANIC);
+  }
+
+  /** Осадный враг рядом: доходит до самой базы (§D.1). */
+  private siegeNear(x: number, y: number, r: number): boolean {
+    for (const e of this.c.enemies()) {
+      if (!e.active || e.dead || !e.siege) continue;
+      if (Math.hypot(e.x - x, e.y - y) < r) return true;
+    }
+    return false;
+  }
+
+  /** Враг, переключившийся на поселение (цель-пешка вместо героя, §A.5). */
+  private hunterNear(x: number, y: number, r: number): boolean {
+    for (const e of this.c.enemies()) {
+      if (!e.active || e.dead) continue;
+      if (e.aimedPawn === null) continue;
       if (Math.hypot(e.x - x, e.y - y) < r) return true;
     }
     return false;

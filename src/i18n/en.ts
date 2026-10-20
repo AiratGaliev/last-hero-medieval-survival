@@ -481,7 +481,7 @@ export const en: Record<TranslationKey, string> = {
   'speedup.heal': 'HEAL EVERYONE',
   'speedup.cost': '{v} gold',
   'speedup.ad': 'for an ad',
-  'speedup.noTarget': 'nothing to speed up',
+  'speedup.noTarget': 'NO TARGET',
   'speedup.poor': 'not enough shop gold',
   'speedup.adUnavailable': 'AD UNAVAILABLE',
   'speedup.done': 'Speed-up applied',
