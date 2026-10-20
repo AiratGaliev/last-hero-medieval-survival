@@ -2309,6 +2309,81 @@ test('phase K: siege building-attack cadence matches the documented DPS budget',
   });
 });
 
+
+test('phase K: pig-rider siege charge telegraphs and adds one 8 HP building hit', async ({ page }) => {
+  await startRun(page);
+  const report = await page.evaluate(() => {
+    const game = (window as RuntimeWindow).__tss;
+    if (!game) throw new Error('Phaser runtime is unavailable');
+    type SiegeEnemyRuntime = {
+      active: boolean;
+      kind: string;
+      siege: boolean;
+      buildingTarget: unknown;
+      attackWindowEnds: number;
+      setPosition(x: number, y: number): unknown;
+    };
+    type RuntimeScene = GameSceneRuntime & {
+      player: { setPosition(x: number, y: number): unknown };
+      settlement: { castle: BuildingRuntime };
+      spawnSiegeUnit(kind: string, x: number, y: number, firer: boolean): SiegeEnemyRuntime | null;
+      enemyGroup: { remove(child: unknown, removeFromScene?: boolean, destroyChild?: boolean): void };
+    };
+    type RuntimeEnemy = {
+      updateSiege(time: number, delta: number): void;
+      siegeChargeStage: 'idle' | 'windup' | 'charge' | 'recover';
+      siegeChargeTimerMs: number;
+      buildingAtkCd: number;
+      ctx: Record<string, unknown> & {
+        playerX: () => number;
+        playerY: () => number;
+        attackBuilding: (target: unknown, damage: number, fire?: boolean, isBoss?: boolean) => void;
+        siegeShoot: (...args: unknown[]) => void;
+        attackPawn: (...args: unknown[]) => void;
+        nearPawn?: (...args: unknown[]) => unknown;
+        siegeInterceptRadius?: () => number;
+      };
+    };
+    const scene = game.scene.getScene('Game') as unknown as RuntimeScene;
+    const castle = scene.settlement.castle;
+    const now = scene.time.now;
+    scene.player.setPosition(0, 0);
+    const enemy = scene.spawnSiegeUnit('pig-rider', castle.x + 100, castle.y, false);
+    if (!enemy) throw new Error('Could not spawn pig-rider charge fixture');
+    enemy.siege = true;
+    enemy.buildingTarget = castle;
+    enemy.attackWindowEnds = now + 10_000;
+    const damageEvents: number[] = [];
+    const runtime = enemy as unknown as RuntimeEnemy;
+    runtime.ctx = {
+      ...runtime.ctx,
+      playerX: () => 0,
+      playerY: () => 0,
+      attackBuilding: (_target, damage) => damageEvents.push(damage),
+      siegeShoot: () => {},
+      attackPawn: () => {},
+      nearPawn: () => null,
+      siegeInterceptRadius: () => 1,
+    };
+    runtime.updateSiege(now + 1, 8_000);
+    const stageAtChargeStart = runtime.siegeChargeStage;
+    const chargeHitsBeforeContact = damageEvents.filter((damage) => damage === 8).length;
+    runtime.updateSiege(now + 481, 480);
+    const stageAfterTelegraph = runtime.siegeChargeStage;
+    enemy.setPosition(castle.x + 30, castle.y);
+    runtime.updateSiege(now + 700, 50);
+    const chargeHits = damageEvents.filter((damage) => damage === 8).length;
+    const stageAfterContact = runtime.siegeChargeStage;
+    scene.enemyGroup.remove(enemy, true, true);
+    return { stageAtChargeStart, chargeHitsBeforeContact, stageAfterTelegraph, chargeHits, stageAfterContact };
+  });
+  expect(report.stageAtChargeStart).toBe('windup');
+  expect(report.chargeHitsBeforeContact).toBe(0);
+  expect(report.stageAfterTelegraph).toBe('charge');
+  expect(report.chargeHits).toBe(1);
+  expect(report.stageAfterContact).toBe('recover');
+});
+
 test('phase K: siege infrastructure caps exclude unfinished and ruined buildings and clamp damage at 12%/6%', async ({ page }) => {
   await startRun(page);
   const report = await page.evaluate(() => {

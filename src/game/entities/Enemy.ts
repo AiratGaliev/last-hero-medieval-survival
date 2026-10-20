@@ -96,6 +96,12 @@ export class Enemy extends Phaser.Physics.Arcade.Sprite {
   get aimedPawn(): Pawn | null { return this.targetPawn; }
   private lastPick = 0;
   private buildingAtkCd = 0;
+  /** Отдельный цикл рывка свиногоблина по зданию в режиме осады (§E.4.1). */
+  private siegeChargeStage: 'idle' | 'windup' | 'charge' | 'recover' = 'idle';
+  private siegeChargeTimerMs = 0;
+  private siegeChargeCooldownMs = 8_000;
+  private siegeChargeDirX = 0;
+  private siegeChargeDirY = 0;
   /** Момент спавна — таймер отступления осады 60 сек (§E.4.2) */
   spawnedAt = 0;
   /** Окно атаки у стены, конец в мс (0 — не ограничено; §E.4.2) */
@@ -265,6 +271,10 @@ export class Enemy extends Phaser.Physics.Arcade.Sprite {
     // Срок атаки проверяется ДО перехвата героем: близость игрока не должна
     // продлевать десятисекундное окно у стены (§E.4.2).
     if (this.attackWindowEnds > 0 && time >= this.attackWindowEnds) {
+      if (this.kind === 'pig-rider') {
+        this.siegeChargeStage = 'idle';
+        this.setSiegeChargeTint(false);
+      }
       this.siege = false;
       this.buildingTarget = null;
       body.setVelocity(0, 0);
@@ -274,13 +284,27 @@ export class Enemy extends Phaser.Physics.Arcade.Sprite {
     }
 
     const b = this.buildingTarget as { x: number; y: number } | null;
-    if (!b) { this.siege = false; return; }
+    if (!b) {
+      this.siege = false;
+      if (this.kind === 'pig-rider') {
+        this.siegeChargeStage = 'idle';
+        this.setSiegeChargeTint(false);
+      }
+      return;
+    }
     const hx = this.ctx.playerX(), hy = this.ctx.playerY();
     const heroD = Math.hypot(hx - this.x, hy - this.y);
 
     // Игрок рядом перехватывает осаду — она бьёт его, не постройку (§E.4.2)
     const interceptRadius = this.ctx.siegeInterceptRadius?.() ?? SIEGE.INTERCEPT_R;
     if (heroD < interceptRadius) {
+      // Герой может перехватить и сорвать телеграфированный осадный рывок.
+      if (this.kind === 'pig-rider' && this.siegeChargeStage !== 'idle') {
+        this.siegeChargeStage = 'idle';
+        this.siegeChargeTimerMs = 0;
+        this.siegeChargeCooldownMs = 8_000;
+        this.setSiegeChargeTint(false);
+      }
       // обычный погон за игроком
       const dx = hx - this.x, dy = hy - this.y;
       const d = Math.max(1, Math.hypot(dx, dy));
@@ -320,12 +344,71 @@ export class Enemy extends Phaser.Physics.Arcade.Sprite {
         }
       }
       this.buildingAtkCd -= delta;
+
+      if (this.kind === 'pig-rider') {
+        if (this.siegeChargeStage === 'windup') {
+          this.siegeChargeTimerMs = Math.max(0, this.siegeChargeTimerMs - delta);
+          body.setVelocity(0, 0);
+          this.setSiegeChargeTint(true);
+          if (this.siegeChargeTimerMs <= 0) {
+            this.setSiegeChargeTint(false);
+            this.siegeChargeDirX = dx / dist;
+            this.siegeChargeDirY = dy / dist;
+            this.siegeChargeStage = 'charge';
+            this.siegeChargeTimerMs = 560;
+            this.playOnce(`${this.kind}-atk`);
+          }
+          return;
+        }
+
+        if (this.siegeChargeStage === 'charge') {
+          this.siegeChargeTimerMs = Math.max(0, this.siegeChargeTimerMs - delta);
+          const targetDistance = Math.hypot(b.x - this.x, b.y - this.y);
+          if (targetDistance <= 36 || this.siegeChargeTimerMs <= 0) {
+            body.setVelocity(0, 0);
+            this.siegeChargeStage = 'recover';
+            this.siegeChargeTimerMs = 850;
+            this.siegeChargeCooldownMs = 8_000;
+            // Рывок — отдельные 8 HP, тот же Settlement/cap, что и обычный урон.
+            this.ctx.attackBuilding(b, 8, false, false);
+            this.playMove(false);
+          } else {
+            body.setVelocity(
+              this.siegeChargeDirX * 420 + this.knockX,
+              this.siegeChargeDirY * 420 + this.knockY,
+            );
+            if (Math.abs(body.velocity.x) > 8) {
+              this.setFlipX(this.faceDir(body.velocity.x));
+            }
+          }
+          return;
+        }
+
+        if (this.siegeChargeStage === 'recover') {
+          this.siegeChargeTimerMs = Math.max(0, this.siegeChargeTimerMs - delta);
+          body.setVelocity(0, 0);
+          if (this.siegeChargeTimerMs <= 0) this.siegeChargeStage = 'idle';
+          return;
+        }
+
+        // Cooldown ticks only while the rider remains in attack range and active time advances.
+        this.siegeChargeCooldownMs = Math.max(0, this.siegeChargeCooldownMs - delta);
+        if (this.siegeChargeCooldownMs <= 0) {
+          this.siegeChargeStage = 'windup';
+          this.siegeChargeTimerMs = 480;
+          this.setSiegeChargeTint(true);
+          this.playLoop(`${this.kind}-idle`);
+          body.setVelocity(0, 0);
+          return;
+        }
+      }
+
       if (this.buildingAtkCd <= 0) {
         // Босс в фазе 2 бьёт замок быстрее осады: 8 урона / 0.535 c ≈ 15 HP/с
         // — замок (~500 HP, потолка для босса нет) держится ~33 с (§E.6)
         // §E.4.1: обычная атака — 1.5 с; шар шамана — 2.4 с
-      // (5 / 2.4 + 3 / 6 ≈ 2.58 HP/с с учётом DoT); босс фазы 2 — 535 мс.
-      this.buildingAtkCd = this.kind === 'boss' ? 535 : this.kind === 'shaman' ? 2400 : 1500;
+        // (5 / 2.4 + 3 / 6 ≈ 2.58 HP/с с учётом DoT); босс фазы 2 — 535 мс.
+        this.buildingAtkCd = this.kind === 'boss' ? 535 : this.kind === 'shaman' ? 2400 : 1500;
         if (ranged) {
           // Бросок по зданию: шаман — огненный шар (поджог), гнолл — кость
           this.playOnce(`${this.kind}-shoot`, () => {
@@ -345,6 +428,17 @@ export class Enemy extends Phaser.Physics.Arcade.Sprite {
       }
     }
     void time;
+  }
+
+  /** Красный телеграф осадного рывка: FILL tint не зависит от случайного фидбека урона. */
+  private setSiegeChargeTint(active: boolean): void {
+    if (active) {
+      this.setTint(0xff9999);
+      this.setTintMode(Phaser.TintModes.FILL);
+    } else {
+      this.clearTint();
+      this.setTintMode(Phaser.TintModes.MULTIPLY);
+    }
   }
 
   /**
