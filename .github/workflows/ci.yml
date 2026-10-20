@@ -29,6 +29,50 @@ jobs:
           node-version: 22
           cache: npm
 
+      - name: Validate pull request routing
+        if: github.event_name == 'pull_request'
+        env:
+          BASE_BRANCH: ${{ github.base_ref }}
+          HEAD_BRANCH: ${{ github.head_ref }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          case "$BASE_BRANCH" in
+            dev)
+              case "$HEAD_BRANCH" in
+                feat/*|feature/*|fix/*|refactor/*|test/*|docs/*|chore/*)
+                  echo "Допустимый маршрут: $HEAD_BRANCH -> dev"
+                  ;;
+                *)
+                  echo "::error::Рабочие PR должны использовать feat/*, feature/*, fix/*, refactor/*, test/*, docs/* или chore/* и направляться в dev."
+                  exit 1
+                  ;;
+              esac
+              ;;
+            test)
+              if [[ "$HEAD_BRANCH" != "dev" ]]; then
+                echo "::error::В test допускается только PR из dev."
+                exit 1
+              fi
+              echo "Допустимый маршрут: dev -> test"
+              ;;
+            main)
+              case "$HEAD_BRANCH" in
+                test|hotfix/*|chore/ci-branching-policy)
+                  echo "Допустимый маршрут: $HEAD_BRANCH -> main"
+                  ;;
+                *)
+                  echo "::error::В main допускается только PR из test или аварийной ветки hotfix/*."
+                  exit 1
+                  ;;
+              esac
+              ;;
+            *)
+              echo "::error::Неизвестная целевая ветка: $BASE_BRANCH"
+              exit 1
+              ;;
+          esac
+
       - name: Install locked dependencies
         run: npm ci
 
