@@ -70,6 +70,7 @@ export class Enemy extends Phaser.Physics.Arcade.Sprite {
   /** Текущая анимация — чтобы не перезапускать один и тот же цикл каждый кадр */
   private lastAnim = '';
   /** Ожидаемый callback одноразовой анимации; старый отменяется при новом действии. */
+  private animationCompleteHandler: ((anim: Phaser.Animations.Animation) => void) | null = null;
 
   // ---- Выбор цели (§A.5): герой → гарнизон → гражданский, пересчёт 400 мс ----
   /** Осадный враг: цель — здание профиля, не игрок (§E.4) */
