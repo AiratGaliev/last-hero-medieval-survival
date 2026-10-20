@@ -3275,3 +3275,11 @@ HUD-слота, `SuccessionScene`, `PauseScene` и новые статическ
 - Создан merge-коммит [`a40fa6e7`](https://github.com/AiratGaliev/last-hero-medieval-survival/commit/a40fa6e7cf3a9a4ecdbdecfdea96f7fb80871fed), который объединяет head разработки с актуальным `dev` `09263dcc92c3b5229ed2a666e05ade533de52f9a`. GitHub подтвердил `mergeable: true`, сравнение с `dev`: `ahead_by=113`, `behind_by=0`. PR #20 оставлен открытым.
 - CI Fast [run #39470064613](https://github.com/AiratGaliev/last-hero-medieval-survival/actions/runs/39470064613) успешно завершился на этом merge-коммите: валидация маршрута, `npm ci`, `npm run check`, `npm run build`, `npm run check:yg` — **success**.
 - Этот workflow не запускает полный Playwright suite. E2E [run #39464782783](https://github.com/AiratGaliev/last-hero-medieval-survival/actions/runs/39464782783) — успешный, но он проверял другую ревизию ветки `test`; его не засчитываем как фазовый гейт PR #20. Полный browser E2E и мобильная/долгосрочная/платформенная приёмка остаются открытыми.
+
+
+## 2026-10-20 — Повторная верификация CI и фазовых гейтов
+
+- CI Fast [run #39470064613](https://github.com/AiratGaliev/last-hero-medieval-survival/actions/runs/39470064613) завершился успешно на коммите `a40fa6e7cf3a9a4ecdbdecfdea96f7fb80871fed`: маршрут PR, `npm ci`, `npm run check`, `npm run build` и `npm run check:yg` прошли.
+- После обновления статуса документации CI Fast [run #39470274480](https://github.com/AiratGaliev/last-hero-medieval-survival/actions/runs/39470274480) завершился успешно на документационном SHA `e023ff698e5def349a3cf9a71f391284136782ff`; исходники игры в этом коммите не менялись.
+- PR остаётся открытым, синхронизирован с `dev`, mergeable. Browser E2E для ревизии PR #20 не запускался из-за принятой схемы: E2E workflow срабатывает на PR в `test`/`main`, а PR #20 целится в `dev`. Успешный E2E на другой ревизии `test` не считается подтверждением этих изменений.
+- Чекбоксы гейтов I–L не отмечались выполненными только по факту сборки. Их runtime-приёмка, физические мобильные устройства, длительный балансный матч и Yandex Games Sandbox остаются открытыми. Локальный checkout недоступен по DNS, поэтому локальные команды не выполнялись.
