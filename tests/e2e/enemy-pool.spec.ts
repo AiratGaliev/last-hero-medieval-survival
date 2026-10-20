@@ -433,36 +433,40 @@ test('phase I: harpoon shark still fires when its throw animation is interrupted
   await page.evaluate(() => {
     const game = (window as unknown as { __tss?: RuntimeGame }).__tss;
     if (!game) throw new Error('Phaser runtime is unavailable');
-    const scene = game.scene.getScene('Game');
+    const scene = game.scene.getScene('Game') as RuntimeScene & {
+      __e2eHarpoonInterrupted?: boolean;
+    };
     scene.spawner.stopped = true;
-    // Place the shark inside throw range, with no other target closer than the hero.
+    // 900 px гарантируют, что выпущенный снаряд не попадёт в героя до проверки:
+    // скорость гарпуна 320 px/с, срок жизни — 2400 мс.
     const x = scene.player.x + 450;
     const y = scene.player.y;
     if (!scene.spawnEnemy('harpoon-shark', x, y)) throw new Error('Could not spawn harpoon shark');
+    const shark = scene.enemyGroup.getChildren().find((candidate) =>
+      candidate.active && candidate.kind === 'harpoon-shark') as RuntimeEnemy | undefined;
+    if (!shark) throw new Error('Harpoon shark disappeared immediately after spawn');
+    const animated = shark as unknown as {
+      on(event: string, listener: (animation: { key: string }) => void): void;
+      play(key: string, ignoreIfPlaying?: boolean): unknown;
+    };
+    // Подписка устанавливается до первого AI-тика. Это исключает гонку старого
+    // теста, который обнаруживал ключ анимации уже после возможного выпуска.
+    animated.on('animationstart', (animation) => {
+      if (animation.key !== 'harpoon-shark-atk') return;
+      scene.player.setPosition(shark.x - 900, shark.y);
+      scene.__e2eHarpoonInterrupted = true;
+      animated.play('harpoon-shark-run', true);
+    });
   });
+
   await expect.poll(() => page.evaluate(() => {
     const game = (window as unknown as { __tss?: RuntimeGame }).__tss;
-    if (!game) return null;
-    const scene = game.scene.getScene('Game');
-    return scene.enemyGroup.getChildren().find((candidate) =>
-      candidate.active && candidate.kind === 'harpoon-shark')?.anims.currentAnim?.key ?? null;
-  }), { timeout: 3_000 }).toBe('harpoon-shark-atk');
-
-  // После начала броска отводим героя дальше: снаряд остаётся активным достаточно
-  // долго, чтобы одинаково наблюдаться в desktop и mobile браузерных прогонах.
-  await page.evaluate(() => {
-    const game = (window as unknown as { __tss?: RuntimeGame }).__tss;
-    if (!game) throw new Error('Phaser runtime is unavailable');
-    const scene = game.scene.getScene('Game');
-    const shark = scene.enemyGroup.getChildren().find((candidate) =>
-      candidate.active && candidate.kind === 'harpoon-shark');
-    if (!shark) throw new Error('Harpoon shark disappeared during windup');
-    scene.player.setPosition(shark.x - 800, shark.y);
-    // Прерываем throw-анимацию намеренно: fallback обязан выпустить гарпун,
-    // даже если callback animationcomplete для исходного клипа не придёт.
-    (shark as RuntimeEnemy & { play: (key: string, ignoreIfPlaying?: boolean) => unknown })
-      .play('harpoon-shark-run', true);
-  });
+    if (!game) return false;
+    const scene = game.scene.getScene('Game') as RuntimeScene & {
+      __e2eHarpoonInterrupted?: boolean;
+    };
+    return scene.__e2eHarpoonInterrupted === true;
+  }), { timeout: 3_000 }).toBe(true);
   await expect.poll(() => page.evaluate(() => {
     const game = (window as unknown as { __tss?: RuntimeGame }).__tss;
     if (!game) return false;
@@ -473,7 +477,7 @@ test('phase I: harpoon shark still fires when its throw animation is interrupted
     };
     return scene.projectiles.enemyShots.getChildren()
       .some((shot) => shot.active && shot.shotKind === 'harpoon' && shot.texture.key === 'proj-harpoon');
-  }), { timeout: 4_000 }).toBe(true);
+  }), { timeout: 2_500 }).toBe(true);
   expect(pageErrors).toEqual([]);
 });
 

@@ -2123,6 +2123,7 @@ test('phase K: building fire pauses with gameplay and applies exactly three DoT 
     builder.state = 'work';
     economy.tick(10_001, scene.time.now + 10_001);
     if (!building.alive || building.underConstruction) throw new Error('Test house did not finish');
+    (building as unknown as { __e2eFireTarget: boolean }).__e2eFireTarget = true;
     // Пауза включается до ignite, чтобы кадр между созданием таймера и pause
     // не списывал часть исходного интервала.
     scene.hintOverlayPaused = true;
@@ -2135,7 +2136,7 @@ test('phase K: building fire pauses with gameplay and applies exactly three DoT 
   const duringPause = await page.evaluate(() => {
     const game = (window as RuntimeWindow).__tss!;
     const scene = game.scene.getScene('Game') as GameSceneRuntime;
-    const building = scene.economy.buildings.find((candidate) => candidate.kind === 'house');
+    const building = scene.economy.buildings.find((candidate) => (candidate as unknown as { __e2eFireTarget?: boolean }).__e2eFireTarget === true);
     return building ? (building as unknown as { burnRemainingMs: number }).burnRemainingMs : -1;
   });
   expect(duringPause).toBe(6_000);
@@ -2147,14 +2148,14 @@ test('phase K: building fire pauses with gameplay and applies exactly three DoT 
   await expect.poll(async () => page.evaluate(() => {
     const game = (window as RuntimeWindow).__tss!;
     const scene = game.scene.getScene('Game') as GameSceneRuntime;
-    const building = scene.economy.buildings.find((candidate) => candidate.kind === 'house');
+    const building = scene.economy.buildings.find((candidate) => (candidate as unknown as { __e2eFireTarget?: boolean }).__e2eFireTarget === true);
     return building ? (building as unknown as { burnRemainingMs: number }).burnRemainingMs : -1;
   }), { timeout: 3_000 }).toBeLessThan(6_000);
 
   const damageTotal = await page.evaluate(() => {
     const game = (window as RuntimeWindow).__tss!;
     const scene = game.scene.getScene('Game') as GameSceneRuntime;
-    const building = scene.economy.buildings.find((candidate) => candidate.kind === 'house');
+    const building = scene.economy.buildings.find((candidate) => (candidate as unknown as { __e2eFireTarget?: boolean }).__e2eFireTarget === true);
     if (!building) throw new Error('House disappeared during fire timer test');
     const burn = building as unknown as {
       burnRemainingMs: number;
@@ -2163,11 +2164,16 @@ test('phase K: building fire pauses with gameplay and applies exactly three DoT 
     // Перезапускаем таймер, чтобы точно проверить полный интервал, независимо
     // от того, сколько кадров прошло между восстановлением симуляции и замером.
     building.ignite(0);
+    // Повторный прямой вызов проверяет математику DoT при фиксированном полном
+    // интервале; предыдущие assertions отдельно проверяют реальный отсчёт и паузу.
+    burn.burnRemainingMs = 6_000;
     const first = burn.tickBurn(5_500);
-    const last = burn.tickBurn(5_000); // only the remaining 500 ms may deal damage
+    const remainingAfterFirst = burn.burnRemainingMs;
+    const last = burn.tickBurn(5_000); // только оставшиеся 500 мс могут нанести урон
     const afterExpiry = burn.tickBurn(5_000);
     return {
       first,
+      remainingAfterFirst,
       last,
       afterExpiry,
       remaining: burn.burnRemainingMs,
@@ -2175,6 +2181,7 @@ test('phase K: building fire pauses with gameplay and applies exactly three DoT 
     };
   });
   expect(damageTotal.first).toBeCloseTo(2.75, 5);
+  expect(damageTotal.remainingAfterFirst).toBe(500);
   expect(damageTotal.last).toBeCloseTo(0.25, 5);
   expect(damageTotal.afterExpiry).toBe(0);
   expect(damageTotal.remaining).toBe(0);
@@ -2362,11 +2369,14 @@ test('phase K: siege wound cap counts only newly wounded pawns and skips wounded
     };
     scene.spawner.stopped = true;
     const now = scene.time.now;
-    const alreadyWounded = scene.economy.spawnPawn('collector', scene.economy.castleX, scene.economy.castleY, false);
-    const firstAvailable = scene.economy.spawnPawn('collector', scene.economy.castleX + 20, scene.economy.castleY, false);
-    const secondAvailable = scene.economy.spawnPawn('collector', scene.economy.castleX + 40, scene.economy.castleY, false);
+    const availableResidents = scene.economy.pawns.filter((pawn) =>
+      pawn.cls === 'civilian' && !pawn.dead
+        && pawn.state !== 'wounded' && pawn.state !== 'bleeding');
+    const alreadyWounded = availableResidents[0] ?? null;
+    const firstAvailable = availableResidents[1] ?? null;
+    const secondAvailable = availableResidents[2] ?? null;
     if (!alreadyWounded || !firstAvailable || !secondAvailable) {
-      throw new Error('Could not create pawn fixtures for siege wound-cap test');
+      throw new Error(`Need 3 existing available residents for wound-cap test; found ${availableResidents.length}`);
     }
     const preWoundApplied = scene.economy.woundPawn(alreadyWounded, alreadyWounded.maxHp + 1, now);
     if (!preWoundApplied || alreadyWounded.state !== 'wounded') {

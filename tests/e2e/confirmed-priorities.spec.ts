@@ -218,6 +218,17 @@ test('intro overlay really pauses gameplay; monastery warnings and garrison dama
   expect(elapsedDuringOverlay).toBe(elapsedBefore);
   await continueInitialTutorial(page);
 
+  // Проверка выше уже подтвердила паузу стартового overlay. Отключаем последующие
+  // подсказки, чтобы очередь FTUE не ставила на паузу отдельный трёхсекундный
+  // таймер обрушения монастыря во время этой регрессии.
+  await page.evaluate(() => {
+    const game = (window as RuntimeWindow).__tss!;
+    const scene = game.scene.getScene('Game') as GameSceneRuntime & {
+      hints: { setEnabled(enabled: boolean): void };
+    };
+    scene.hints.setEnabled(false);
+  });
+
   const monastery = await page.evaluate(() => {
     const game = (window as RuntimeWindow).__tss!;
     const scene = game.scene.getScene('Game') as GameSceneRuntime & {
