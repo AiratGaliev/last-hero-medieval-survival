@@ -204,7 +204,7 @@ async function preparePawn(page: Page): Promise<Point> {
   });
 }
 
-test('phase G: desktop menu is explicit, closable and BUILD order ends after construction', async ({ page }) => {
+test('phase G: command menu is explicit, closable and BUILD order ends after construction', async ({ page }, testInfo) => {
   await startRun(page);
   const point = await preparePawn(page);
   const isOpen = () => page.evaluate(() => {
@@ -254,7 +254,20 @@ test('phase G: desktop menu is explicit, closable and BUILD order ends after con
   await expect.poll(isOpen).toBe(false);
   await shiftClick(page, point.x, point.y);
   await expect.poll(isOpen).toBe(true);
-  await page.keyboard.press('Escape');
+  // Escape — desktop-контракт. В touch-профиле клавиатурное событие не
+  // моделирует пользовательский ввод: закрываем меню штатным центральным крестиком.
+  if (testInfo.project.name === 'chromium-mobile') {
+    await page.touchscreen.tap(point.x, point.y);
+  } else {
+    // Удерживаем клавишу до реакции игрового update loop: page.keyboard.press()
+    // иногда отпускает её до того, как Phaser успевает прочитать JustDown().
+    await page.keyboard.down('Escape');
+    try {
+      await expect.poll(isOpen).toBe(false);
+    } finally {
+      await page.keyboard.up('Escape');
+    }
+  }
   await expect.poll(isOpen).toBe(false);
   expect(await page.evaluate(() => (window as RuntimeWindow).__tss!.scene.isActive('Pause'))).toBe(false);
 
