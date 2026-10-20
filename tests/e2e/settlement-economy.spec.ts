@@ -2090,10 +2090,24 @@ test('phase K: building fire pauses with gameplay and applies exactly three DoT 
       spawner: { stopped: boolean };
     };
     scene.spawner.stopped = true;
-    scene.hintOverlayPaused = true; // замораживаем симуляцию до установки исходного таймера
-    const building = scene.economy.buildings.find((candidate) =>
-      candidate.kind === 'house' && candidate.alive && !candidate.underConstruction);
-    if (!building) throw new Error('A completed house is required for the fire timer test');
+    const economy = scene.economy;
+    economy.resources.wood = 1_000;
+    economy.resources.ore = 1_000;
+    economy.resources.meat = 1_000;
+    const builder = economy.pawns.find((pawn) => pawn.kind === 'builder');
+    const spot = economy.freeSpots().find((candidate) => candidate.kind === 'house');
+    if (!builder || !spot || !economy.tryStartBuild('house', builder, spot)) {
+      throw new Error('Could not build the house required for the fire timer test');
+    }
+    const building = economy.buildings.find((candidate) => candidate.kind === 'house' && candidate.underConstruction);
+    if (!building) throw new Error('House construction object is missing');
+    builder.setPosition(spot.x, spot.y);
+    builder.state = 'work';
+    economy.tick(10_001, scene.time.now + 10_001);
+    if (!building.alive || building.underConstruction) throw new Error('Test house did not finish');
+    // Пауза включается до ignite, чтобы кадр между созданием таймера и pause
+    // не списывал часть исходного интервала.
+    scene.hintOverlayPaused = true;
     building.ignite(0);
     return { remaining: (building as unknown as { burnRemainingMs: number }).burnRemainingMs };
   });
