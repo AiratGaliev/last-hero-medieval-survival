@@ -1175,7 +1175,7 @@ test('phase J: barracks hiring spends resources immediately and reserves slots w
   const report = await page.evaluate(() => {
     const game = (window as RuntimeWindow).__tss;
     if (!game) throw new Error('Phaser runtime is unavailable');
-    const scene = game.scene.getScene('Game') as GameSceneRuntime;
+    const scene = game.scene.getScene('Game') as GameSceneRuntime & { xp: number; score: number };
     const economy = scene.economy as unknown as {
       resources: { wood: number; ore: number; meat: number };
       pawns: Array<PawnRuntime & { weapon?: string; cls?: string }>;
@@ -1199,7 +1199,11 @@ test('phase J: barracks hiring spends resources immediately and reserves slots w
     if (!started || !barracks) throw new Error('Barracks construction could not start');
     builder.setPosition(spot.x, spot.y);
     builder.state = 'work';
+    const xpBeforeBarracks = scene.xp;
+    const scoreBeforeBarracks = scene.score;
     economy.tick(20_001, scene.time.now + 20_001);
+    const barracksBuildXp = scene.xp - xpBeforeBarracks;
+    const barracksBuildScore = scene.score - scoreBeforeBarracks;
 
     const completed = barracks.alive && !barracks.underConstruction;
     const before = { ...economy.resources };
@@ -1222,6 +1226,8 @@ test('phase J: barracks hiring spends resources immediately and reserves slots w
       .sort();
     return {
       completed,
+      barracksBuildXp,
+      barracksBuildScore,
       limit,
       firstAvailable,
       firstHired,
@@ -1245,6 +1251,8 @@ test('phase J: barracks hiring spends resources immediately and reserves slots w
   });
 
   expect(report.completed).toBe(true);
+  expect(report.barracksBuildXp).toBe(15);
+  expect(report.barracksBuildScore).toBe(50);
   expect(report.limit).toBe(2);
   expect(report.firstAvailable).toBe(true);
   expect(report.firstHired).toBe(true);
@@ -1423,4 +1431,149 @@ test('phase J: sword taunt redirects siege damage only while HOLD is explicitly 
   expect(report.noOrder.buildingDamage).toBeGreaterThan(0);
   expect(report.holdOrder.fighterDamage).toBeGreaterThan(0);
   expect(report.holdOrder.buildingDamage).toBeLessThan(report.noOrder.buildingDamage);
+});
+
+test('phase L: repair and siege callbacks award the specified XP and micro-score', async ({ page }) => {
+  await startRun(page);
+  const report = await page.evaluate(() => {
+    const game = (window as RuntimeWindow).__tss;
+    if (!game) throw new Error('Phaser runtime is unavailable');
+    const scene = game.scene.getScene('Game') as GameSceneRuntime & {
+      xp: number;
+      xpNext: number;
+      xpMult: number;
+      level: number;
+      score: number;
+      economy: EconomyRuntime & { emit(event: string, ...args: unknown[]): boolean };
+      settlement: {
+        beginSiege(index: number, woundCap: number, enemies: unknown[]): void;
+        endSiege(outcome: 'defended' | 'partial' | 'ignored'): void;
+      };
+    };
+    scene.xp = 0;
+    scene.xpNext = 10_000;
+    scene.xpMult = 1;
+    scene.level = 1;
+    scene.score = 0;
+    const building = scene.economy.buildings.find((candidate) => candidate.kind === 'castle');
+    if (!building) throw new Error('Castle is missing');
+    scene.economy.emit('repairDone', { building });
+    const repairXp = scene.xp;
+    const scoreAfterRepair = scene.score;
+
+    scene.settlement.beginSiege(0, 1, []);
+    scene.settlement.endSiege('defended');
+    const defendedXp = scene.xp - repairXp;
+    const defendedScore = scene.score - scoreAfterRepair;
+
+    scene.settlement.beginSiege(0, 1, []);
+    scene.settlement.endSiege('partial');
+    const partialXp = scene.xp - repairXp - defendedXp;
+    const partialScore = scene.score - scoreAfterRepair - defendedScore;
+    return { repairXp, scoreAfterRepair, defendedXp, defendedScore, partialXp, partialScore };
+  });
+
+  expect(report.repairXp).toBe(8);
+  expect(report.scoreAfterRepair).toBe(0);
+  expect(report.defendedXp).toBe(40);
+  expect(report.defendedScore).toBe(150);
+  expect(report.partialXp).toBe(20);
+  expect(report.partialScore).toBe(75);
+});
+
+test('phase L: settlement cards unlock after the first house, support rank II, and stop at rank II', async ({ page }) => {
+  await startRun(page);
+  const report = await page.evaluate(() => {
+    const game = (window as RuntimeWindow).__tss;
+    if (!game) throw new Error('Phaser runtime is unavailable');
+    const scene = game.scene.getScene('Game') as GameSceneRuntime & {
+      generateChoices(): Array<{ kind: string; id?: string; subtitle: string }>;
+      economy: EconomyRuntime & {
+        card(id: string): number;
+        applySettlementCard(id: string): void;
+      };
+    };
+    const before = scene.generateChoices();
+    const builder = scene.economy.pawns.find((pawn) => pawn.kind === 'builder');
+    const spot = scene.economy.freeSpots().find((candidate) => candidate.kind === 'house');
+    if (!builder || !spot) throw new Error('Builder or house build spot is missing');
+    scene.economy.resources.wood = 1_000;
+    scene.economy.resources.ore = 1_000;
+    scene.economy.resources.meat = 1_000;
+    if (!scene.economy.tryStartBuild('house', builder, spot)) throw new Error('House construction did not start');
+    const house = scene.economy.buildings.find((candidate) => candidate.kind === 'house' && candidate.underConstruction);
+    if (!house) throw new Error('House was not registered');
+    builder.setPosition(spot.x, spot.y);
+    builder.state = 'work';
+    scene.economy.tick(20_001, scene.time.now + 20_001);
+    if (house.underConstruction || !house.alive) throw new Error('House was not completed');
+
+    const afterHouse = scene.generateChoices();
+    const settlementCard = afterHouse.find((card) => card.kind === 'settlement');
+    if (!settlementCard?.id) throw new Error('Settlement card is missing after the first house');
+    const id = settlementCard.id;
+    scene.economy.applySettlementCard(id);
+    const rankOne = scene.economy.card(id);
+    scene.economy.applySettlementCard(id);
+    const rankTwo = scene.economy.card(id);
+    scene.economy.applySettlementCard(id);
+    const rankThree = scene.economy.card(id);
+    const afterRankTwo = scene.generateChoices();
+    return {
+      hadCardsBeforeHouse: before.some((card) => card.kind === 'settlement'),
+      settlementCardCountAfterHouse: afterHouse.filter((card) => card.kind === 'settlement').length,
+      id,
+      rankOne,
+      rankTwo,
+      rankThree,
+      cardOfferedAfterRankTwo: afterRankTwo.some((card) => card.kind === 'settlement' && card.id === id),
+    };
+  });
+
+  expect(report.hadCardsBeforeHouse).toBe(false);
+  expect(report.settlementCardCountAfterHouse).toBe(1);
+  expect(report.id).toBeTruthy();
+  expect(report.rankOne).toBe(1);
+  expect(report.rankTwo).toBe(2);
+  expect(report.rankThree).toBe(2);
+  expect(report.cardOfferedAfterRankTwo).toBe(false);
+});
+
+test('phase L: the 100-kill combo milestone grants settlement resources but no match score', async ({ page }) => {
+  await startRun(page);
+  const scoreBefore = await page.evaluate(() => {
+    const game = (window as RuntimeWindow).__tss;
+    if (!game) throw new Error('Phaser runtime is unavailable');
+    const scene = game.scene.getScene('Game') as GameSceneRuntime & {
+      score: number;
+      comboMilestones: readonly number[];
+      comboMilestone(combo: number, x: number, y: number): void;
+      spawner: { stopped: boolean };
+      enemyGroup: { clear(removeFromScene?: boolean, destroyChildren?: boolean): void };
+    };
+    scene.spawner.stopped = true;
+    scene.enemyGroup.clear(true, true);
+    scene.economy.resources.wood = 0;
+    scene.economy.resources.ore = 0;
+    scene.economy.resources.meat = 0;
+    scene.comboMilestones = [25, 50, 100, 200];
+    scene.comboMilestone(100, scene.player.x, scene.player.y);
+    return scene.score;
+  });
+  await page.waitForTimeout(1_400);
+  const result = await page.evaluate(() => {
+    const game = (window as RuntimeWindow).__tss;
+    if (!game) throw new Error('Phaser runtime is unavailable');
+    const scene = game.scene.getScene('Game') as GameSceneRuntime & { score: number };
+    return {
+      wood: scene.economy.resources.wood,
+      ore: scene.economy.resources.ore,
+      meat: scene.economy.resources.meat,
+      score: scene.score,
+    };
+  });
+  expect(result.wood).toBe(25);
+  expect(result.ore).toBe(15);
+  expect(result.meat).toBe(15);
+  expect(result.score).toBe(scoreBefore);
 });
