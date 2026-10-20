@@ -114,11 +114,15 @@ export class HealerAI {
     target.healBy(amount);
     eco.healHpTotal += amount;
     monk.state = 'heal';
-    // Спасение на поле: 50% maxHP → wounded снят, слот обители не занят (§B.7.2)
-    if (target.state === 'wounded' && target.hp >= target.maxHp * HEALER.WOUNDED_FREE_AT) {
+    // До монастыря раненый может перейти в bleeding прямо на следующем
+    // тике. Полевой лекарь всё ещё должен успеть спасти его до конца таймера:
+    // обе нефатальные состояния снимаются при 50% maxHP (§B.7.2).
+    if ((target.state === 'wounded' || target.state === 'bleeding')
+      && target.hp >= target.maxHp * HEALER.WOUNDED_FREE_AT) {
       const slotFreed = target.monasterySlot !== null;
       target.state = 'idle';
       target.cooldown = 0.5;
+      target.updateBleedBadge();
       if (target.monasterySlot !== null) {
         const freedIdx = target.monasterySlot;
         for (const b of eco.buildings) {
