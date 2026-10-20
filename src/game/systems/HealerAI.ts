@@ -61,7 +61,7 @@ export class HealerAI {
       // Слегка повреждённый гражданский не должен опережать раненого героя.
       let prio = 3;
       if (p.state === 'retreat' && p.cls === 'garrison') prio = 0;
-      else if (p.state === 'wounded') prio = 1;
+      else if (p.state === 'wounded' || p.state === 'bleeding') prio = 1;
       needs.push({ pawn: p, prio, x: p.x, y: p.y, hpRatio: ratio });
     }
     const hero = this.heroFn?.() ?? null;
