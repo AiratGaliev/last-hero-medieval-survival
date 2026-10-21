@@ -285,6 +285,14 @@ test('phase P: slow-motion restores Phaser time scales and siege warning arms th
   expect(before.changed.clock).toBeCloseTo(before.scales.clock * 0.5, 4);
   expect(before.changed.tweens).toBeCloseTo(before.scales.tweens * 0.5, 4);
 
+  await page.waitForTimeout(100);
+  const stillSlowed = await page.evaluate(() => {
+    const game = (window as unknown as { __tss?: { scene: { getScene(key: string): unknown } } }).__tss;
+    if (!game) return null;
+    return (game.scene.getScene('Game') as { juiceSlowFactor: number }).juiceSlowFactor;
+  });
+  expect(stillSlowed).toBe(0.5);
+
   await expect.poll(
     () => page.evaluate(() => {
       const game = (window as unknown as { __tss?: { scene: { getScene(key: string): unknown } } }).__tss;
