@@ -78,7 +78,10 @@ export async function hydrateSuccessionFreeUsed(): Promise<void> {
 
   successionFreeUsed = localUsed || cloudUsed;
   successionFreeHydrated = true;
-  if (successionFreeUsed) saveJson('succession-free', true);
+  if (successionFreeUsed) {
+    saveJson('succession-free', true);
+    try { window.localStorage.removeItem('tss-succession-free'); } catch { /* приватный режим */ }
+  }
 
   // Если локальная запись есть, а облачная — нет, восстанавливаем облако.
   if (localUsed && !cloudUsed && cloudReadSucceeded && player) {

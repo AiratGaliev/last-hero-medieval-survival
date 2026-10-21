@@ -1031,6 +1031,15 @@ private bottomStack(): { iconsY: number; speedupY: number; feedY: number } {
     });
   }
 
+  /** Удаляет иконки прошлого героя, чтобы старый билд не оставался в HUD преемника. */
+  resetBuildoutIcons(): void {
+    for (const icon of this.weaponIcons.values()) {
+      this.scene.tweens.killTweensOf(icon);
+      icon.destroy();
+    }
+    this.weaponIcons.clear();
+  }
+
   setIcon(id: string, iconKey: string, level: number, isPassive: boolean): void {
     let c = this.weaponIcons.get(id);
     const H = this.scene.scale.height;

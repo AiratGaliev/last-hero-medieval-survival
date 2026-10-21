@@ -2562,8 +2562,9 @@ private bossDeathSequence(e: Enemy): boolean {
     track('succession_shown', {
       branch_available: [
         living ? 1 : 0,
-        this.succession.canAffordResources() ? 2 : 0,
-        3,
+        this.succession.resourcesBranchAvailable()
+          && (this.succession.isFirstLifetimeFree() || this.succession.canAffordResources()) ? 2 : 0,
+        this.succession.isFirstLifetimeFree() || this.gold >= this.succession.goldCost() ? 3 : 0,
       ],
       buildings: this.settlement.aliveBuildings.map((b) => b.kind).join(','),
     });
@@ -2680,6 +2681,9 @@ private bossDeathSequence(e: Enemy): boolean {
       ? [...this.passiveLevels.keys()][0]
       : undefined;
     this.passiveLevels.clear();
+    // У преемника нет старого билда: убираем иконки оружия/пассивок, после
+    // чего восстанавливаем только разрешённую мета-пассивку и стартовое оружие.
+    this.hud.resetBuildoutIcons();
     if (keptPassive) {
       this.passiveLevels.set(keptPassive, 1);
       this.hud.setIcon(keptPassive, PASSIVES[keptPassive].icon, 1, true);
