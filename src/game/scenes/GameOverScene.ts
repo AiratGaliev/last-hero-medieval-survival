@@ -40,6 +40,8 @@ export interface GameOverStats {
   level: number;
   gold: number;
   score: number;
+  /** Контрактный счёт только для результата; primary leaderboard использует score. */
+  contractScore?: { id: string; multiplier: number; baseScore: number; adjustedScore: number };
   hero?: string;
   difficulty?: string;
   difficultyId?: string;
@@ -432,6 +434,10 @@ export class GameOverScene extends Phaser.Scene {
       [t('over.time', { v: clock(s.time) }), t('over.kills', { v: num(s.kills) })],
       [t('over.level', { v: num(s.level) }), (s.bestCombo ?? 0) >= 5 ? t('over.combo', { v: s.bestCombo ?? 0 }) : ''],
       [t('over.gold', { v: num(s.gold) }), t('over.score', { v: num(s.score) })],
+      ...(s.contractScore ? [[
+        t('over.contractLabel', { mult: s.contractScore.multiplier }),
+        t('over.contractScore', { v: num(s.contractScore.adjustedScore) }),
+      ] as [string, string][]] : []),
     ].filter(([a, b]) => a.length > 0 || b.length > 0) as Array<[string, string]>;
 
     const avail = Math.max(60, bottom - top - pad);
