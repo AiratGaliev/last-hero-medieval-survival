@@ -43,7 +43,7 @@ import { track, beginRun, flushRunTelemetry, detectDeviceClass } from '../../pla
 import { analyticsIdentity } from '../../platform/player';
 import {
   consumeRunConfig, loadMetaState, rollMetaDay, nodeEffects, seasonDef,
-  takeConsumables, applyRunToMeta, contractDef, QUEST_POOL, markCodex,
+  takeConsumables, applyRunToMeta, contractDef, contractScoreForRun, QUEST_POOL, markCodex,
   heroSkinTint, buildingSkinTint, trailSkinTint, activeBanner, matchesPlayed,
   type RunModifiers, type NodeEffects, type SeasonModifier, type RunSummary,
   type QuestMetric,
@@ -3672,6 +3672,9 @@ private bossDeathSequence(e: Enemy): boolean {
       + settlementScore.population
       + (ideal ? SCORE.RATING : 0)
     ) * this.diffDef.scoreMult);
+    // Контрактный множитель не меняет primary leaderboard score (§E.9-A):
+    // сохраняем базовый SCORE и отдельно рассчитываем контрактный результат (§H.9).
+    const contractScoreResult = contractScoreForRun(score, this.mods.contract);
     // Статистика оружия: сортировка по суммарному урону; эволюционные формы — с ★
     const weapons: WeaponStat[] = [...this.weaponStats.entries()]
       .map(([id, st]) => {
@@ -3691,6 +3694,12 @@ private bossDeathSequence(e: Enemy): boolean {
       level: this.level,
       gold: this.gold,
       score,
+      contractScore: contractScoreResult.contract ? {
+        id: contractScoreResult.contract,
+        multiplier: contractScoreResult.multiplier,
+        baseScore: contractScoreResult.baseScore,
+        adjustedScore: contractScoreResult.adjustedScore,
+      } : undefined,
       hero: this.heroDef.name,
       difficulty: this.diffDef.name,
       difficultyId: this.diffDef.id,
@@ -3723,6 +3732,11 @@ private bossDeathSequence(e: Enemy): boolean {
       cause: endCause,
       duration_s: Math.floor(this.elapsed),
       score,
+      ...(contractScoreResult.contract ? {
+        contract_id: contractScoreResult.contract,
+        contract_multiplier: contractScoreResult.multiplier,
+        contract_score: contractScoreResult.adjustedScore,
+      } : {}),
       kills: this.kills,
       level: this.level,
       buildings: settlementScore.buildings,
