@@ -17,7 +17,6 @@ export const FTUE_MATCH_GATE = {
   chronicle: 1,
   meta: 2,
   dailyBonus: 2,
-  dailyChest: 2,
   challenge: 3,
   valleyChronicle: 3,
   contracts: 4,
