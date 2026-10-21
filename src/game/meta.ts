@@ -865,7 +865,10 @@ export function getOrAssignExperimentVariant(
     throw new Error('Для A/B-эксперимента нужны имя, identity и минимум один вариант');
   }
 
-  const key = `ab:${experimentId}`;
+  // MetaState локален для браузера, поэтому область ключа фиксирует профиль.
+  // Другой аккаунт на общем устройстве не должен наследовать это плечо.
+  const identityScope = hashStr(identity).toString(36);
+  const key = `ab:${experimentId}:${identityScope}`;
   const state = loadMetaState();
   const existing = state.flags[key];
   if (existing && choices.includes(existing)) return existing;

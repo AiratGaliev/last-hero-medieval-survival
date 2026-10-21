@@ -40,13 +40,25 @@ test('A/B assignment is deterministic and persisted in MetaState.flags', async (
     };
     const first = m.getOrAssignExperimentVariant('qa-persistence', 'stable-test-profile', ['control', 'soft']);
     const second = m.getOrAssignExperimentVariant('qa-persistence', 'stable-test-profile', ['control', 'soft']);
+    const flags = m.loadMetaState().flags;
+    const assignmentKey = Object.keys(flags).find((key) => key.startsWith('ab:qa-persistence:'));
     const raw = localStorage.getItem('tss-meta2');
-    return { first, second, stored: m.loadMetaState().flags['ab:qa-persistence'], localHasFlag: raw?.includes('"ab:qa-persistence"') ?? false };
+    const otherProfile = m.getOrAssignExperimentVariant('qa-persistence', 'other-test-profile', ['control', 'soft']);
+    const hasScopedKeysForBoth = Object.keys(m.loadMetaState().flags)
+      .filter((key) => key.startsWith('ab:qa-persistence:')).length === 2;
+    return {
+      first, second, otherProfile,
+      stored: assignmentKey ? flags[assignmentKey] : undefined,
+      localHasFlag: raw?.includes('"ab:qa-persistence:') ?? false,
+      hasScopedKeysForBoth,
+    };
   });
   expect(['control', 'soft']).toContain(result.first);
   expect(result.second).toBe(result.first);
   expect(result.stored).toBe(result.first);
   expect(result.localHasFlag).toBe(true);
+  expect(['control', 'soft']).toContain(result.otherProfile);
+  expect(result.hasScopedKeysForBoth).toBe(true);
 });
 
 test('run archive includes the current run and its numeric seed', async ({ page }) => {
