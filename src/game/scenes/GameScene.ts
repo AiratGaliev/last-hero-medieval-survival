@@ -154,6 +154,11 @@ export class GameScene extends Phaser.Scene {
     return this.dailyGameplayRng?.frac() ?? Math.random();
   }
 
+  /** Отдельный поток для состава и геометрии появления врагов; боевые броски его не сдвигают. */
+  private spawnerRandom(): number {
+    return this.dailySpawnerRng?.frac() ?? Math.random();
+  }
+
   private gameplayInt(min: number, max: number): number {
     if (!this.isSeededDailyChallenge) return Phaser.Math.Between(min, max);
     return min + Math.floor(this.gameplayRandom() * (max - min + 1));
@@ -450,6 +455,9 @@ export class GameScene extends Phaser.Scene {
     this.xpMagnetUntil = 0;
     // Сначала погашаем конфиг: ежедневный вызов обязан использовать seed серверной даты.
     this.mods = consumeRunConfig();
+    if (this.mods.challenge && !this.mods.challengeSeed) {
+      this.mods.challengeSeed = rollMetaDay().quests.date;
+    }
     const challengeDate = this.isSeededDailyChallenge ? this.mods.challengeSeed! : null;
     this.dailyGameplayRng = challengeDate
       ? new Phaser.Math.RandomDataGenerator([`daily-gameplay:${challengeDate}`]) : null;
@@ -1192,7 +1200,7 @@ export class GameScene extends Phaser.Scene {
         // Игрок узнаёт о ней по объявлению, звуку и указателю за краем.
         const cam = this.cameras.main;
         const r = Math.hypot(cam.width, cam.height) / (2 * cam.zoom) + 140;
-        const a = this.gameplayRandom() * Math.PI * 2;
+        const a = this.spawnerRandom() * Math.PI * 2;
         const x = this.player.x + Math.cos(a) * r;
         const y = this.player.y + Math.sin(a) * r;
         if (this.spawnEnemy(kind, x, y)) {
@@ -1218,7 +1226,7 @@ export class GameScene extends Phaser.Scene {
       randomSpawnX: () => {
         const cam = this.cameras.main;
         const r = Math.hypot(cam.width, cam.height) / (2 * cam.zoom) + 80;
-        const a = this.gameplayRandom() * Math.PI * 2;
+        const a = this.spawnerRandom() * Math.PI * 2;
         return Phaser.Math.Clamp(
           this.player.x + Math.cos(a) * r,
           WORLD.GRASS_MARGIN + 60,
@@ -1228,7 +1236,7 @@ export class GameScene extends Phaser.Scene {
       randomSpawnY: () => {
         const cam = this.cameras.main;
         const r = Math.hypot(cam.width, cam.height) / (2 * cam.zoom) + 80;
-        const a = this.gameplayRandom() * Math.PI * 2;
+        const a = this.spawnerRandom() * Math.PI * 2;
         return Phaser.Math.Clamp(
           this.player.y + Math.sin(a) * r,
           WORLD.GRASS_MARGIN + 60,
