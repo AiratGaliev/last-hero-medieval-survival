@@ -3827,6 +3827,7 @@ private bossDeathSequence(e: Enemy): boolean {
     return {
       glory: res.glory,
       questsDone: res.quests.done.length,
+      questsTotal: res.quests.ids.length,
       questsCompletedNow: res.questsCompleted.map((q) => ({ descKey: q.descKey, reward: q.reward })),
       passLevels: res.passLevelsGained,
       passRewards: res.passRewards.map((r) => ({ kind: r.kind, amount: r.amount })),
