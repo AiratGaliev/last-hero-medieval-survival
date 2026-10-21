@@ -54,7 +54,7 @@ function safeReadArray<T>(key: string): T[] {
 }
 function persistOutbox(): void {
   try { window.localStorage.setItem(OUTBOX_KEY, JSON.stringify(outbox.slice(-MAX_OUTBOX))); }
-  catch { /* Memory queue remains usable when storage is blocked. */ }
+  catch { /* Очередь в памяти продолжает работать, даже если хранилище недоступно. */ }
 }
 function loadOutbox(): void {
   outbox = safeReadArray<DeliveryEvent>(OUTBOX_KEY)
@@ -104,7 +104,7 @@ function readLocalHistory(): BufferedEvent[][] {
 }
 function writeLocalHistory(history: BufferedEvent[][]): void {
   try { window.localStorage.setItem(RUNS_KEY, JSON.stringify(history.slice(-MAX_RUNS))); }
-  catch { /* The in-memory buffer can still be exported. */ }
+  catch { /* Буфер в памяти всё ещё доступен для экспорта. */ }
 }
 function mergeHistories(...histories: BufferedEvent[][][]): BufferedEvent[][] {
   const unique = new Map<string, BufferedEvent[]>();
@@ -136,7 +136,7 @@ async function encodeHistory(history: BufferedEvent[][]): Promise<string> {
       const bytes = new Uint8Array(await new Response(stream).arrayBuffer());
       const compressed = `gzip:${bytesToBase64(bytes)}`;
       if (compressed.length < json.length) return compressed;
-    } catch { /* Older browsers fall back to JSON. */ }
+    } catch { /* В старых браузерах используем обычный JSON. */ }
   }
   return `json:${json}`;
 }
@@ -201,13 +201,13 @@ export function initAnalytics(opts?: {
   flushDeliveryQueue();
 }
 
-/** Attach session_start and pre-run events to the first run in this session. */
+/** Присоединяет session_start и события до начала игры к первому рану сессии. */
 export function beginRun(): void {
   const nextRun = runCounter + 1;
   for (const event of buffer) if (event.run === 0) event.run = nextRun;
   runCounter = nextRun;
 }
-/** sessionIdx is forced last and cannot be overwritten by caller params. */
+/** sessionIdx устанавливается последним и не может быть переопределён параметрами вызывающего кода. */
 export function track(event: AnalyticsEvent, params?: Params): void {
   const t = Date.now();
   const p = { ...(params ?? {}), sessionIdx };
@@ -226,7 +226,7 @@ export function track(event: AnalyticsEvent, params?: Params): void {
   }
   if (devLog) console.info(`[track] ${event}`, p);
   for (const listener of listeners) {
-    try { listener({ ...record, p: { ...p } }); } catch { /* Observers must not affect gameplay. */ }
+    try { listener({ ...record, p: { ...p } }); } catch { /* Ошибка подписчика аналитики не должна влиять на игровой процесс. */ }
   }
 }
 export function subscribeAnalytics(listener: (event: BufferedEvent) => void): () => void {
@@ -237,7 +237,7 @@ export function getAnalyticsSnapshot(): BufferedEvent[] {
   return buffer.slice(-MAX_BUFFER).map((event) => ({ ...event, p: { ...event.p } }));
 }
 
-/** Archive one completed run locally and asynchronously in Player Data. */
+/** Сохраняет завершённый ран локально и асинхронно архивирует его в Player Data. */
 export function flushRunTelemetry(): void {
   const drained = drainRunBuffer();
   if (!drained.length) return;
@@ -247,9 +247,9 @@ export function flushRunTelemetry(): void {
   writeLocalHistory(history);
   cloudPersistenceQueue = cloudPersistenceQueue
     .then(() => persistCloudHistory(history))
-    .catch(() => { /* Cloud sync must not block gameplay. */ });
+    .catch(() => { /* Ошибка синхронизации с облаком не должна блокировать игровой процесс. */ });
 }
-/** Merge the cloud archive before scenes start, preserving up to 50 recent runs. */
+/** До запуска сцен объединяет облачный архив с локальным, сохраняя до 50 последних ранов. */
 export async function hydrateRunTelemetryFromPlayerData(): Promise<void> {
   const remote = await decodeHistory(await readPlayerDataValue(PLAYER_DATA_RUNS_KEY));
   const local = readLocalHistory();
@@ -259,7 +259,7 @@ export async function hydrateRunTelemetryFromPlayerData(): Promise<void> {
   if (JSON.stringify(merged) !== JSON.stringify(remote)) {
     cloudPersistenceQueue = cloudPersistenceQueue
       .then(() => persistCloudHistory(merged))
-      .catch(() => { /* Cloud sync is a soft dependency. */ });
+      .catch(() => { /* Облако необязательно: локальная история остаётся доступной. */ });
   }
 }
 export function exportBuffer(): string {

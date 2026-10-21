@@ -180,7 +180,7 @@ export function persistSuccessionFreeUsed(): void {
 }
 
 
-/** Stable experiment key; the raw identity is never sent to analytics. */
+/** Стабильный ключ эксперимента; исходная идентичность не отправляется в аналитику. */
 export function analyticsIdentity(): string {
   const id = playerUniqueId(cached);
   if (id) return `yg:${id}`;
@@ -199,7 +199,7 @@ export function analyticsIdentity(): string {
   return localAnalyticsIdentity;
 }
 
-/** Read one Player Data field with a timeout; unavailable cloud is a soft failure. */
+/** Читает поле Player Data с таймаутом; недоступность облака не блокирует игру. */
 export async function readPlayerDataValue(key: string): Promise<unknown> {
   if (!isOnYandex()) return null;
   const player = cached ?? await loadPlayer();
@@ -212,7 +212,7 @@ export async function readPlayerDataValue(key: string): Promise<unknown> {
   }
 }
 
-/** Serialize cloud writes to avoid concurrent setData calls overwriting a newer snapshot. */
+/** Последовательно выполняет облачные записи, чтобы параллельные setData не перезаписывали новое состояние. */
 export function writePlayerDataValue(key: string, value: unknown): Promise<boolean> {
   const player = cached;
   if (!isOnYandex() || !player?.setData) return Promise.resolve(false);
@@ -228,7 +228,7 @@ export function writePlayerDataValue(key: string, value: unknown): Promise<boole
   return playerDataWriteQueue.then(() => persisted);
 }
 
-/** Fetch existing assigned arms before any game scene starts. */
+/** Загружает сохранённые A/B-варианты до запуска игровых сцен. */
 export async function loadExperimentFlagsFromPlayerData(): Promise<Record<string, string>> {
   const value = await readPlayerDataValue(ANALYTICS_EXPERIMENTS_KEY);
   if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
@@ -242,7 +242,7 @@ export async function loadExperimentFlagsFromPlayerData(): Promise<Record<string
   return flags;
 }
 
-/** Only assigned variants are synchronized; player IDs are not included. */
+/** Синхронизируются только варианты экспериментов; идентификаторы игроков не передаются. */
 export function persistExperimentFlagsToPlayerData(flags: Record<string, string>): void {
   if (Object.keys(flags).length === 0) return;
   void writePlayerDataValue(ANALYTICS_EXPERIMENTS_KEY, flags);
