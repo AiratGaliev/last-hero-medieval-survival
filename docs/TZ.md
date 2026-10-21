@@ -3523,7 +3523,7 @@ Data** — это уже есть и работает:
 | `succession_taken` | branch: warrior/resources/ad/gold, cost (0, ресурсы, золото или ad=1), first_lifetime | N/T |
 | `succession_refused` | — | N |
 | `ad_impression` / `ad_rewarded_complete` / `ad_error` | placement(R1–R11, interstitial, banner) | O |
-| `speedup_bought` | kind: repair/heal, currency: wallet/ad | O |
+| `speedup_bought` | kind: repair/heal, currency: wallet/ad/token, cost | O |
 | `combo_milestone` | tier: 25/50/100/200 | L |
 | `levelup_card_picked` | card_id, settlement_card(bool) | L |
 | `perf_fps` | одно событие в конце рана: p50/p10 по секундным сэмплам, device_class, enemies_peak, samples, duration_s | T |
