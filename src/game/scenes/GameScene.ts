@@ -2917,12 +2917,10 @@ private bossDeathSequence(e: Enemy): boolean {
     this.scene.resume();
     this.overlayOpen = false;
     gameplayStart();
-    // Для живого преемника — его настоящее имя; для призванного — локализованный
-    // тип героя. Большой посимвольный анонс визуально отмечает возвращение у врат.
-    this.hud.announceTypewriter(
-      successorName?.trim() || this.heroDef.name,
-      '#ffd700', 75,
-    );
+    // Имя преемника получает отдельную крупную заставку; событие не маскируется
+    // короткой лентой поверх боя. Для живого воина используется его имя, для
+    // призванного — локализованное имя выбранного типа героя.
+    this.hud.successorIntro(successorName?.trim() || this.heroDef.name, this.heroDef.title);
     this.hud.feed(t('succession.took'), '#7dc95e');
     this.hud.setVisible(true);
     audio.startMusic();
@@ -2990,7 +2988,8 @@ private bossDeathSequence(e: Enemy): boolean {
         this.pendingLevelUps++;
       }
     }
-    // Вспышка у врат (juice №12 §H.13)
+    // Вспышка у врат (juice №12 §H.13); на low-профиле без вспышки камеры.
+    if (this.juicePolicy.canShake()) this.cameras.main.flash(180, 255, 239, 180);
     this.effects.goldBurst(pos.x, pos.y - 20, 18);
     this.cameras.main.startFollow(this.player, true, 0.12, 0.1);
     void weapon;
