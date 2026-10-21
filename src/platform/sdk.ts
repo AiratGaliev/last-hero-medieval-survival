@@ -72,8 +72,8 @@ export interface YandexSdk {
   };
   isAvailableMethod(name: string): Promise<boolean>;
   getPlayer(): Promise<YandexPlayer>;
-  /** Серверное время Яндекса (мс эпохи или Date) — для дат ежедневок. */
-  getServerTime?(): Promise<number | Date>;
+  /** Синхронизированное серверное время Яндекс Игр в миллисекундах эпохи. */
+  serverTime?(): number;
   /** Платёжный слой (фаза S §J.6.1); может отсутствовать в старых версиях SDK. */
   getPayments?(options?: { signed?: boolean }): Promise<YandexPayments>;
   on(event: string, handler: () => void): void;
@@ -212,22 +212,18 @@ export function getSdk(): YandexSdk | null {
   return sdk;
 }
 
-/** Подтягивает серверное время площадки (не блокирует запуск при ошибке). */
-export async function syncServerTime(): Promise<void> {
+/** Синхронизирует локальные часы с официальным SDK serverTime(). */
+export function syncServerTime(): void {
   const s = sdk;
-  if (!s || typeof s.getServerTime !== 'function') return;
+  if (!s || typeof s.serverTime !== 'function') return;
   try {
-    const raw = await withTimeout(s.getServerTime(), 4000);
-    if (raw === null || raw === undefined) return;
-    const ms = raw instanceof Date ? raw.getTime() : Number(raw);
+    // Yandex Games SDK serverTime() возвращает epoch ms синхронизированного времени.
+    const ms = Number(s.serverTime());
     if (Number.isFinite(ms) && ms > 1_000_000_000_000) {
       timeOffsetMs = ms - Date.now();
-    } else if (Number.isFinite(ms) && ms > 1_000_000_000) {
-      // Секунды → миллисекунды
-      timeOffsetMs = ms * 1000 - Date.now();
     }
   } catch {
-    // Нет доступа к методу — молча играем по локальным часам
+    // SDK не отдал серверное время — используем локальный fallback, не блокируя запуск.
   }
 }
 
@@ -236,6 +232,19 @@ export async function syncServerTime(): Promise<void> {
  * QA-режиме — локальные часы (смещение нулевое).
  */
 export function serverNow(): number {
+  // serverTime() возвращает актуальную синхронизированную эпоху; используем его
+  // при каждом чтении, а смещение оставляем fallback для старого/сломавшегося SDK.
+  if (sdk && typeof sdk.serverTime === 'function') {
+    try {
+      const current = Number(sdk.serverTime());
+      if (Number.isFinite(current) && current > 1_000_000_000_000) {
+        timeOffsetMs = current - Date.now();
+        return current;
+      }
+    } catch {
+      // При сбое метода не блокируем игровые часы.
+    }
+  }
   return Date.now() + timeOffsetMs;
 }
 

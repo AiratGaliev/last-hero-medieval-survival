@@ -18,10 +18,16 @@
 // Единственный источник — gloryForRun() по итогам матча.
 
 import { loadJson, saveJson } from './storage';
-import { depositGold } from './shop';
+import {
+  depositGold, loadShop, restoreShopState, setShopSavedListener, type ShopState,
+} from './shop';
 import { serverNow } from '../platform/sdk';
 import { track } from '../platform/analytics';
-import { persistExperimentFlagsToPlayerData } from '../platform/player';
+import {
+  persistExperimentFlagsToPlayerData,
+  readPlayerDataEntry,
+  writePlayerDataValue,
+} from '../platform/player';
 import { FTUE_MATCH_GATE } from './data';
 
 // ============================================================
@@ -769,6 +775,8 @@ export const DAILY_BONUS: DailyBonusDef[] = [
 
 /** Пропуск дня откатывает стрик на ОДИН шаг, а не в ноль (§H.7, гейт Q). */
 export const BONUS_RESET_HOURS = 26;
+/** Минимальный интервал между дарами: защищает от двойного забора на границе UTC-дней. */
+export const BONUS_MIN_INTERVAL_HOURS = 24;
 
 // ============================================================
 // Константы гейтов и лимитов (Приложение A3)
@@ -790,6 +798,8 @@ export const ENDLESS_WAVE_CROWNS = [
 
 export interface MetaState {
   v: 2;
+  /** Время последней мутации для выбора более свежего локального/облачного снимка. */
+  savedAt: number;
   glory: number;
   nodes: NodeId[];
   matchesPlayed: number;
@@ -798,7 +808,7 @@ export interface MetaState {
   codex: Record<string, number>;
   quests: QuestDayState;
   weekly: { week: string; progress: number; stage: number; claimed: boolean };
-  dailyBonus: { last: string; streak: number };
+  dailyBonus: { last: string; lastAt: number; streak: number };
   contractsDone: number;
   chains: { counters: Record<string, number>; claimed: string[] };
   pass: { season: string; xp: number; premium: boolean; claimedFree: number; claimedPrem: number };
@@ -826,14 +836,15 @@ export interface MetaState {
 const LS_META2 = 'tss-meta2';
 
 function todayKey(now = serverNow()): string {
-  const d = new Date(now);
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  // Для всех игроков граница ежедневок едина: используем UTC-день серверной эпохи,
+  // а не часовой пояс конкретного браузера.
+  return new Date(now).toISOString().slice(0, 10);
 }
 
 function weekKey(now = serverNow()): string {
   const d = new Date(now);
-  const day = (d.getDay() + 6) % 7; // понедельник = 0
-  d.setDate(d.getDate() - day);
+  const day = (d.getUTCDay() + 6) % 7; // понедельник = 0, UTC
+  d.setUTCDate(d.getUTCDate() - day);
   return todayKey(d.getTime());
 }
 
@@ -905,6 +916,7 @@ export function rotateQuests(date: string): string[] {
 
 const EMPTY: MetaState = {
   v: 2,
+  savedAt: 0,
   glory: 0,
   nodes: [],
   matchesPlayed: 0,
@@ -912,7 +924,7 @@ const EMPTY: MetaState = {
   codex: {},
   quests: { date: '', ids: [], progress: {}, done: [], rerolls: 0 },
   weekly: { week: '', progress: 0, stage: 0, claimed: false },
-  dailyBonus: { last: '', streak: 0 },
+  dailyBonus: { last: '', lastAt: 0, streak: 0 },
   contractsDone: 0,
   chains: { counters: {}, claimed: [] },
   pass: { season: '', xp: 0, premium: false, claimedFree: 0, claimedPrem: 0 },
@@ -965,6 +977,7 @@ function sanitize(raw: unknown): MetaState {
 
   return {
     v: 2,
+    savedAt: int(o.savedAt),
     glory: int(o.glory),
     nodes: strArr(o.nodes, knownNodes),
     matchesPlayed: int(o.matchesPlayed),
@@ -1006,7 +1019,13 @@ function sanitize(raw: unknown): MetaState {
       stage: int(w.stage),
       claimed: w.claimed === true,
     },
-    dailyBonus: { last: typeof db.last === 'string' ? db.last.slice(0, 10) : '', streak: int(db.streak) },
+    // Старые сохранения не содержали времени получения: lastAt=0 означает
+    // один безопасный переход без штрафа, после чего точный timestamp сохраняется.
+    dailyBonus: {
+      last: typeof db.last === 'string' ? db.last.slice(0, 10) : '',
+      lastAt: int(db.lastAt),
+      streak: int(db.streak),
+    },
     dailyChest: ((): MetaState['dailyChest'] => {
       const dc = (o.dailyChest ?? {}) as Partial<MetaState['dailyChest']>;
       return { date: typeof dc.date === 'string' ? dc.date.slice(0, 10) : '', count: int(dc.count) };
@@ -1046,7 +1065,25 @@ function sanitize(raw: unknown): MetaState {
 
 let cached: MetaState | null = null;
 
-/** Текущее мета-состояние (кэшируется; мутируйте через helpers + saveMeta()). */
+/** Облачный снимок хранится отдельным ключом и не конфликтует с Player Data других подсистем. */
+const META_PLAYER_DATA_KEY = 'tss-meta-state-v1';
+const META_CLOUD_WRITE_INTERVAL_MS = 20_000;
+
+interface MetaCloudEnvelope {
+  version: 1;
+  savedAt: number;
+  state: MetaState;
+  shop?: ShopState;
+}
+
+let metaCloudHydrated = false;
+let metaCloudDirty = false;
+let metaCloudSaveTimer: ReturnType<typeof setTimeout> | null = null;
+let metaCloudWriteInFlight: Promise<boolean> | null = null;
+let lastMetaCloudWriteAt: number | null = null;
+let metaCloudLifecycleInstalled = false;
+
+/** Текущее мета-состояние (кэшируется; мутируйте через helpers + saveMetaState()). */
 export function loadMetaState(): MetaState {
   if (cached) return cached;
   if (typeof window === 'undefined') {
@@ -1061,10 +1098,181 @@ function structuredCloneSafe(s: MetaState): MetaState {
   return JSON.parse(JSON.stringify(s)) as MetaState;
 }
 
-export function saveMetaState(st: MetaState): boolean {
-  cached = st;
-  return saveJson(LS_META2, st);
+function installMetaCloudLifecycle(): void {
+  if (metaCloudLifecycleInstalled || typeof window === 'undefined' || typeof document === 'undefined') return;
+  metaCloudLifecycleInstalled = true;
+  const flush = (): void => { void flushMetaStateToPlayerData(); };
+  window.addEventListener('pagehide', flush);
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'hidden') flush();
+  });
 }
+
+function scheduleMetaCloudSave(): void {
+  if (!metaCloudHydrated || !metaCloudDirty || metaCloudSaveTimer !== null) return;
+  // Yandex Player.setData имеет лимит запросов; сохраняем полный снимок не чаще
+  // одного раза в 20 секунд, объединяя частые обновления боевого матча.
+  const wait = lastMetaCloudWriteAt === null
+    ? 0
+    : Math.max(0, META_CLOUD_WRITE_INTERVAL_MS - (performance.now() - lastMetaCloudWriteAt));
+  metaCloudSaveTimer = setTimeout(() => {
+    metaCloudSaveTimer = null;
+    void persistMetaStateToPlayerData(false);
+  }, wait);
+}
+
+function persistMetaStateToPlayerData(flush: boolean): Promise<boolean> {
+  if (!metaCloudHydrated || !metaCloudDirty) return Promise.resolve(false);
+  if (metaCloudWriteInFlight) {
+    // Изменение, произошедшее во время предыдущей записи, сохранится следующим
+    // снимком: не запускаем параллельные setData и не теряем последний state.
+    metaCloudDirty = true;
+    return metaCloudWriteInFlight;
+  }
+
+  const snapshot = structuredCloneSafe(loadMetaState());
+  const envelope: MetaCloudEnvelope = {
+    version: 1,
+    savedAt: snapshot.savedAt,
+    state: snapshot,
+    shop: loadShop(),
+  };
+  metaCloudDirty = false;
+  lastMetaCloudWriteAt = performance.now();
+  const write = writePlayerDataValue(META_PLAYER_DATA_KEY, envelope, flush)
+    .then((success) => {
+      if (!success || loadMetaState().savedAt !== snapshot.savedAt) metaCloudDirty = true;
+      return success;
+    })
+    .catch((error: unknown) => {
+      metaCloudDirty = true;
+      console.warn('[meta] не удалось сохранить облачный прогресс:', error);
+      return false;
+    })
+    .finally(() => {
+      metaCloudWriteInFlight = null;
+      if (metaCloudDirty) scheduleMetaCloudSave();
+    });
+  metaCloudWriteInFlight = write;
+  return write;
+}
+
+function isValidCloudMetaState(raw: unknown): raw is Record<string, unknown> {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return false;
+  const state = raw as Record<string, unknown>;
+  const dailyBonus = state.dailyBonus;
+  const quests = state.quests;
+  return state.v === 2
+    && Number.isSafeInteger(state.savedAt) && Number(state.savedAt) >= 0
+    && typeof state.glory === 'number' && Number.isFinite(state.glory) && state.glory >= 0
+    && typeof state.matchesPlayed === 'number' && Number.isFinite(state.matchesPlayed) && state.matchesPlayed >= 0
+    && Array.isArray(state.nodes)
+    && !!dailyBonus && typeof dailyBonus === 'object' && !Array.isArray(dailyBonus)
+    && !!quests && typeof quests === 'object' && !Array.isArray(quests);
+}
+
+function isValidCloudShopState(raw: unknown): raw is ShopState {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return false;
+  const shop = raw as Partial<ShopState>;
+  if (typeof shop.balance !== 'number' || !Number.isSafeInteger(shop.balance) || shop.balance < 0
+    || !shop.upgrades || typeof shop.upgrades !== 'object' || Array.isArray(shop.upgrades)) return false;
+  const ids = ['might', 'vitality', 'speed', 'magnet', 'luck'] as const;
+  return ids.every((id) => {
+    const level = shop.upgrades?.[id];
+    return typeof level === 'number' && Number.isInteger(level) && level >= 0 && level <= 3;
+  });
+}
+
+/**
+ * Восстанавливает общий мета-прогресс до создания игровых сцен.
+ * При недоступности Player Data ничего не перезаписываем: локальный прогресс
+ * продолжает работать, а неизвестное или повреждённое облачное состояние не затирается.
+ */
+export async function hydrateMetaStateFromPlayerData(): Promise<void> {
+  if (typeof window === 'undefined') return;
+
+  let cloud: Awaited<ReturnType<typeof readPlayerDataEntry>>;
+  try {
+    cloud = await readPlayerDataEntry(META_PLAYER_DATA_KEY);
+  } catch {
+    return;
+  }
+  if (!cloud.available) return;
+
+  metaCloudHydrated = true;
+  installMetaCloudLifecycle();
+
+  const local = loadMetaState();
+  const value = cloud.value as Partial<MetaCloudEnvelope> | null;
+  const envelopeSavedAt = Number(value?.savedAt);
+  const remoteState = value?.version === 1 && isValidCloudMetaState(value.state)
+    ? sanitize(value.state)
+    : null;
+  const validEnvelope = remoteState !== null
+    && Number.isSafeInteger(envelopeSavedAt)
+    && envelopeSavedAt >= 0
+    && remoteState.savedAt === envelopeSavedAt;
+
+  if (validEnvelope && remoteState && envelopeSavedAt >= local.savedAt) {
+    // Облачный снимок новее или равен локальному; его sanitized-форма
+    // записывается локально без обновления savedAt и без обратной записи в облако.
+    cached = remoteState;
+    saveJson(LS_META2, remoteState);
+    if (isValidCloudShopState(value?.shop)) {
+      restoreShopState(value.shop);
+      metaCloudDirty = false;
+    } else {
+      // Не затираем локальный кошелёк повреждёнными/устаревшими данными магазина.
+      metaCloudDirty = true;
+      scheduleMetaCloudSave();
+    }
+    return;
+  }
+
+  // Облако отсутствует/повреждено или локальный снимок новее. Поднимаем
+  // монотонную метку и ставим локальный снимок в очередь на первую синхронизацию.
+  cached = local;
+  metaCloudDirty = true;
+  saveMetaState(local);
+}
+
+/** Немедленно отправляет последний снимок при скрытии/закрытии страницы. */
+export async function flushMetaStateToPlayerData(): Promise<boolean> {
+  if (!metaCloudHydrated || !metaCloudDirty) return false;
+  if (metaCloudSaveTimer !== null) {
+    clearTimeout(metaCloudSaveTimer);
+    metaCloudSaveTimer = null;
+  }
+  if (metaCloudWriteInFlight) await metaCloudWriteInFlight;
+  // Ошибка или незавершённая запись может поставить debounce-таймер уже во время
+  // ухода со страницы. Перед явным flush отменяем его, чтобы не было гонки снимков.
+  if (metaCloudSaveTimer !== null) {
+    clearTimeout(metaCloudSaveTimer);
+    metaCloudSaveTimer = null;
+  }
+  if (!metaCloudDirty) return true;
+
+  return persistMetaStateToPlayerData(true);
+}
+
+export function saveMetaState(st: MetaState): boolean {
+  // Не даём двум мутациям в одной миллисекунде получить одинаковую версию
+  // снимка: это важно, чтобы фоновая синхронизация не перезаписала более новый state.
+  st.savedAt = Math.max(Math.floor(serverNow()), (st.savedAt ?? 0) + 1);
+  cached = st;
+  const saved = saveJson(LS_META2, st);
+  if (metaCloudHydrated) {
+    metaCloudDirty = true;
+    scheduleMetaCloudSave();
+  }
+  return saved;
+}
+
+/** Изменения постоянного кошелька/апгрейдов должны попасть в тот же облачный снимок. */
+setShopSavedListener(() => {
+  if (metaCloudHydrated) saveMetaState(loadMetaState());
+});
+
 
 /** Гарантирует актуальность дневных/недельных/сезонных секций. */
 export function rollMetaDay(): MetaState {
@@ -1455,19 +1663,24 @@ export interface BonusClaimResult {
 export function claimDailyBonus(useAd = false): BonusClaimResult {
   const st = rollMetaDay();
   const today = todayKey();
+  const now = serverNow();
+  const lastAt = st.dailyBonus.lastAt;
+  const elapsed = lastAt > 0 ? now - lastAt : Number.POSITIVE_INFINITY;
   if (st.matchesPlayed < DAILY_BONUS_AFTER_MATCHES) {
     return { ok: false, day: st.dailyBonus.streak % 7, def: null, doubled: false, streak: st.dailyBonus.streak };
   }
-  if (st.dailyBonus.last === today) {
+  if (st.dailyBonus.last === today
+    || (lastAt > 0 && elapsed < BONUS_MIN_INTERVAL_HOURS * 60 * 60 * 1000)) {
     return { ok: false, day: st.dailyBonus.streak % 7, def: null, doubled: false, streak: st.dailyBonus.streak };
   }
-  const gap = st.dailyBonus.last ? daysBetween(st.dailyBonus.last, today) : 999;
-  // Пропуск дня откатывает стрик на ОДИН шаг, а не в ноль (§H.7, гейт Q):
-  // каждый пропущенный день съедает один шаг, но за сегодня шаг всё же +1.
+  // 26-часовое окно рассчитывается по серверному времени, а не по датам браузера.
+  // Превышение окна снимает ровно одну ступень (§H.7); длинный перерыв не обнуляет стрик.
   const prev = st.dailyBonus.streak;
-  const effective = gap <= 1 ? prev : Math.max(0, prev - (gap - 1));
+  const missedWindow = lastAt > 0
+    && elapsed > BONUS_RESET_HOURS * 60 * 60 * 1000;
+  const effective = missedWindow ? Math.max(0, prev - 1) : prev;
   const streak = effective + 1;
-  st.dailyBonus = { last: today, streak };
+  st.dailyBonus = { last: today, lastAt: now, streak };
   const dayIdx = (streak - 1) % 7;
   const def = DAILY_BONUS[dayIdx];
   const doubled = useAd === true;
@@ -1496,8 +1709,10 @@ export function applyBonus(st: MetaState, def: DailyBonusDef, doubled: boolean):
 /** Требование R11: удвоение дара дня — только пока день не забран. */
 export function bonusAvailable(): boolean {
   const st = rollMetaDay();
+  const elapsed = st.dailyBonus.lastAt > 0 ? serverNow() - st.dailyBonus.lastAt : Number.POSITIVE_INFINITY;
   return st.matchesPlayed >= DAILY_BONUS_AFTER_MATCHES
-    && st.dailyBonus.last !== todayKey();
+    && st.dailyBonus.last !== todayKey()
+    && !(st.dailyBonus.lastAt > 0 && elapsed < BONUS_MIN_INTERVAL_HOURS * 60 * 60 * 1000);
 }
 
 // ============================================================
