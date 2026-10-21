@@ -136,6 +136,10 @@ export class GameScene extends Phaser.Scene {
    */
   private rngState = 0;
   private runSeed = 0;
+  /** Независимые потоки RNG не дают боевым событиям менять карту/будущие волны вызова. */
+  private dailyGameplayRng: Phaser.Math.RandomDataGenerator | null = null;
+  private dailyEconomyRng: Phaser.Math.RandomDataGenerator | null = null;
+  private dailySpawnerRng: Phaser.Math.RandomDataGenerator | null = null;
   /** [0, 1) из rng рана. */
   private runRng(): number {
     this.rngState = (this.rngState + 0x6d2b79f5) | 0;
@@ -145,9 +149,9 @@ export class GameScene extends Phaser.Scene {
     return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
   }
 
-  /** Случайность, влияющая на ежедневный вызов, берётся из общего seed рана. */
+  /** RNG боя отделён от генерации мира, стартовой экономики и волны врагов. */
   private gameplayRandom(): number {
-    return this.mods.challenge && this.mods.challengeSeed ? this.runRng() : Math.random();
+    return this.dailyGameplayRng?.frac() ?? Math.random();
   }
 
   private gameplayInt(min: number, max: number): number {
@@ -436,8 +440,15 @@ export class GameScene extends Phaser.Scene {
     this.xpMagnetUntil = 0;
     // Сначала погашаем конфиг: ежедневный вызов обязан использовать seed серверной даты.
     this.mods = consumeRunConfig();
-    this.runSeed = this.isSeededDailyChallenge
-      ? dailyChallengeSeedNumber(this.mods.challengeSeed!)
+    const challengeDate = this.isSeededDailyChallenge ? this.mods.challengeSeed! : null;
+    this.dailyGameplayRng = challengeDate
+      ? new Phaser.Math.RandomDataGenerator([`daily-gameplay:${challengeDate}`]) : null;
+    this.dailyEconomyRng = challengeDate
+      ? new Phaser.Math.RandomDataGenerator([`daily-economy:${challengeDate}`]) : null;
+    this.dailySpawnerRng = challengeDate
+      ? new Phaser.Math.RandomDataGenerator([`daily-spawner:${challengeDate}`]) : null;
+    this.runSeed = challengeDate
+      ? dailyChallengeSeedNumber(challengeDate)
       : (Date.now() ^ Math.floor(Math.random() * 0x1_0000_0000)) >>> 0;
     this.rngState = this.runSeed | 0;
     this.registry.set('tss-freeze', 0);
@@ -617,7 +628,7 @@ export class GameScene extends Phaser.Scene {
     this.economy = new Economy(this, {
       castleX: this.castleX,
       castleY: this.castleY,
-      random: this.isSeededDailyChallenge ? () => this.runRng() : undefined,
+      random: this.isSeededDailyChallenge ? () => this.dailyEconomyRng!.frac() : undefined,
       onBuildComplete: (kind, x, y) => this.onBuildComplete(kind, x, y),
       onRepairComplete: () => {},
       onBurnDamage: (b, amount) => this.settlement.damageBuilding(b, amount, b.lastSiegeIdx, false),
@@ -1229,7 +1240,7 @@ export class GameScene extends Phaser.Scene {
         this.mods.ukaz,
         this.challengeMods.has('cm_horde'),
       ),
-      random: this.isSeededDailyChallenge ? () => this.runRng() : undefined,
+      random: this.isSeededDailyChallenge ? () => this.dailySpawnerRng!.frac() : undefined,
       season: this.seasonMod,
       contractQuiet: this.contractId === 'c_quiet',
       bloodMoon: this.challengeMods.has('cm_blood_moon'),
@@ -1240,7 +1251,7 @@ export class GameScene extends Phaser.Scene {
       ftueSoftStart: this.ftueSoftStart,
       // Вызов дня использует повторяемый пул по дате — обычные и бесконечные
       // матчи не меняют свой состав врагов.
-      dailyPool: this.mods.challenge ? pickDailyPool(rollMetaDay().quests.date) : undefined,
+      dailyPool: this.mods.challenge ? pickDailyPool(this.mods.challengeSeed ?? rollMetaDay().quests.date) : undefined,
       alarmLevel: () => this.economy.card('alarm'),
     });
 
