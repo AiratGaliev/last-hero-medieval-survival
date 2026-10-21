@@ -33,7 +33,9 @@ import {
   CHALLENGE_AFTER_MATCHES,
   DAILY_BONUS,
   dailyChestLeft,
+  loadMetaPreferences,
   loadMetaState,
+  saveMetaPreferences,
   matchesPlayed,
   ORDERS,
   ordersUnlocked,
@@ -1739,12 +1741,12 @@ export class MenuScene extends Phaser.Scene {
   }
 
   private contractPickName(): string {
-    const def = contractDef(loadText('tss-contract-pick'));
+    const def = contractDef(loadMetaPreferences().contract);
     return def ? this.tr(def.nameKey) : t('contract.none');
   }
 
   private ukazPickName(): string {
-    const id = loadText('tss-ukaz-pick');
+    const id = loadMetaPreferences().ukaz;
     const order = ORDERS.find((o) => o.id === id);
     return order ? this.tr(order.nameKey) : t('ukaz.none');
   }
@@ -1756,7 +1758,7 @@ export class MenuScene extends Phaser.Scene {
     this.beginOverlay();
     const width = this.vw;
     const height = this.vh;
-    const pick = loadText('tss-contract-pick');
+    const pick = loadMetaPreferences().contract;
     const paperW = Math.min(520, width - 50);
     const rowCount = CONTRACTS.length + 1;
     const rowH = Math.min(56, Math.max(46, Math.floor((height - 130) / rowCount)));
@@ -1771,7 +1773,7 @@ export class MenuScene extends Phaser.Scene {
     const rowW = paperW - 48;
     const rowsTop = head - 12;
 
-    const drawRow = (i: number, name: string, desc: string, mult: string, id: string | null): void => {
+    const drawRow = (i: number, name: string, desc: string, mult: string, id: ContractId | null): void => {
       const rowCy = rowsTop + i * rowH + rowH / 2;
       const active = id === null ? !pick : pick === id;
       const g = this.add.graphics();
@@ -1793,9 +1795,9 @@ export class MenuScene extends Phaser.Scene {
       zone.on('pointerdown', () => {
         audio.play('click');
         if (id === null) {
-          removeKey('tss-contract-pick');
+          saveMetaPreferences({ ...loadMetaPreferences(), contract: null });
         } else {
-          saveText('tss-contract-pick', id);
+          saveMetaPreferences({ ...loadMetaPreferences(), contract: id });
           track('contract_signed', { id });
         }
         this.closeOverlay();
@@ -2133,11 +2135,12 @@ export class MenuScene extends Phaser.Scene {
 
   /** Поток кнопки «Играть»: сбор RunModifiers → оверлей благословения → старт. */
   private startRun(): void {
+    const preferences = loadMetaPreferences();
     const cfg: RunModifiers = {
       contract: matchesPlayed() >= CONTRACTS_AFTER_MATCHES
-        ? (loadText('tss-contract-pick') || null) as ContractId | null
+        ? preferences.contract
         : null,
-      ukaz: ordersUnlocked() ? ((loadText('tss-ukaz-pick') || null) as OrderId | null) : null,
+      ukaz: ordersUnlocked() ? preferences.ukaz : null,
       challenge: null,
       blessing: null,
       consumables: this.loadPickedConsumables(),
