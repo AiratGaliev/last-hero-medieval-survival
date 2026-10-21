@@ -350,6 +350,36 @@ export function contractDef(id: string | null | undefined): ContractDef | null {
   return CONTRACTS.find((c) => c.id === id) ?? null;
 }
 
+export interface ContractScoreResult {
+  /** Валидный контракт или null, если модификатор не выбран/неизвестен. */
+  contract: ContractId | null;
+  /** Исходный SCORE — именно он остаётся основой основного лидерборда. */
+  baseScore: number;
+  multiplier: number;
+  /** Отдельный контрактный результат; не подменяет primary leaderboard score. */
+  adjustedScore: number;
+}
+
+/**
+ * Рассчитывает результат добровольного контракта (§H.9).
+ * Основной рекорд сохраняет прежний SCORE, а контрактный множитель выводится
+ * отдельно в статистике результата и аналитике, не меняя формат основного борда.
+ */
+export function contractScoreForRun(
+  score: number,
+  contractId: string | null | undefined,
+): ContractScoreResult {
+  const baseScore = Number.isFinite(score) ? Math.max(0, Math.floor(score)) : 0;
+  const contract = contractDef(contractId);
+  const multiplier = contract?.mult ?? 1;
+  return {
+    contract: contract?.id ?? null,
+    baseScore,
+    multiplier,
+    adjustedScore: Math.round(baseScore * multiplier),
+  };
+}
+
 // ============================================================
 // Ежедневный вызов (§H.8): один сид на день + 2 модификатора из A2
 // ============================================================
