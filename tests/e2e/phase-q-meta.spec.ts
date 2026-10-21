@@ -61,6 +61,7 @@ test('meta progress restores newer Player Data state and flushes subsequent muta
           dailyBonus: { last: '2000-01-01', lastAt: Date.parse('2000-01-01T12:00:00.000Z'), streak: 6 },
         },
         shop: { balance: 500, upgrades: { might: 2, vitality: 1, speed: 0, magnet: 0, luck: 0 } },
+        preferences: { contract: 'c_hunger', ukaz: 'ukaz_fragile' },
       },
     };
     sessionStorage.setItem(cloudKey, JSON.stringify(playerData));
@@ -76,6 +77,8 @@ test('meta progress restores newer Player Data state and flushes subsequent muta
       balance: 15,
       upgrades: { might: 0, vitality: 0, speed: 0, magnet: 0, luck: 0 },
     }));
+    localStorage.setItem('tss-contract-pick', 'c_no_repair');
+    localStorage.setItem('tss-ukaz-pick', 'ukaz_double_siege');
 
     const player = {
       isAuthorized: () => true,
@@ -141,6 +144,8 @@ test('meta progress restores newer Player Data state and flushes subsequent muta
     const moduleUrl = new URL('/src/game/meta.ts', window.location.origin).href;
     const meta = await import(/* @vite-ignore */ moduleUrl) as {
       loadMetaState: () => { matchesPlayed: number; glory: number; dailyBonus: { streak: number } };
+      loadMetaPreferences: () => { contract: string | null; ukaz: string | null };
+      saveMetaPreferences: (preferences: { contract: 'c_no_repair' | 'c_hunger' | 'c_pacifist' | null; ukaz: 'ukaz_double_siege' | 'ukaz_fragile' | 'ukaz_horde' | null }) => void;
       addGlory: (amount: number) => void;
       flushMetaStateToPlayerData: () => Promise<boolean>;
     };
@@ -150,14 +155,18 @@ test('meta progress restores newer Player Data state and flushes subsequent muta
       depositGold: (amount: number) => void;
     };
     const restored = meta.loadMetaState();
+    const restoredPreferences = meta.loadMetaPreferences();
     const restoredSnapshot = {
       matchesPlayed: restored.matchesPlayed,
       glory: restored.glory,
       streak: restored.dailyBonus.streak,
       wallet: shopModule.loadShop().balance,
       mightUpgrade: shopModule.loadShop().upgrades.might,
+      contract: restoredPreferences.contract,
+      ukaz: restoredPreferences.ukaz,
     };
 
+    meta.saveMetaPreferences({ contract: 'c_pacifist', ukaz: 'ukaz_horde' });
     meta.addGlory(17);
     shopModule.depositGold(23);
     const flushed = await meta.flushMetaStateToPlayerData();
@@ -166,6 +175,7 @@ test('meta progress restores newer Player Data state and flushes subsequent muta
         version?: number;
         state?: { glory?: number; matchesPlayed?: number };
         shop?: { balance?: number; upgrades?: { might?: number } };
+        preferences?: { contract?: string | null; ukaz?: string | null };
       };
     };
     const cloud = playerData['tss-meta-state-v1'];
@@ -178,11 +188,14 @@ test('meta progress restores newer Player Data state and flushes subsequent muta
       cloudMatches: cloud?.state?.matchesPlayed,
       cloudWallet: cloud?.shop?.balance,
       cloudMightUpgrade: cloud?.shop?.upgrades?.might,
+      cloudContract: cloud?.preferences?.contract,
+      cloudUkaz: cloud?.preferences?.ukaz,
     };
   });
 
   expect(report.restoredSnapshot).toEqual({
     matchesPlayed: 11, glory: 777, streak: 6, wallet: 500, mightUpgrade: 2,
+    contract: 'c_hunger', ukaz: 'ukaz_fragile',
   });
   expect(report.flushed).toBe(true);
   expect(report.cloudVersion).toBe(1);
@@ -190,6 +203,8 @@ test('meta progress restores newer Player Data state and flushes subsequent muta
   expect(report.cloudMatches).toBe(11);
   expect(report.cloudWallet).toBe(523);
   expect(report.cloudMightUpgrade).toBe(2);
+  expect(report.cloudContract).toBe('c_pacifist');
+  expect(report.cloudUkaz).toBe('ukaz_horde');
 });
 
 

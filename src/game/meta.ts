@@ -17,7 +17,7 @@
 // ни одна функция здесь не тратит её и не конвертирует в неё другие валюты.
 // Единственный источник — gloryForRun() по итогам матча.
 
-import { loadJson, saveJson } from './storage';
+import { loadJson, loadText, removeKey, saveJson, saveText } from './storage';
 import {
   depositGold, loadShop, restoreShopState, setShopSavedListener, type ShopState,
 } from './shop';
@@ -796,6 +796,11 @@ export const ENDLESS_WAVE_CROWNS = [
 // Состояние
 // ============================================================
 
+export interface MetaPreferences {
+  contract: ContractId | null;
+  ukaz: OrderId | null;
+}
+
 export interface MetaState {
   v: 2;
   /** Время последней мутации для выбора более свежего локального/облачного снимка. */
@@ -1074,6 +1079,7 @@ interface MetaCloudEnvelope {
   savedAt: number;
   state: MetaState;
   shop?: ShopState;
+  preferences?: MetaPreferences;
 }
 
 let metaCloudHydrated = false;
@@ -1082,6 +1088,54 @@ let metaCloudSaveTimer: ReturnType<typeof setTimeout> | null = null;
 let metaCloudWriteInFlight: Promise<boolean> | null = null;
 let lastMetaCloudWriteAt: number | null = null;
 let metaCloudLifecycleInstalled = false;
+
+const CONTRACT_PICK_KEY = 'tss-contract-pick';
+const ORDER_PICK_KEY = 'tss-ukaz-pick';
+let cachedMetaPreferences: MetaPreferences | null = null;
+
+function readLocalMetaPreferences(): MetaPreferences {
+  const contract = loadText(CONTRACT_PICK_KEY);
+  const ukaz = loadText(ORDER_PICK_KEY);
+  return {
+    contract: CONTRACTS.some((item) => item.id === contract) ? contract as ContractId : null,
+    ukaz: ORDERS.some((item) => item.id === ukaz) ? ukaz as OrderId : null,
+  };
+}
+
+function writeLocalMetaPreferences(preferences: MetaPreferences): void {
+  if (preferences.contract) saveText(CONTRACT_PICK_KEY, preferences.contract);
+  else removeKey(CONTRACT_PICK_KEY);
+  if (preferences.ukaz) saveText(ORDER_PICK_KEY, preferences.ukaz);
+  else removeKey(ORDER_PICK_KEY);
+}
+
+/** Возвращает выбор контракта/указа; старые локальные ключи сохраняются для миграции. */
+export function loadMetaPreferences(): MetaPreferences {
+  if (!cachedMetaPreferences) cachedMetaPreferences = readLocalMetaPreferences();
+  return { ...cachedMetaPreferences };
+}
+
+/** Изменение постоянного выбора сразу попадает в локальный fallback и облачную очередь. */
+export function saveMetaPreferences(preferences: MetaPreferences): void {
+  const normalized: MetaPreferences = {
+    contract: preferences.contract && CONTRACTS.some((item) => item.id === preferences.contract)
+      ? preferences.contract : null,
+    ukaz: preferences.ukaz && ORDERS.some((item) => item.id === preferences.ukaz)
+      ? preferences.ukaz : null,
+  };
+  cachedMetaPreferences = normalized;
+  writeLocalMetaPreferences(normalized);
+  if (metaCloudHydrated) saveMetaState(loadMetaState());
+}
+
+function isValidCloudMetaPreferences(raw: unknown): raw is MetaPreferences {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return false;
+  const preferences = raw as Partial<MetaPreferences>;
+  return (preferences.contract === null
+      || (typeof preferences.contract === 'string' && CONTRACTS.some((item) => item.id === preferences.contract)))
+    && (preferences.ukaz === null
+      || (typeof preferences.ukaz === 'string' && ORDERS.some((item) => item.id === preferences.ukaz)));
+}
 
 /** Текущее мета-состояние (кэшируется; мутируйте через helpers + saveMetaState()). */
 export function loadMetaState(): MetaState {
@@ -1136,6 +1190,7 @@ function persistMetaStateToPlayerData(flush: boolean): Promise<boolean> {
     savedAt: snapshot.savedAt,
     state: snapshot,
     shop: loadShop(),
+    preferences: loadMetaPreferences(),
   };
   metaCloudDirty = false;
   lastMetaCloudWriteAt = performance.now();
@@ -1191,6 +1246,7 @@ function isValidCloudShopState(raw: unknown): raw is ShopState {
 export async function hydrateMetaStateFromPlayerData(): Promise<void> {
   if (typeof window === 'undefined') return;
 
+  const localPreferences = loadMetaPreferences();
   let cloud: Awaited<ReturnType<typeof readPlayerDataEntry>>;
   try {
     cloud = await readPlayerDataEntry(META_PLAYER_DATA_KEY);
@@ -1218,20 +1274,29 @@ export async function hydrateMetaStateFromPlayerData(): Promise<void> {
     // записывается локально без обновления savedAt и без обратной записи в облако.
     cached = remoteState;
     saveJson(LS_META2, remoteState);
-    if (isValidCloudShopState(value?.shop)) {
-      restoreShopState(value.shop);
-      metaCloudDirty = false;
-    } else {
-      // Не затираем локальный кошелёк повреждёнными/устаревшими данными магазина.
-      metaCloudDirty = true;
-      scheduleMetaCloudSave();
-    }
+
+    const remotePreferences = value?.preferences;
+    const validPreferences = isValidCloudMetaPreferences(remotePreferences);
+    const resolvedPreferences: MetaPreferences = validPreferences
+      ? { contract: remotePreferences.contract, ukaz: remotePreferences.ukaz }
+      : localPreferences;
+    cachedMetaPreferences = resolvedPreferences;
+    if (validPreferences) writeLocalMetaPreferences(resolvedPreferences);
+
+    const validShop = isValidCloudShopState(value?.shop);
+    if (validShop) restoreShopState(value.shop);
+
+    // Старые облачные снимки без preferences/shop не считаем полными:
+    // локальные значения сохраняются, а полный снимок ставится в очередь.
+    metaCloudDirty = !validPreferences || !validShop;
+    if (metaCloudDirty) scheduleMetaCloudSave();
     return;
   }
 
   // Облако отсутствует/повреждено или локальный снимок новее. Поднимаем
   // монотонную метку и ставим локальный снимок в очередь на первую синхронизацию.
   cached = local;
+  cachedMetaPreferences = localPreferences;
   metaCloudDirty = true;
   saveMetaState(local);
 }
