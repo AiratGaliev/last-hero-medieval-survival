@@ -864,6 +864,9 @@ export const en: Record<TranslationKey, string> = {
   'weekly.claim': 'CLAIM FINAL',
   'weekly.claimed': 'Final claimed',
   'weekly.hint': 'Points: run +1, daily quest +1',
+  'weekly.scoreBest': 'Best: {v}',
+  'weekly.startChallenge': 'WEEKLY RUN',
+  'weekly.runResult': 'Weekly trial: {score} · best {best}',
 
   'endless.title': 'HOLD THE FORT',
   'endless.enter': 'HOLD THE FORT',
