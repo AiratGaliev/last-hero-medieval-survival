@@ -1421,6 +1421,8 @@ export interface RunSummary {
   victory: boolean;
   ideal: boolean;
   endless: boolean;
+  /** true только для отдельного режима недельного испытания с указом. */
+  weeklyChallenge: boolean;
   wave: number;              // волны бесконечного (осады) — 0 вне режима
   time: number;
   kills: number;
@@ -1635,8 +1637,8 @@ export function applyRunToMeta(s: RunSummary): RunMetaResult {
   // --- Недельная цепочка: раны двигают прогресс (§H.17)
   bumpWeekly(st, 1);
 
-  // --- Испытание недели (§H.18): локальная мини-таблица
-  if (s.ukaz) {
+  // --- Испытание недели (§H.18): пишем результат только специального рана, не любого матча с указом.
+  if (s.weeklyChallenge && s.ukaz) {
     const week = st.weekly.week;
     if (st.weeklyChallenge.week !== week) st.weeklyChallenge = { week, best: 0 };
     st.weeklyChallenge.best = Math.max(st.weeklyChallenge.best, s.score);

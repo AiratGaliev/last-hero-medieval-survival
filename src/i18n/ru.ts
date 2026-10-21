@@ -882,6 +882,9 @@ export const ru = {
   'weekly.claim': 'ЗАБРАТЬ ФИНАЛ',
   'weekly.claimed': 'Финал забран',
   'weekly.hint': 'Очки: ран +1, задание дня +1',
+  'weekly.scoreBest': 'Рекорд: {v}',
+  'weekly.startChallenge': 'ИСПЫТАТЬ',
+  'weekly.runResult': 'Испытание недели: {score} · рекорд {best}',
 
   // ---------- Бесконечный режим (§H.12) ----------
   'endless.title': 'ДЕРЖАТЬ КРЕПОСТЬ',

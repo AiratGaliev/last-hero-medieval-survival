@@ -302,6 +302,7 @@ export class GameScene extends Phaser.Scene {
       ftue_soft_start: this.ftueSoftStart,
       endless: this.mods.endless,
       challenge: this.mods.challenge ? [...this.mods.challenge.mods] : null,
+      weekly_challenge: this.mods.weeklyChallenge,
     });
     // Стики-баннер (§J.5) показывается только вне рана — в бою гасим
     hideStickyBanner();
@@ -3796,6 +3797,7 @@ private bossDeathSequence(e: Enemy): boolean {
       victory,
       ideal,
       endless: this.mods.endless,
+      weeklyChallenge: this.mods.weeklyChallenge,
       wave,
       time: Math.floor(this.elapsed),
       kills: this.kills,
@@ -3840,6 +3842,8 @@ private bossDeathSequence(e: Enemy): boolean {
       challenge: !!this.mods.challenge,
       ukaz: this.mods.ukaz,
       endless: this.mods.endless,
+      weeklyChallenge: this.mods.weeklyChallenge,
+      weeklyChallengeBest: loadMetaState().weeklyChallenge.best,
     };
   }
 

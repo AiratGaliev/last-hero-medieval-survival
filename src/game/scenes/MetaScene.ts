@@ -572,7 +572,8 @@ export class MetaScene extends Phaser.Scene {
 
     const active = loadMetaPreferences().ukaz;
     const w = x1 - x0;
-    const rowH = Math.max(52, Math.min(62, Math.floor((y1 - y0 - 6) / ORDERS.length)));
+    const weeklyFooterH = 44;
+    const rowH = Math.max(42, Math.min(62, Math.floor((y1 - y0 - weeklyFooterH - 6) / ORDERS.length)));
 
     ORDERS.forEach((o: OrderDef, i) => {
       const cy = y0 + i * rowH + rowH / 2;
@@ -609,6 +610,28 @@ export class MetaScene extends Phaser.Scene {
       });
       box.add(zone);
     });
+
+    // Недельное испытание — отдельный режим одного указа, не обычный ран.
+    // Его счётчик хранится в MetaState и сбрасывается по границе недели.
+    const state = rollMetaDay();
+    const best = state.weeklyChallenge.week === state.weekly.week ? state.weeklyChallenge.best : 0;
+    const footerY = y1 - weeklyFooterH / 2;
+    box.add(this.add.text(x0 + 12, footerY, t('weekly.scoreBest', { v: num(best) }), {
+      fontFamily: FONT, fontSize: '11px', color: '#8a5b12',
+    }).setOrigin(0, 0.5));
+
+    const weeklyButton = makeButton(this, x1 - 75, footerY, 142, 34, t('weekly.startChallenge'), () => {
+      audio.play('click');
+      const menu = this.scene.get('Menu') as { startWeeklyChallengeFromMeta?: () => void };
+      menu.startWeeklyChallengeFromMeta?.();
+    }, 'blue', 10, {
+      disabled: !active,
+      hitW: 148,
+      hitH: 40,
+      stopPropagation: true,
+    });
+    box.add([weeklyButton.img, weeklyButton.txt, weeklyButton.hit]);
+    this.contentButtons.push(weeklyButton);
   }
 
   // ================================================================
