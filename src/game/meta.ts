@@ -21,7 +21,11 @@ import { loadJson, saveJson } from './storage';
 import { depositGold } from './shop';
 import { serverNow } from '../platform/sdk';
 import { track } from '../platform/analytics';
-import { persistExperimentFlagsToPlayerData } from '../platform/player';
+import {
+  persistExperimentFlagsToPlayerData,
+  readPlayerDataEntry,
+  writePlayerDataValue,
+} from '../platform/player';
 import { FTUE_MATCH_GATE } from './data';
 
 // ============================================================
@@ -790,6 +794,8 @@ export const ENDLESS_WAVE_CROWNS = [
 
 export interface MetaState {
   v: 2;
+  /** Timestamp of the latest local/cloud mutation, used for cross-device reconciliation. */
+  savedAt: number;
   glory: number;
   nodes: NodeId[];
   matchesPlayed: number;
@@ -905,6 +911,7 @@ export function rotateQuests(date: string): string[] {
 
 const EMPTY: MetaState = {
   v: 2,
+  savedAt: 0,
   glory: 0,
   nodes: [],
   matchesPlayed: 0,
@@ -965,6 +972,7 @@ function sanitize(raw: unknown): MetaState {
 
   return {
     v: 2,
+    savedAt: int(o.savedAt),
     glory: int(o.glory),
     nodes: strArr(o.nodes, knownNodes),
     matchesPlayed: int(o.matchesPlayed),
@@ -1046,7 +1054,26 @@ function sanitize(raw: unknown): MetaState {
 
 let cached: MetaState | null = null;
 
-/** Текущее мета-состояние (кэшируется; мутируйте через helpers + saveMeta()). */
+/** Облачный снимок хранится отдельным ключом и не конфликтует с Player Data других подсистем. */
+const META_PLAYER_DATA_KEY = 'tss-meta-state-v1';
+const META_CLOUD_WRITE_INTERVAL_MS = 20_000;
+const META_CLOUD_FLUSH_GUARD_MS = 3_000;
+
+interface MetaCloudEnvelope {
+  version: 1;
+  savedAt: number;
+  state: MetaState;
+}
+
+let metaCloudHydrated = false;
+let metaCloudDirty = false;
+let metaCloudSaveTimer: ReturnType<typeof setTimeout> | null = null;
+let metaCloudWriteInFlight: Promise<boolean> | null = null;
+let lastMetaCloudWriteAt = 0;
+let lastMetaCloudFlushAt = 0;
+let metaCloudLifecycleInstalled = false;
+
+/** Текущее мета-состояние (кэшируется; мутируйте через helpers + saveMetaState()). */
 export function loadMetaState(): MetaState {
   if (cached) return cached;
   if (typeof window === 'undefined') {
@@ -1061,9 +1088,132 @@ function structuredCloneSafe(s: MetaState): MetaState {
   return JSON.parse(JSON.stringify(s)) as MetaState;
 }
 
+function installMetaCloudLifecycle(): void {
+  if (metaCloudLifecycleInstalled || typeof window === 'undefined' || typeof document === 'undefined') return;
+  metaCloudLifecycleInstalled = true;
+  const flush = (): void => { void flushMetaStateToPlayerData(); };
+  window.addEventListener('pagehide', flush);
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'hidden') flush();
+  });
+}
+
+function scheduleMetaCloudSave(): void {
+  if (!metaCloudHydrated || !metaCloudDirty || metaCloudSaveTimer !== null) return;
+  // Yandex Player.setData имеет лимит запросов; сохраняем полный снимок не чаще
+  // одного раза в 20 секунд, объединяя частые обновления боевого матча.
+  const wait = Math.max(0, META_CLOUD_WRITE_INTERVAL_MS - (Date.now() - lastMetaCloudWriteAt));
+  metaCloudSaveTimer = setTimeout(() => {
+    metaCloudSaveTimer = null;
+    void persistMetaStateToPlayerData(false);
+  }, wait);
+}
+
+function persistMetaStateToPlayerData(flush: boolean): Promise<boolean> {
+  if (!metaCloudHydrated || !metaCloudDirty) return Promise.resolve(false);
+  if (metaCloudWriteInFlight) {
+    // Изменение, произошедшее во время предыдущей записи, сохранится следующим
+    // снимком: не запускаем параллельные setData и не теряем последний state.
+    metaCloudDirty = true;
+    return metaCloudWriteInFlight;
+  }
+
+  const snapshot = structuredCloneSafe(loadMetaState());
+  const envelope: MetaCloudEnvelope = { version: 1, savedAt: snapshot.savedAt, state: snapshot };
+  metaCloudDirty = false;
+  lastMetaCloudWriteAt = Date.now();
+  const write = writePlayerDataValue(META_PLAYER_DATA_KEY, envelope, flush)
+    .then((success) => {
+      if (!success || loadMetaState().savedAt !== snapshot.savedAt) metaCloudDirty = true;
+      return success;
+    })
+    .catch((error: unknown) => {
+      metaCloudDirty = true;
+      console.warn('[meta] не удалось сохранить облачный прогресс:', error);
+      return false;
+    })
+    .finally(() => {
+      metaCloudWriteInFlight = null;
+      if (metaCloudDirty) scheduleMetaCloudSave();
+    });
+  metaCloudWriteInFlight = write;
+  return write;
+}
+
+/**
+ * Восстанавливает общий мета-прогресс до создания игровых сцен.
+ * При недоступности Player Data ничего не перезаписываем: локальный прогресс
+ * продолжает работать, а неизвестное облачное состояние не затирается.
+ */
+export async function hydrateMetaStateFromPlayerData(): Promise<void> {
+  if (typeof window === 'undefined') return;
+
+  let cloud;
+  try {
+    cloud = await readPlayerDataEntry(META_PLAYER_DATA_KEY);
+  } catch {
+    return;
+  }
+  if (!cloud.available) return;
+
+  metaCloudHydrated = true;
+  installMetaCloudLifecycle();
+
+  const local = loadMetaState();
+  const value = cloud.value as Partial<MetaCloudEnvelope> | null;
+  const remoteState = value && value.version === 1
+    && value.state && typeof value.state === 'object' && !Array.isArray(value.state)
+    ? sanitize(value.state)
+    : null;
+
+  if (remoteState && Number.isFinite(Number(value?.savedAt))
+    && Number(value?.savedAt) >= local.savedAt) {
+    // Облачный снимок новее или равен локальному; его sanitized-форма
+    // записывается локально без обновления savedAt и без обратной записи в облако.
+    remoteState.savedAt = Math.max(remoteState.savedAt, Math.floor(Number(value?.savedAt)));
+    cached = remoteState;
+    saveJson(LS_META2, remoteState);
+    metaCloudDirty = false;
+    return;
+  }
+
+  // Облако отсутствует/повреждено или локальный снимок новее. Поднимаем
+  // монотонную метку и ставим локальный снимок в очередь на первую синхронизацию.
+  cached = local;
+  metaCloudDirty = true;
+  saveMetaState(local);
+}
+
+/** Немедленно отправляет последний снимок при скрытии/закрытии страницы. */
+export async function flushMetaStateToPlayerData(): Promise<boolean> {
+  if (!metaCloudHydrated || !metaCloudDirty) return false;
+  if (metaCloudSaveTimer !== null) {
+    clearTimeout(metaCloudSaveTimer);
+    metaCloudSaveTimer = null;
+  }
+  if (metaCloudWriteInFlight) await metaCloudWriteInFlight;
+  if (!metaCloudDirty) return true;
+
+  const now = Date.now();
+  if (now - lastMetaCloudFlushAt < META_CLOUD_FLUSH_GUARD_MS) {
+    scheduleMetaCloudSave();
+    return false;
+  }
+  lastMetaCloudFlushAt = now;
+  return persistMetaStateToPlayerData(true);
+}
+
 export function saveMetaState(st: MetaState): boolean {
+  // Не даём двум мутациям в одной миллисекунде получить одинаковую версию
+  // снимка: это важно, чтобы фоновая синхронизация не перезаписала более новый state.
+  st.savedAt = Math.max(Math.floor(serverNow()), (st.savedAt ?? 0) + 1);
   cached = st;
-  return saveJson(LS_META2, st);
+  const saved = saveJson(LS_META2, st);
+  if (metaCloudHydrated) {
+    metaCloudDirty = true;
+    scheduleMetaCloudSave();
+  }
+  return saved;
 }
 
 /** Гарантирует актуальность дневных/недельных/сезонных секций. */
@@ -1465,7 +1615,7 @@ export function claimDailyBonus(useAd = false): BonusClaimResult {
   // Пропуск дня откатывает стрик на ОДИН шаг, а не в ноль (§H.7, гейт Q):
   // каждый пропущенный день съедает один шаг, но за сегодня шаг всё же +1.
   const prev = st.dailyBonus.streak;
-  const effective = gap <= 1 ? prev : Math.max(0, prev - (gap - 1));
+  const effective = gap <= 1 ? prev : Math.max(0, prev - 1);
   const streak = effective + 1;
   st.dailyBonus = { last: today, streak };
   const dayIdx = (streak - 1) % 7;
