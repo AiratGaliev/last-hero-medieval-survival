@@ -569,7 +569,13 @@ export class PawnAI {
       text: t('pawn.bleeding', { v: p.name, s: Math.ceil(p.bleedTimer) }),
       color: '#ff6655',
     });
-    track('pawn_bleeding_start', { fatal: true, monastery: this.eco.nearestMonastery(p) !== null });
+    const monasteryExists = this.eco.nearestMonastery(p) !== null;
+    track('pawn_bleeding_start', {
+      name_role: `${p.kind}:${p.name}`,
+      cause: monasteryExists ? 'no_free_slot' : 'no_monastery',
+      monastery_exists: monasteryExists,
+      slots_free: this.eco.freeMonasterySlots(),
+    });
     p.updateStarBadge();
   }
 

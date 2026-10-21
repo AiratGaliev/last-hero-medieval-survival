@@ -29,10 +29,10 @@ export interface EconomyEvents {
   built: { kind: BuildingKind; first: boolean };
   feed: { text: string; color?: string };
   pawnDied: { pawn: Pawn };
-  pawnWounded: { pawn: Pawn };
+  pawnWounded: { pawn: Pawn; cause: 'regular' | 'siege' | 'taunt' };
   pawnArrived: { pawn: Pawn };
   repairDone: { building: Building };
-  hireDone: { weapon: PawnWeapon };
+  hireDone: { weapon: PawnWeapon; cost: ResourceCost };
   /** inMonastery — раненый выписан именно из обители (задание «Обитель милосердия» §H.17). */
   pawnSaved: { pawn: Pawn; inMonastery?: boolean };
 }
@@ -58,6 +58,8 @@ interface HireJob {
   building: Building;
   weapon: PawnWeapon;
   progress: number;
+  /** Стоимость, реально списанная при постановке найма в очередь. */
+  cost: ResourceCost;
 }
 
 /** Нормализованные множители мета-модификаторов (см. EconomyOpts). */
@@ -782,8 +784,9 @@ export class Economy extends Phaser.Events.EventEmitter {
   hire(weapon: PawnWeapon, building: Building): boolean {
     if (!building.alive || building.kind !== Economy.sourceOf(weapon)) return false;
     if (!this.canHire(weapon)) return false;
-    if (!this.spend(this.hireCost(weapon))) return false;
-    this.hireJobs.push({ building, weapon, progress: 0 });
+    const cost = this.hireCost(weapon);
+    if (!this.spend(cost)) return false;
+    this.hireJobs.push({ building, weapon, progress: 0, cost: { ...cost } });
     return true;
   }
 
@@ -819,11 +822,24 @@ export class Economy extends Phaser.Events.EventEmitter {
 
   // ---------- Пешки: урон/смерть/восстановление ----------
 
+  /** Количество свободных слотов лечения в живых, построенных обителях. */
+  freeMonasterySlots(): number {
+    return this.buildings.reduce((count, building) => {
+      if (!building.alive || building.kind !== 'monastery' || building.underConstruction) return count;
+      return count + building.healSlots.filter((slot) => slot === null).length;
+    }, 0);
+  }
+
   /** Враг ранит пешку: wounded → в монастырь, без места — bleeding (§G.3). */
-  woundPawn(pawn: Pawn, dmg: number, now: number): boolean {
+  woundPawn(
+    pawn: Pawn,
+    dmg: number,
+    now: number,
+    cause: 'regular' | 'siege' | 'taunt' = 'regular',
+  ): boolean {
     const wounded = pawn.takeDamage(dmg, now);
     if (!wounded) return false;
-    this.emit('pawnWounded', { pawn });
+    this.emit('pawnWounded', { pawn, cause });
     return true;
   }
 
@@ -951,7 +967,7 @@ export class Economy extends Phaser.Events.EventEmitter {
         const pawn = j.weapon === 'staff'
           ? this.spawnHealer()
           : this.spawnFighter(j.weapon);
-        if (pawn) this.emit('hireDone', { weapon: j.weapon });
+        if (pawn) this.emit('hireDone', { weapon: j.weapon, cost: { ...j.cost } });
       }
     }
 

@@ -1257,17 +1257,29 @@ export class GameScene extends Phaser.Scene {
     this.economy.on('pawnArrived', ({ pawn }) => {
       this.hud.feed(t('pawn.arrived', { v: `${this.pawnTitle(pawn)} ${pawn.name}` }), '#9fd8ff');
     });
-    this.economy.on('pawnWounded', ({ pawn }) => {
+    this.economy.on('pawnWounded', ({ pawn, cause }) => {
       this.hud.feed(t('pawn.wounded', { v: `${this.pawnTitle(pawn)} ${pawn.name}` }), '#ffb090');
-      track('pawn_wounded', { name_role: `${pawn.kind}:${pawn.name}`, monastery_exists: this.economy.nearestMonastery(pawn) !== null });
+      track('pawn_wounded', {
+        name_role: `${pawn.kind}:${pawn.name}`,
+        cause,
+        monastery_exists: this.economy.nearestMonastery(pawn) !== null,
+        slots_free: this.economy.freeMonasterySlots(),
+      });
       if (pawn.cls === 'civilian') this.hints?.show('monastery');
     });
-    this.economy.on('pawnSaved', ({ pawn }) => {
+    this.economy.on('pawnSaved', ({ pawn, inMonastery }) => {
       this.hud.feed(t('pawn.saved', { v: `${this.pawnTitle(pawn)} ${pawn.name}` }), '#7dc95e');
-      track('pawn_saved', { name_role: `${pawn.kind}:${pawn.name}` });
+      track('pawn_saved', {
+        name_role: `${pawn.kind}:${pawn.name}`,
+        cause: 'healed',
+        monastery_exists: this.economy.nearestMonastery(pawn) !== null,
+        slots_free: this.economy.freeMonasterySlots(),
+        in_monastery: inMonastery === true,
+      });
     });
-    this.economy.on('hireDone', ({ weapon }) => {
+    this.economy.on('hireDone', ({ weapon, cost }) => {
       this.hires++; // сводка рана (§K.2): наём дружины (§H.17)
+      track('garrison_hired', { weapon, cost, cause: 'player' });
       this.hud.feed(t('hire.started', { v: t(`hire.${weapon}` as Parameters<typeof t>[0]) }), '#9fd8ff');
       this.economy.emit('change');
     });
@@ -1289,10 +1301,14 @@ export class GameScene extends Phaser.Scene {
           this.settlement.facts.bledOutName = pawn.name;
           this.settlement.facts.bledOutShort = Math.max(1, Math.ceil(short));
         }
-        track('pawn_bleeding_start', { fatal: true, monastery: short !== null });
-      } else {
-        track('pawn_died', { kind: pawn.kind });
       }
+      const monasteryExists = this.economy.nearestMonastery(pawn) !== null;
+      track('pawn_died', {
+        name_role: `${pawn.kind}:${pawn.name}`,
+        cause: pawn.state === 'bleeding' ? 'bleedout' : 'direct',
+        monastery_exists: monasteryExists,
+        slots_free: this.economy.freeMonasterySlots(),
+      });
       // Телеметрия §K.2: потеря гарнизона (невосполнима без найма, §B.7.1)
       if (pawn.cls === 'garrison') {
         track('garrison_lost', {
@@ -1609,10 +1625,8 @@ private ordersUnlocked(): boolean {
     }));
     this.orderMenu.openCustom(entries, wx, wy, (key) => {
       const w = key as import('../data').PawnWeapon;
-      const cost = this.economy.hireCost(w);
       if (this.economy.hire(w, b)) {
         this.hud.feed(t('hire.started', { v: t(`hire.${w}` as Parameters<typeof t>[0]) }), '#9fd8ff');
-        track('garrison_hired', { weapon: w, cost, cause: 'player', building: b.kind });
         this.economy.emit('change');
       } else {
         this.hud.announce(t('building.cannot'), '#ff8866');
@@ -2312,8 +2326,12 @@ private ordersUnlocked(): boolean {
     this.hud.announce(t('building.destroyed', { v: t(`building.${b.kind}.name` as Parameters<typeof t>[0]) }), '#ff6655');
     audio.play('explosion');
     // Источник: фаза 2 босса или осада (§K.2 building_destroyed.source)
-    const destroySource = this.boss?.active && this.boss.siege ? 'boss' : 'siege';
-    track('building_destroyed', { kind: b.kind, hp_before: Math.round(b.hp), source: destroySource });
+    const destroySource = b.lastDamageSource ?? (this.boss?.active && this.boss.siege ? 'boss' : 'siege');
+    track('building_destroyed', {
+      kind: b.kind,
+      hp_before: Math.round(b.hpBeforeLastDamage),
+      source: destroySource,
+    });
     if (b === this.settlement.castle) {
       // Условие №2: замок разрушен (§E.3)
       this.loseCause = 'castle';
@@ -2423,7 +2441,7 @@ private ordersUnlocked(): boolean {
       this.ach?.event({ type: 'kills', value: this.kills });
     } else {
       this.score += SCORE.KILL;
-      track('ally_kill', { target_kind: e.kind, player_combo_grew: false });
+      track('ally_kill', { weapon: src ?? 'unknown', target_kind: e.kind, player_combo_grew: false });
     }
     // Счётчики существ → достижения (TZ §A.6)
     if (e.kind === 'skull') {
