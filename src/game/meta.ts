@@ -1275,11 +1275,13 @@ export async function hydrateMetaStateFromPlayerData(): Promise<void> {
     cached = remoteState;
     saveJson(LS_META2, remoteState);
 
-    const validPreferences = isValidCloudMetaPreferences(value?.preferences);
-    cachedMetaPreferences = validPreferences
-      ? { ...value.preferences }
+    const remotePreferences = value?.preferences;
+    const validPreferences = isValidCloudMetaPreferences(remotePreferences);
+    const resolvedPreferences: MetaPreferences = validPreferences
+      ? { contract: remotePreferences.contract, ukaz: remotePreferences.ukaz }
       : localPreferences;
-    if (validPreferences) writeLocalMetaPreferences(cachedMetaPreferences);
+    cachedMetaPreferences = resolvedPreferences;
+    if (validPreferences) writeLocalMetaPreferences(resolvedPreferences);
 
     const validShop = isValidCloudShopState(value?.shop);
     if (validShop) restoreShopState(value.shop);
