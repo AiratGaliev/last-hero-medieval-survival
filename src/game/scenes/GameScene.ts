@@ -2499,6 +2499,7 @@ private ordersUnlocked(): boolean {
     this.score += 50;
     this.economy.emit('change');
     this.effects.dust(x, y - 18, 8);
+    this.effects.buildFlag(x, y - 18);
     for (const pawn of this.economy.pawns) {
       if (!pawn.dead && Math.hypot(pawn.x - x, pawn.y - y) < 240) pawn.faceToward(x);
     }
