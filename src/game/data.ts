@@ -6,6 +6,26 @@
 
 import { t } from '../i18n';
 
+/**
+ * Единый контракт прогрессивного раскрытия (§I.3).
+ * Значения — количество уже завершённых ранов до доступности механики в меню.
+ * Гейты по состоянию поселения (дома/казармы/обитель) остаются отдельно.
+ */
+export const FTUE_MATCH_GATE = {
+  howTo: 1,
+  shop: 1,
+  chronicle: 1,
+  meta: 2,
+  dailyBonus: 2,
+  challenge: 3,
+  valleyChronicle: 3,
+  contracts: 4,
+  codex: 5,
+  storefront: 5,
+  seasonPass: 5,
+  kingOrders: 10,
+} as const;
+
 export type WeaponId = 'sword' | 'bow' | 'spear' | 'hammer' | 'bomb' | 'aura' | 'knives';
 export type PassiveId = 'boots' | 'armor' | 'magnet' | 'regen' | 'might' | 'haste' | 'vitality' | 'luck' | 'wisdom';
 

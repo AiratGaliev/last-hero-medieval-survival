@@ -35,6 +35,8 @@ interface SuccessionData {
   resourceCost: ResourceCost | null;
   goldCost: number;
   firstFree: boolean;
+  /** Первый показ аккаунта: поясняющий блок вместо необходимости угадывать правило. */
+  firstTutorial?: boolean;
   showResources: boolean;
   resourcesAffordable: boolean;
   goldAffordable: boolean;
@@ -104,6 +106,7 @@ export class SuccessionScene extends Phaser.Scene {
       living: data.livingCount > 0,
       resources: data.showResources,
       options: data.options.length,
+      tutorial: data.firstTutorial === true,
     });
     const { cx, panelW, panelH } = L;
 
@@ -134,6 +137,23 @@ export class SuccessionScene extends Phaser.Scene {
       fontFamily: FONT, fontSize: `${FS.small}px`, color: '#5a4327', align: 'center',
     }).setOrigin(0.5).setDepth(D.ribbon + 1).setScrollFactor(0);
     shrinkToHeight(sub, 34, FS.small);
+
+    if (data.firstTutorial) {
+      const lesson = this.add.text(
+        cx,
+        L.tutorialY,
+        `${t('succession.tutorialTitle')}\n${t('succession.tutorialBody')}`,
+        {
+          fontFamily: FONT,
+          fontSize: `${L.compact ? FS.micro : FS.small}px`,
+          color: '#3b2410',
+          align: 'center',
+          wordWrap: { width: Math.max(120, panelW - 56) },
+          lineSpacing: 3,
+        },
+      ).setOrigin(0.5).setDepth(D.content).setScrollFactor(0);
+      shrinkToHeight(lesson, L.tutorialH, L.compact ? FS.micro : FS.small);
+    }
 
     const { btnH, btnFont, halfW } = L;
 

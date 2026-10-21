@@ -2,7 +2,7 @@ import Phaser from 'phaser';
 import { Cursor } from '../systems/Cursor';
 import { makeCornerFrame, type CornerFrame } from '../systems/Corners';
 import { FONT } from '../constants';
-import { HEROES, WEAPONS, PASSIVES, DIFFICULTIES, EVOLUTIONS, type HeroId, type DifficultyId } from '../data';
+import { HEROES, WEAPONS, PASSIVES, DIFFICULTIES, EVOLUTIONS, FTUE_MATCH_GATE, type HeroId, type DifficultyId } from '../data';
 import { audio } from '../systems/Audio';
 import { makePanel, makeButton, makeChip, makeRibbon, fitTextWidth } from '../systems/Ui';
 import { shrinkToHeight, FONT_FLOOR, FS } from '../systems/Text';
@@ -29,6 +29,8 @@ import {
   CONSUMABLE_MAX,
   contractDef,
   CONTRACTS,
+  CONTRACTS_AFTER_MATCHES,
+  CHALLENGE_AFTER_MATCHES,
   DAILY_BONUS,
   dailyChestLeft,
   loadMetaState,
@@ -50,6 +52,15 @@ import {
 // (покупки за золото), «Достижения» и «Хроника воина» (localStorage).
 
 /** Строка зала славы. Формат единый для локальной таблицы и данных SDK. */
+type PreRunChipId = 'contract' | 'ukaz' | 'consumables' | 'challenge';
+
+interface PreRunChip {
+  id: PreRunChipId;
+  label: string;
+  enabled: boolean;
+  action: () => void;
+}
+
 interface ScoreRow {
   rank: number;
   name: string;
@@ -140,7 +151,7 @@ export class MenuScene extends Phaser.Scene {
 
   // Мета-фаза Q/S: чип дара дня, пре-ран выбор, расходники
   private bonusChip: Phaser.GameObjects.Container | null = null;
-  private preChipTexts: Array<Phaser.GameObjects.Text | null> = [null, null, null, null];
+  private preChipTexts: Partial<Record<PreRunChipId, Phaser.GameObjects.Text>> = {};
   private preChipW = 0;
   private preChipFont = 10;
   private consRowEls: Phaser.GameObjects.GameObject[] = [];
@@ -167,7 +178,7 @@ export class MenuScene extends Phaser.Scene {
     this.overlayExtras = [];
     this.shopRowEls = [];
     this.bonusChip = null;
-    this.preChipTexts = [null, null, null, null];
+    this.preChipTexts = {};
     this.consRowEls = [];
 
     // Мобильная раскладка: контент позиционируется на виртуальном полотне,
@@ -278,14 +289,27 @@ export class MenuScene extends Phaser.Scene {
     // На телефоне высоты не хватает на четыре секции с воздухом, поэтому
     // кнопки и промежутки там плотнее: на 360×640 иначе карточки героя
     // наезжали на логотип. Тач-гейт (44 px) соблюдается везде.
-    const navRows = mobile ? 2 : 1;
+    const completedMatches = matchesPlayed();
+    // Вкладки и пре-рановые модификаторы появляются в тот матч, который
+    // следует за указанным числом завершённых ранов (§I.3).
+    const visibleNavCount = 2
+      + Number(completedMatches >= FTUE_MATCH_GATE.howTo)
+      + Number(completedMatches >= FTUE_MATCH_GATE.shop)
+      + Number(completedMatches >= FTUE_MATCH_GATE.chronicle)
+      + Number(completedMatches >= FTUE_MATCH_GATE.meta);
+    const navRows = mobile ? Math.max(1, Math.ceil(visibleNavCount / 3)) : 1;
     const navH = mobile ? 38 : 42;
     const navGap = 8;
     const navBlockH = navRows * navH + (navRows - 1) * navGap;
     const versionH = 24;
     const playH = mobile ? 52 : 58;
     const diffH = mobile ? 44 : 48;
-    const preH = mobile ? 42 * 2 + 10 : 42;
+    const preRunCount = 1
+      + Number(completedMatches >= CONTRACTS_AFTER_MATCHES)
+      + Number(ordersUnlocked())
+      + Number(completedMatches >= CHALLENGE_AFTER_MATCHES);
+    const preRows = Math.ceil(preRunCount / (mobile ? 2 : 4));
+    const preH = preRows * 42 + Math.max(0, preRows - 1) * 10;
     const gapPlay = mobile ? 14 : 16;
     const gapPre = mobile ? 12 : 14;
     const gapDiff = mobile ? 14 : 18;
@@ -527,31 +551,44 @@ export class MenuScene extends Phaser.Scene {
     // Навигация по мета-экранам — всё внутри Phaser. «Лавка торговца»
     // теперь отдельная сцена 'Shop' (фаза S), мета — сцена 'Meta' (фаза Q).
     const navItems: Array<[string, () => void]> = [
-      [t('menu.howTo'), () => this.showHowTo()],
       [t('menu.records'), () => { void this.showRecords(); }],
-      [t('menu.shop'), () => this.openOverlayScene('Shop')],
       [t('menu.achievements'), () => this.showAchievements()],
-      [t('menu.chronicle'), () => this.showChronicle()],
-      [t('meta.tab'), () => this.openOverlayScene('Meta')],
     ];
+    if (completedMatches >= FTUE_MATCH_GATE.howTo) {
+      navItems.push([t('menu.howTo'), () => this.showHowTo()]);
+    }
+    if (completedMatches >= FTUE_MATCH_GATE.shop) {
+      navItems.push([t('menu.shop'), () => this.openOverlayScene('Shop')]);
+    }
+    if (completedMatches >= FTUE_MATCH_GATE.chronicle) {
+      navItems.push([t('menu.chronicle'), () => this.showChronicle()]);
+    }
+    if (completedMatches >= FTUE_MATCH_GATE.meta) {
+      navItems.push([t('meta.tab'), () => this.openOverlayScene('Meta')]);
+    }
+
     const navY = navBottom - navH / 2;
     if (mobile) {
-      // Два ряда по три: шесть кнопок мета-навигации
-      const w3 = Math.min(150, (width - 60 - 24) / 3);
-      navItems.slice(0, 3).forEach(([lbl, action], i) => {
-        const x = width / 2 - (3 * w3 + 24) / 2 + i * (w3 + 12) + w3 / 2;
-        makeButton(this, x, navY, w3, navH, lbl, action, 'red', 12);
-      });
-      navItems.slice(3).forEach(([lbl, action], i) => {
-        const x = width / 2 - (3 * w3 + 24) / 2 + i * (w3 + 12) + w3 / 2;
-        makeButton(this, x, navY - navH - navGap, w3, navH, lbl, action, 'red', 12);
+      const columns = 3;
+      const rows = Math.ceil(navItems.length / columns);
+      navItems.forEach(([label, action], index) => {
+        const row = Math.floor(index / columns);
+        const column = index % columns;
+        const rowCount = Math.min(columns, navItems.length - row * columns);
+        const buttonW = Math.min(150, (width - 60 - (rowCount - 1) * 12) / rowCount);
+        const x = width / 2 - (rowCount * buttonW + (rowCount - 1) * 12) / 2
+          + column * (buttonW + 12) + buttonW / 2;
+        const y = navY - (rows - 1 - row) * (navH + navGap);
+        makeButton(this, x, y, buttonW, navH, label, action, 'red', 12);
       });
     } else {
       const gapN = 8;
-      const bw = Math.min(160, (width - 80 - 5 * gapN) / 6);
-      navItems.forEach(([lbl, action], i) => {
-        const x = width / 2 - (6 * bw + 5 * gapN) / 2 + i * (bw + gapN) + bw / 2;
-        makeButton(this, x, navY, bw, navH, lbl, action, 'red', 12);
+      const count = navItems.length;
+      const bw = Math.min(160, (width - 80 - (count - 1) * gapN) / count);
+      navItems.forEach(([label, action], index) => {
+        const x = width / 2 - (count * bw + (count - 1) * gapN) / 2
+          + index * (bw + gapN) + bw / 2;
+        makeButton(this, x, navY, bw, navH, label, action, 'red', 12);
       });
     }
 
@@ -1623,49 +1660,63 @@ export class MenuScene extends Phaser.Scene {
     const perRow = mobile ? 2 : 4;
     const chipW = Math.min(mobile ? 200 : 190, (width - 24 - (perRow - 1) * gap) / perRow);
     this.preChipW = chipW;
-    // Кегль подписи чипа: на телефоне строка должна оставаться читаемой,
-    // поэтому 12 px, а не 8 — раньше подпись превращалась в кашу.
+    // Кегль подписи чипа: на телефоне строка должна оставаться читаемой.
     this.preChipFont = 12;
-    // Высота плашки держит ДВЕ строки подписи. Длинные подписи
-    // («Откроется после 3 го матча») в одну строку не влезали и вылезали
-    // за верхний край чипа.
-    const chipH = mobile ? 42 : 42;
+    const chipH = 42;
     const rowH = chipH + gap;
+    const completedMatches = matchesPlayed();
+    const chips: PreRunChip[] = [];
 
-    const ukazLocked = !ordersUnlocked();
-    const challengeLocked = matchesPlayed() < 3;
-    const chips: Array<{ label: string; enabled: boolean; action: () => void }> = [
-      { label: t('contract.pick', { v: this.contractPickName() }), enabled: true, action: () => this.showContractOverlay() },
-      {
-        label: ukazLocked ? t('ukaz.locked') : t('ukaz.pick', { v: this.ukazPickName() }),
-        enabled: !ukazLocked,
+    if (completedMatches >= CONTRACTS_AFTER_MATCHES) {
+      chips.push({
+        id: 'contract',
+        label: t('contract.pick', { v: this.contractPickName() }),
+        enabled: true,
+        action: () => this.showContractOverlay(),
+      });
+    }
+    if (ordersUnlocked()) {
+      chips.push({
+        id: 'ukaz',
+        label: t('ukaz.pick', { v: this.ukazPickName() }),
+        enabled: true,
         action: () => this.showUkazOverlay(),
-      },
-      { label: t('consumable.pick', { v: this.loadPickedConsumables().length }), enabled: true, action: () => this.showConsumablesOverlay() },
-      {
-        label: challengeLocked ? t('challenge.locked') : t('challenge.title'),
-        enabled: !challengeLocked,
+      });
+    }
+    chips.push({
+      id: 'consumables',
+      label: t('consumable.pick', { v: this.loadPickedConsumables().length }),
+      enabled: true,
+      action: () => this.showConsumablesOverlay(),
+    });
+    if (completedMatches >= CHALLENGE_AFTER_MATCHES) {
+      chips.push({
+        id: 'challenge',
+        label: t('challenge.title'),
+        enabled: true,
         action: () => this.showChallengeOverlay(),
-      },
-    ];
+      });
+    }
 
-    chips.forEach((c, i) => {
-      const col = i % perRow;
+    chips.forEach((chipDef, i) => {
       const row = Math.floor(i / perRow);
-      const x = width / 2 - (perRow * chipW + (perRow - 1) * gap) / 2 + col * (chipW + gap) + chipW / 2;
+      const col = i % perRow;
+      const rowCount = Math.min(perRow, chips.length - row * perRow);
+      const rowStart = width / 2 - (rowCount * chipW + (rowCount - 1) * gap) / 2;
+      const x = rowStart + col * (chipW + gap) + chipW / 2;
       const y = preTop + row * rowH + chipH / 2;
-      const chip = makeChip(this, x, y, chipW, chipH, c.label, {
+      const chip = makeChip(this, x, y, chipW, chipH, chipDef.label, {
         fontSize: this.preChipFont,
-        disabled: !c.enabled,
+        disabled: !chipDef.enabled,
       });
       chip.container.setSize(chipW + 8, chipH + 6);
-      chip.container.setInteractive({ useHandCursor: c.enabled });
+      chip.container.setInteractive({ useHandCursor: chipDef.enabled });
       chip.container.on('pointerdown', () => {
-        if (!c.enabled) return;
+        if (!chipDef.enabled) return;
         audio.play('click');
-        c.action();
+        chipDef.action();
       });
-      this.preChipTexts[i] = chip.container.list[1] as Phaser.GameObjects.Text;
+      this.preChipTexts[chipDef.id] = chip.container.list[1] as Phaser.GameObjects.Text;
     });
 
     return Math.ceil(chips.length / perRow) * rowH - gap;
@@ -1673,20 +1724,18 @@ export class MenuScene extends Phaser.Scene {
 
   /** Обновляет подписи чипов пре-рана после выбора в оверлеях. */
   private refreshPreChips(): void {
-    const ukazLocked = !ordersUnlocked();
-    const challengeLocked = matchesPlayed() < 3;
-    const labels: Array<string | null> = [
-      t('contract.pick', { v: this.contractPickName() }),
-      ukazLocked ? null : t('ukaz.pick', { v: this.ukazPickName() }),
-      t('consumable.pick', { v: this.loadPickedConsumables().length }),
-      challengeLocked ? t('challenge.locked') : t('challenge.title'),
-    ];
-    labels.forEach((label, i) => {
-      const txt = this.preChipTexts[i];
-      if (!txt || label === null) return;
+    const labels: Partial<Record<PreRunChipId, string>> = {
+      contract: t('contract.pick', { v: this.contractPickName() }),
+      ukaz: t('ukaz.pick', { v: this.ukazPickName() }),
+      consumables: t('consumable.pick', { v: this.loadPickedConsumables().length }),
+      challenge: t('challenge.title'),
+    };
+    for (const [id, label] of Object.entries(labels) as Array<[PreRunChipId, string]>) {
+      const txt = this.preChipTexts[id];
+      if (!txt) continue;
       txt.setText(label);
       fitTextWidth(txt, this.preChipW - 14, this.preChipFont);
-    });
+    }
   }
 
   private contractPickName(): string {
@@ -1703,6 +1752,7 @@ export class MenuScene extends Phaser.Scene {
   // ----- Оверлей контракта (§H.9): выбор/снятие, хранение 'tss-contract-pick' -----
 
   private showContractOverlay(): void {
+    if (matchesPlayed() < CONTRACTS_AFTER_MATCHES) return;
     this.beginOverlay();
     const width = this.vw;
     const height = this.vh;
@@ -1765,6 +1815,7 @@ export class MenuScene extends Phaser.Scene {
   // ----- Оверлей указа (§H.17): показывает активный, выбор — в «Хронике» -----
 
   private showUkazOverlay(): void {
+    if (!ordersUnlocked()) return;
     this.beginOverlay();
     const width = this.vw;
     const height = this.vh;
@@ -1918,6 +1969,7 @@ export class MenuScene extends Phaser.Scene {
   // ----- Оверлей вызова дня (§H.8): 2 модификатора, реролл R6, старт -----
 
   private showChallengeOverlay(salt = ''): void {
+    if (matchesPlayed() < CHALLENGE_AFTER_MATCHES) return;
     this.beginOverlay();
     const width = this.vw;
     const height = this.vh;
@@ -1987,6 +2039,7 @@ export class MenuScene extends Phaser.Scene {
   // ----- Оверлей дара дня (§H.7): 7 кружков недели, забор / ×2 (R11) -----
 
   private showBonusOverlay(): void {
+    if (!bonusAvailable()) return;
     this.beginOverlay();
     const width = this.vw;
     const height = this.vh;
@@ -2081,7 +2134,9 @@ export class MenuScene extends Phaser.Scene {
   /** Поток кнопки «Играть»: сбор RunModifiers → оверлей благословения → старт. */
   private startRun(): void {
     const cfg: RunModifiers = {
-      contract: (loadText('tss-contract-pick') || null) as ContractId | null,
+      contract: matchesPlayed() >= CONTRACTS_AFTER_MATCHES
+        ? (loadText('tss-contract-pick') || null) as ContractId | null
+        : null,
       ukaz: ordersUnlocked() ? ((loadText('tss-ukaz-pick') || null) as OrderId | null) : null,
       challenge: null,
       blessing: null,

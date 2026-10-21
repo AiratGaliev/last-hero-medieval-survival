@@ -26,7 +26,7 @@ import { track } from '../../platform/analytics';
 export interface EconomyEvents {
   change: void;                    // изменился склад (HUD)
   garrison: void;                  // изменился гарнизон (HUD)
-  built: { kind: BuildingKind; first: boolean };
+  built: { kind: BuildingKind; first: boolean; firstPawn?: Pawn | null };
   feed: { text: string; color?: string };
   pawnDied: { pawn: Pawn };
   pawnWounded: { pawn: Pawn; cause: 'regular' | 'siege' | 'taunt' };
@@ -915,18 +915,23 @@ export class Economy extends Phaser.Events.EventEmitter {
             }
           }
           const first = j.spot.kind === 'house' && !this.firstHouseBuilt;
+          let firstPawn: Pawn | null = null;
           if (first) {
             this.firstHouseBuilt = true;
             // Первый дом дарит жителя бесплатно (§E.5): вход к дому за 2 секунды.
-            const v = this.spawnPawn('collector', j.spot.x, j.spot.y + 40);
-            if (v) {
-              const dx = v.x - this.castleX;
-              const dy = v.y - this.castleY;
+            firstPawn = this.spawnPawn('collector', j.spot.x, j.spot.y + 40);
+            if (firstPawn) {
+              const dx = firstPawn.x - this.castleX;
+              const dy = firstPawn.y - this.castleY;
               const distance = Math.max(1, Math.hypot(dx, dy));
-              v.arriveFrom(v.x + (dx / distance) * 360, v.y + (dy / distance) * 360, 2_000);
+              firstPawn.arriveFrom(
+                firstPawn.x + (dx / distance) * 360,
+                firstPawn.y + (dy / distance) * 360,
+                2_000,
+              );
             }
           }
-          this.emit('built', { kind: j.spot.kind, first });
+          this.emit('built', { kind: j.spot.kind, first, firstPawn });
           this.opts.onBuildComplete?.(j.spot.kind, j.spot.x, j.spot.y);
         }
       }

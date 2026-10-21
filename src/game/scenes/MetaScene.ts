@@ -4,10 +4,11 @@ import { FONT } from '../constants';
 import { audio } from '../systems/Audio';
 import { makeButton, makePanel, makeRibbon, resizePanel, fitTextWidth, type Button } from '../systems/Ui';
 import { t, num, type TranslationKey, type TranslateParams } from '../../i18n';
+import { FTUE_MATCH_GATE } from '../data';
 import { loadText, saveText, removeKey } from '../storage';
 import { track } from '../../platform/analytics';
 import { placementAvailable, showPlacementRewarded, showStickyBanner } from '../../platform/ads';
-import { purchaseSku, showcaseVisible } from '../../platform/payments';
+import { purchaseSku } from '../../platform/payments';
 import {
   bonusAvailable,
   buyNode,
@@ -23,6 +24,8 @@ import {
   DAILY_BONUS,
   rerollQuestSlot,
   rollMetaDay,
+  matchesPlayed,
+  seasonPassUnlocked,
   seasonDef,
   SEASON_STEPS,
   TREE_NODES,
@@ -134,7 +137,10 @@ export class MetaScene extends Phaser.Scene {
   create(payload: MetaPayload): void {
     this.cursor = new Cursor(this);
     this.payload = payload ?? {};
-    this.tab = this.payload.tab ?? 'tree';
+    const availableTabs = this.availableTabs();
+    this.tab = this.payload.tab && availableTabs.includes(this.payload.tab)
+      ? this.payload.tab
+      : availableTabs[0] ?? 'quests';
     this.pageIdx = 0;
 
     this.pw = Math.min(1020, this.scale.width * 0.92);
@@ -226,9 +232,25 @@ export class MetaScene extends Phaser.Scene {
     return this.py - this.ph / 2 + 80;
   }
 
+  /** Скрывает поздние подсистемы до соответствующего числа завершённых матчей (§I.3). */
+  private availableTabs(): MetaTab[] {
+    const completedMatches = matchesPlayed();
+    return TAB_ORDER.filter((id) => {
+      if (id === 'tree') return completedMatches >= FTUE_MATCH_GATE.valleyChronicle;
+      if (id === 'orders') return completedMatches >= FTUE_MATCH_GATE.kingOrders;
+      if (id === 'codex') return completedMatches >= FTUE_MATCH_GATE.codex;
+      if (id === 'pass') return seasonPassUnlocked();
+      return true;
+    });
+  }
+
+  private tabRowCount(): number {
+    return this.scale.width < 760 ? Math.max(1, Math.ceil(this.availableTabs().length / 4)) : 1;
+  }
+
   private contentTop(): number {
-    const narrow = this.scale.width < 760;
-    return this.tabsTop() + (narrow ? 44 * 2 + 10 : 44) + 12;
+    const rows = this.tabRowCount();
+    return this.tabsTop() + 44 * rows + 10 * (rows - 1) + 12;
   }
 
   /** Нижняя граница контента — выше кнопки «Назад». */
@@ -253,9 +275,12 @@ export class MetaScene extends Phaser.Scene {
     this.tabButtons = [];
 
     const narrow = this.scale.width < 760;
+    const tabs = this.availableTabs();
     const rows: MetaTab[][] = narrow
-      ? [TAB_ORDER.slice(0, 4), TAB_ORDER.slice(4)]
-      : [TAB_ORDER];
+      ? Array.from({ length: Math.max(1, Math.ceil(tabs.length / 4)) }, (_, row) =>
+        tabs.slice(row * 4, row * 4 + 4),
+      )
+      : [tabs];
     const gap = 8;
 
     rows.forEach((row, rowIdx) => {
@@ -777,7 +802,7 @@ export class MetaScene extends Phaser.Scene {
     // Покупка пропуска: только при открытой витрине (5-й матч, §J.6.4)
     cy += 26;
     if (!st.pass.premium) {
-      if (showcaseVisible()) {
+      if (seasonPassUnlocked()) {
         const buyPassBtn = makeButton(this, this.px, cy, 260, 44, t('store.pass'), () => {
           void this.buyPass();
         }, 'red', 12);

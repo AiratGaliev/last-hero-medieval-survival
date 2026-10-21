@@ -10,6 +10,7 @@ import { isMockMode, isOnYandex } from '../../platform/sdk';
 import { placementAvailable, showPlacementRewarded, showStickyBanner } from '../../platform/ads';
 import {
   rollMetaDay,
+  seasonPassUnlocked,
   saveMetaState,
   hasIapEntitlement,
   buySkinWithCrowns,
@@ -207,7 +208,10 @@ export class ShopScene extends Phaser.Scene {
   create(payload?: ShopPayload): void {
     this.cursor = new Cursor(this);
     this.payload = payload ?? {};
-    this.tab = this.payload.tab ?? 'shop';
+    const allowedTabs = this.availableTabs();
+    this.tab = this.payload.tab && allowedTabs.includes(this.payload.tab)
+      ? this.payload.tab
+      : 'shop';
     this.pageIdx = 0;
     this.busy = false;
     this.refreshBusy = false;
@@ -323,11 +327,19 @@ export class ShopScene extends Phaser.Scene {
     return this.pw - 64;
   }
 
+  /** До пятого завершённого матча витрина оплаты не должна даже занимать место в навигации. */
+  private availableTabs(): TabId[] {
+    const ids: TabId[] = ['shop', 'skins'];
+    if (seasonPassUnlocked()) ids.push('pass');
+    if (showcaseVisible()) ids.push('crowns');
+    return ids;
+  }
+
   private renderTabs(): void {
     for (const b of this.tabButtons) b.destroy();
     this.tabButtons = [];
 
-    const ids: TabId[] = ['shop', 'skins', 'pass', 'crowns'];
+    const ids = this.availableTabs();
     const gap = 8;
     const tw = Math.min(126, (this.pw - 48 - (ids.length - 1) * gap) / ids.length);
     ids.forEach((id, i) => {
@@ -344,6 +356,7 @@ export class ShopScene extends Phaser.Scene {
 
   /** Переключение вкладки: сброс страницы, трекинг витрины, перерисовка. */
   private openTab(id: TabId): void {
+    if (!this.availableTabs().includes(id)) return;
     if (this.tab === id && this.contentBox) return;
     this.tab = id;
     this.pageIdx = 0;
@@ -983,7 +996,7 @@ export class ShopScene extends Phaser.Scene {
     y += tight ? 18 : 24;
 
     if (!st.pass.premium) {
-      if (showcaseVisible()) {
+      if (seasonPassUnlocked()) {
         const bh = tight ? 40 : 44;
         const buy = makeButton(this, this.px, y + bh / 2, 280, bh, t('store.pass'),
           () => { void this.buySku('pass_chronicle'); }, 'blue', 13, { stopPropagation: true });

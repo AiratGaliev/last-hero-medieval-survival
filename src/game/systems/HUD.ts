@@ -97,6 +97,7 @@ export class HUD {
   private goldText!: Phaser.GameObjects.Text;
   private scoreText!: Phaser.GameObjects.Text;
   private announceText!: Phaser.GameObjects.Text;
+  private announcementTypewriterEvent: Phaser.Time.TimerEvent | null = null;
   // HP-бар: мгновенная полоса + «призрак» урона (медленно догоняет)
   private hpIcon!: Phaser.GameObjects.Image;
   private hpBar!: StatBar;
@@ -133,6 +134,7 @@ export class HUD {
 
   // Виньетка низкого HP + тег сложности + тосты ачивок
   private vignetteRects: Phaser.GameObjects.Rectangle[] = [];
+  private siegeVignetteUntil = 0;
   private diffTag: Phaser.GameObjects.Text | null = null;
   private toastQueue: AchievementDef[] = [];
   private toastBusy = false;
@@ -574,16 +576,30 @@ export class HUD {
     // HP-бар: полоса + «призрак» урона (медленно догоняет после удара)
     this.updateHpBar(s.hp, s.maxHp);
 
-    // Виньетка низкого HP
+    // Виньетка включается как низким HP, так и объявлением осады.
+    // Два триггера объединены, поэтому восстановление HP не гасит срочное
+    // предупреждение об осаде, а окончание предупреждения не гасит low-HP edge.
+    const now = this.scene.time.now;
     const hpFrac = s.hp / Math.max(1, s.maxHp);
-    if (hpFrac < 0.3) {
-      const pulse = 0.18 + Math.abs(Math.sin(this.scene.time.now / 260)) * 0.16;
-      for (const r of this.vignetteRects) {
-        r.setVisible(true).setAlpha(pulse);
-      }
-    } else {
-      for (const r of this.vignetteRects) r.setVisible(false);
+    const hpPulse = hpFrac < 0.3 ? 0.18 + Math.abs(Math.sin(now / 260)) * 0.16 : 0;
+    const siegePulse = now < this.siegeVignetteUntil
+      ? 0.16 + Math.abs(Math.sin(now / 95)) * 0.2
+      : 0;
+    const vignetteAlpha = Math.max(hpPulse, siegePulse);
+    for (const r of this.vignetteRects) {
+      r.setVisible(vignetteAlpha > 0).setAlpha(vignetteAlpha);
     }
+  }
+
+  /** Красные края экрана при объявлении осады (TZ §H.13 №2). */
+  showSiegeVignette(durationMs = 2_000): void {
+    if (!Number.isFinite(durationMs) || durationMs <= 0) return;
+    this.siegeVignetteUntil = Math.max(
+      this.siegeVignetteUntil,
+      this.scene.time.now + durationMs,
+    );
+    const alpha = 0.2 + Math.abs(Math.sin(this.scene.time.now / 95)) * 0.2;
+    for (const rect of this.vignetteRects) rect.setVisible(true).setAlpha(alpha);
   }
 
   /** Полоса HP: быстрая заливка + медленный «призрак» (классика файтингов) */
@@ -595,6 +611,16 @@ export class HUD {
   }
 
   // ================= ПОСЕЛЕНИЕ: HUD (TZ §B.8, §E.11) =================
+
+  /** Экранная координата ресурса дерева для обучающей стрелки (§I.2). */
+  resourceHintPoint(): { x: number; y: number } {
+    // resGroup и HUD root используют одну и ту же inverse-zoom систему
+    // экранных координат, поэтому подсказке передаётся логическая точка до zoom.
+    return {
+      x: this.resGroup.x + 86 * this.resGroup.scaleX,
+      y: this.resGroup.y,
+    };
+  }
 
   /** Блок РЕСУРСЫ: обновление по событию economy 'change', не каждый кадр. */
   updateResources(res: { wood: number; ore: number; meat: number }): void {
@@ -648,7 +674,16 @@ private bottomStack(): { iconsY: number; speedupY: number; feedY: number } {
   feed(text: string, color = '#ffe9b0'): void {
     const W = this.scene.scale.width;
     const w = Math.min(this.sc(300), W - this.sc(24));
-    const c = this.scene.add.container(this.sc(14), this.bottomStack().feedY);
+    const feedY = this.bottomStack().feedY;
+    const rowHeight = this.sc(28);
+    // Лента — это стек, а не три сообщения в одной точке.
+    for (const item of this.feedItems) {
+      this.scene.tweens.killTweensOf(item);
+      this.scene.tweens.add({
+        targets: item, y: item.y - rowHeight, duration: 160, ease: 'Sine.Out',
+      });
+    }
+    const c = this.scene.add.container(this.sc(14), feedY);
     // Подложка ленты — пергамент из набора, а не чёрный прямоугольник:
     // события поселения читаются поверх живой сцены, и тёмная плашка
     // выбивалась из общей стилистики. Цвет события переносит полоска
@@ -671,7 +706,6 @@ private bottomStack(): { iconsY: number; speedupY: number; feedY: number } {
       const old = this.feedItems.shift()!;
       this.scene.tweens.add({ targets: old, alpha: 0, duration: 300, onComplete: () => old.destroy() });
     }
-    this.scene.tweens.add({ targets: c, y: c.y - this.feedItems.length * 0, duration: 1 });
     this.scene.time.delayedCall(6000, () => {
       const i = this.feedItems.indexOf(c);
       if (i >= 0) this.feedItems.splice(i, 1);
@@ -986,7 +1020,16 @@ private bottomStack(): { iconsY: number; speedupY: number; feedY: number } {
     });
   }
 
+  /** Кинематографичное представление преемника крупным именем у врат (§H.13 #12). */
+  successorIntro(name: string, heroTitle: string): void {
+    this.bossIntro(name, heroTitle);
+  }
+
   announce(text: string, color = '#ffffff'): void {
+    if (this.announcementTypewriterEvent) {
+      this.scene.time.removeEvent(this.announcementTypewriterEvent);
+      this.announcementTypewriterEvent = null;
+    }
     this.announceText.setText(text).setColor(color).setAlpha(1).setScale(1.25);
     this.scene.tweens.killTweensOf(this.announceText);
     this.scene.tweens.add({
@@ -1000,6 +1043,24 @@ private bottomStack(): { iconsY: number; speedupY: number; feedY: number } {
       alpha: 0,
       delay: 1700,
       duration: 520,
+    });
+  }
+
+  /** Финальный анонс постепенно выводит буквы, используя ту же анимацию HUD. */
+  announceTypewriter(text: string, color = '#ffffff', intervalMs = 65): void {
+    this.announce(text, color);
+    const characters = Array.from(text);
+    this.announceText.setText('');
+    if (characters.length === 0) return;
+    let visible = 0;
+    this.announcementTypewriterEvent = this.scene.time.addEvent({
+      delay: Math.max(20, intervalMs),
+      repeat: characters.length - 1,
+      callback: () => {
+        visible++;
+        this.announceText.setText(characters.slice(0, visible).join(''));
+        if (visible >= characters.length) this.announcementTypewriterEvent = null;
+      },
     });
   }
 
@@ -1150,6 +1211,10 @@ private bottomStack(): { iconsY: number; speedupY: number; feedY: number } {
   }
 
   destroy(): void {
+    if (this.announcementTypewriterEvent) {
+      this.scene.time.removeEvent(this.announcementTypewriterEvent);
+      this.announcementTypewriterEvent = null;
+    }
     this.scene.scale.off('resize', this.resizeHandler);
     window.removeEventListener('orientationchange', this.resizeHandler);
     for (const button of Object.values(this.speedupButtons)) button.destroy();

@@ -3,7 +3,7 @@
 // требование платформы (п. 1.2: игра должна работать без входа в сторонние
 // сервисы, а предложение авторизоваться — только по явному действию игрока).
 
-import { getSdk, isOnYandex, type YandexPlayer } from './sdk';
+import { getSdk, isMockMode, isOnYandex, type YandexPlayer } from './sdk';
 import { loadJson, saveJson } from '../game/storage';
 import { t } from '../i18n';
 
@@ -30,6 +30,19 @@ function playerUniqueId(player: YandexPlayer | null): string | null {
   try {
     const id = player?.getUniqueID().trim();
     return id || null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Область локального fallback для активного профиля. В QA-mock и у гостя
+ * остаётся прежнее локальное пространство; ID используется только как ключ.
+ */
+export async function getPlayerLocalDataScope(): Promise<string | null> {
+  if (!isOnYandex() || isMockMode()) return null;
+  try {
+    return playerUniqueId(cached ?? await loadPlayer());
   } catch {
     return null;
   }
@@ -199,17 +212,29 @@ export function analyticsIdentity(): string {
   return localAnalyticsIdentity;
 }
 
-/** Читает поле Player Data с таймаутом; недоступность облака не блокирует игру. */
-export async function readPlayerDataValue(key: string): Promise<unknown> {
-  if (!isOnYandex()) return null;
-  const player = cached ?? await loadPlayer();
-  if (!player?.getData) return null;
+/** Результат чтения различает пустое поле и недоступное Player Data. */
+export interface PlayerDataReadResult {
+  available: boolean;
+  value: unknown;
+}
+
+/** Читает поле Player Data с таймаутом, не скрывая сам факт ошибки чтения. */
+export async function readPlayerDataEntry(key: string): Promise<PlayerDataReadResult> {
+  if (!isOnYandex()) return { available: false, value: null };
   try {
+    const player = cached ?? await loadPlayer();
+    if (!player?.getData) return { available: false, value: null };
     const data = await playerDataWithTimeout(player, [key]);
-    return data[key] ?? null;
+    return { available: true, value: data[key] ?? null };
   } catch {
-    return null;
+    return { available: false, value: null };
   }
+}
+
+/** Читает поле Player Data; недоступность облака не блокирует игровой процесс. */
+export async function readPlayerDataValue(key: string): Promise<unknown> {
+  const result = await readPlayerDataEntry(key);
+  return result.available ? result.value : null;
 }
 
 /** Последовательно выполняет облачные записи, чтобы параллельные setData не перезаписывали новое состояние. */

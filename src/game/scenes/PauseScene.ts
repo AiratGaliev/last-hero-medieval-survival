@@ -27,6 +27,8 @@ interface LoadoutData {
 interface PauseData {
   onResume: () => void;
   onToggleMute: () => boolean;
+  hintsEnabled: boolean;
+  onToggleHints: () => boolean;
   loadout?: LoadoutData;
   /**
    * Нижняя граница верхней полосы HUD (полоса босса) в экранных пикселях.
@@ -46,6 +48,7 @@ export class PauseScene extends Phaser.Scene {
    * можно нажать. Теперь это та же кнопка пака, что и остальные.
    */
   private muteBtn!: ReturnType<typeof makeButton>;
+  private hintsBtn!: ReturnType<typeof makeButton>;
   /** Слой окна: всё содержимое выше HUD и его затемнения. */
   private ui!: OverlayLayer;
 
@@ -62,7 +65,7 @@ export class PauseScene extends Phaser.Scene {
     this.cursor = new Cursor(this);
     this.payload = payload;
     const { width, height } = this.scale;
-    const compact = height < 560;
+    const compact = height < 560 || width < 560;
     this.ui = new OverlayLayer(this, DEPTH.OVERLAY + 2);
 
     this.ui.rectangle(width / 2, height / 2, width + 40, height + 40, 0x0a0a12, 0.7);
@@ -74,10 +77,15 @@ export class PauseScene extends Phaser.Scene {
     const ribbonH = Math.round(titleFont * 1.55);
     // Лента не наезжает на верхнюю полосу HUD: полоса босса с именем стоит
     // на той же высоте, и «ПАУЗА» ложилась прямо на неё.
-    const titleY = Math.max(
+    const requestedTitleY = Math.max(
       compact ? height * 0.1 : height * 0.11,
       (payload.topInset ?? 0) + ribbonH / 2 + 12,
     );
+    // На низком/узком viewport оставляем физическое место под оба переключателя
+    // и три действия. Если полоса босса съела почти всю высоту, слегка сжимаем
+    // безопасный отступ вместо того, чтобы сделать меню неуправляемым.
+    const maxTitleY = height - ribbonH / 2 - 177;
+    const titleY = compact ? Math.min(requestedTitleY, maxTitleY) : requestedTitleY;
     const ribbonW = Math.min(width - 40, Math.max(260, width * 0.34));
     this.ui.add(makeRibbon(this, width / 2, titleY, ribbonW, 'ribbon-blue', ribbonH));
 
@@ -86,15 +94,16 @@ export class PauseScene extends Phaser.Scene {
       stroke: '#1b1008', strokeThickness: outlineFor(titleFont),
     }).setOrigin(0.5);
     this.tweens.add({ targets: title, scale: { from: 0.7, to: 1 }, duration: 260, ease: 'Back.easeOut' });
-    const headerBottom = titleY + ribbonH / 2 + 8;
-
-    // Переключатель звука — сразу под лентой, а не под рядом кнопок.
-    //
-    // Раньше он стоял ПОД кнопками, и на телефоне налезал на кнопки
-    // ускорений HUD: «звук вкл» перекрывал «нечего ускорить». Здесь место
-    // зарезервировано лентой, и нижняя часть экрана остаётся свободной.
+    // Переключатели идут в одной адаптивной строке: второй ряд съедал место
+    // на телефоне и наезжал на кнопки управления при видимой полосе босса.
     const soundY = titleY + ribbonH / 2 + 30;
-    this.buildSoundToggle(width / 2, soundY);
+    const controlsW = Math.max(120, Math.min(420, width - 32));
+    const controlsGap = 10;
+    const controlW = (controlsW - controlsGap) / 2;
+    const controlsOffset = controlW / 2 + controlsGap / 2;
+    this.buildSoundToggle(width / 2 - controlsOffset, soundY, controlW);
+    this.buildHintsToggle(width / 2 + controlsOffset, soundY, controlW);
+    const headerBottom = soundY + 38 / 2 + 8;
 
     // ---------- Панель снаряжения ----------
     const lo = payload.loadout;
@@ -115,10 +124,19 @@ export class PauseScene extends Phaser.Scene {
       this.menuBtn(width / 2, by, t('pause.restart'), 'red', bw, 58, () => this.restart());
       this.menuBtn(width / 2 + (bw + 16), by, t('pause.toMenu'), 'blue', bw, 58, () => this.toMenu());
     } else {
-      // Компактный ландшафт / без данных — прежняя вертикальная раскладка
-      this.menuBtn(width / 2, height * 0.42, t('pause.resume'), 'blue', 300, 66, () => this.resume());
-      this.menuBtn(width / 2, height * 0.58, t('pause.restart'), 'red', 300, 66, () => this.restart());
-      this.menuBtn(width / 2, height * 0.74, t('pause.toMenu'), 'blue', 220, 54, () => this.toMenu());
+      // На narrow/landscape viewport действия раскладываются в свободной зоне
+      // после заголовка и настроек, а не по фиксированным долям высоты.
+      const actionsTop = headerBottom + 10;
+      const actionsBottom = height - 12;
+      const available = Math.max(0, actionsBottom - actionsTop);
+      const gap = Math.max(4, Math.min(10, Math.floor(available * 0.04)));
+      const buttonH = Math.max(30, Math.min(58, Math.floor((available - gap * 2) / 3)));
+      const total = buttonH * 3 + gap * 2;
+      const startY = actionsTop + Math.max(0, (available - total) / 2) + buttonH / 2;
+      const buttonW = Math.min(300, width - 40);
+      this.menuBtn(width / 2, startY, t('pause.resume'), 'blue', buttonW, buttonH, () => this.resume());
+      this.menuBtn(width / 2, startY + buttonH + gap, t('pause.restart'), 'red', buttonW, buttonH, () => this.restart());
+      this.menuBtn(width / 2, startY + 2 * (buttonH + gap), t('pause.toMenu'), 'blue', Math.min(260, width - 40), buttonH, () => this.toMenu());
     }
 
     // Esc — продолжить
@@ -245,14 +263,30 @@ export class PauseScene extends Phaser.Scene {
    * остальные: раньше это была строчка текста, и в неё нельзя было
    * целиться на телефоне.
    */
-  private buildSoundToggle(x: number, y: number): void {
-    const b = makeButton(this, x, y, 190, 38, '', () => {
+  private buildSoundToggle(x: number, y: number, width = 190): void {
+    const b = makeButton(this, x, y, width, 38, '', () => {
       this.payload.onToggleMute();
       this.updateMuteLabel();
-    }, 'blue', 13, { hitW: 200, hitH: 46 });
+    }, 'blue', 13, { hitW: width + 10, hitH: 46 });
     this.ui.addAll([b.img, b.txt, b.hit]);
     this.muteBtn = b;
     this.updateMuteLabel();
+  }
+
+  private buildHintsToggle(x: number, y: number, width: number): void {
+    const b = makeButton(this, x, y, width, 38, '', () => {
+      const enabled = this.payload.onToggleHints();
+      this.updateHintsLabel(enabled);
+    }, 'blue', 12, { hitW: width + 10, hitH: 46 });
+    this.ui.addAll([b.img, b.txt, b.hit]);
+    this.hintsBtn = b;
+    this.updateHintsLabel(this.payload.hintsEnabled);
+  }
+
+  private updateHintsLabel(enabled: boolean): void {
+    // Состояние payload переживает сцену при resize/orientationchange.
+    this.payload.hintsEnabled = enabled;
+    this.hintsBtn?.setLabel(enabled ? t('pause.trainingOn') : t('pause.trainingOff'));
   }
 
   private rebuild = (): void => {

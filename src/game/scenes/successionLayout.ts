@@ -17,6 +17,8 @@ export interface SuccessionLayoutOpts {
   resources: boolean;
   /** Сколько типов воина доступно для выбора. */
   options: number;
+  /** Резерв места для обучающего блока при первом показе. */
+  tutorial?: boolean;
 }
 
 export interface SuccessionBlock {
@@ -60,9 +62,11 @@ export interface SuccessionLayout {
   headerBottom: number;
   /** Ширина каждой из двух кнопок в ряду. */
   halfW: number;
-  /** Положение ленты и подзаголовка. */
+  /** Положение ленты, подзаголовка и обучающего блока. */
   ribbonY: number;
   subtitleY: number;
+  tutorialY: number;
+  tutorialH: number;
   ribbonH: number;
   ribbonW: number;
   /** Ширина кнопки «сдаться». */
@@ -105,7 +109,9 @@ export function successionLayout(
     const btnH = compact ? 40 : 48;
     const btnFont = compact ? 12 : 14;
     const gap = compact ? 8 : 12;
-    const headerH = compact ? 54 : 66;
+    const baseHeaderH = compact ? 54 : 66;
+    const tutorialH = opts.tutorial ? (compact ? 46 : 54) : 0;
+    const headerH = baseHeaderH + (tutorialH > 0 ? tutorialH + gap : 0);
 
     // Блоки считаются в СИСТЕМЕ ЭКРАНА, как и headerBottom: иначе при
     // «обтягивании» панели под контент координаты разъезжаются с шапкой
@@ -168,6 +174,8 @@ export function successionLayout(
       halfW: Math.floor((capW - pad * 3 - 14) / 2),
       ribbonY: panelTop + (compact ? 22 : 28),
       subtitleY: panelTop + (compact ? 44 : 56),
+      tutorialY: tutorialH > 0 ? panelTop + baseHeaderH + gap + tutorialH / 2 : 0,
+      tutorialH,
       ribbonH: compact ? 42 : 50,
       ribbonW: Math.min(capW - 60, 380),
       surrenderW: Math.min(260, capW - pad * 4),
@@ -185,7 +193,9 @@ export function successionLayout(
     const p = isCompact ? 14 : 24;
     const b = isCompact ? 40 : 48;
     const g = isCompact ? 8 : 12;
-    const head = isCompact ? 54 : 66;
+    const baseHead = isCompact ? 54 : 66;
+    const tutorial = opts.tutorial ? (isCompact ? 46 : 54) + g : 0;
+    const head = baseHead + tutorial;
     const warrior = (opts.living || opts.resources) ? b + (opts.living ? (isCompact ? 11 : 14) : 0) : 0;
     const gridH = opts.options > 0 ? (isCompact ? 44 : 54) + 10 : 0;
     return head + gridH + warrior + 2 * b + 4 * g + 2 * p;

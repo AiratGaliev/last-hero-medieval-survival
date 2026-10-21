@@ -82,6 +82,10 @@ export interface GameOverStats {
 
 interface GameOverData {
   stats: GameOverStats;
+  /** Первое обучение хронике показываем на её собственных строках. */
+  showChronicleTutorial?: boolean;
+  /** Успешный рендер одноразового tutorial фиксирует аккаунтный FTUE-маркер. */
+  onChronicleTutorialShown?: () => void;
 }
 
 /** План ряда действий: третья кнопка «ДЕРЖАТЬ КРЕПОСТЬ» (§H.7). */
@@ -730,13 +734,55 @@ export class GameOverScene extends Phaser.Scene {
     const wrap = Math.min(500, width - 60);
     const text = lines.join('\n');
     // Замер — с ТЕМ ЖЕ lineSpacing, что и рендер: без него need занижался
-    // на 4 px × (строк−1), и следующий блок (near-miss) налезал на хронику
+    // на 4 px × (строк−1), и следующий блок (near-miss) налезал на хронику.
     const probe = this.add.text(0, 0, text, {
       fontFamily: FONT, fontSize: compact ? '10px' : '12px', wordWrap: { width: wrap }, align: 'center', lineSpacing: 4,
     });
-    const need = 16 + probe.height + 8;
+    const chronicleHeight = 16 + probe.height + 8;
     probe.destroy();
-    if (avail < need) return cursor;
+    if (avail < chronicleHeight) return cursor;
+
+    const showTutorial = this.payload.showChronicleTutorial === true;
+    const tutorialHeight = compact ? 34 : 38;
+    const tutorialGap = 6;
+    // Сначала убеждаемся, что поместятся и подсказка, и сама хроника. Если
+    // экран слишком короткий, не расходуем одноразовый маркер на невидимый текст.
+    const renderTutorial = showTutorial
+      && avail >= chronicleHeight + tutorialHeight + tutorialGap;
+    if (renderTutorial) {
+      const panelW = Math.min(wrap, width - 48);
+      const panelY = cursor + tutorialHeight / 2;
+      const panel = makePanel(this, cx, panelY, 'paper', panelW, tutorialHeight);
+      body.add(panel);
+      body.add(this.add.text(cx, panelY, t('hint.chronicle'), {
+        fontFamily: FONT,
+        fontSize: compact ? '9px' : '10px',
+        color: '#3b2410',
+        align: 'center',
+        wordWrap: { width: panelW - 20 },
+        lineSpacing: 2,
+      }).setOrigin(0.5));
+      // Короткая золотая стрелка указывает на заголовок и строки хроники.
+      const arrowY = cursor + tutorialHeight + 5;
+      const arrow = this.add.graphics();
+      arrow.lineStyle(2, 0xffd76e, 0.95);
+      arrow.beginPath();
+      arrow.moveTo(cx, cursor + tutorialHeight);
+      arrow.lineTo(cx, arrowY);
+      arrow.strokePath();
+      arrow.fillStyle(0xffd76e, 0.95);
+      arrow.beginPath();
+      arrow.moveTo(cx, arrowY + 4);
+      arrow.lineTo(cx - 4, arrowY - 1);
+      arrow.lineTo(cx + 4, arrowY - 1);
+      arrow.closePath();
+      arrow.fillPath();
+      body.add(arrow);
+
+      cursor += tutorialHeight + tutorialGap;
+      this.payload.showChronicleTutorial = false;
+      this.payload.onChronicleTutorialShown?.();
+    }
 
     body.add(this.add.text(cx, cursor, t('over.chronicleTitle'), {
       fontFamily: FONT, fontSize: '12px', color: '#6b4a1e',
@@ -745,7 +791,7 @@ export class GameOverScene extends Phaser.Scene {
       fontFamily: FONT, fontSize: compact ? '10px' : '12px', color: '#3b2410',
       align: 'center', wordWrap: { width: wrap }, lineSpacing: 4,
     }).setOrigin(0.5, 0));
-    return cursor + need;
+    return cursor + chronicleHeight;
   }
 
   /** Near-miss (§H.3, блок 2): «чуть-чуть» — триггер ещё одного рана. */

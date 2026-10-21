@@ -13,6 +13,7 @@ type BuildingRuntime = {
 type SuccessionUiData = {
   resourceCost: { wood: number; ore: number; meat?: number } | null;
   firstFree: boolean;
+  firstTutorial?: boolean;
   showResources: boolean;
   resourcesAffordable: boolean;
   goldAffordable: boolean;
@@ -24,6 +25,7 @@ type GameSceneRuntime = {
     buildings: BuildingRuntime[];
     pawns: unknown[];
     removePawn(pawn: unknown, paid?: boolean): void;
+    emit(event: string, payload?: unknown): void;
     resources: { wood: number; ore: number; meat: number };
   };
   succession: {
@@ -35,6 +37,8 @@ type GameSceneRuntime = {
   heroDef: { id: string };
   hud: {
     weaponIcons: Map<string, unknown>;
+    announceText: { text: string };
+    successorIntro(name: string, heroTitle: string): void;
     setIcon(id: string, iconKey: string, level: number, isPassive: boolean): void;
   };
   level: number;
@@ -110,6 +114,67 @@ async function startRun(page: Page): Promise<void> {
   }), { timeout: 10_000 }).toBe(true);
 }
 
+
+test('phase P: first house reward names its real resident instead of a placeholder', async ({ page }) => {
+  await startRun(page);
+
+  const result = await page.evaluate(() => {
+    const game = (window as RuntimeWindow).__tss;
+    if (!game) throw new Error('Phaser runtime is unavailable');
+    const scene = game.scene.getScene('Game') as GameSceneRuntime;
+    const resident = scene.economy.pawns[0] as { name?: string } | undefined;
+    if (!resident?.name) throw new Error('Initial settlement has no named resident');
+
+    scene.economy.emit('built', { kind: 'house', first: true, firstPawn: resident });
+    return { announcement: scene.hud.announceText.text, name: resident.name };
+  });
+
+  expect(result.announcement).toContain(result.name);
+  expect(result.announcement).not.toContain('…');
+});
+
+test('phase P: first succession explains the rule once, then remembers it', async ({ page }) => {
+  await startRun(page);
+
+  const result = await page.evaluate(() => {
+    const game = (window as RuntimeWindow).__tss;
+    if (!game) throw new Error('Phaser runtime is unavailable');
+    const scene = game.scene.getScene('Game') as GameSceneRuntime;
+    scene.economy.buildings.push({
+      kind: 'barracks',
+      alive: true,
+      underConstruction: false,
+    });
+    for (const pawn of [...scene.economy.pawns]) {
+      const candidate = pawn as { canBecomeHero?: () => boolean };
+      if (candidate.canBecomeHero?.()) scene.economy.removePawn(pawn, false);
+    }
+
+    scene.onHeroDeath();
+    const succession = game.scene.getScene('Succession') as SuccessionSceneRuntime;
+    const firstTutorial = succession.data_?.firstTutorial === true;
+    const tutorialVisible = succession.children.list.some((child) =>
+      child.type === 'Text' && /SETTLEMENT DOES NOT ABANDON ITS OWN/i.test(child.text ?? ''),
+    );
+
+    game.scene.stop('Succession');
+    scene.scene.resume();
+    scene.overlayOpen = false;
+    scene.onHeroDeath();
+    const secondSuccession = game.scene.getScene('Succession') as SuccessionSceneRuntime;
+    const secondTutorial = secondSuccession.data_?.firstTutorial === true;
+
+    game.scene.stop('Succession');
+    scene.scene.resume();
+    scene.overlayOpen = false;
+    return { firstTutorial, tutorialVisible, secondTutorial };
+  });
+
+  expect(result.firstTutorial).toBe(true);
+  expect(result.tutorialVisible).toBe(true);
+  expect(result.secondTutorial).toBe(false);
+});
+
 test('phase N: no living warrior still exposes first-free resource succession and clears the old build', async ({ page }) => {
   await startRun(page);
 
@@ -136,6 +201,8 @@ test('phase N: no living warrior still exposes first-free resource succession an
     scene.hud.setIcon('obsolete-test-weapon', 'btn-small-blue', 3, false);
 
     const heroBefore = scene.player.hero.id;
+    const successorIntroCalls: Array<{ name: string; title: string }> = [];
+    scene.hud.successorIntro = (name, title) => successorIntroCalls.push({ name, title });
     scene.onHeroDeath();
     const succession = game.scene.getScene('Succession') as SuccessionSceneRuntime;
     const data = succession.data_;
@@ -171,6 +238,7 @@ test('phase N: no living warrior still exposes first-free resource succession an
       successionFreeUsed: scene.succession.freeUsed,
       hudIconIds: [...scene.hud.weaponIcons.keys()].sort(),
       overlayOpen: scene.overlayOpen,
+      successorIntroCalls,
     };
   });
 
@@ -190,6 +258,9 @@ test('phase N: no living warrior still exposes first-free resource succession an
   expect(result.successionFreeUsed).toBe(true);
   expect(result.hudIconIds).toEqual(['sword']);
   expect(result.overlayOpen).toBe(false);
+  expect(result.successorIntroCalls).toHaveLength(1);
+  expect(result.successorIntroCalls[0]?.name).toBe('Warrior');
+  expect(result.successorIntroCalls[0]?.title).toBeTruthy();
 });
 
 test('phase N: later succession without a resource cost renders safely and keeps the resource branch unavailable', async ({ page }) => {
