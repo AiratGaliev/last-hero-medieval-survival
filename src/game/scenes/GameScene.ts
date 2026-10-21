@@ -21,10 +21,11 @@ import { Settlement, type LoseCause } from '../systems/Settlement';
 import { calculateSiegeSpawnAngles } from '../systems/SiegeFormation';
 import { Succession } from '../systems/Succession';
 import { Speedup } from '../systems/Speedup';
-import { Hints } from '../systems/Hints';
+import { Hints, type HintTargetResolver } from '../systems/Hints';
 import { OrderMenu } from '../systems/OrderMenu';
 import { audio } from '../systems/Audio';
 import { Effects } from '../systems/Effects';
+import { JuicePolicy } from '../systems/Juice';
 import { Pickups } from '../systems/Pickups';
 import { Projectiles } from '../systems/Projectiles';
 import { Spawner, type SpawnerCtx } from '../systems/Spawner';
@@ -73,6 +74,8 @@ export class GameScene extends Phaser.Scene {
   private joystick!: Joystick;
   private enemyGroup!: Phaser.Physics.Arcade.Group;
   private effects!: Effects;
+  /** Единая политика тряски и частоты hitstop для Phase P. */
+  private readonly juicePolicy = new JuicePolicy();
   private pickups!: Pickups;
   private projectiles!: Projectiles;
   private spawner!: Spawner;
@@ -180,6 +183,10 @@ export class GameScene extends Phaser.Scene {
   /** Монотонное время активной симуляции: не расходуется под блокирующим overlay. */
   private activeTimeMs = 0;
   private hitstopUntil = 0;
+  private juiceSlowFactor = 1;
+  private juiceSlowRestoreEvent: Phaser.Time.TimerEvent | null = null;
+  private juiceSlowOriginalScales: { physics: number; clock: number; tweens: number } | null = null;
+  private buildingMusicResumeEvent: Phaser.Time.TimerEvent | null = null;
   private ach: AchTracker | null = null;
   private shopLevels: ShopLevels = { might: 0, vitality: 0, speed: 0, magnet: 0, luck: 0 };
   // Существа: счётчики для достижений (TZ §A.6)
@@ -269,7 +276,9 @@ export class GameScene extends Phaser.Scene {
 
   create(payload?: { hero?: HeroId; diff?: DifficultyId }): void {
     this.cursor = new Cursor(this);
+    this.restoreJuiceSlowMotion();
     this.resetState();
+    this.juicePolicy.resetBudget();
     this.initHero(payload?.hero);
     this.initDifficulty(payload?.diff);
     this.shopLevels = getShopLevels();
@@ -590,7 +599,7 @@ export class GameScene extends Phaser.Scene {
     this.economy = new Economy(this, {
       castleX: this.castleX,
       castleY: this.castleY,
-      onBuildComplete: (kind) => this.onBuildComplete(kind),
+      onBuildComplete: (kind, x, y) => this.onBuildComplete(kind, x, y),
       onRepairComplete: () => {},
       onBurnDamage: (b, amount) => this.settlement.damageBuilding(b, amount, b.lastSiegeIdx, false),
       onBuildingDestroyed: (b) => this.settlement.onBuildingDestroyed(b),
@@ -649,12 +658,21 @@ export class GameScene extends Phaser.Scene {
         this.effects.popup(pawn.x, pawn.y - 60, '+100', '#ffd76e', 14);
         // §I.2 требует подсказку о ветеранах; ключ `hint.veteran` был
         // заведён в обоих словарях, но ни разу не показывался.
-        this.hints?.show('veteran');
+        this.hints?.show('veteran', this.worldHintTarget(() =>
+          pawn.active && !pawn.dead ? { x: pawn.x, y: pawn.y } : null,
+        ));
       },
-      onMonasteryCollapsed: (victims) => {
-        this.hud?.announce(t('siege.monasteryCollapsed', { v: victims }), '#ff5544');
-        this.economy.emit('feed', { text: t('siege.monasteryCollapsed', { v: victims }) });
-        track('monastery_collapsed', { victims_n: victims });
+      onMonasteryCollapsed: (victims, building) => {
+        const names = victims.map((pawn) => `${this.pawnTitle(pawn)} ${pawn.name}`);
+        this.hud?.announce(t('siege.monasteryCollapsed', { v: victims.length }), '#ff5544');
+        if (names.length > 0) {
+          this.hud?.feed(t('siege.monasteryCollapsedNames', { names: names.join(', ') }), '#ff5544');
+        }
+        this.effects.explosion(building.x, building.y, 1.4, 2);
+        this.shakeCamera(400, 0.006);
+        audio.play('slam');
+        this.applyJuiceSlowMotion(1_000, 0.5);
+        track('monastery_collapsed', { victims_n: victims.length, names: names.join(', ') });
       },
       onBuildingDestroyed: (b) => this.onBuildingDestroyed(b),
       onSiegeScore: (outcome, index) => this.onSiegeScore(outcome, index),
@@ -1137,7 +1155,7 @@ export class GameScene extends Phaser.Scene {
         const y = this.player.y + Math.sin(a) * r;
         if (this.spawnEnemy(kind, x, y)) {
           audio.play('boss');
-          this.cameras.main.shake(220, 0.004);
+          this.shakeCamera(220, 0.004);
           const def = ENEMIES[kind];
           this.hud.bossIntro(
             def.name,
@@ -1233,7 +1251,7 @@ export class GameScene extends Phaser.Scene {
         this.garrisonHudLabel(),
       );
     });
-    this.economy.on('built', ({ kind, first, firstPawnName }) => {
+    this.economy.on('built', ({ kind, first, firstPawn }) => {
       // Сводка рана (§K.2): постройки, время первого дома (§H.17)
       this.buildingsBuilt++;
       if (kind === 'barracks') this.builtBarracks++;
@@ -1251,11 +1269,12 @@ export class GameScene extends Phaser.Scene {
       // Скин построек (§J.6.2): новая постройка тоже под tint
       if (this.bldTint !== null) this.tintAllBuildings();
       this.hud.announce(t('building.built', { v: t(`building.${kind}.name` as Parameters<typeof t>[0]) }), '#7dc95e');
-      // Не показываем фиктивное имя до завершения входа жителя. Имя известно
-      // уже при создании пешки, поэтому награда за первый дом получает точную
-      // обратную связь даже до события pawnArrived.
-      if (first && firstPawnName) {
-        this.hud.announce(t('pawn.arrived', { v: firstPawnName }), '#ffe9b0');
+      // Баннер первого жителя называет реальную пешку вместо фиктивного «…».
+      if (first && firstPawn) {
+        this.hud.announce(
+          t('pawn.arrived', { v: `${this.pawnTitle(firstPawn)} ${firstPawn.name}` }),
+          '#ffe9b0',
+        );
       }
       audio.play('levelup');
     });
@@ -1264,16 +1283,22 @@ export class GameScene extends Phaser.Scene {
     });
     this.economy.on('pawnWounded', ({ pawn, cause }) => {
       this.hud.feed(t('pawn.wounded', { v: `${this.pawnTitle(pawn)} ${pawn.name}` }), '#ffb090');
+      this.effects.woundMark(pawn.x, pawn.y);
+      audio.play('hurt');
       track('pawn_wounded', {
         name_role: `${pawn.kind}:${pawn.name}`,
         cause,
         monastery_exists: this.economy.nearestMonastery(pawn) !== null,
         slots_free: this.economy.freeMonasterySlots(),
       });
-      if (pawn.cls === 'civilian') this.hints?.show('monastery');
+      if (pawn.cls === 'civilian') this.hints?.show('monastery', this.buildingHintTarget('monastery'));
     });
     this.economy.on('pawnSaved', ({ pawn, inMonastery }) => {
-      this.hud.feed(t('pawn.saved', { v: `${this.pawnTitle(pawn)} ${pawn.name}` }), '#7dc95e');
+      const savedLabel = t('pawn.saved', { v: `${this.pawnTitle(pawn)} ${pawn.name}` });
+      this.hud.feed(savedLabel, '#7dc95e');
+      this.hud.announce(savedLabel, '#7dc95e');
+      this.effects.heal(pawn.x, pawn.y);
+      audio.play('pickup');
       track('pawn_saved', {
         name_role: `${pawn.kind}:${pawn.name}`,
         cause: 'healed',
@@ -1615,7 +1640,11 @@ private ordersUnlocked(): boolean {
       pawn.order = key;
       pawn.orderTarget = key === 'hold' ? { x: wx, y: wy } : null;
       track('first_order_used', { order: key });
-      if (pawn.cls === 'civilian') this.hints?.show('orders');
+      if (pawn.cls === 'civilian') {
+        this.hints?.show('orders', this.worldHintTarget(() =>
+          pawn.active && !pawn.dead ? { x: pawn.x, y: pawn.y } : null,
+        ));
+      }
     });
   }
 
@@ -1699,7 +1728,7 @@ private ordersUnlocked(): boolean {
 
     // Scene Clock.now и параметр update(time) продолжают расти под Clock.pause().
     // Отдельные часы симуляции останавливаются вместе с блокирующим FTUE overlay.
-    const dtMs = Math.min(Math.max(0, delta), 50);
+    const dtMs = Math.min(Math.max(0, delta * this.juiceSlowFactor), 50);
     this.activeTimeMs += dtMs;
     this.registry.set('tss-active-time-ms', this.activeTimeMs);
     this.updateDpsDebug(this.activeTimeMs);
@@ -1766,8 +1795,8 @@ private ordersUnlocked(): boolean {
     }
 
     // Системы
-    this.weapons.update(delta);
-    this.projectiles.update(delta);
+    this.weapons.update(dtMs);
+    this.projectiles.update(dtMs);
     this.spawner.update(dt);
 
     // Экономика поселения: пешки, стройка, ремонт, найм, обитель (TZ §B)
@@ -1841,7 +1870,9 @@ private ordersUnlocked(): boolean {
     const magnetNow = this.activeTimeMs < this.xpMagnetUntil
       ? this.magnetRadius * 6
       : this.magnetRadius;
-    this.pickups.update(delta, this.player.x, this.player.y, magnetNow, this.activeTimeMs);
+    // Подбор кристаллов — часть игровой симуляции, поэтому slow-motion
+    // должен замедлять их движение и притяжение так же, как оружие и снаряды.
+    this.pickups.update(dtMs, this.player.x, this.player.y, magnetNow, this.activeTimeMs);
 
     // Регенерация
     if (this.regen > 0 && this.player.hp < this.player.maxHp) {
@@ -1919,11 +1950,11 @@ private ordersUnlocked(): boolean {
     // а не по узкому окну кадра. Вводный overlay был показан до первого update.
     if (this.houseHintArmed && this.economy.resources.wood >= 30) {
       this.houseHintArmed = false;
-      this.hints.show('house');
+      this.hints.show('house', this.buildingHintTarget('house'));
     }
     if (this.pawnsHintArmed && this.elapsed >= 20) {
       this.pawnsHintArmed = false;
-      this.hints.show('pawns');
+      this.hints.show('pawns', () => this.hud.resourceHintPoint());
     }
 
     // Тосты заданий дня (§H.17): проверка раз в 5 сек, бой не прерывается
@@ -1985,8 +2016,69 @@ private ordersUnlocked(): boolean {
     return out;
   }
 
-  /** Хитстоп: заморозить врагов на ms миллисекунд */
-  private hitstop(ms: number): void {
+  /** На 300 мс гасим музыку разрушения; повторный взрыв продлевает паузу. */
+  private pauseMusicForBuildingDestruction(): void {
+    audio.stopMusic();
+    if (this.buildingMusicResumeEvent) this.time.removeEvent(this.buildingMusicResumeEvent);
+    this.buildingMusicResumeEvent = this.time.delayedCall(300, () => {
+      this.buildingMusicResumeEvent = null;
+      if (!this.gameEnded && !this.victoryPending) audio.startMusic();
+    });
+  }
+
+  /** Управляет slow-motion и возвращает исходные шкалы времени по окончании. */
+  private applyJuiceSlowMotion(durationMs: number, factor: number, essential = false): void {
+    if (!Number.isFinite(durationMs) || durationMs <= 0
+      || !Number.isFinite(factor) || factor <= 0 || factor >= 1
+      || !this.juicePolicy.allowTimeEffect(this.activeTimeMs, essential)) return;
+
+    if (!this.juiceSlowOriginalScales) {
+      this.juiceSlowOriginalScales = {
+        physics: this.physics.world.timeScale,
+        clock: this.time.timeScale,
+        tweens: this.tweens.timeScale,
+      };
+    }
+    if (this.juiceSlowRestoreEvent) this.time.removeEvent(this.juiceSlowRestoreEvent);
+    this.juiceSlowFactor = Math.min(this.juiceSlowFactor, factor);
+    this.physics.world.timeScale = this.juiceSlowOriginalScales.physics / this.juiceSlowFactor;
+    this.time.timeScale = this.juiceSlowOriginalScales.clock * this.juiceSlowFactor;
+    this.tweens.timeScale = this.juiceSlowOriginalScales.tweens * this.juiceSlowFactor;
+    // Timer Events сами подчиняются Clock.timeScale. Компенсируем текущий
+    // scale, чтобы durationMs оставался фактической длительностью эффекта:
+    // при 0.5× Clock для 1 500 мс достаточно 750 мс его собственного времени.
+    const clockScale = Math.max(Number.EPSILON, this.time.timeScale);
+    this.juiceSlowRestoreEvent = this.time.delayedCall(
+      durationMs * clockScale,
+      () => this.restoreJuiceSlowMotion(),
+    );
+  }
+
+  private restoreJuiceSlowMotion(): void {
+    if (this.juiceSlowRestoreEvent) {
+      this.time.removeEvent(this.juiceSlowRestoreEvent);
+      this.juiceSlowRestoreEvent = null;
+    }
+    if (this.juiceSlowOriginalScales) {
+      this.physics.world.timeScale = this.juiceSlowOriginalScales.physics;
+      this.time.timeScale = this.juiceSlowOriginalScales.clock;
+      this.tweens.timeScale = this.juiceSlowOriginalScales.tweens;
+      this.juiceSlowOriginalScales = null;
+    }
+    this.juiceSlowFactor = 1;
+  }
+
+  /** Камерная тряска отключена на low-профиле (телефоны/reduced motion). */
+  private shakeCamera(duration: number, intensity: number): void {
+    if (this.juicePolicy.canShake()) this.cameras.main.shake(duration, intensity);
+  }
+
+  /**
+   * Короткие time-effects ограничены общим бюджетом 1/3 сек активной игры.
+   * Essential зарезервирован только для кульминаций босса и победы (§H.13 №9–10).
+   */
+  private hitstop(ms: number, essential = false): void {
+    if (!this.juicePolicy.allowTimeEffect(this.activeTimeMs, essential)) return;
     this.hitstopUntil = Math.max(this.hitstopUntil, this.activeTimeMs + ms);
     this.registry.set('tss-freeze', this.hitstopUntil);
   }
@@ -2016,7 +2108,7 @@ private ordersUnlocked(): boolean {
   private explode(x: number, y: number, dmg: number, radius: number, src?: WeaponId, allowCluster = true): void {
     this.effects.explosion(x, y, 1.1, 2);
     audio.play('explosion');
-    this.cameras.main.shake(160, 0.004);
+    this.shakeCamera(160, 0.004);
     for (const e of this.activeEnemies()) {
       const dx = e.x - x, dy = e.y - y;
       if (Math.hypot(dx, dy) <= radius + e.def.body.r) {
@@ -2043,7 +2135,7 @@ private ordersUnlocked(): boolean {
     const dmg = Math.max(1, Math.round(amount * this.armorMult));
     const dead = this.player.damage(dmg, this.activeTimeMs);
     audio.play('hurt');
-    this.cameras.main.shake(120, 0.0035);
+    this.shakeCamera(120, 0.0035);
     this.cameras.main.flash(110, 190, 40, 30, false);
     this.hitstop(80);
     // §H.4: «Серия сбрасывается пропущенным ударом по герою (как сейчас) —
@@ -2076,6 +2168,8 @@ private ordersUnlocked(): boolean {
   /** Осада стартует: анонс уже прозвучал (Spawner). Отряд спавнится у базы. */
   private startSiege(profile: SiegeProfile, index: number): void {
     audio.play('boss');
+    this.hud.showSiegeVignette(2_000);
+    this.applyJuiceSlowMotion(500, 0.7);
     this.cameras.main.flash(200, 190, 40, 30, false);
     const enemies: Enemy[] = [];
     // Обычные осады подходят с одной стороны; «Клещи» делят отряд
@@ -2109,7 +2203,10 @@ private ordersUnlocked(): boolean {
       this.wave = index + 1;
       this.hud.announce(t('endless.wave', { v: this.wave }), '#ffd76e');
     }
-    this.hints?.show('siege');
+    this.hints?.show('siege', this.worldHintTarget(() => {
+      const target = enemies.find((enemy) => enemy.active && !enemy.dead);
+      return target ? { x: target.x, y: target.y } : null;
+    }));
     track('siege_start', { index, profile: profile.name });
   }
 
@@ -2327,6 +2424,9 @@ private ordersUnlocked(): boolean {
       console.warn('[qa] building destroyed:', b.kind, 'alive=', b.alive, 'hp=', b.hp, 'scene=', this.scene.key, new Error('trace').stack?.split('\n').slice(1, 8).join(' | '));
     }
     if (this.settlement.siegeIdx >= 0) this.siegeDestroyed++;
+    this.effects.explosion(b.x, b.y, 1.2, 2);
+    this.effects.splinters(b.x, b.y, b.kind === 'castle' ? 28 : 18);
+    this.pauseMusicForBuildingDestruction();
     this.hud.feed(t('building.destroyed', { v: t(`building.${b.kind}.name` as Parameters<typeof t>[0]) }), '#ff6655');
     this.hud.announce(t('building.destroyed', { v: t(`building.${b.kind}.name` as Parameters<typeof t>[0]) }), '#ff6655');
     audio.play('explosion');
@@ -2352,17 +2452,46 @@ private ordersUnlocked(): boolean {
     this.loseCause = cause;
   }
 
-  /** Стройка завершена: XP +15, очки +50, метка first_house (§H.6, §E.8). */
-  private onBuildComplete(kind: BuildingKind): void {
+  /** Стройка завершена: XP +15, очки +50 и короткий визуальный акцент (§H.13). */
+  private onBuildComplete(kind: BuildingKind, x: number, y: number): void {
     this.addXp(15);
     this.score += 50;
     this.economy.emit('change');
+    this.effects.dust(x, y - 18, 8);
+    for (const pawn of this.economy.pawns) {
+      if (!pawn.dead && Math.hypot(pawn.x - x, pawn.y - y) < 240) pawn.faceToward(x);
+    }
     // Метрики first_house/first_barracks отправляет единственный listener
     // Economy.on('built'); не дублируем событие из XP-callback.
     if (kind === 'house' && !this.registry.get('tss-first-house')) {
       this.registry.set('tss-first-house', true);
-      this.hints?.show('barracks');
+      this.hints?.show('barracks', this.buildingHintTarget('barracks'));
     }
+  }
+
+  /** Мировую точку переводим в логические экранные координаты слоя HUD/FTUE. */
+  private worldHintTarget(resolveWorldPoint: () => { x: number; y: number } | null): HintTargetResolver {
+    return () => {
+      const point = resolveWorldPoint();
+      if (!point) return null;
+      const camera = this.cameras.main;
+      const zoom = camera.zoom || 1;
+      const view = camera.worldView;
+      return {
+        x: camera.x + (point.x - view.x) * zoom,
+        y: camera.y + (point.y - view.y) * zoom,
+      };
+    };
+  }
+
+  /** Указывает свободное пятно строительства, а если занято — само здание. */
+  private buildingHintTarget(kind: BuildingKind): HintTargetResolver {
+    return this.worldHintTarget(() => {
+      const spot = this.economy.spotFor(kind);
+      if (spot) return spot;
+      const building = this.economy.buildings.find((item) => item.kind === kind && item.alive);
+      return building ? { x: building.x, y: building.y } : null;
+    });
   }
 
   private pawnTitle(pawn: Pawn): string {
@@ -2379,9 +2508,12 @@ private ordersUnlocked(): boolean {
       this.boss.aiState = 'bossPhase2';
       this.hud.announce(t('boss.siege'), '#ff5544');
       audio.play('boss');
-      this.cameras.main.shake(300, 0.006);
-      // Кинематографичный бит: time-freeze 0.8 с (§H.13 №9, §E.6)
-      this.hitstop(800);
+      this.shakeCamera(300, 0.006);
+      const cameraZoom = this.cameras.main.zoom;
+      this.cameras.main.zoomTo(Math.min(1.5, cameraZoom * 1.12), 240, 'Sine.Out');
+      this.time.delayedCall(800, () => this.cameras.main.zoomTo(cameraZoom, 260, 'Sine.Out'));
+      // Кинематографичный бит: time-freeze 0.8 с + краткий zoom (§H.13 №9, §E.6)
+      this.hitstop(800, true);
       track('siege_start', { index: -1, profile: 'boss-phase2' });
     }
   }
@@ -2467,7 +2599,12 @@ private ordersUnlocked(): boolean {
     }
 
     this.effects.explosion(x, y, big ? 1.7 : e.def.scale * 1.15, big ? 2 : 1);
-    if (big) this.hitstop(110);
+    if (e.def.isElite) {
+      this.shakeCamera(220, 0.004);
+      this.hitstop(40);
+    } else if (e.def.isBoss) {
+      this.hitstop(110);
+    }
     if (this.activeTimeMs - this.lastDieSound > 120) {
       this.lastDieSound = this.activeTimeMs;
       audio.play('die');
@@ -2520,7 +2657,7 @@ private ordersUnlocked(): boolean {
         this.hud.hideBossBar();
         this.score += SCORE.BOSS;
         this.hitstop(200);
-        this.cameras.main.shake(400, 0.006);
+        this.shakeCamera(400, 0.006);
         for (let i = 0; i < 6; i++) {
           this.time.delayedCall(i * 140, () => {
             if (this.gameEnded) return;
@@ -2642,6 +2779,9 @@ private bossDeathSequence(e: Enemy): boolean {
     this.scene.pause();
     const options = this.succession.options();
     const living = this.succession.findLivingWarrior();
+    const hints = this.hints;
+    const firstTutorial = hints?.isEnabled() === true && !hints.hasSeen('succession');
+    if (firstTutorial) hints?.markSeen('succession');
     track('succession_shown', {
       branch_available: [
         living ? 1 : 0,
@@ -2658,6 +2798,7 @@ private bossDeathSequence(e: Enemy): boolean {
       resourceCost: this.succession.resourceCost(),
       goldCost: this.succession.goldCost(),
       firstFree: this.succession.isFirstLifetimeFree(),
+      firstTutorial,
       showResources: this.succession.resourcesBranchAvailable(),
       resourcesAffordable: this.succession.resourcesBranchAvailable()
         && (this.succession.isFirstLifetimeFree() || this.succession.canAffordResources()),
@@ -2673,7 +2814,7 @@ private bossDeathSequence(e: Enemy): boolean {
         // Раньше всё сводилось к `lance ? lancer : warrior`, и гарнизонный
         // лучник получал мечника.
         this.applyHero(this.succession.heroFor(w.weapon ?? 'sword'), w.weapon ?? 'sword');
-        this.afterSuccession('warrior', false, 0);
+        this.afterSuccession('warrior', false, 0, w.name);
         return true;
       },
       // Ветка 2: ресурсы — новый воин из здания.
@@ -2690,7 +2831,7 @@ private bossDeathSequence(e: Enemy): boolean {
           this.succession.payFree();
         } else if (!this.succession.payResources()) return false;
         this.applyHero(this.succession.heroFor(weapon as PawnWeapon), weapon);
-        this.afterSuccession('resources', firstLifetimeFree, resourceCost);
+        this.afterSuccession('resources', firstLifetimeFree, resourceCost, this.heroDef.name);
         return true;
       },
       // Ветка 3: реклама
@@ -2698,7 +2839,7 @@ private bossDeathSequence(e: Enemy): boolean {
         if (!this.succession.typeAvailable(weapon as PawnWeapon)) return false;
         this.succession.payAd();
         this.applyHero(this.succession.heroFor(weapon as PawnWeapon), weapon);
-        this.afterSuccession('ad', false, { ad: 1 });
+        this.afterSuccession('ad', false, { ad: 1 }, this.heroDef.name);
         return true;
       },
       // Ветка 3: золото матча (тоже бесплатно при первом показе, §F.4)
@@ -2714,7 +2855,7 @@ private bossDeathSequence(e: Enemy): boolean {
           this.succession.payGold();
         }
         this.applyHero(this.succession.heroFor(weapon as PawnWeapon), weapon);
-        this.afterSuccession('gold', firstLifetimeFree, cost);
+        this.afterSuccession('gold', firstLifetimeFree, cost, this.heroDef.name);
         return true;
       },
       onSurrender: () => {
@@ -2732,13 +2873,20 @@ private bossDeathSequence(e: Enemy): boolean {
     branch: string,
     firstLifetimeFree = false,
     cost: number | { wood?: number; ore?: number; meat?: number; ad?: number } | null = null,
+    successorName?: string,
   ): void {
     this.successions++; // сводка рана (§K.2): преемственность (§H.11, §H.17)
     track('succession_taken', { branch, cost, first_lifetime: firstLifetimeFree });
     this.scene.resume();
     this.overlayOpen = false;
     gameplayStart();
-    this.hud.announce(t('succession.took'), '#7dc95e');
+    // Для живого преемника — его настоящее имя; для призванного — локализованный
+    // тип героя. Большой посимвольный анонс визуально отмечает возвращение у врат.
+    this.hud.announceTypewriter(
+      successorName?.trim() || this.heroDef.name,
+      '#ffd700', 75,
+    );
+    this.hud.feed(t('succession.took'), '#7dc95e');
     this.hud.setVisible(true);
     audio.startMusic();
   }
@@ -2818,7 +2966,7 @@ private bossDeathSequence(e: Enemy): boolean {
     const R = def.explodeRadius ?? 150;
     this.effects.explosion(x, y, 1.05, 2);
     audio.play('explosion');
-    this.cameras.main.shake(170, 0.0045);
+    this.shakeCamera(170, 0.0045);
     this.hitstop(70);
     // Урон игроку — только если бочка дошла сама
     if (selfDestruct && Math.hypot(this.player.x - x, this.player.y - y) < R) {
@@ -2852,7 +3000,7 @@ private bossDeathSequence(e: Enemy): boolean {
     audio.play('levelup');
     audio.play('explosion');
     this.effects.explosion(x, y, 0.9, 2);
-    this.cameras.main.shake(180, 0.004);
+    this.shakeCamera(180, 0.004);
     this.hud.announce(t('game.chestFound'), '#ffd700');
     this.gold += 75;
     this.score += 250;
@@ -2918,7 +3066,7 @@ private bossDeathSequence(e: Enemy): boolean {
       this.diffDef.id === 'nightmare' ? t('hud.bossSubtitleNightmare') : t('hud.bossSubtitleFinal'),
       'face-boss',
     );
-    this.cameras.main.shake(400, 0.008);
+    this.shakeCamera(400, 0.008);
   }
 
   /**
@@ -3134,6 +3282,7 @@ private bossDeathSequence(e: Enemy): boolean {
     this.overlayOpen = true;
     gameplayStop();
     audio.play('levelup');
+    audio.play('bell');
     // Убираем подсказки перед запуском оверлея.
     //
     // Раньше здесь ничего не сбрасывалось, и обучающий баннер («Двигайся и
@@ -3143,8 +3292,15 @@ private bossDeathSequence(e: Enemy): boolean {
     // читалось как мусор в вёрстке. На паузе и в игре-овере подсказки
     // сбрасывались, а на этом экране забыли.
     this.hints.reset();
+    const heroScreen = this.worldHintTarget(() => ({ x: this.player.x, y: this.player.y }))();
+    const heroPoint = heroScreen && this.scale.width > 0 && this.scale.height > 0
+      ? { x: heroScreen.x / this.scale.width, y: heroScreen.y / this.scale.height }
+      : { x: 0.5, y: 0.6 };
     this.scene.pause();
     this.scene.launch('LevelUp', {
+      // Луч левел-апа использует нормализованную screen-space точку героя;
+      // сама сцена выбора анимирует его на своих работающих часах.
+      heroPoint,
       // Заголовок окна опускается ниже верхней полосы HUD: полоса босса
       // стоит ровно на той же высоте, и лента ложилась прямо на неё.
       topInset: this.hud.overlayTopInset(),
@@ -3341,6 +3497,12 @@ private bossDeathSequence(e: Enemy): boolean {
       },
       muted: audio.muted,
       onToggleMute: () => audio.toggleMute(),
+      hintsEnabled: this.hints.isEnabled(),
+      onToggleHints: () => {
+        const enabled = !(this.hints?.isEnabled() ?? true);
+        this.hints?.setEnabled(enabled);
+        return enabled;
+      },
       loadout,
     });
   }
@@ -3374,10 +3536,14 @@ private bossDeathSequence(e: Enemy): boolean {
     this.player.setVelocity(0, 0);
     this.score += SCORE.BOSS;
     this.hud.hideBossBar();
-    this.hud.announce(t('game.victory'), '#ffd700');
+    this.hud.announceTypewriter(t('game.victory'), '#ffd700', 65);
     audio.play('victory');
-    this.cameras.main.shake(500, 0.006);
-    this.hitstop(200);
+    this.shakeCamera(500, 0.006);
+    this.effects.goldBurst(this.player.x, this.player.y - 24, 32);
+    this.effects.goldRain(32);
+    // Кульминация победы разрешена даже на low и обходит общий budget (§H.13 №10).
+    this.applyJuiceSlowMotion(1_500, 0.5, true);
+    this.hitstop(200, true);
     this.ach?.event({ type: 'victory', difficulty: this.diffDef.id });
     // Толпа отступает: враги мягко растворяются (без AI и физики)
     for (const e of this.activeEnemies()) {
@@ -3446,6 +3612,10 @@ private bossDeathSequence(e: Enemy): boolean {
     // Подсказки FTUE тоже гасим: их слой лежит выше игрового мира, и
     // текст «Нажми, чтобы продолжить» просвечивал сквозь экран итогов.
     this.hints.reset();
+    // Обучение хронике показывается в самом end-screen, где находится цель.
+    // Маркер отмечается только после того, как GameOverScene реально разместила
+    // подсказку рядом с хроникой (на компактном экране блок может не поместиться).
+    const showChronicleTutorial = this.hints.isEnabled() && !this.hints.hasSeen('chronicle');
 
     const settlementScore = this.settlement.settlementScore();
     const ideal = this.settlement.isIdealVictory(victory);
@@ -3542,7 +3712,11 @@ private bossDeathSequence(e: Enemy): boolean {
     // applyRunMeta — иначе glory_earned/quest_done/pass_level попадали
     // в буфер СЛЕДУЮЩЕГО рана, и группировка событий по ранам сдвигалась.
     flushRunTelemetry();
-    this.scene.launch('GameOver', { stats });
+    this.scene.launch('GameOver', {
+      stats,
+      showChronicleTutorial,
+      onChronicleTutorialShown: () => this.hints?.markSeen('chronicle'),
+    });
     this.scene.pause();
   }
 
@@ -3761,7 +3935,7 @@ private bossDeathSequence(e: Enemy): boolean {
         const dmg = Math.round(20 * this.spawner.dmgMult);
         this.effects.explosion(x, y, 1.5, 2);
         audio.play('explosion');
-        this.cameras.main.shake(180, 0.005);
+        this.shakeCamera(180, 0.005);
         if (Math.hypot(this.player.x - x, this.player.y - y) < 170) {
           this.hurtPlayer(dmg);
         }
@@ -3806,7 +3980,7 @@ private bossDeathSequence(e: Enemy): boolean {
       attackBuilding: (b, dmg, fire, isBoss) => {
         const building = b as Building;
         // Босс — вне потолка осады и таунта (§E.6, §B.7.1)
-        if (fire) building.ignite(isBoss ? -1 : this.settlement.siegeIdx);
+        if (fire && building.ignite(isBoss ? -1 : this.settlement.siegeIdx)) audio.play('fire');
         this.settlement.damageBuilding(building, dmg, isBoss ? -1 : this.settlement.siegeIdx, isBoss);
         this.effects.hitSpark(building.x, building.y - 20);
       },
@@ -3821,7 +3995,7 @@ private bossDeathSequence(e: Enemy): boolean {
           const b = building as Building;
           if (b && b.alive) {
             if (fire) {
-              b.ignite(firedAt);
+              if (b.ignite(firedAt)) audio.play('fire');
               this.effects.hexBlast(shot.x, shot.y);
             }
             this.settlement.damageBuilding(b, dmg, firedAt, false);
