@@ -56,6 +56,8 @@ test('meta progress restores newer Player Data state and flushes subsequent muta
           savedAt: cloudSavedAt,
           matchesPlayed: 11,
           glory: 777,
+          nodes: [],
+          quests: { date: '', ids: [], progress: {}, done: [], rerolls: 0 },
           dailyBonus: { last: '2000-01-01', lastAt: Date.parse('2000-01-01T12:00:00.000Z'), streak: 6 },
         },
         shop: { balance: 500, upgrades: { might: 2, vitality: 1, speed: 0, magnet: 0, luck: 0 } },
