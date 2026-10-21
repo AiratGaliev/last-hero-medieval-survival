@@ -1148,7 +1148,7 @@ function persistMetaStateToPlayerData(flush: boolean): Promise<boolean> {
 export async function hydrateMetaStateFromPlayerData(): Promise<void> {
   if (typeof window === 'undefined') return;
 
-  let cloud;
+  let cloud: Awaited<ReturnType<typeof readPlayerDataEntry>>;
   try {
     cloud = await readPlayerDataEntry(META_PLAYER_DATA_KEY);
   } catch {
@@ -1192,6 +1192,13 @@ export async function flushMetaStateToPlayerData(): Promise<boolean> {
     metaCloudSaveTimer = null;
   }
   if (metaCloudWriteInFlight) await metaCloudWriteInFlight;
+  // A failed/in-flight write can schedule a debounce while the page is already
+  // being hidden. Cancel that timer before the explicit flush to avoid a second
+  // write racing with the flush on the same snapshot.
+  if (metaCloudSaveTimer !== null) {
+    clearTimeout(metaCloudSaveTimer);
+    metaCloudSaveTimer = null;
+  }
   if (!metaCloudDirty) return true;
 
   const now = Date.now();
