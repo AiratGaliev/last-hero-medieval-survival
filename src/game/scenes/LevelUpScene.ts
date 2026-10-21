@@ -14,6 +14,8 @@ import { t } from '../../i18n';
 interface LevelUpData {
   getChoices: () => UpgradeCard[];
   onChoose: (card: UpgradeCard) => boolean; // true = готово
+  /** Нормализованная позиция героя в игровом viewport до паузы мира. */
+  heroPoint?: { x: number; y: number };
   /**
    * Нижняя граница верхней полосы HUD (полоса босса) в экранных пикселях.
    *
@@ -66,6 +68,55 @@ export class LevelUpScene extends Phaser.Scene {
    *  cursor, который Phaser ставит через useHandCursor. */
   private cursor!: Cursor;
 
+  private showHeroLevelUpBeam(
+    point: { x: number; y: number } | undefined,
+    width: number,
+    height: number,
+  ): void {
+    if (!point || !Number.isFinite(point.x) || !Number.isFinite(point.y)) return;
+    const x = Phaser.Math.Clamp(point.x, 0, 1) * width;
+    const y = Phaser.Math.Clamp(point.y, 0.12, 0.9) * height;
+    const beamHeight = Math.min(180, height * 0.28);
+
+    // Луч и золотое кольцо рисуются в overlay-сцене, чьи часы продолжают идти,
+    // пока GameScene заморожена. Поэтому эффект не зависает вместе с миром.
+    const beam = this.add.graphics().setPosition(x, y).setAlpha(0)
+      .setBlendMode(Phaser.BlendModes.ADD);
+    beam.fillStyle(0xffe9a0, 0.28);
+    beam.beginPath();
+    beam.moveTo(-18, -beamHeight);
+    beam.lineTo(18, -beamHeight);
+    beam.lineTo(8, 4);
+    beam.lineTo(-8, 4);
+    beam.closePath();
+    beam.fillPath();
+    this.ui.add(beam);
+
+    const ring = this.add.circle(x, y, 9)
+      .setStrokeStyle(3, 0xffd76e, 0.9)
+      .setAlpha(0);
+    this.ui.add(ring);
+
+    this.tweens.add({
+      targets: beam,
+      alpha: { from: 0, to: 0.95 },
+      scaleX: { from: 0.6, to: 1.2 },
+      duration: 220,
+      yoyo: true,
+      repeat: 1,
+      ease: 'Sine.Out',
+      onComplete: () => beam.destroy(),
+    });
+    this.tweens.add({
+      targets: ring,
+      alpha: { from: 0, to: 0.95 },
+      scale: 3.2,
+      duration: 420,
+      ease: 'Cubic.easeOut',
+      onComplete: () => ring.destroy(),
+    });
+  }
+
   create(payload: LevelUpData): void {
     this.cursor = new Cursor(this);
     if (this.lastPayload !== payload) {
@@ -95,6 +146,7 @@ export class LevelUpScene extends Phaser.Scene {
     // опыта и иконки оружия — они светились сквозь «выбор карты».
     this.ui = new OverlayLayer(this, DEPTH.OVERLAY + 2);
     this.ui.rectangle(width / 2, height / 2, width / this.overlayZoom + 80, height / this.overlayZoom + 80, 0x0a0a12, 0.72);
+    this.showHeroLevelUpBeam(payload.heroPoint, width, height);
 
     // Заголовок на ленте. Лента не даёт заголовку висеть в пустом
     // тёмном поле и повторяет стиль остальных экранов.
