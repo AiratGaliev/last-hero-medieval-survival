@@ -796,7 +796,7 @@ export const ENDLESS_WAVE_CROWNS = [
 
 export interface MetaState {
   v: 2;
-  /** Timestamp of the latest local/cloud mutation, used for cross-device reconciliation. */
+  /** Время последней мутации для выбора более свежего локального/облачного снимка. */
   savedAt: number;
   glory: number;
   nodes: NodeId[];
@@ -1066,7 +1066,6 @@ let cached: MetaState | null = null;
 /** Облачный снимок хранится отдельным ключом и не конфликтует с Player Data других подсистем. */
 const META_PLAYER_DATA_KEY = 'tss-meta-state-v1';
 const META_CLOUD_WRITE_INTERVAL_MS = 20_000;
-const META_CLOUD_FLUSH_GUARD_MS = 3_000;
 
 interface MetaCloudEnvelope {
   version: 1;
@@ -1079,7 +1078,6 @@ let metaCloudDirty = false;
 let metaCloudSaveTimer: ReturnType<typeof setTimeout> | null = null;
 let metaCloudWriteInFlight: Promise<boolean> | null = null;
 let lastMetaCloudWriteAt = 0;
-let lastMetaCloudFlushAt = 0;
 let metaCloudLifecycleInstalled = false;
 
 /** Текущее мета-состояние (кэшируется; мутируйте через helpers + saveMetaState()). */
@@ -1210,12 +1208,6 @@ export async function flushMetaStateToPlayerData(): Promise<boolean> {
   }
   if (!metaCloudDirty) return true;
 
-  const now = Date.now();
-  if (now - lastMetaCloudFlushAt < META_CLOUD_FLUSH_GUARD_MS) {
-    scheduleMetaCloudSave();
-    return false;
-  }
-  lastMetaCloudFlushAt = now;
   return persistMetaStateToPlayerData(true);
 }
 
