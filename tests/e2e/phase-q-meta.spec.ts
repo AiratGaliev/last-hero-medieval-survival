@@ -8,7 +8,7 @@ test('daily streak loses only one step after a long absence', async ({ page }) =
     localStorage.setItem('tss-meta2', JSON.stringify({
       v: 2,
       matchesPlayed: 10,
-      dailyBonus: { last: '2000-01-01', streak: 5 },
+      dailyBonus: { last: '2000-01-01', lastAt: Date.parse('2000-01-01T12:00:00.000Z'), streak: 5 },
     }));
   });
 
@@ -119,7 +119,7 @@ test('meta progress restores newer Player Data state and flushes subsequent muta
         },
         isAvailableMethod: async () => true,
         getPlayer: async () => player,
-        getServerTime: async () => Date.now(),
+        serverTime: () => Date.now(),
         on: () => undefined,
         off: () => undefined,
       }),
@@ -165,4 +165,47 @@ test('meta progress restores newer Player Data state and flushes subsequent muta
   expect(report.cloudVersion).toBe(1);
   expect(report.cloudGlory).toBe(794);
   expect(report.cloudMatches).toBe(11);
+});
+
+
+test('daily bonus cannot be claimed twice across a UTC date boundary', async ({ page }) => {
+  await page.addInitScript(() => {
+    const now = Date.now();
+    const yesterday = new Date(now - 86_400_000).toISOString().slice(0, 10);
+    localStorage.clear();
+    localStorage.setItem('tss-meta2', JSON.stringify({
+      v: 2,
+      savedAt: now - 5_000,
+      matchesPlayed: 10,
+      dailyBonus: { last: yesterday, lastAt: now - 60 * 60 * 1000, streak: 4 },
+    }));
+  });
+
+  await page.goto('/?lang=en&ysdk=mock');
+  await expect(page.locator('#game canvas')).toBeVisible({ timeout: startupTimeout });
+  await expect(page.locator('#boot')).toHaveCount(0, { timeout: startupTimeout });
+
+  const outcome = await page.evaluate(async () => {
+    const moduleUrl = new URL('/src/game/meta.ts', window.location.origin).href;
+    const meta = await import(/* @vite-ignore */ moduleUrl) as {
+      claimDailyBonus: () => { ok: boolean; streak: number };
+      bonusAvailable: () => boolean;
+    };
+    const result = meta.claimDailyBonus();
+    const raw = localStorage.getItem('tss-meta2');
+    const stored = raw
+      ? JSON.parse(raw) as { dailyBonus?: { streak?: number; lastAt?: number } }
+      : null;
+    return {
+      result,
+      available: meta.bonusAvailable(),
+      streak: stored?.dailyBonus?.streak,
+      lastAt: stored?.dailyBonus?.lastAt,
+    };
+  });
+
+  expect(outcome.result.ok).toBe(false);
+  expect(outcome.available).toBe(false);
+  expect(outcome.streak).toBe(4);
+  expect(outcome.lastAt).toBeGreaterThan(0);
 });
