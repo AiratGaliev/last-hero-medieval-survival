@@ -102,6 +102,7 @@ export class GameScene extends Phaser.Scene {
   private readonly castleY = WORLD.SIZE / 2 - 460;
   /** Активная осада: состав, цель, окно (§E.4). */
   private siegeAlive = false;
+  private activeSiegeProfile: string | null = null;
   private siegeDestroyed = 0;
   /** Сколько юнитов в текущей осаде и сколько из них убито — для исхода (§E.8). */
   private siegeTotal = 0;
@@ -371,6 +372,7 @@ export class GameScene extends Phaser.Scene {
     this.victoryPending = false;
     this.boss = null;
     this.siegeAlive = false;
+    this.activeSiegeProfile = null;
     this.siegeDestroyed = 0;
     this.siegeTotal = 0;
     this.siegeKills = 0;
@@ -2077,6 +2079,7 @@ private ordersUnlocked(): boolean {
     this.assignSiegeTarget(profile, enemies);
     this.showSiegeTargetIndicators(enemies);
     this.settlement.beginSiege(index, profile.woundCap, enemies);
+    this.activeSiegeProfile = profile.name;
     this.siegeAlive = true;
     this.siegeDestroyed = 0;
     this.siegeTotal = enemies.length;
@@ -2239,8 +2242,16 @@ private ordersUnlocked(): boolean {
       const outcome = this.siegeDestroyed > 0 ? 'partial'
         : this.siegeKills >= this.siegeTotal ? 'defended'
           : 'ignored';
+      const siegeTelemetry = {
+        index: this.settlement.siegeIdx,
+        profile: this.activeSiegeProfile,
+        dmg_taken: this.settlement.siegeDamageTaken,
+        cap_applied: this.settlement.capApplied,
+        pawns_wounded: this.settlement.siegeWoundsCount,
+      };
       this.settlement.endSiege(outcome);
-      track('siege_result', { outcome, cap_applied: this.settlement.capApplied });
+      track('siege_result', { ...siegeTelemetry, outcome });
+      this.activeSiegeProfile = null;
       this.siegeAlive = false;
     }
   }

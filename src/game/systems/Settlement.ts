@@ -43,6 +43,14 @@ export class Settlement {
   get capApplied(): boolean {
     return this.siegeCapApplied;
   }
+  /** Фактически применённый осадный урон по инфраструктуре для §K.2. */
+  get siegeDamageTaken(): number {
+    return Math.round(this.siegeDmg * 10) / 10;
+  }
+  /** Число реальных переходов пешек в ранение за текущую осаду (§E.4). */
+  get siegeWoundsCount(): number {
+    return this.siegeWounds;
+  }
   private siegeWounds = 0;
   private siegeWoundCap = 1;
   private siegeEnemies: Set<Enemy> = new Set();

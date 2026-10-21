@@ -127,8 +127,10 @@ export class HealerAI {
     const d = Phaser.Math.Distance.Between(monk.x, monk.y, target.x, target.y);
     if (d > HEALER.RADIUS) return; // подойти — движение делает PawnAI
     const amount = (HEALER.HPS + HealerAI.hpsBonus) * (dtMs / 1000);
+    const hpBeforeHealing = target.hp;
     target.healBy(amount);
-    eco.healHpTotal += amount;
+    const hpRestored = Math.max(0, target.hp - hpBeforeHealing);
+    eco.healHpTotal += hpRestored;
     monk.state = 'heal';
     // До монастыря раненый может перейти в bleeding прямо на следующем
     // тике. Полевой лекарь всё ещё должен успеть спасти его до конца таймера:
@@ -150,7 +152,11 @@ export class HealerAI {
         target.monasteryBuilding = null;
       }
       // Телеметрия §K.2: полевое спасение освобождает слот (§B.7.2)
-      track('field_heal_save', { target_kind: target.kind, hp_restored: Math.round(target.hp), monastery_slot_freed: slotFreed });
+      track('field_heal_save', {
+        target_kind: target.kind,
+        hp_restored: Math.round(hpRestored),
+        monastery_slot_freed: slotFreed,
+      });
       eco.emit('pawnSaved', { pawn: target });
       monk.healTarget = null;
     }
