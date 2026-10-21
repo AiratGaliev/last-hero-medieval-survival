@@ -232,6 +232,19 @@ export async function syncServerTime(): Promise<void> {
  * QA-режиме — локальные часы (смещение нулевое).
  */
 export function serverNow(): number {
+  // serverTime() возвращает актуальную синхронизированную эпоху; используем его
+  // при каждом чтении, а смещение оставляем fallback для старого/сломавшегося SDK.
+  if (sdk && typeof sdk.serverTime === 'function') {
+    try {
+      const current = Number(sdk.serverTime());
+      if (Number.isFinite(current) && current > 1_000_000_000_000) {
+        timeOffsetMs = current - Date.now();
+        return current;
+      }
+    } catch {
+      // При сбое метода не блокируем игровые часы.
+    }
+  }
   return Date.now() + timeOffsetMs;
 }
 
