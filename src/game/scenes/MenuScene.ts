@@ -2,7 +2,7 @@ import Phaser from 'phaser';
 import { Cursor } from '../systems/Cursor';
 import { makeCornerFrame, type CornerFrame } from '../systems/Corners';
 import { FONT } from '../constants';
-import { HEROES, WEAPONS, PASSIVES, DIFFICULTIES, EVOLUTIONS, type HeroId, type DifficultyId } from '../data';
+import { HEROES, WEAPONS, PASSIVES, DIFFICULTIES, EVOLUTIONS, FTUE_MATCH_GATE, type HeroId, type DifficultyId } from '../data';
 import { audio } from '../systems/Audio';
 import { makePanel, makeButton, makeChip, makeRibbon, fitTextWidth } from '../systems/Ui';
 import { shrinkToHeight, FONT_FLOOR, FS } from '../systems/Text';
@@ -292,7 +292,11 @@ export class MenuScene extends Phaser.Scene {
     const completedMatches = matchesPlayed();
     // Вкладки и пре-рановые модификаторы появляются в тот матч, который
     // следует за указанным числом завершённых ранов (§I.3).
-    const visibleNavCount = 2 + (completedMatches >= 1 ? 3 : 0) + (completedMatches >= 2 ? 1 : 0);
+    const visibleNavCount = 2
+      + Number(completedMatches >= FTUE_MATCH_GATE.howTo)
+      + Number(completedMatches >= FTUE_MATCH_GATE.shop)
+      + Number(completedMatches >= FTUE_MATCH_GATE.chronicle)
+      + Number(completedMatches >= FTUE_MATCH_GATE.meta);
     const navRows = mobile ? Math.max(1, Math.ceil(visibleNavCount / 3)) : 1;
     const navH = mobile ? 38 : 42;
     const navGap = 8;
@@ -550,14 +554,16 @@ export class MenuScene extends Phaser.Scene {
       [t('menu.records'), () => { void this.showRecords(); }],
       [t('menu.achievements'), () => this.showAchievements()],
     ];
-    if (completedMatches >= 1) {
-      navItems.push(
-        [t('menu.howTo'), () => this.showHowTo()],
-        [t('menu.shop'), () => this.openOverlayScene('Shop')],
-        [t('menu.chronicle'), () => this.showChronicle()],
-      );
+    if (completedMatches >= FTUE_MATCH_GATE.howTo) {
+      navItems.push([t('menu.howTo'), () => this.showHowTo()]);
     }
-    if (completedMatches >= 2) {
+    if (completedMatches >= FTUE_MATCH_GATE.shop) {
+      navItems.push([t('menu.shop'), () => this.openOverlayScene('Shop')]);
+    }
+    if (completedMatches >= FTUE_MATCH_GATE.chronicle) {
+      navItems.push([t('menu.chronicle'), () => this.showChronicle()]);
+    }
+    if (completedMatches >= FTUE_MATCH_GATE.meta) {
       navItems.push([t('meta.tab'), () => this.openOverlayScene('Meta')]);
     }
 
