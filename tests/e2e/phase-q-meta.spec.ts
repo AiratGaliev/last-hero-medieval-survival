@@ -523,7 +523,7 @@ test('king order Horde compounds with difficulty without double-stacking the cha
       timer: number;
     };
     const nightmareSpawner = new spawnerModule.Spawner(
-      {},
+      { registry: { get: () => 0 }, events: { emit: () => undefined } },
       {},
       'nightmare',
       { rateMultFactor: spawnerModule.resolveSpawnRateFactor('ukaz_horde', false) },
