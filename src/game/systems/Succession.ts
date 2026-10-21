@@ -1,5 +1,6 @@
 import { SUCCESSION_COST, SUCCESSION_GOLD, SUCCESSION_TYPES, type ResourceCost, type PawnWeapon, type HeroId } from '../data';
 import { loadJson, saveJson } from '../storage';
+import { getSuccessionFreeUsed, persistSuccessionFreeUsed } from '../../platform/player';
 import type { Economy } from './Economy';
 import type { Settlement } from './Settlement';
 import type { Pawn } from '../entities/Pawn';
@@ -47,9 +48,10 @@ export class Succession {
     if (legacy === '1') {
       this.freeUsed = true;
       saveJson('succession-free', true);
+      persistSuccessionFreeUsed();
       try { localStorage.removeItem('tss-succession-free'); } catch { /* приватный режим */ }
     } else {
-      this.freeUsed = loadJson<boolean>('succession-free') === true;
+      this.freeUsed = getSuccessionFreeUsed() ?? (loadJson<boolean>('succession-free') === true);
     }
   }
 
@@ -118,6 +120,7 @@ export class Succession {
   markFreeUsed(): void {
     this.freeUsed = true;
     saveJson('succession-free', true);
+    persistSuccessionFreeUsed();
   }
 
   /** Ветвь 1: воин становится героем. Пешка выпадает из гарнизона (§F.12).

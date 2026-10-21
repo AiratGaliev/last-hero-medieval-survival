@@ -2574,6 +2574,11 @@ private bossDeathSequence(e: Enemy): boolean {
       resourceCost: this.succession.resourceCost(),
       goldCost: this.succession.goldCost(),
       firstFree: this.succession.isFirstLifetimeFree(),
+      showResources: this.succession.resourcesBranchAvailable(),
+      resourcesAffordable: this.succession.resourcesBranchAvailable()
+        && (this.succession.isFirstLifetimeFree() || this.succession.canAffordResources()),
+      goldAffordable: this.succession.isFirstLifetimeFree()
+        || this.gold >= this.succession.goldCost(),
       // Ветка 1: живой воин — бесплатно и мгновенно
       onTakeWarrior: () => {
         const w = this.succession.findLivingWarrior();
@@ -2591,14 +2596,16 @@ private bossDeathSequence(e: Enemy): boolean {
       // Первая преемственность аккаунта бесплатна (§F.4/§I.4): ничего не
       // списываем, только гасим lifetime-флаг.
       onTakeResources: (weapon: string) => {
-        // Серый тип выбрать нельзя (§F.13 п.6) — проверяем ещё раз на
-        // приёмочной стороне: UI не единственный вход в эти колбэки.
-        if (!this.succession.typeAvailable(weapon as PawnWeapon)) return false;
-        if (this.succession.isFirstLifetimeFree()) {
+        // Повторная проверка защищает и от прямого вызова callback: контракт
+        // «Один в поле» и исчерпание ресурсных ступеней не обходятся бесплатной веткой.
+        if (!this.succession.resourcesBranchAvailable()
+          || !this.succession.typeAvailable(weapon as PawnWeapon)) return false;
+        const firstLifetimeFree = this.succession.isFirstLifetimeFree();
+        if (firstLifetimeFree) {
           this.succession.payFree();
         } else if (!this.succession.payResources()) return false;
         this.applyHero(this.succession.heroFor(weapon as PawnWeapon), weapon);
-        this.afterSuccession('resources');
+        this.afterSuccession('resources', firstLifetimeFree);
         return true;
       },
       // Ветка 3: реклама
@@ -2612,15 +2619,17 @@ private bossDeathSequence(e: Enemy): boolean {
       // Ветка 3: золото матча (тоже бесплатно при первом показе, §F.4)
       onTakeGold: (weapon: string) => {
         if (!this.succession.typeAvailable(weapon as PawnWeapon)) return false;
-        if (this.succession.isFirstLifetimeFree()) {
+        const firstLifetimeFree = this.succession.isFirstLifetimeFree();
+        if (firstLifetimeFree) {
           this.succession.payFree();
         } else {
-          if (this.gold < this.succession.goldCost()) return false;
-          this.gold -= this.succession.goldCost();
+          const cost = this.succession.goldCost();
+          if (this.gold < cost) return false;
+          this.gold -= cost;
           this.succession.payGold();
         }
         this.applyHero(this.succession.heroFor(weapon as PawnWeapon), weapon);
-        this.afterSuccession('gold');
+        this.afterSuccession('gold', firstLifetimeFree);
         return true;
       },
       onSurrender: () => {
@@ -2634,9 +2643,9 @@ private bossDeathSequence(e: Enemy): boolean {
     });
   }
 
-  private afterSuccession(branch: string): void {
+  private afterSuccession(branch: string, firstLifetimeFree = false): void {
     this.successions++; // сводка рана (§K.2): преемственность (§H.11, §H.17)
-    track('succession_taken', { branch, first_lifetime: !this.succession.freeUsed });
+    track('succession_taken', { branch, first_lifetime: firstLifetimeFree });
     this.scene.resume();
     this.overlayOpen = false;
     gameplayStart();

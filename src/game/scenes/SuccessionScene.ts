@@ -32,9 +32,12 @@ interface SuccessionData {
   options: SuccessionOption[];
   livingCount: number;
   livingKind: string | null;
-  resourceCost: ResourceCost;
+  resourceCost: ResourceCost | null;
   goldCost: number;
   firstFree: boolean;
+  showResources: boolean;
+  resourcesAffordable: boolean;
+  goldAffordable: boolean;
   onTakeWarrior: () => boolean;
   onTakeResources: (weapon: string) => boolean;
   onTakeAd: (weapon: string) => boolean;
@@ -62,6 +65,7 @@ export class SuccessionScene extends Phaser.Scene {
   /** Выбранный тип воина для платных веток. */
   private picked: string = 'sword';
   private adUsed = false;
+  private adInFlight = false;
   private surrendered = false;
   /** Карточки выбора типа — нужны для перерисовки рамки выбора. */
   private cards = new Map<string, OptionCard>();
@@ -88,6 +92,7 @@ export class SuccessionScene extends Phaser.Scene {
     // объекты по готовым координатам.
     const L = successionLayout(W, H, {
       living: data.livingCount > 0,
+      resources: data.showResources,
       options: data.options.length,
     });
     const { cx, panelW, panelH } = L;
@@ -128,35 +133,54 @@ export class SuccessionScene extends Phaser.Scene {
 
     // ---- Платные ветки: реклама / золото (первая преемственность — бесплатна)
     const free = data.firstFree;
-    const freeLabel = free ? ` — ${t('pawn.firstFree')}` : '';
+    const freeLabel = `${t('succession.reason.free').toUpperCase()} — ${t('pawn.firstFree')}`;
     this.addBtn(cx - halfW / 2 - 7, L.branchY, halfW, btnH,
       t('succession.watchAd'), 'blue', btnFont, () => void this.takeAd(),
       free || !placementAvailable('succession'));
     this.addBtn(cx + halfW / 2 + 7, L.branchY, halfW, btnH,
-      t('succession.payGold', { v: num(data.goldCost) }), 'blue', btnFont, () => {
+      free ? freeLabel : t('succession.payGold', { v: num(data.goldCost) }),
+      'blue', btnFont, () => {
         if (this.data_?.onTakeGold(this.picked)) this.scene.stop();
         else this.flash('speedup.poor');
-      });
+      }, !data.goldAffordable);
 
-    // ---- Ветка 1: живой воин на поле (только если такие есть) ----
-    if (data.livingCount > 0) {
+    // ---- Выбор живого воина и призыв из поселения ----
+    // Ресурсная ветка должна быть доступна и когда на поле не осталось ни одного
+    // воина: в противном случае первый бесплатный призыв и базовый путь по TZ §F.4
+    // исчезали бы именно в сценарии, ради которого они нужны.
+    if (data.livingCount > 0 && data.showResources) {
       this.addBtn(cx - halfW / 2 - 7, L.warriorY, halfW, btnH,
         t('succession.takeCommand'), 'blue', btnFont, () => {
           if (this.data_?.onTakeWarrior()) this.scene.stop();
         });
-      // Вторая кнопка в этой строке — новый воин за ресурсы.
       this.addBtn(cx + halfW / 2 + 7, L.warriorY, halfW, btnH,
-        (free ? t('succession.reason.free').toUpperCase() + freeLabel
-          : `${t('succession.reason.resources').toUpperCase()} (${costText(data.resourceCost)})`),
+        free ? freeLabel : `${t('succession.reason.resources').toUpperCase()} (${data.resourceCost ? costText(data.resourceCost) : '—'})`,
         'blue', btnFont, () => {
           if (!this.data_) return;
           if (this.data_.onTakeResources(this.picked)) this.scene.stop();
-          else this.flash('building.cannot');
-        });
+          else this.flash('speedup.poor');
+        }, !data.resourcesAffordable);
       this.add.text(cx - halfW / 2 - 7, L.warriorY + btnH / 2 + L.captionH / 2,
         t('succession.warriorOnField', { v: data.livingCount }), {
           fontFamily: FONT, fontSize: `${FS.micro}px`, color: '#3b6ea5', align: 'center',
         }).setOrigin(0.5).setDepth(D.content).setScrollFactor(0);
+    } else if (data.livingCount > 0) {
+      this.addBtn(cx, L.warriorY, L.surrenderW, btnH,
+        t('succession.takeCommand'), 'blue', btnFont, () => {
+          if (this.data_?.onTakeWarrior()) this.scene.stop();
+        });
+      this.add.text(cx, L.warriorY + btnH / 2 + L.captionH / 2,
+        t('succession.warriorOnField', { v: data.livingCount }), {
+          fontFamily: FONT, fontSize: `${FS.micro}px`, color: '#3b6ea5', align: 'center',
+        }).setOrigin(0.5).setDepth(D.content).setScrollFactor(0);
+    } else if (data.showResources) {
+      this.addBtn(cx, L.warriorY, Math.min(halfW * 2 + 14, W - 60), btnH,
+        free ? freeLabel : `${t('succession.reason.resources').toUpperCase()} (${data.resourceCost ? costText(data.resourceCost) : '—'})`,
+        'blue', btnFont, () => {
+          if (!this.data_) return;
+          if (this.data_.onTakeResources(this.picked)) this.scene.stop();
+          else this.flash('speedup.poor');
+        }, !data.resourcesAffordable);
     }
 
     // ---- Выбор типа воина (серые = нет здания, §F.5) ----
@@ -281,13 +305,18 @@ export class SuccessionScene extends Phaser.Scene {
   // ================================================================
 
   private async takeAd(): Promise<void> {
-    if (!this.data_ || this.adUsed) return;
-    const res = await showPlacementRewarded('succession');
-    if (res.rewarded) {
-      this.adUsed = true;
-      if (this.data_.onTakeAd(this.picked)) this.scene.stop();
-    } else {
-      this.flash('speedup.adUnavailable');
+    if (!this.data_ || this.adUsed || this.adInFlight) return;
+    this.adInFlight = true;
+    try {
+      const res = await showPlacementRewarded('succession');
+      if (res.rewarded) {
+        this.adUsed = true;
+        if (this.data_?.onTakeAd(this.picked)) this.scene.stop();
+      } else {
+        this.flash('speedup.adUnavailable');
+      }
+    } finally {
+      this.adInFlight = false;
     }
   }
 
