@@ -753,10 +753,11 @@ test('daily challenge date deterministically seeds the map, economy and wave dir
   await expect(page.locator('#boot')).toHaveCount(0, { timeout: startupTimeout });
   const appOrigin = await page.evaluate(() => window.location.origin);
 
-  const capture = async (target: Page, date: string): Promise<{
+  const capture = async (target: Page, date: string, perturbGameplayRng = false): Promise<{
     seed: number;
     challengeSeed: string | null;
     map: Array<{ kind: string; resource: string; x: number; y: number }>;
+    spawnPositions: Array<{ x: number; y: number }>;
     economyRandom: number[];
     waveRandom: number[];
   }> => {
@@ -815,7 +816,7 @@ test('daily challenge date deterministically seeds the map, economy and wave dir
       return runtime?.scene.isActive('Game') ?? false;
     }), { timeout: startupTimeout }).toBe(true);
 
-    return target.evaluate(() => {
+    return target.evaluate(({ challengeDate, perturbGameplayRng }) => {
       const runtime = (window as Window & {
         __tss?: { scene: { getScene: (key: string) => unknown } };
       }).__tss;
@@ -823,20 +824,32 @@ test('daily challenge date deterministically seeds the map, economy and wave dir
       const scene = runtime.scene.getScene('Game') as {
         runSeed: number;
         mods: { challengeSeed?: string | null; challenge: { mods: string[] } | null };
+        gameplayRandom: () => number;
+        dailySpawnerRng: { sow: (seeds: string[]) => unknown };
         spawner: {
           stopped: boolean;
           o: { random?: () => number };
+          ctx: { randomSpawnX: () => number; randomSpawnY: () => number };
         };
         economy: {
           nodes: Array<{ kind: string; res: string; x: number; y: number }>;
           opts: { random?: () => number };
         };
       };
-      // Блокируем последующее обновление волн до снятия последовательностей RNG.
+      // Сбрасываем поток спавнера, чтобы время загрузки контекстов не влияло на сравнение.
       scene.spawner.stopped = true;
+      scene.dailySpawnerRng.sow([`daily-spawner:${challengeDate}`]);
+      if (perturbGameplayRng) {
+        for (let i = 0; i < 32; i++) scene.gameplayRandom();
+      }
+      const spawnPositions = Array.from({ length: 6 }, () => ({
+        x: Math.round(scene.spawner.ctx.randomSpawnX() * 100) / 100,
+        y: Math.round(scene.spawner.ctx.randomSpawnY() * 100) / 100,
+      }));
       return {
         seed: scene.runSeed,
         challengeSeed: scene.mods.challengeSeed ?? null,
+        spawnPositions,
         map: scene.economy.nodes.map((node) => ({
           kind: node.kind,
           resource: node.res,
@@ -846,11 +859,11 @@ test('daily challenge date deterministically seeds the map, economy and wave dir
         economyRandom: Array.from({ length: 8 }, () => scene.economy.opts.random?.() ?? -1),
         waveRandom: Array.from({ length: 8 }, () => scene.spawner.o.random?.() ?? -1),
       };
-    });
+    }, { challengeDate: date, perturbGameplayRng });
   };
 
   const date = '2026-10-22';
-  const first = await capture(page, date);
+  const first = await capture(page, date, true);
   const repeatContext = await browser.newContext();
   try {
     const repeatPage = await repeatContext.newPage();
@@ -859,6 +872,7 @@ test('daily challenge date deterministically seeds the map, economy and wave dir
     expect(repeat.challengeSeed).toBe(date);
     expect(first.challengeSeed).toBe(date);
     expect(repeat.map).toEqual(first.map);
+    expect(repeat.spawnPositions).toEqual(first.spawnPositions);
     expect(repeat.economyRandom).toEqual(first.economyRandom);
     expect(repeat.waveRandom).toEqual(first.waveRandom);
 
@@ -876,4 +890,30 @@ test('daily challenge date deterministically seeds the map, economy and wave dir
   } finally {
     await repeatContext.close();
   }
+});
+
+
+test('daily challenge config rejects impossible calendar dates', async ({ page }) => {
+  await page.goto('/?lang=en&ysdk=mock');
+  await expect(page.locator('#game canvas')).toBeVisible({ timeout: startupTimeout });
+  await expect(page.locator('#boot')).toHaveCount(0, { timeout: startupTimeout });
+
+  const seed = await page.evaluate(async () => {
+    type Config = {
+      contract: null; ukaz: null; challenge: null; blessing: null;
+      consumables: []; endless: false; weeklyChallenge: false; challengeSeed: string;
+    };
+    const meta = await import('/src/game/meta.ts') as unknown as {
+      saveRunConfig: (config: Config) => void;
+      consumeRunConfig: () => { challengeSeed?: string | null };
+    };
+    meta.saveRunConfig({
+      contract: null, ukaz: null, challenge: null, blessing: null,
+      consumables: [], endless: false, weeklyChallenge: false,
+      challengeSeed: '2026-02-31',
+    });
+    return meta.consumeRunConfig().challengeSeed;
+  });
+
+  expect(seed).toBeNull();
 });
