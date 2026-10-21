@@ -152,10 +152,12 @@ export function getHintLayout(width: number, height: number, ui: HintUi, anchor?
   };
 }
 
+type FtueMarkerId = 'succession' | 'chronicle';
+
 interface HintState {
   shown: HintId[];
   /** Одноразовые учебные блоки, которые рендерятся другими сценами. */
-  markers: string[];
+  markers: FtueMarkerId[];
   enabled: boolean;
   /** Версия состояния для выбора актуального переключателя между устройствами. */
   updatedAt: number;
@@ -173,7 +175,8 @@ function normalizeHintState(raw: unknown): HintState {
     ? value.shown.filter((id): id is HintId => typeof id === 'string' && HINT_BY_ID.has(id as HintId))
     : [];
   const markers = Array.isArray(value.markers)
-    ? value.markers.filter((marker): marker is string => marker === 'succession')
+    ? value.markers.filter((marker): marker is FtueMarkerId =>
+      marker === 'succession' || marker === 'chronicle')
     : [];
   return {
     shown: [...new Set(shown)],
@@ -310,13 +313,15 @@ export class Hints {
     if (hintsCloudReady) void writePlayerDataValue(HINTS_PLAYER_DATA_KEY, state, true);
   }
 
-  hasSeen(id: HintId | 'succession'): boolean {
-    return id === 'succession' ? this.markers.has(id) : this.shown.has(id);
+  hasSeen(id: HintId | FtueMarkerId): boolean {
+    return id === 'succession' || id === 'chronicle'
+      ? this.markers.has(id)
+      : this.shown.has(id);
   }
 
   /** Отмечает одноразовый обучающий экран, встроенный в другую сцену. */
-  markSeen(id: HintId | 'succession'): void {
-    if (id === 'succession') {
+  markSeen(id: HintId | FtueMarkerId): void {
+    if (id === 'succession' || id === 'chronicle') {
       if (this.markers.has(id)) return;
       this.markers.add(id);
       this.save();
