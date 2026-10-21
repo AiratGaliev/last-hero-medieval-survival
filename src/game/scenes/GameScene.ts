@@ -256,9 +256,8 @@ export class GameScene extends Phaser.Scene {
   private questCheckAcc = 0;
   /** FTUE (§I.2): тепличный первый матч — плотность волн −20% первые 3 минуты. */
   private ftueSoftStart = false;
-  /** Подсказка «построй дом» — один раз при 30 дерева (§I.2). */
-  private houseHintArmed = true;
-  private pawnsHintArmed = true;
+  /** Первый раненый гражданский может ждать включения обучения в текущем забеге. */
+  private monasteryHintPending = false;
   /** FPS-сэмплы примерно раз в секунду агрегируются в конце рана. */
   private perfSampleAccMs = 0;
   private perfFpsSamples: number[] = [];
@@ -373,8 +372,7 @@ export class GameScene extends Phaser.Scene {
     this.registry.set('tss-hint-overlay-paused', false);
     this.registry.set('tss-active-time-ms', 0);
     this.time.paused = false;
-    this.houseHintArmed = true;
-    this.pawnsHintArmed = true;
+    this.monasteryHintPending = false;
     this.elapsed = 0; this.kills = 0; this.level = 1;
     this.xp = 0; this.xpNext = XP_CURVE(1); this.gold = 0; this.score = 0;
     this.pendingLevelUps = 0; this.overlayOpen = false; this.gameEnded = false;
@@ -466,7 +464,7 @@ export class GameScene extends Phaser.Scene {
     this.questToastDone = new Set();
     this.questCheckAcc = 0;
     this.ftueSoftStart = false; // назначается из сохранённого A/B-флага при старте рана
-    this.houseHintArmed = true;
+    this.monasteryHintPending = false;
     this.perfSampleAccMs = 0;
     this.perfFpsSamples = [];
     this.enemiesPeak = 0;
@@ -1291,7 +1289,12 @@ export class GameScene extends Phaser.Scene {
         monastery_exists: this.economy.nearestMonastery(pawn) !== null,
         slots_free: this.economy.freeMonasterySlots(),
       });
-      if (pawn.cls === 'civilian') this.hints?.show('monastery', this.buildingHintTarget('monastery'));
+      if (pawn.cls === 'civilian'
+        && !this.economy.buildings.some((building) =>
+          building.kind === 'monastery' && building.alive && !building.underConstruction,
+        )) {
+        this.monasteryHintPending = true;
+      }
     });
     this.economy.on('pawnSaved', ({ pawn, inMonastery }) => {
       const savedLabel = t('pawn.saved', { v: `${this.pawnTitle(pawn)} ${pawn.name}` });
@@ -1640,11 +1643,6 @@ private ordersUnlocked(): boolean {
       pawn.order = key;
       pawn.orderTarget = key === 'hold' ? { x: wx, y: wy } : null;
       track('first_order_used', { order: key });
-      if (pawn.cls === 'civilian') {
-        this.hints?.show('orders', this.worldHintTarget(() =>
-          pawn.active && !pawn.dead ? { x: pawn.x, y: pawn.y } : null,
-        ));
-      }
     });
   }
 
@@ -1946,15 +1944,58 @@ private ordersUnlocked(): boolean {
       this.updateIndicators();
     }
 
-    // Подсказки FTUE (§I.2): оставшиеся milestones срабатывают по порогу,
-    // а не по узкому окну кадра. Вводный overlay был показан до первого update.
-    if (this.houseHintArmed && this.economy.resources.wood >= 30) {
-      this.houseHintArmed = false;
-      this.hints.show('house', this.buildingHintTarget('house'));
+    // Подсказки FTUE (§I.2–I.3) проверяют текущее состояние каждый кадр.
+    // Событие не потребляется, пока обучение выключено: игрок может включить
+    // его в паузе и всё ещё получить подсказки для доступных механик.
+    if (this.hints.isEnabled()) {
+      if (this.economy.resources.wood >= 30 && !this.hints.hasSeen('house')) {
+        this.hints.show('house', this.buildingHintTarget('house'));
+      }
+      if (this.elapsed >= 20 && !this.hints.hasSeen('pawns')) {
+        this.hints.show('pawns', () => this.hud.resourceHintPoint());
+      }
+      const hasLivingBarracks = this.economy.buildings.some((building) =>
+        building.kind === 'barracks' && building.alive,
+      );
+      if (this.economy.houses > 0
+        && !hasLivingBarracks
+        && this.economy.canAfford(this.economy.buildingCost('barracks'))
+        && !this.hints.hasSeen('barracks')) {
+        this.hints.show('barracks', this.buildingHintTarget('barracks'));
+      }
+      if (this.economy.houses >= 2 && !this.hints.hasSeen('orders')) {
+        this.hints.show('orders', this.worldHintTarget(() => {
+          const pawn = this.economy.pawns.find((candidate) =>
+            candidate.cls === 'civilian' && candidate.active && !candidate.dead,
+          );
+          return pawn ? { x: pawn.x, y: pawn.y } : null;
+        }));
+      }
+      const monastery = this.economy.buildings.find((building) =>
+        building.kind === 'monastery' && building.alive && !building.underConstruction,
+      );
+      if (monastery && !this.hints.hasSeen('monasteryBuilt')) {
+        this.hints.show('monasteryBuilt', this.worldHintTarget(() => {
+          const target = this.economy.buildings.find((building) =>
+            building.kind === 'monastery' && building.alive && !building.underConstruction,
+          );
+          return target ? { x: target.x, y: target.y } : null;
+        }));
+      }
+      if (this.settlement.facts.monasteryFallenAt && !this.hints.hasSeen('monasteryLoss')) {
+        this.hints.show('monasteryLoss');
+      }
     }
-    if (this.pawnsHintArmed && this.elapsed >= 20) {
-      this.pawnsHintArmed = false;
-      this.hints.show('pawns', () => this.hud.resourceHintPoint());
+
+    const hasMonastery = this.economy.buildings.some((building) =>
+      building.kind === 'monastery' && building.alive && !building.underConstruction,
+    );
+    if (this.monasteryHintPending) {
+      if (hasMonastery || this.hints.hasSeen('monastery')) {
+        this.monasteryHintPending = false;
+      } else if (this.hints.isEnabled()) {
+        this.hints.show('monastery', this.buildingHintTarget('monastery'));
+      }
     }
 
     // Тосты заданий дня (§H.17): проверка раз в 5 сек, бой не прерывается
@@ -2461,12 +2502,8 @@ private ordersUnlocked(): boolean {
     for (const pawn of this.economy.pawns) {
       if (!pawn.dead && Math.hypot(pawn.x - x, pawn.y - y) < 240) pawn.faceToward(x);
     }
-    // Метрики first_house/first_barracks отправляет единственный listener
-    // Economy.on('built'); не дублируем событие из XP-callback.
-    if (kind === 'house' && !this.registry.get('tss-first-house')) {
-      this.registry.set('tss-first-house', true);
-      this.hints?.show('barracks', this.buildingHintTarget('barracks'));
-    }
+    // Подсказки о доступных постройках запускает update() по текущей цене и
+    // состоянию поселения, а не в XP-callback завершения первого дома.
   }
 
   /** Мировую точку переводим в логические экранные координаты слоя HUD/FTUE. */
