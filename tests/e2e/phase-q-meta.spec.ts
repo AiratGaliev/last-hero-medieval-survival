@@ -439,7 +439,7 @@ test('game over always shows daily quest progress even when this run completes n
 });
 
 
-test('king order Horde applies the spawn-rate modifier without stacking the same challenge modifier', async ({ page }) => {
+test('king order Horde compounds with difficulty without double-stacking the challenge modifier', async ({ page }) => {
   await page.goto('/?lang=en&ysdk=mock');
   await expect(page.locator('#game canvas')).toBeVisible({ timeout: startupTimeout });
   await expect(page.locator('#boot')).toHaveCount(0, { timeout: startupTimeout });
@@ -500,8 +500,14 @@ test('king order Horde applies the spawn-rate modifier without stacking the same
   }), { timeout: startupTimeout }).toBe(true);
 
   const report = await page.evaluate(async () => {
-    const spawnerModule = await import('/src/game/systems/Spawner.ts') as {
-      resolveSpawnRateOverride: (ukaz: string | null, challengeHorde: boolean) => number | null;
+    const spawnerModule = await import('/src/game/systems/Spawner.ts') as unknown as {
+      resolveSpawnRateFactor: (ukaz: string | null, challengeHorde: boolean) => number;
+      Spawner: new (
+        scene: unknown,
+        ctx: unknown,
+        difficulty: 'normal' | 'nightmare',
+        opts: { rateMultFactor?: number },
+      ) => unknown;
     };
     const runtime = (window as Window & {
       __tss?: { scene: { getScene: (key: string) => unknown } };
@@ -512,31 +518,42 @@ test('king order Horde applies the spawn-rate modifier without stacking the same
       diffDef: { rateMult: number; scoreMult: number };
     };
     const spawner = scene.spawner as {
-      o: { rateMultOverride?: number | null };
+      o: { rateMultFactor?: number };
       interval: number;
       timer: number;
     };
+    const nightmareSpawner = new spawnerModule.Spawner(
+      {},
+      {},
+      'nightmare',
+      { rateMultFactor: spawnerModule.resolveSpawnRateFactor('ukaz_horde', false) },
+    ) as { interval: number; timer: number; update: (dtSec: number) => void };
+    nightmareSpawner.update(0);
     return {
-      rateMultOverride: spawner.o.rateMultOverride ?? null,
+      rateMultFactor: spawner.o.rateMultFactor ?? 1,
       initialIntervalMs: spawner.interval,
       initialTimerMs: spawner.timer,
       difficultyRateMult: scene.diffDef.rateMult,
       difficultyScoreMult: scene.diffDef.scoreMult,
-      noOrder: spawnerModule.resolveSpawnRateOverride(null, false),
-      anotherOrder: spawnerModule.resolveSpawnRateOverride('ukaz_drought', false),
-      ukazHorde: spawnerModule.resolveSpawnRateOverride('ukaz_horde', false),
-      challengeHorde: spawnerModule.resolveSpawnRateOverride(null, true),
-      bothHordes: spawnerModule.resolveSpawnRateOverride('ukaz_horde', true),
+      nightmareIntervalAfterRateEventMs: nightmareSpawner.interval,
+      nightmareTimerMs: nightmareSpawner.timer,
+      noOrder: spawnerModule.resolveSpawnRateFactor(null, false),
+      anotherOrder: spawnerModule.resolveSpawnRateFactor('ukaz_drought', false),
+      ukazHorde: spawnerModule.resolveSpawnRateFactor('ukaz_horde', false),
+      challengeHorde: spawnerModule.resolveSpawnRateFactor(null, true),
+      bothHordes: spawnerModule.resolveSpawnRateFactor('ukaz_horde', true),
     };
   });
 
-  expect(report.rateMultOverride).toBe(0.85);
-  expect(report.initialIntervalMs).toBeCloseTo(850 * 0.85);
-  expect(report.initialTimerMs).toBeCloseTo(1200 * 0.85);
+  expect(report.rateMultFactor).toBe(0.85);
+  expect(report.initialIntervalMs).toBeCloseTo(850 * 1 * 0.85);
+  expect(report.initialTimerMs).toBeCloseTo(1200 * 1 * 0.85);
   expect(report.difficultyRateMult).toBe(1);
   expect(report.difficultyScoreMult).toBe(1);
-  expect(report.noOrder).toBeNull();
-  expect(report.anotherOrder).toBeNull();
+  expect(report.nightmareIntervalAfterRateEventMs).toBeCloseTo(850 * 0.85 * 0.85);
+  expect(report.nightmareTimerMs).toBeCloseTo(1200 * 0.85 * 0.85);
+  expect(report.noOrder).toBe(1);
+  expect(report.anotherOrder).toBe(1);
   expect(report.ukazHorde).toBe(0.85);
   expect(report.challengeHorde).toBe(0.85);
   expect(report.bothHordes).toBe(0.85);
