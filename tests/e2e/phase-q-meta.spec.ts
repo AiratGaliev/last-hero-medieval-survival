@@ -558,3 +558,189 @@ test('king order Horde compounds with difficulty without double-stacking the cha
   expect(report.challengeHorde).toBe(0.85);
   expect(report.bothHordes).toBe(0.85);
 });
+
+
+test('weekly mini-board ignores ordinary runs even when an order is selected', async ({ page }) => {
+  await page.goto('/?lang=en&ysdk=mock');
+  await expect(page.locator('#game canvas')).toBeVisible({ timeout: startupTimeout });
+  await expect(page.locator('#boot')).toHaveCount(0, { timeout: startupTimeout });
+
+  const outcome = await page.evaluate(async () => {
+    type RunSummary = {
+      victory: boolean;
+      ideal: boolean;
+      endless: boolean;
+      weeklyChallenge: boolean;
+      wave: number;
+      time: number;
+      kills: number;
+      level: number;
+      gold: number;
+      score: number;
+      difficulty: string;
+      buildingsBuilt: number;
+      pawnsAlive: number;
+      siegesDefended: number;
+      siegesTotal: number;
+      monasteryHealed: number;
+      healHp: number;
+      hires: number;
+      successions: number;
+      veterans: number;
+      firstHouseMin: number;
+      barracks: number;
+      monastery: number;
+      archery: number;
+      bestCombo: number;
+      bossKilled: boolean;
+      killsByKind: Record<string, number>;
+      cardsPicked: string[];
+      contract: string | null;
+      ukaz: string | null;
+      challengeMods: string[];
+      blessing: string | null;
+      consumables: string[];
+    };
+    const meta = await import('/src/game/meta.ts') as unknown as {
+      rollMetaDay: () => {
+        weekly: { week: string };
+        weeklyChallenge: { week: string; best: number };
+      };
+      saveMetaState: (state: ReturnType<import('/src/game/meta.ts')['loadMetaState']>) => boolean;
+      loadMetaState: () => { weeklyChallenge: { week: string; best: number } };
+      applyRunToMeta: (summary: RunSummary) => unknown;
+    };
+
+    const state = meta.rollMetaDay() as ReturnType<import('/src/game/meta.ts')['loadMetaState']>;
+    state.weeklyChallenge = { week: state.weekly.week, best: 0 };
+    meta.saveMetaState(state);
+
+    const base: Omit<RunSummary, 'weeklyChallenge'> = {
+      victory: false,
+      ideal: false,
+      endless: false,
+      wave: 0,
+      time: 120,
+      kills: 50,
+      level: 4,
+      gold: 100,
+      score: 5_000,
+      difficulty: 'normal',
+      buildingsBuilt: 2,
+      pawnsAlive: 3,
+      siegesDefended: 0,
+      siegesTotal: 0,
+      monasteryHealed: 0,
+      healHp: 0,
+      hires: 0,
+      successions: 0,
+      veterans: 0,
+      firstHouseMin: 0,
+      barracks: 0,
+      monastery: 0,
+      archery: 0,
+      bestCombo: 3,
+      bossKilled: false,
+      killsByKind: {},
+      cardsPicked: [],
+      contract: null,
+      ukaz: 'ukaz_horde',
+      challengeMods: [],
+      blessing: null,
+      consumables: [],
+    };
+
+    meta.applyRunToMeta({ ...base, weeklyChallenge: false });
+    const bestAfterOrdinaryRun = meta.loadMetaState().weeklyChallenge.best;
+    meta.applyRunToMeta({ ...base, weeklyChallenge: true });
+    const bestAfterWeeklyRun = meta.loadMetaState().weeklyChallenge.best;
+
+    return { bestAfterOrdinaryRun, bestAfterWeeklyRun };
+  });
+
+  expect(outcome.bestAfterOrdinaryRun).toBe(0);
+  expect(outcome.bestAfterWeeklyRun).toBe(5_000);
+});
+
+test('orders tab starts a weekly challenge with the selected king order', async ({ page }) => {
+  await page.addInitScript(() => {
+    localStorage.clear();
+    localStorage.setItem('tss-meta2', JSON.stringify({
+      v: 2,
+      savedAt: Date.now(),
+      matchesPlayed: 10,
+      weeklyChallenge: { week: '', best: 0 },
+    }));
+    localStorage.setItem('tss-ukaz-pick', 'ukaz_horde');
+  });
+
+  await page.goto('/?lang=en&ysdk=mock');
+  await expect(page.locator('#game canvas')).toBeVisible({ timeout: startupTimeout });
+  await expect(page.locator('#boot')).toHaveCount(0, { timeout: startupTimeout });
+  await expect.poll(() => page.evaluate(() => {
+    const runtime = (window as Window & {
+      __tss?: { scene: { isActive: (key: string) => boolean } };
+    }).__tss;
+    return runtime?.scene.isActive('Menu') ?? false;
+  }), { timeout: startupTimeout }).toBe(true);
+
+  await page.evaluate(() => {
+    const runtime = (window as Window & {
+      __tss?: { scene: { launch: (key: string, payload?: unknown) => void } };
+    }).__tss;
+    runtime?.scene.launch('Meta', { tab: 'orders' });
+  });
+  await expect.poll(() => page.evaluate(() => {
+    const runtime = (window as Window & {
+      __tss?: { scene: { isActive: (key: string) => boolean } };
+    }).__tss;
+    return runtime?.scene.isActive('Meta') ?? false;
+  }), { timeout: startupTimeout }).toBe(true);
+
+  const labels = await page.evaluate(() => {
+    const runtime = (window as Window & {
+      __tss?: { scene: { getScene: (key: string) => { children: { list: unknown[] } } } };
+    }).__tss;
+    const scene = runtime?.scene.getScene('Meta');
+    const found: string[] = [];
+    const visit = (object: unknown): void => {
+      if (!object || typeof object !== 'object') return;
+      const item = object as { text?: unknown; list?: unknown[] };
+      if (typeof item.text === 'string') found.push(item.text);
+      if (Array.isArray(item.list)) item.list.forEach(visit);
+    };
+    scene?.children.list.forEach(visit);
+    return found;
+  });
+  expect(labels).toContain('WEEKLY RUN');
+  expect(labels).toContain('Best: 0');
+
+  await page.evaluate(() => {
+    const runtime = (window as Window & {
+      __tss?: { scene: { getScene: (key: string) => unknown } };
+    }).__tss;
+    const menu = runtime?.scene.getScene('Menu') as {
+      startWeeklyChallengeFromMeta: () => void;
+    } | undefined;
+    if (!menu) throw new Error('Menu scene is unavailable');
+    menu.startWeeklyChallengeFromMeta();
+  });
+
+  await expect.poll(() => page.evaluate(() => {
+    const runtime = (window as Window & {
+      __tss?: { scene: { isActive: (key: string) => boolean } };
+    }).__tss;
+    return runtime?.scene.isActive('Game') ?? false;
+  }), { timeout: startupTimeout }).toBe(true);
+
+  const run = await page.evaluate(() => {
+    const runtime = (window as Window & {
+      __tss?: { scene: { getScene: (key: string) => unknown } };
+    }).__tss;
+    const scene = runtime?.scene.getScene('Game') as {
+      mods: { weeklyChallenge: boolean; ukaz: string | null };
+    } | undefined;
+    return { weeklyChallenge: scene?.mods.weeklyChallenge, ukaz: scene?.mods.ukaz };
+  });
+  expect(run).toEqual({ weeklyChallenge: true, ukaz: 'ukaz_horde' });
+});
