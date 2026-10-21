@@ -10,6 +10,7 @@ import { isMockMode, isOnYandex } from '../../platform/sdk';
 import { placementAvailable, showPlacementRewarded, showStickyBanner } from '../../platform/ads';
 import {
   rollMetaDay,
+  seasonPassUnlocked,
   saveMetaState,
   hasIapEntitlement,
   buySkinWithCrowns,
@@ -983,7 +984,7 @@ export class ShopScene extends Phaser.Scene {
     y += tight ? 18 : 24;
 
     if (!st.pass.premium) {
-      if (showcaseVisible()) {
+      if (seasonPassUnlocked()) {
         const bh = tight ? 40 : 44;
         const buy = makeButton(this, this.px, y + bh / 2, 280, bh, t('store.pass'),
           () => { void this.buySku('pass_chronicle'); }, 'blue', 13, { stopPropagation: true });
