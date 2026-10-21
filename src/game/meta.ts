@@ -773,6 +773,8 @@ export const DAILY_BONUS: DailyBonusDef[] = [
 
 /** Пропуск дня откатывает стрик на ОДИН шаг, а не в ноль (§H.7, гейт Q). */
 export const BONUS_RESET_HOURS = 26;
+/** Минимальный интервал между дарами: защищает от двойного забора на границе UTC-дней. */
+export const BONUS_MIN_INTERVAL_HOURS = 24;
 
 // ============================================================
 // Константы гейтов и лимитов (Приложение A3)
@@ -1619,18 +1621,21 @@ export interface BonusClaimResult {
 export function claimDailyBonus(useAd = false): BonusClaimResult {
   const st = rollMetaDay();
   const today = todayKey();
+  const now = serverNow();
+  const lastAt = st.dailyBonus.lastAt;
+  const elapsed = lastAt > 0 ? now - lastAt : Number.POSITIVE_INFINITY;
   if (st.matchesPlayed < DAILY_BONUS_AFTER_MATCHES) {
     return { ok: false, day: st.dailyBonus.streak % 7, def: null, doubled: false, streak: st.dailyBonus.streak };
   }
-  if (st.dailyBonus.last === today) {
+  if (st.dailyBonus.last === today
+    || (lastAt > 0 && elapsed < BONUS_MIN_INTERVAL_HOURS * 60 * 60 * 1000)) {
     return { ok: false, day: st.dailyBonus.streak % 7, def: null, doubled: false, streak: st.dailyBonus.streak };
   }
   // 26-часовое окно рассчитывается по серверному времени, а не по датам браузера.
   // Превышение окна снимает ровно одну ступень (§H.7); длинный перерыв не обнуляет стрик.
-  const now = serverNow();
   const prev = st.dailyBonus.streak;
-  const missedWindow = st.dailyBonus.lastAt > 0
-    && now - st.dailyBonus.lastAt > BONUS_RESET_HOURS * 60 * 60 * 1000;
+  const missedWindow = lastAt > 0
+    && elapsed > BONUS_RESET_HOURS * 60 * 60 * 1000;
   const effective = missedWindow ? Math.max(0, prev - 1) : prev;
   const streak = effective + 1;
   st.dailyBonus = { last: today, lastAt: now, streak };
@@ -1662,8 +1667,10 @@ export function applyBonus(st: MetaState, def: DailyBonusDef, doubled: boolean):
 /** Требование R11: удвоение дара дня — только пока день не забран. */
 export function bonusAvailable(): boolean {
   const st = rollMetaDay();
+  const elapsed = st.dailyBonus.lastAt > 0 ? serverNow() - st.dailyBonus.lastAt : Number.POSITIVE_INFINITY;
   return st.matchesPlayed >= DAILY_BONUS_AFTER_MATCHES
-    && st.dailyBonus.last !== todayKey();
+    && st.dailyBonus.last !== todayKey()
+    && !(st.dailyBonus.lastAt > 0 && elapsed < BONUS_MIN_INTERVAL_HOURS * 60 * 60 * 1000);
 }
 
 // ============================================================
