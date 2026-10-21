@@ -1829,7 +1829,7 @@ export class MenuScene extends Phaser.Scene {
 
     const head = this.overlayTitle(top, t('ukaz.title'), 'red');
 
-    const id = loadText('tss-ukaz-pick');
+    const id = loadMetaPreferences().ukaz;
     const order = ORDERS.find((o) => o.id === id);
     this.overlay?.add(this.add.text(cx, head + 18, t('ukaz.pick', {
       v: order ? this.tr(order.nameKey) : t('ukaz.none'),
