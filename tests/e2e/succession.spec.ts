@@ -38,6 +38,7 @@ type GameSceneRuntime = {
   hud: {
     weaponIcons: Map<string, unknown>;
     announceText: { text: string };
+    successorIntro(name: string, heroTitle: string): void;
     setIcon(id: string, iconKey: string, level: number, isPassive: boolean): void;
   };
   level: number;
@@ -200,6 +201,8 @@ test('phase N: no living warrior still exposes first-free resource succession an
     scene.hud.setIcon('obsolete-test-weapon', 'btn-small-blue', 3, false);
 
     const heroBefore = scene.player.hero.id;
+    const successorIntroCalls: Array<{ name: string; title: string }> = [];
+    scene.hud.successorIntro = (name, title) => successorIntroCalls.push({ name, title });
     scene.onHeroDeath();
     const succession = game.scene.getScene('Succession') as SuccessionSceneRuntime;
     const data = succession.data_;
@@ -235,6 +238,7 @@ test('phase N: no living warrior still exposes first-free resource succession an
       successionFreeUsed: scene.succession.freeUsed,
       hudIconIds: [...scene.hud.weaponIcons.keys()].sort(),
       overlayOpen: scene.overlayOpen,
+      successorIntroCalls,
     };
   });
 
@@ -254,6 +258,9 @@ test('phase N: no living warrior still exposes first-free resource succession an
   expect(result.successionFreeUsed).toBe(true);
   expect(result.hudIconIds).toEqual(['sword']);
   expect(result.overlayOpen).toBe(false);
+  expect(result.successorIntroCalls).toHaveLength(1);
+  expect(result.successorIntroCalls[0]?.name).toBe('Warrior');
+  expect(result.successorIntroCalls[0]?.title).toBeTruthy();
 });
 
 test('phase N: later succession without a resource cost renders safely and keeps the resource branch unavailable', async ({ page }) => {
