@@ -2249,7 +2249,7 @@ export class MenuScene extends Phaser.Scene {
       }, 'red', 10);
       this.addExtra(adBtn.img); this.addExtra(adBtn.txt); this.addExtra(adBtn.hit);
     }
-    const skip = makeButton(this, cx + 98, footY, 150, 44, t('common.back'), () => {
+    const skip = makeButton(this, cx + 98, footY, 150, 44, t('blessing.skip'), () => {
       this.closeOverlay();
       go();
     }, 'blue', 11);
