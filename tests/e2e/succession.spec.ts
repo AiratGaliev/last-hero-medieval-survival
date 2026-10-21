@@ -101,14 +101,6 @@ async function startRun(page: Page): Promise<void> {
   }), { timeout: 10_000 }).toBe(true);
 }
 
-function addBarracks(scene: GameSceneRuntime): void {
-  scene.economy.buildings.push({
-    kind: 'barracks',
-    alive: true,
-    underConstruction: false,
-  });
-}
-
 test('phase N: no living warrior still exposes first-free resource succession and clears the old build', async ({ page }) => {
   await startRun(page);
 
@@ -117,13 +109,18 @@ test('phase N: no living warrior still exposes first-free resource succession an
     if (!game) throw new Error('Phaser runtime is unavailable');
     const scene = game.scene.getScene('Game') as GameSceneRuntime;
 
-    addBarracks(scene);
+    scene.economy.buildings.push({
+      kind: 'barracks',
+      alive: true,
+      underConstruction: false,
+    });
     const woodBefore = scene.economy.resources.wood;
     const oreBefore = scene.economy.resources.ore;
     const pawnCountBefore = scene.economy.pawns.length;
     // Маркер старого билда: после смены не должен остаться в панели HUD.
     scene.hud.setIcon('obsolete-test-weapon', 'btn-small-blue', 3, false);
 
+    const heroBefore = scene.player.hero.id;
     scene.onHeroDeath();
     const succession = game.scene.getScene('Succession') as SuccessionSceneRuntime;
     const data = succession.data_;
@@ -145,7 +142,7 @@ test('phase N: no living warrior still exposes first-free resource succession an
       resourcesAffordable,
       costAtDisplay,
       accepted,
-      heroBefore: 'archer',
+      heroBefore,
       heroAfter: scene.player.hero.id,
       levelAfter: scene.level,
       invulnerabilityMs: scene.player.iframesUntil - scene.activeTimeMs,
@@ -187,7 +184,11 @@ test('phase N: later succession without a resource cost renders safely and keeps
     const game = (window as RuntimeWindow).__tss;
     if (!game) throw new Error('Phaser runtime is unavailable');
     const scene = game.scene.getScene('Game') as GameSceneRuntime;
-    addBarracks(scene);
+    scene.economy.buildings.push({
+      kind: 'barracks',
+      alive: true,
+      underConstruction: false,
+    });
     scene.succession.freeUsed = true;
     scene.succession.successionsDone = 3;
     scene.gold = 0;
