@@ -748,6 +748,11 @@ test('orders tab starts a weekly challenge with the selected king order', async 
 
 
 test('daily challenge date deterministically seeds the map, economy and wave director', async ({ page, browser }) => {
+  await page.goto('/?lang=en&ysdk=mock');
+  await expect(page.locator('#game canvas')).toBeVisible({ timeout: startupTimeout });
+  await expect(page.locator('#boot')).toHaveCount(0, { timeout: startupTimeout });
+  const appOrigin = await page.evaluate(() => window.location.origin);
+
   const capture = async (target: Page, date: string): Promise<{
     seed: number;
     challengeSeed: string | null;
@@ -755,7 +760,7 @@ test('daily challenge date deterministically seeds the map, economy and wave dir
     economyRandom: number[];
     waveRandom: number[];
   }> => {
-    await target.goto('/?lang=en&ysdk=mock');
+    if (target !== page) await target.goto(new URL('/?lang=en&ysdk=mock', appOrigin).toString());
     await expect(target.locator('#game canvas')).toBeVisible({ timeout: startupTimeout });
     await expect(target.locator('#boot')).toHaveCount(0, { timeout: startupTimeout });
     await expect.poll(() => target.evaluate(() => {
