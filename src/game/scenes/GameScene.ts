@@ -38,13 +38,15 @@ import { t } from '../../i18n';
 import { loadText } from '../storage';
 import { gameplayStart, gameplayStop } from '../../platform/lifecycle';
 import { placementAvailable, resetPlacementLimits, hideStickyBanner } from '../../platform/ads';
-import { track, beginRun, flushRunTelemetry } from '../../platform/analytics';
+import { track, beginRun, flushRunTelemetry, detectDeviceClass } from '../../platform/analytics';
+import { analyticsIdentity } from '../../platform/player';
 import {
   consumeRunConfig, loadMetaState, rollMetaDay, nodeEffects, seasonDef,
   takeConsumables, applyRunToMeta, contractDef, QUEST_POOL, markCodex,
   heroSkinTint, buildingSkinTint, trailSkinTint, activeBanner, matchesPlayed,
   type RunModifiers, type NodeEffects, type SeasonModifier, type RunSummary,
   type QuestMetric,
+  getOrAssignExperimentVariant,
 } from '../meta';
 
 type Keys = Record<string, Phaser.Input.Keyboard.Key>;
@@ -129,6 +131,7 @@ export class GameScene extends Phaser.Scene {
    * разбросом «ресурсы или лечение»), делал такой прогон невозможным.
    */
   private rngState = 0;
+  private runSeed = 0;
   /** [0, 1) из rng рана. */
   private runRng(): number {
     this.rngState = (this.rngState + 0x6d2b79f5) | 0;
@@ -248,9 +251,11 @@ export class GameScene extends Phaser.Scene {
   /** Подсказка «построй дом» — один раз при 30 дерева (§I.2). */
   private houseHintArmed = true;
   private pawnsHintArmed = true;
-  /** perf_fps (§K.2): накопитель среднего FPS за 30-секундное окно. */
-  private perfAcc = 0;
-  private perfFrames = 0;
+  /** FPS-сэмплы примерно раз в секунду агрегируются в конце рана. */
+  private perfSampleAccMs = 0;
+  private perfFpsSamples: number[] = [];
+  private enemiesPeak = 0;
+  private perfTelemetrySent = false;
 
   constructor() {
     super('Game');
@@ -270,15 +275,22 @@ export class GameScene extends Phaser.Scene {
     // Т0 аналитики: реестр плейсментов и метка рана — до любых механик (§K.1)
     resetPlacementLimits();
     beginRun();
-    // §K.2: seed/contract/ukaz/blessing обязательны — без них не построить
-// воронку A/B по контрактам (§K.4) и не отличить вызов дня от обычного рана.
+    const firstMatch = matchesPlayed() === 0;
+    const ftueVariant = firstMatch
+      ? getOrAssignExperimentVariant('ftueSoftStart', analyticsIdentity(), ['control', 'soft'])
+      : null;
+    this.ftueSoftStart = firstMatch && ftueVariant === 'soft';
+    // §K.2: фиксируем фактический seed и параметры, необходимые для анализа рана.
     track('run_start', {
       hero: this.heroDef.id,
       difficulty: this.diffDef.id,
-      seed: this.mods.challenge ? 'daily' : 'default',
+      seed: this.runSeed,
       contract: this.contractId,
       ukaz: this.mods.ukaz ?? null,
       blessing: this.mods.blessing ?? null,
+      experiment: firstMatch ? 'ftueSoftStart' : null,
+      experiment_variant: ftueVariant,
+      ftue_soft_start: this.ftueSoftStart,
       endless: this.mods.endless,
       challenge: this.mods.challenge ? [...this.mods.challenge.mods] : null,
     });
@@ -397,8 +409,9 @@ export class GameScene extends Phaser.Scene {
     this.comboTimer = 0;
     this.bestCombo = 0;
     this.xpMagnetUntil = 0;
-    // Сид рана фиксирован на запуск сцены: одинаковый сид → одинаковые рулетки
-    this.rngState = (Date.now() ^ (Math.random() * 0xffffffff)) | 0;
+    // Числовой seed RNG совпадает с передаваемым в событии run_start.
+    this.runSeed = (Date.now() ^ Math.floor(Math.random() * 0x1_0000_0000)) >>> 0;
+    this.rngState = this.runSeed | 0;
     this.registry.set('tss-freeze', 0);
     this.lastMove = { x: 1, y: 0 };
     this.sepGrid.clear();
@@ -441,10 +454,12 @@ export class GameScene extends Phaser.Scene {
       : this.challengeMods.has('cm_fog') ? 0.8 : 1;
     this.questToastDone = new Set();
     this.questCheckAcc = 0;
-    this.ftueSoftStart = matchesPlayed() === 0; // первый матч аккаунта (§I.2)
+    this.ftueSoftStart = false; // назначается из сохранённого A/B-флага при старте рана
     this.houseHintArmed = true;
-    this.perfAcc = 0;
-    this.perfFrames = 0;
+    this.perfSampleAccMs = 0;
+    this.perfFpsSamples = [];
+    this.enemiesPeak = 0;
+    this.perfTelemetrySent = false;
     this.bldTint = buildingSkinTint();
   }
 
@@ -1674,6 +1689,7 @@ private ordersUnlocked(): boolean {
     }
 
     const dt = dtMs / 1000;
+    this.samplePerformance(dtMs);
 
     // Escape закрывает меню приказов, не создавая поверх него окно паузы.
     const escapePressed = Phaser.Input.Keyboard.JustDown(this.keys.esc);
@@ -1895,15 +1911,6 @@ private ordersUnlocked(): boolean {
       this.checkQuestToasts();
     }
 
-    // perf_fps (§K.2): средний FPS за 30-секундное окно
-    this.perfAcc += this.game.loop.actualFps;
-    this.perfFrames++;
-    if (this.perfFrames >= 30 * 30) {
-      track('perf_fps', { fps: Math.round(this.perfAcc / this.perfFrames) });
-      this.perfAcc = 0;
-      this.perfFrames = 0;
-    }
-
     // Левел-ап
     if (this.pendingLevelUps > 0 && !this.overlayOpen && !this.gameEnded && !this.victoryPending) {
       this.openLevelUp();
@@ -1911,6 +1918,38 @@ private ordersUnlocked(): boolean {
   }
 
   // ================= БОЙ =================
+
+  /** Снимает FPS-сэмпл раз в секунду и отслеживает пик активных врагов. */
+  private samplePerformance(dtMs: number): void {
+    this.perfSampleAccMs += dtMs;
+    if (this.perfSampleAccMs < 1_000) return;
+    this.perfSampleAccMs %= 1_000;
+    const fps = this.game.loop.actualFps;
+    if (Number.isFinite(fps) && fps > 0) this.perfFpsSamples.push(fps);
+    this.enemiesPeak = Math.max(this.enemiesPeak, this.activeEnemies().length);
+  }
+
+  /** Одно событие perf_fps на ран с процентилями, классом устройства и пиком врагов. */
+  private flushPerformanceTelemetry(): void {
+    if (this.perfTelemetrySent) return;
+    this.perfTelemetrySent = true;
+    const samples = this.perfFpsSamples
+      .filter((fps) => Number.isFinite(fps) && fps > 0)
+      .sort((a, b) => a - b);
+    if (samples.length === 0) return;
+    const percentile = (p: number): number => {
+      const index = Math.min(samples.length - 1, Math.max(0, Math.ceil(p * samples.length) - 1));
+      return Math.round(samples[index] ?? 0);
+    };
+    track('perf_fps', {
+      p50: percentile(0.5),
+      p10: percentile(0.1),
+      device_class: detectDeviceClass(),
+      enemies_peak: this.enemiesPeak,
+      samples: samples.length,
+      duration_s: Math.floor(this.elapsed),
+    });
+  }
 
   private activeEnemies(): Enemy[] {
     return this.enemyGroup.getChildren().filter((e) => e.active) as Enemy[];
@@ -2599,7 +2638,7 @@ private bossDeathSequence(e: Enemy): boolean {
         // Раньше всё сводилось к `lance ? lancer : warrior`, и гарнизонный
         // лучник получал мечника.
         this.applyHero(this.succession.heroFor(w.weapon ?? 'sword'), w.weapon ?? 'sword');
-        this.afterSuccession('warrior');
+        this.afterSuccession('warrior', false, 0);
         return true;
       },
       // Ветка 2: ресурсы — новый воин из здания.
@@ -2611,11 +2650,12 @@ private bossDeathSequence(e: Enemy): boolean {
         if (!this.succession.resourcesBranchAvailable()
           || !this.succession.typeAvailable(weapon as PawnWeapon)) return false;
         const firstLifetimeFree = this.succession.isFirstLifetimeFree();
+        const resourceCost = firstLifetimeFree ? 0 : this.succession.resourceCost();
         if (firstLifetimeFree) {
           this.succession.payFree();
         } else if (!this.succession.payResources()) return false;
         this.applyHero(this.succession.heroFor(weapon as PawnWeapon), weapon);
-        this.afterSuccession('resources', firstLifetimeFree);
+        this.afterSuccession('resources', firstLifetimeFree, resourceCost);
         return true;
       },
       // Ветка 3: реклама
@@ -2623,23 +2663,23 @@ private bossDeathSequence(e: Enemy): boolean {
         if (!this.succession.typeAvailable(weapon as PawnWeapon)) return false;
         this.succession.payAd();
         this.applyHero(this.succession.heroFor(weapon as PawnWeapon), weapon);
-        this.afterSuccession('ad');
+        this.afterSuccession('ad', false, { ad: 1 });
         return true;
       },
       // Ветка 3: золото матча (тоже бесплатно при первом показе, §F.4)
       onTakeGold: (weapon: string) => {
         if (!this.succession.typeAvailable(weapon as PawnWeapon)) return false;
         const firstLifetimeFree = this.succession.isFirstLifetimeFree();
+        const cost = firstLifetimeFree ? 0 : this.succession.goldCost();
         if (firstLifetimeFree) {
           this.succession.payFree();
         } else {
-          const cost = this.succession.goldCost();
           if (this.gold < cost) return false;
           this.gold -= cost;
           this.succession.payGold();
         }
         this.applyHero(this.succession.heroFor(weapon as PawnWeapon), weapon);
-        this.afterSuccession('gold', firstLifetimeFree);
+        this.afterSuccession('gold', firstLifetimeFree, cost);
         return true;
       },
       onSurrender: () => {
@@ -2653,9 +2693,13 @@ private bossDeathSequence(e: Enemy): boolean {
     });
   }
 
-  private afterSuccession(branch: string, firstLifetimeFree = false): void {
+  private afterSuccession(
+    branch: string,
+    firstLifetimeFree = false,
+    cost: number | { wood?: number; ore?: number; meat?: number; ad?: number } | null = null,
+  ): void {
     this.successions++; // сводка рана (§K.2): преемственность (§H.11, §H.17)
-    track('succession_taken', { branch, first_lifetime: firstLifetimeFree });
+    track('succession_taken', { branch, cost, first_lifetime: firstLifetimeFree });
     this.scene.resume();
     this.overlayOpen = false;
     gameplayStart();
@@ -3429,8 +3473,11 @@ private bossDeathSequence(e: Enemy): boolean {
       },
       veterans: this.economy.pawns.filter((p) => p.veteranStars > 0).slice(0, 2).map((p) => ({ name: p.name, stars: p.veteranStars })),
     };
+    this.flushPerformanceTelemetry();
+    const endCause: 'victory' | 'hero' | 'castle' | 'population' | 'surrender' =
+      victory ? 'victory' : this.surrendered ? 'surrender' : this.loseCause;
     track('run_end', {
-      cause: victory ? 'victory' : this.surrendered ? 'surrender' : this.loseCause,
+      cause: endCause,
       duration_s: Math.floor(this.elapsed),
       score,
       kills: this.kills,

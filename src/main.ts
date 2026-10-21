@@ -8,10 +8,15 @@ import Phaser from 'phaser';
 import type { createGame as CreateGame } from './game/config';
 import { audio } from './game/systems/Audio';
 import { installTextDefaults } from './game/systems/Text';
-import { initSdk, isOnYandex, getSdk } from './platform/sdk';
+import { initSdk, isOnYandex, isMockMode, getSdk } from './platform/sdk';
 import { initPayments } from './platform/payments';
-import { initAnalytics, exportBuffer } from './platform/analytics';
-import { hydrateSuccessionFreeUsed, loadPlayer } from './platform/player';
+import { initAnalytics, exportBuffer, hydrateRunTelemetryFromPlayerData } from './platform/analytics';
+import { installAnalyticsDebugOverlay } from './platform/analyticsDebug';
+import {
+  hydrateSuccessionFreeUsed, loadPlayer, loadExperimentFlagsFromPlayerData,
+  persistExperimentFlagsToPlayerData,
+} from './platform/player';
+import { loadMetaState, saveMetaState, matchesPlayed } from './game/meta';
 import { detectLanguage, t } from './i18n';
 import { installLifecycle, setLifecycleHandlers, gameplayStop } from './platform/lifecycle';
 import type { GameScene } from './game/scenes/GameScene';
@@ -172,16 +177,33 @@ const boot = async (): Promise<void> => {
 
   // T0 аналитики (§K.1): шина поднимается до любых механик — session_start
   // уходит первым, sessionIdx проставляется всем событиям сессии.
+  const matchesTotal = matchesPlayed();
   initAnalytics({
     dev: import.meta.env.DEV,
     ymId: Number.isFinite(YM_COUNTER_ID) ? YM_COUNTER_ID : undefined,
+    platformEnabled: isOnYandex() && !isMockMode(),
+    newUser: matchesTotal === 0,
+    matchesTotal,
   });
+  installAnalyticsDebugOverlay();
   maybeExportTelemetry();
   // §J.6.1 (1.13.1): платёжный слой + консумирование необработанных покупок —
   // ДО первого purchase() и до старта сцен. Вне Яндекса — no-op заглушка.
   if (isOnYandex()) await initPayments();
 
   if (isOnYandex()) await loadPlayer();
+
+  // Возвращаем cloud A/B-варианты до создания игровых сцен; cloud assignment имеет
+  // приоритет, чтобы профиль не менял плечо при переустановке/смене устройства.
+  const localMeta = loadMetaState();
+  const remoteFlags = await loadExperimentFlagsFromPlayerData();
+  localMeta.flags = { ...localMeta.flags, ...remoteFlags };
+  saveMetaState(localMeta);
+  persistExperimentFlagsToPlayerData(localMeta.flags);
+
+  // Восстанавливаем историю последних ранов из Player Data, если она доступна.
+  await hydrateRunTelemetryFromPlayerData();
+
   // Lifetime-преемственность читается до создания сцен, чтобы не показывать
   // повторно бесплатную смену на другом устройстве. При ошибке останется локальный fallback.
   await hydrateSuccessionFreeUsed();
