@@ -40,6 +40,7 @@ import {
   ORDERS,
   ordersUnlocked,
   rollBlessings,
+  rollMetaDay,
   saveMetaState,
   saveRunConfig,
   type ConsumableId,
@@ -565,7 +566,11 @@ export class MenuScene extends Phaser.Scene {
       navItems.push([t('menu.chronicle'), () => this.showChronicle()]);
     }
     if (completedMatches >= FTUE_MATCH_GATE.meta) {
-      navItems.push([t('meta.tab'), () => this.openOverlayScene('Meta')]);
+      const quests = rollMetaDay().quests;
+      navItems.push([
+        `${t('meta.tab')}\n${t('quest.menuSummary', { a: quests.done.length, b: quests.ids.length })}`,
+        () => this.openOverlayScene('Meta', { tab: 'quests' }),
+      ]);
     }
 
     const navY = navBottom - navH / 2;
@@ -1556,10 +1561,10 @@ export class MenuScene extends Phaser.Scene {
   }
 
   /** Лаунч сцены-оверлея ('Meta' | 'Shop') с защитой от дублей. */
-  private openOverlayScene(key: string): void {
+  private openOverlayScene(key: string, payload?: { tab?: 'quests' }): void {
     audio.unlock();
     if (this.scene.isActive(key)) this.scene.stop(key);
-    this.scene.launch(key);
+    this.scene.launch(key, payload);
   }
 
   /** Чип дара дня у верхнего левого угла: лёгкий пульс, клик — оверлей. */
