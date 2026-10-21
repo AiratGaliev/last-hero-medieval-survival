@@ -70,6 +70,7 @@ export interface GameOverStats {
   meta?: {
     glory: { base: number; bonus: number; total: number; cap: number } | null;
     questsDone: number;
+    questsTotal: number;
     questsCompletedNow: { descKey: string; reward: number }[];
     passLevels: number;
     passRewards: { kind: string; amount: number }[];
@@ -600,11 +601,18 @@ export class GameOverScene extends Phaser.Scene {
       lines.push({ text, color: '#9a6a08' });
     }
 
-    // Задания дня: сколько закрыто всего и какие выполнились сейчас (§H.17)
+    // Показываем ежедневный прогресс каждый раз, даже если в этом ране
+    // ни одно задание не закрыто: игрок должен видеть остаток до 3/3.
+    if (m.questsTotal > 0) {
+      lines.push({
+        text: t('over.questsProgress', { done: num(m.questsDone), total: num(m.questsTotal) }),
+        color: '#3b2410',
+      });
+    }
     const doneNow = m.questsCompletedNow ?? [];
     if (doneNow.length > 0) {
       const list = doneNow.map((q) => t(q.descKey as TranslationKey)).join(' · ');
-      lines.push({ text: `${t('over.questsDone', { v: num(m.questsDone) })}: ${list}`, color: '#3b2410' });
+      lines.push({ text: `${t('over.questsNow', { v: num(doneNow.length) })}: ${list}`, color: '#3b2410' });
     }
 
     // Пропуск «Хроника» и цепочки достижений — по числу (§J, §H.12)
