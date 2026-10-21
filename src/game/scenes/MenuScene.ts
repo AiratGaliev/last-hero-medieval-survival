@@ -2039,6 +2039,7 @@ export class MenuScene extends Phaser.Scene {
         contract: null,
         ukaz: null,
         challenge: { mods: ch.mods, rerolled: salt !== '' },
+        challengeSeed: ch.seed,
         blessing: null,
         consumables: [],
         endless: false,
