@@ -135,7 +135,7 @@ export const en: Record<TranslationKey, string> = {
   'over.combo': 'BEST STREAK: ×{v}',
   'over.gold': 'GOLD: {v}',
   'over.score': 'SCORE: {v}',
-  'over.contractLabel': 'With contract ×{mult}',
+  'over.contractLabel': '{name} ×{mult}',
   'over.contractScore': '{v} score',
   'over.difficulty': 'DIFFICULTY: {v}',
   'over.newAch': 'NEW TROPHIES:',
