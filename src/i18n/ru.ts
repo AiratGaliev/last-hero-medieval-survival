@@ -489,6 +489,14 @@ export const ru = {
   'speedup.noTarget': 'НЕТ ЦЕЛИ',
   'speedup.poor': 'не хватает золота кошелька',
   'speedup.adUnavailable': 'РОЛИК НЕДОСТУПЕН',
+  'speedup.storageUnavailable': 'Не удалось сохранить покупку',
+  'speedup.repairGoldLabel': 'РЕМ. {v} ЗОЛ.',
+  'speedup.healGoldLabel': 'ЛЕЧ. {v} ЗОЛ.',
+  'speedup.needGold': 'НУЖНО {v} ЗОЛ.',
+  'speedup.tokenButton': 'ЖЕТОН',
+  'speedup.adButton': 'ВИДЕО',
+  'speedup.adUnavailableShort': 'НЕТ РЕКЛ.',
+  'speedup.noTargetShort': 'НЕТ ЦЕЛИ',
   'speedup.done': 'Ускорение применено',
 
   // ---------- Монастырь (TZ §G) ----------

@@ -484,6 +484,14 @@ export const en: Record<TranslationKey, string> = {
   'speedup.noTarget': 'NO TARGET',
   'speedup.poor': 'not enough shop gold',
   'speedup.adUnavailable': 'AD UNAVAILABLE',
+  'speedup.storageUnavailable': 'Purchase could not be saved',
+  'speedup.repairGoldLabel': 'FIX {v} GOLD',
+  'speedup.healGoldLabel': 'HEAL {v} GOLD',
+  'speedup.needGold': 'NEED {v} GOLD',
+  'speedup.tokenButton': 'TOKEN',
+  'speedup.adButton': 'AD',
+  'speedup.adUnavailableShort': 'NO AD',
+  'speedup.noTargetShort': 'NONE',
   'speedup.done': 'Speed-up applied',
 
   // ---------- Monastery (TZ §G) ----------

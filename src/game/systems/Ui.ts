@@ -340,6 +340,12 @@ export interface Button {
   /** Блокирует повторные нажатия во время анимации. */
   setEnabled(on: boolean): void;
   setLabel(text: string): void;
+  /** Перемещает визуал; hit-зону можно трансформировать для компенсации camera zoom. */
+  setPosition(
+    x: number,
+    y: number,
+    hitTransform?: { originX: number; originY: number; scaleX: number; scaleY: number },
+  ): void;
   destroy(): void;
 }
 
@@ -396,6 +402,9 @@ export function makeButton(
   fontSize = 20,
   opts: ButtonOpts = {},
 ): Button {
+  let buttonX = x;
+  let buttonY = y;
+  let hitTransform: { originX: number; originY: number; scaleX: number; scaleY: number } | null = null;
   const states = BUTTON_STATES[variant];
 
   const normal = fitSlices(states.normal, w, h);
@@ -450,9 +459,21 @@ export function makeButton(
     // «Утопленная» кнопка визуально садится на пару пикселей
     const sink = holding && enabled ? 3 : 0;
     const lift = hovering && enabled && !holding ? -2 : 0;
-    img.setY(y + sink + lift);
-    txt.setY(y + sink + lift);
-    hit.setY(y + sink + lift);
+    img.setY(buttonY + sink + lift);
+    txt.setY(buttonY + sink + lift);
+    if (hitTransform) {
+      // Кнопка визуально находится внутри HUD root (обратный camera zoom),
+      // а hit-зона остаётся top-level: иначе Phaser 4 неверно считает hit
+      // test для scrollFactor вложенного Container. Применяем ту же трансформацию.
+      hit.setPosition(
+        hitTransform.originX + buttonX * hitTransform.scaleX,
+        hitTransform.originY + (buttonY + sink + lift) * hitTransform.scaleY,
+      );
+      hit.setScale(hitTransform.scaleX, hitTransform.scaleY);
+    } else {
+      hit.setPosition(buttonX, buttonY + sink + lift);
+      hit.setScale(1);
+    }
 
     if (!enabled) img.clearTint();
   };
@@ -554,6 +575,19 @@ export function makeButton(
       baseTxt.x = txt.scaleX;
       baseTxt.y = txt.scaleY;
       tweenScale(holding ? 0.97 : hovering ? 1.06 : 1, 0);
+    },
+    setPosition(
+      newX: number,
+      newY: number,
+      transform?: { originX: number; originY: number; scaleX: number; scaleY: number },
+    ): void {
+      buttonX = newX;
+      buttonY = newY;
+      hitTransform = transform ?? null;
+      img.setPosition(buttonX, buttonY);
+      txt.setPosition(buttonX, buttonY);
+      if (!hitTransform) hit.setPosition(buttonX, buttonY);
+      applyVisual();
     },
     destroy(): void {
       scene.input.off(Phaser.Input.Events.POINTER_UP_OUTSIDE, onUpOutside);
