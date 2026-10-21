@@ -248,7 +248,7 @@ export function writePlayerDataValue(key: string, value: unknown, flush = false)
       persisted = true;
     })
     .catch((error: unknown) => {
-      console.warn('[player] не удалось сохранить данные аналитики:', error);
+      console.warn('[player] не удалось сохранить данные:', error);
     });
   return playerDataWriteQueue.then(() => persisted);
 }
