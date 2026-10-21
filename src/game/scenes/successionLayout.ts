@@ -13,6 +13,8 @@ export const RIBBON_KEY = 'ribbon-red' as const;
 export interface SuccessionLayoutOpts {
   /** Есть ли живые воины на поле (открывает ветку «взять командование»). */
   living: boolean;
+  /** Доступна ли ветка призыва за ресурсы/первый бесплатный призыв. */
+  resources: boolean;
   /** Сколько типов воина доступно для выбора. */
   options: number;
 }
@@ -122,9 +124,10 @@ export function successionLayout(
     const surrenderY = slot('surrender', surrenderH);
     const branchY = slot('branch', btnH);
 
-    // Слот «живой воин» выше обычного: под левой кнопкой живёт подпись.
+    // Строка выбора резервируется для живого воина и/или призыва за ресурсы.
+    // При отсутствии живого кандидата ресурсная ветка остаётся на том же месте.
     const captionH = compact ? 11 : 14;
-    const warriorH = opts.living ? btnH + captionH : 0;
+    const warriorH = (opts.living || opts.resources) ? btnH + (opts.living ? captionH : 0) : 0;
     const warriorY = warriorH ? slot('warrior', warriorH) : y + gap - btnH / 2;
 
     const n = Math.max(0, opts.options);
@@ -183,7 +186,7 @@ export function successionLayout(
     const b = isCompact ? 40 : 48;
     const g = isCompact ? 8 : 12;
     const head = isCompact ? 54 : 66;
-    const warrior = opts.living ? b + (isCompact ? 11 : 14) : 0;
+    const warrior = (opts.living || opts.resources) ? b + (opts.living ? (isCompact ? 11 : 14) : 0) : 0;
     const gridH = opts.options > 0 ? (isCompact ? 44 : 54) + 10 : 0;
     return head + gridH + warrior + 2 * b + 4 * g + 2 * p;
   };

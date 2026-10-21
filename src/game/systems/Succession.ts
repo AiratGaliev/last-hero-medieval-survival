@@ -1,5 +1,6 @@
 import { SUCCESSION_COST, SUCCESSION_GOLD, SUCCESSION_TYPES, type ResourceCost, type PawnWeapon, type HeroId } from '../data';
 import { loadJson, saveJson } from '../storage';
+import { getSuccessionFreeUsed, persistSuccessionFreeUsed } from '../../platform/player';
 import type { Economy } from './Economy';
 import type { Settlement } from './Settlement';
 import type { Pawn } from '../entities/Pawn';
@@ -42,14 +43,18 @@ export class Succession {
     this.settlement = settlement;
     this.resourcesBranchDisabled = opts.resourcesBranchDisabled === true;
     this.costMult = Math.max(0.1, opts.successionCostMult ?? 1);
-    // lifetime-флаг через storage.ts (префикс tss-); миграция старого ключа
-    const legacy = (() => { try { return localStorage.getItem('tss-succession-free'); } catch { return null; } })();
-    if (legacy === '1') {
-      this.freeUsed = true;
-      saveJson('succession-free', true);
-      try { localStorage.removeItem('tss-succession-free'); } catch { /* приватный режим */ }
+    // После bootstrap cloud/local результат уже привязан к текущему профилю.
+    // Старый общий ключ читаем только в автономном режиме без гидратации.
+    const hydrated = getSuccessionFreeUsed();
+    if (hydrated !== null) {
+      this.freeUsed = hydrated;
     } else {
-      this.freeUsed = loadJson<boolean>('succession-free') === true;
+      const legacy = (() => { try { return localStorage.getItem('tss-succession-free'); } catch { return null; } })();
+      this.freeUsed = legacy === '1' || loadJson<boolean>('succession-free') === true;
+      if (this.freeUsed) {
+        saveJson('succession-free', true);
+        persistSuccessionFreeUsed();
+      }
     }
   }
 
@@ -118,6 +123,7 @@ export class Succession {
   markFreeUsed(): void {
     this.freeUsed = true;
     saveJson('succession-free', true);
+    persistSuccessionFreeUsed();
   }
 
   /** Ветвь 1: воин становится героем. Пешка выпадает из гарнизона (§F.12).

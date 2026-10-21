@@ -11,7 +11,7 @@ import { installTextDefaults } from './game/systems/Text';
 import { initSdk, isOnYandex, getSdk } from './platform/sdk';
 import { initPayments } from './platform/payments';
 import { initAnalytics, exportBuffer } from './platform/analytics';
-import { loadPlayer } from './platform/player';
+import { hydrateSuccessionFreeUsed, loadPlayer } from './platform/player';
 import { detectLanguage, t } from './i18n';
 import { installLifecycle, setLifecycleHandlers, gameplayStop } from './platform/lifecycle';
 import type { GameScene } from './game/scenes/GameScene';
@@ -182,6 +182,9 @@ const boot = async (): Promise<void> => {
   if (isOnYandex()) await initPayments();
 
   if (isOnYandex()) await loadPlayer();
+  // Lifetime-преемственность читается до создания сцен, чтобы не показывать
+  // повторно бесплатную смену на другом устройстве. При ошибке останется локальный fallback.
+  await hydrateSuccessionFreeUsed();
 
   await waitForFont();
 

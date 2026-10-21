@@ -5,10 +5,9 @@
 // Модуль скрывает разницу: вне Яндекса все функции ниже — заглушки,
 // а игровой код о различиях не знает.
 //
-// Отдельного облачного сохранения через player.setData() нам делать не нужно:
-// для игр, залитых архивом, SDK сама подменяет localStorage надёжным
-// хранилищем (см. «Progress loss on iOS» в документации SDK), поэтому весь
-// существующий прогресс на localStorage сохраняется сам.
+// Для игр в архиве SDK подменяет localStorage надёжным локальным хранилищем,
+// что уменьшает риск потери данных на iOS. Это не межустройственное облачное
+// сохранение: для lifetime-флагов аккаунта отдельно используем getData/setData.
 
 /** Игрок, доступный через SDK (только то, чем пользуется игра). */
 export interface YandexPlayer {
@@ -16,6 +15,10 @@ export interface YandexPlayer {
   getUniqueID(): string;
   getName(): string | undefined;
   getPhoto(size: 'small' | 'medium' | 'large'): string | undefined;
+  /** Данные игрока для синхронизации прогресса между устройствами. */
+  getData?(keys?: string[]): Promise<Record<string, unknown>>;
+  /** Сохранить данные игрока; flush=true просит отправить их немедленно. */
+  setData?(data: Record<string, unknown>, flush?: boolean): Promise<void>;
 }
 
 /** Запись в таблицу рекордов Яндекса. */
