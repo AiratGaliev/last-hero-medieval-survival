@@ -594,7 +594,7 @@ export class GameScene extends Phaser.Scene {
       onBuildingDestroyed: (b) => this.settlement.onBuildingDestroyed(b),
       onMonasteryFalling: (_building, victims) => {
         this.hud?.announce(t('siege.monasteryFalling', { v: victims }), '#ff5544');
-        track('monastery_falling', { victims });
+        track('monastery_falling', { victims_n: victims });
       },
       // ---- Мета-эффекты рана (§H.16 дерево, §H.17 указы, §H.9 контракты, A2, §J.6.2) ----
       pawnSpeedMult: this.fx.pawnSpeedMult
@@ -652,7 +652,7 @@ export class GameScene extends Phaser.Scene {
       onMonasteryCollapsed: (victims) => {
         this.hud?.announce(t('siege.monasteryCollapsed', { v: victims }), '#ff5544');
         this.economy.emit('feed', { text: t('siege.monasteryCollapsed', { v: victims }) });
-        track('monastery_collapsed', { victims });
+        track('monastery_collapsed', { victims_n: victims });
       },
       onBuildingDestroyed: (b) => this.onBuildingDestroyed(b),
       onSiegeScore: (outcome, index) => this.onSiegeScore(outcome, index),
@@ -1607,9 +1607,10 @@ private ordersUnlocked(): boolean {
     }));
     this.orderMenu.openCustom(entries, wx, wy, (key) => {
       const w = key as import('../data').PawnWeapon;
+      const cost = this.economy.hireCost(w);
       if (this.economy.hire(w, b)) {
         this.hud.feed(t('hire.started', { v: t(`hire.${w}` as Parameters<typeof t>[0]) }), '#9fd8ff');
-        track('garrison_hired', { weapon: w });
+        track('garrison_hired', { weapon: w, cost, cause: 'player', building: b.kind });
         this.economy.emit('change');
       } else {
         this.hud.announce(t('building.cannot'), '#ff8866');
