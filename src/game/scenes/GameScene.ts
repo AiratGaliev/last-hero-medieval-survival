@@ -1283,6 +1283,7 @@ export class GameScene extends Phaser.Scene {
     });
     this.economy.on('pawnWounded', ({ pawn, cause }) => {
       this.hud.feed(t('pawn.wounded', { v: `${this.pawnTitle(pawn)} ${pawn.name}` }), '#ffb090');
+      this.effects.woundMark(pawn.x, pawn.y);
       audio.play('hurt');
       track('pawn_wounded', {
         name_role: `${pawn.kind}:${pawn.name}`,
@@ -2424,6 +2425,7 @@ private ordersUnlocked(): boolean {
     }
     if (this.settlement.siegeIdx >= 0) this.siegeDestroyed++;
     this.effects.explosion(b.x, b.y, 1.2, 2);
+    this.effects.splinters(b.x, b.y, b.kind === 'castle' ? 28 : 18);
     this.pauseMusicForBuildingDestruction();
     this.hud.feed(t('building.destroyed', { v: t(`building.${b.kind}.name` as Parameters<typeof t>[0]) }), '#ff6655');
     this.hud.announce(t('building.destroyed', { v: t(`building.${b.kind}.name` as Parameters<typeof t>[0]) }), '#ff6655');
@@ -3280,6 +3282,7 @@ private bossDeathSequence(e: Enemy): boolean {
     this.overlayOpen = true;
     gameplayStop();
     audio.play('levelup');
+    audio.play('bell');
     // Убираем подсказки перед запуском оверлея.
     //
     // Раньше здесь ничего не сбрасывалось, и обучающий баннер («Двигайся и
@@ -3289,8 +3292,15 @@ private bossDeathSequence(e: Enemy): boolean {
     // читалось как мусор в вёрстке. На паузе и в игре-овере подсказки
     // сбрасывались, а на этом экране забыли.
     this.hints.reset();
+    const heroScreen = this.worldHintTarget(() => ({ x: this.player.x, y: this.player.y }))();
+    const heroPoint = heroScreen && this.scale.width > 0 && this.scale.height > 0
+      ? { x: heroScreen.x / this.scale.width, y: heroScreen.y / this.scale.height }
+      : { x: 0.5, y: 0.6 };
     this.scene.pause();
     this.scene.launch('LevelUp', {
+      // Луч левел-апа использует нормализованную screen-space точку героя;
+      // сама сцена выбора анимирует его на своих работающих часах.
+      heroPoint,
       // Заголовок окна опускается ниже верхней полосы HUD: полоса босса
       // стоит ровно на той же высоте, и лента ложилась прямо на неё.
       topInset: this.hud.overlayTopInset(),
@@ -3530,6 +3540,7 @@ private bossDeathSequence(e: Enemy): boolean {
     audio.play('victory');
     this.shakeCamera(500, 0.006);
     this.effects.goldBurst(this.player.x, this.player.y - 24, 32);
+    this.effects.goldRain(32);
     // Кульминация победы разрешена даже на low и обходит общий budget (§H.13 №10).
     this.applyJuiceSlowMotion(1_500, 0.5, true);
     this.hitstop(200, true);
