@@ -63,6 +63,7 @@ export interface ShopState {
 export type ShopLevels = ShopState['upgrades'];
 
 const LS_SHOP = 'tss-shop';
+let shopSavedListener: (() => void) | null = null;
 
 const EMPTY: ShopState = {
   balance: 0,
@@ -100,7 +101,19 @@ function cloneEmpty(): ShopState {
 }
 
 function saveShop(state: ShopState): boolean {
-  return saveJson(LS_SHOP, state);
+  const saved = saveJson(LS_SHOP, state);
+  if (saved) shopSavedListener?.();
+  return saved;
+}
+
+/** Подключает сохранение общего облачного снимка после изменения кошелька/апгрейдов. */
+export function setShopSavedListener(listener: (() => void) | null): void {
+  shopSavedListener = listener;
+}
+
+/** Восстанавливает облачный снимок магазина без рекурсивного события синхронизации. */
+export function restoreShopState(raw: unknown): boolean {
+  return saveJson(LS_SHOP, sanitize(raw));
 }
 
 /** Начисление золота в кошелёк (вызывается в конце матча). */
