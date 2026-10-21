@@ -22,6 +22,7 @@ import { depositGold } from './shop';
 import { serverNow } from '../platform/sdk';
 import { track } from '../platform/analytics';
 import { persistExperimentFlagsToPlayerData } from '../platform/player';
+import { FTUE_MATCH_GATE } from './data';
 
 // ============================================================
 // Справочник дерева «Хроника Долины» (§H.16): 30 узлов, 3 ветви
@@ -309,9 +310,9 @@ export const ORDERS: OrderDef[] = [
 ];
 
 /** Указы открываются после 10-го матча (гейт 48). */
-export const UKAZ_AFTER_MATCH = 10;
+export const UKAZ_AFTER_MATCH = FTUE_MATCH_GATE.kingOrders;
 /** Вкладка дерева открывается после 3-го матча (гейт 48). */
-export const TREE_AFTER_MATCH = 3;
+export const TREE_AFTER_MATCH = FTUE_MATCH_GATE.valleyChronicle;
 
 // ============================================================
 // Контракты (§H.9): 0 или 1 на ран, множитель к SCORE
@@ -774,7 +775,7 @@ export const BONUS_RESET_HOURS = 26;
 // ============================================================
 
 /** Витрина крон скрыта до 5-го матча (§J.6.4, гейт 45). */
-export const STOREFRONT_AFTER_MATCH = 5;
+export const STOREFRONT_AFTER_MATCH = FTUE_MATCH_GATE.storefront;
 /** Конвертация крон → золото: 100 крон = 600 золота, лимит 3/день (§J.8). */
 export const CROWNS_TO_GOLD = { crowns: 100, gold: 600, perDay: 3 } as const;
 /** F2P-капля (§J.7): вызов дня 3 кроны за победу; волны бесконечного 5/10/20. */
@@ -1434,10 +1435,10 @@ export function claimWeeklyFinal(): { kind: 'crowns' | 'banner'; amount: number;
 
 /** Прогрессивное раскрытие считает именно завершённые раны. Матч 3 начинается
  * после двух завершённых ранов; эти пороги используются UI и игровыми guard-ами. */
-export const DAILY_BONUS_AFTER_MATCHES = 2;
-export const CHALLENGE_AFTER_MATCHES = 3;
-export const CONTRACTS_AFTER_MATCHES = 4;
-export const CODEX_AFTER_MATCHES = 5;
+export const DAILY_BONUS_AFTER_MATCHES = FTUE_MATCH_GATE.dailyBonus;
+export const CHALLENGE_AFTER_MATCHES = FTUE_MATCH_GATE.challenge;
+export const CONTRACTS_AFTER_MATCHES = FTUE_MATCH_GATE.contracts;
+export const CODEX_AFTER_MATCHES = FTUE_MATCH_GATE.codex;
 
 export interface BonusClaimResult {
   ok: boolean;
@@ -1816,6 +1817,11 @@ export function ordersUnlocked(): boolean {
 /** Витрина крон после 5-го матча (гейт 45). */
 export function showcaseUnlocked(): boolean {
   return rollMetaDay().matchesPlayed >= STOREFRONT_AFTER_MATCH;
+}
+
+/** Отдельный guard пропуска: порог объявлен отдельно, даже если совпадает с витриной. */
+export function seasonPassUnlocked(): boolean {
+  return rollMetaDay().matchesPlayed >= FTUE_MATCH_GATE.seasonPass;
 }
 
 export function buyNode(id: NodeId): { ok: boolean; reason?: 'locked' | 'poor' | 'owned' | 'unknown' } {
