@@ -788,7 +788,7 @@ export function consumeRunConfig(): RunModifiers {
     }
     cfg.endless = raw.endless === true;
     cfg.weeklyChallenge = raw.weeklyChallenge === true;
-    cfg.challengeSeed = typeof raw.challengeSeed === 'string' && /^\\d{4}-\\d{2}-\\d{2}$/.test(raw.challengeSeed)
+    cfg.challengeSeed = typeof raw.challengeSeed === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(raw.challengeSeed)
       ? raw.challengeSeed : null;
   }
   return cfg;
