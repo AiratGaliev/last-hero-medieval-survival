@@ -74,9 +74,46 @@ export class Effects {
     this.dustEmitter.explode(count, x, y);
   }
 
+  /** Облако щепок/пыли при разрушении здания (§H.13 №5). */
+  splinters(x: number, y: number, count = 16): void {
+    if (!this.scene.textures.exists('fx-dust')) return;
+    const emitter = this.scene.add.particles(x, y, 'fx-dust', {
+      frame: [0, 1, 2, 3, 4, 5, 6, 7],
+      speed: { min: 80, max: 230 },
+      angle: { min: 205, max: 335 },
+      gravityY: 220,
+      scale: { start: 0.42, end: 0.06 },
+      alpha: { start: 0.95, end: 0 },
+      lifespan: { min: 300, max: 620 },
+      tint: [0xcfa16b, 0x9c6b3e, 0xe6c48c],
+      emitting: false,
+    }).setDepth(DEPTH.FX + 4);
+    emitter.explode(Math.max(1, Math.min(32, Math.round(count))), x, y);
+    this.scene.time.delayedCall(800, () => emitter.destroy());
+  }
+
   /** Брызги при попадании по врагу */
   hitSpark(x: number, y: number): void {
     this.sparkEmitter.explode(3, x, y);
+  }
+
+  /** Красный знак + над раненой пешкой (§H.13 №6). */
+  woundMark(x: number, y: number): void {
+    const mark = this.scene.add.container(x, y - 26).setDepth(DEPTH.FX + 12);
+    const disc = this.scene.add.circle(0, 0, 8, 0xb92335, 0.96)
+      .setStrokeStyle(1.5, 0xffe0c4, 0.95);
+    const horizontal = this.scene.add.rectangle(0, 0, 10, 2.5, 0xffffff, 1);
+    const vertical = this.scene.add.rectangle(0, 0, 2.5, 10, 0xffffff, 1);
+    mark.add([disc, horizontal, vertical]);
+    this.scene.tweens.add({
+      targets: mark,
+      y: y - 58,
+      alpha: 0,
+      scale: { from: 0.8, to: 1.1 },
+      duration: 850,
+      ease: 'Quad.easeOut',
+      onComplete: () => mark.destroy(),
+    });
   }
 
   /** Эффект лечения */
@@ -222,6 +259,45 @@ export class Effects {
       ease: 'Quad.easeIn',
       onComplete: () => g.destroy(),
     });
+  }
+
+  /** Дождь монет из ассетов UI при победе над боссом (§H.13 №10). */
+  goldRain(count = 28): void {
+    if (!this.scene.textures.exists('icon-coin')) return;
+    const view = this.scene.cameras.main.worldView;
+    const safeCount = Math.max(1, Math.min(40, Math.round(count)));
+    for (let i = 0; i < safeCount; i++) {
+      const startX = Phaser.Math.Between(
+        Math.round(view.x + 12),
+        Math.round(view.x + Math.max(13, view.width - 12)),
+      );
+      const startY = view.y + Phaser.Math.Between(0, Math.max(1, Math.round(view.height * 0.18)));
+      const coin = this.scene.add.image(startX, startY, 'icon-coin')
+        .setDisplaySize(15, 15)
+        .setTint(0xffdf72)
+        .setAlpha(0)
+        .setDepth(DEPTH.FX + 12);
+      const endY = startY + Phaser.Math.Between(90, Math.max(91, Math.round(view.height * 0.42)));
+      this.scene.tweens.add({
+        targets: coin,
+        x: startX + Phaser.Math.Between(-28, 28),
+        y: endY,
+        angle: Phaser.Math.Between(-240, 240),
+        scale: { from: 0.75, to: 0.24 },
+        alpha: { from: 0, to: 1 },
+        duration: Phaser.Math.Between(520, 1_000),
+        delay: i * 24,
+        ease: 'Sine.In',
+        onComplete: () => {
+          this.scene.tweens.add({
+            targets: coin,
+            alpha: 0,
+            duration: 180,
+            onComplete: () => coin.destroy(),
+          });
+        },
+      });
+    }
   }
 
   /** Взрыв золотых искр (момент эволюции/новы) */
