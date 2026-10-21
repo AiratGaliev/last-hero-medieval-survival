@@ -62,6 +62,8 @@ interface OptionCard {
 
 export class SuccessionScene extends Phaser.Scene {
   private data_: SuccessionData | null = null;
+  private lastData_: SuccessionData | null = null;
+  private adButton: Button | null = null;
   /** Выбранный тип воина для платных веток. */
   private picked: string = 'sword';
   private adUsed = false;
@@ -75,7 +77,15 @@ export class SuccessionScene extends Phaser.Scene {
   }
 
   create(data: SuccessionData): void {
+    // Resize перезапускает сцену с тем же payload — нельзя терять lock текущего
+    // rewarded-показа. Новый объект данных означает новую ситуацию преемственности.
+    if (data !== this.lastData_) {
+      this.adUsed = false;
+      this.adInFlight = false;
+      this.lastData_ = data;
+    }
     this.data_ = data;
+    this.adButton = null;
     this.surrendered = false;
     this.cards.clear();
     // ⚠️ Выбор сбрасывается на первый ДОСТУПНЫЙ тип (§F.5). Раньше оставался
@@ -134,7 +144,7 @@ export class SuccessionScene extends Phaser.Scene {
     // ---- Платные ветки: реклама / золото (первая преемственность — бесплатна)
     const free = data.firstFree;
     const freeLabel = `${t('succession.reason.free').toUpperCase()} — ${t('pawn.firstFree')}`;
-    this.addBtn(cx - halfW / 2 - 7, L.branchY, halfW, btnH,
+    this.adButton = this.addBtn(cx - halfW / 2 - 7, L.branchY, halfW, btnH,
       t('succession.watchAd'), 'blue', btnFont, () => void this.takeAd(),
       free || !placementAvailable('succession'));
     this.addBtn(cx + halfW / 2 + 7, L.branchY, halfW, btnH,
@@ -307,14 +317,26 @@ export class SuccessionScene extends Phaser.Scene {
   private async takeAd(): Promise<void> {
     if (!this.data_ || this.adUsed || this.adInFlight) return;
     this.adInFlight = true;
+    this.adButton?.setEnabled(false);
     try {
       const res = await showPlacementRewarded('succession');
       if (res.rewarded) {
         this.adUsed = true;
-        if (this.data_?.onTakeAd(this.picked)) this.scene.stop();
-      } else {
-        this.flash('speedup.adUnavailable');
+        if (this.data_?.onTakeAd(this.picked)) {
+          this.scene.stop();
+          return;
+        }
       }
+
+      // Отказ/ошибка текущего показа закрывает рекламную ветку этого окна:
+      // игрок может выбрать другой способ преемственности или сдаться.
+      this.adUsed = true;
+      this.adButton?.setEnabled(false);
+      this.flash('speedup.adUnavailable');
+    } catch {
+      this.adUsed = true;
+      this.adButton?.setEnabled(false);
+      this.flash('speedup.adUnavailable');
     } finally {
       this.adInFlight = false;
     }
