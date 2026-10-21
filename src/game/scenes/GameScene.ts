@@ -155,8 +155,18 @@ export class GameScene extends Phaser.Scene {
   }
 
   private gameplayInt(min: number, max: number): number {
-    if (!this.mods.challenge || !this.mods.challengeSeed) return Phaser.Math.Between(min, max);
+    if (!this.isSeededDailyChallenge) return Phaser.Math.Between(min, max);
     return min + Math.floor(this.gameplayRandom() * (max - min + 1));
+  }
+
+  /** Варианты левел-апа тоже должны пользоваться seeded RNG внутри вызова дня. */
+  private shuffleGameplay<T>(items: T[]): T[] {
+    if (!this.isSeededDailyChallenge) return Phaser.Utils.Array.Shuffle(items);
+    for (let i = items.length - 1; i > 0; i--) {
+      const j = Math.floor(this.gameplayRandom() * (i + 1));
+      [items[i], items[j]] = [items[j], items[i]];
+    }
+    return items;
   }
 
   private get isSeededDailyChallenge(): boolean {
@@ -1393,8 +1403,8 @@ export class GameScene extends Phaser.Scene {
         if (this.pickups.chestPos()) {
           for (let i = 0; i < 3; i++) {
             this.pickups.spawnGoldGem(
-              pawn.x + Phaser.Math.Between(-30, 30),
-              pawn.y + Phaser.Math.Between(-20, 20), 12,
+              pawn.x + this.gameplayInt(-30, 30),
+              pawn.y + this.gameplayInt(-20, 20), 12,
             );
           }
         } else {
@@ -2695,8 +2705,8 @@ private ordersUnlocked(): boolean {
       const per = Math.floor(e.xpValue / n);
       let rest = e.xpValue - per * n;
       for (let i = 0; i < n; i++) {
-        const ox = big ? Phaser.Math.Between(-40, 40) : 0;
-        const oy = big ? Phaser.Math.Between(-40, 40) : 0;
+        const ox = big ? this.gameplayInt(-40, 40) : 0;
+        const oy = big ? this.gameplayInt(-40, 40) : 0;
         const amount = per + (rest > 0 ? 1 : 0);
         rest -= amount - per;
         if (amount > 0) this.pickups.spawnGem(x + ox, y + oy, e.def.gem, amount);
@@ -3324,9 +3334,9 @@ private bossDeathSequence(e: Enemy): boolean {
           desc: t(`settle.${def.id}.desc` as Parameters<typeof t>[0]),
         });
       }
-      Phaser.Utils.Array.Shuffle(cards);
+      this.shuffleGameplay(cards);
       // Одна карта поселения на выдачу — не вытесняет боевую прокачку
-      if (cards[0]) picked.splice(Phaser.Math.Between(0, Math.min(2, picked.length - 1)), 0, cards[0]);
+      if (cards[0]) picked.splice(this.gameplayInt(0, Math.min(2, picked.length - 1)), 0, cards[0]);
       if (picked.length > 3) picked.length = 3;
     }
 
