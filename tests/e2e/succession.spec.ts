@@ -23,6 +23,7 @@ type GameSceneRuntime = {
   economy: {
     buildings: BuildingRuntime[];
     pawns: unknown[];
+    removePawn(pawn: unknown, paid?: boolean): void;
     resources: { wood: number; ore: number; meat: number };
   };
   succession: {
@@ -122,6 +123,12 @@ test('phase N: no living warrior still exposes first-free resource succession an
       alive: true,
       underConstruction: false,
     });
+    // Исключаем живых кандидатов, чтобы проверялся именно сценарий без
+    // готового преемника, а не автоматическая ветка живого гарнизонца.
+    for (const pawn of [...scene.economy.pawns]) {
+      const candidate = pawn as { canBecomeHero?: () => boolean };
+      if (candidate.canBecomeHero?.()) scene.economy.removePawn(pawn, false);
+    }
     const woodBefore = scene.economy.resources.wood;
     const oreBefore = scene.economy.resources.ore;
     const pawnCountBefore = scene.economy.pawns.length;
