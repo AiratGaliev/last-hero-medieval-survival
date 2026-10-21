@@ -5,7 +5,7 @@ import { audio } from '../systems/Audio';
 import { makeButton, makePanel, makeRibbon, resizePanel, fitTextWidth, type Button } from '../systems/Ui';
 import { t, num, type TranslationKey, type TranslateParams } from '../../i18n';
 import { FTUE_MATCH_GATE } from '../data';
-import { loadText, saveText, removeKey } from '../storage';
+import { track } from '../../platform/analytics';
 import { track } from '../../platform/analytics';
 import { placementAvailable, showPlacementRewarded, showStickyBanner } from '../../platform/ads';
 import { purchaseSku } from '../../platform/payments';
@@ -30,7 +30,9 @@ import {
   SEASON_STEPS,
   TREE_NODES,
   gloryBalance,
+  loadMetaPreferences,
   loadMetaState,
+  saveMetaPreferences,
   ordersUnlocked,
   ORDERS,
   PASS,
@@ -569,7 +571,7 @@ export class MetaScene extends Phaser.Scene {
       return;
     }
 
-    const active = loadText('tss-ukaz-pick');
+    const active = loadMetaPreferences().ukaz;
     const w = x1 - x0;
     const rowH = Math.max(52, Math.min(62, Math.floor((y1 - y0 - 6) / ORDERS.length)));
 
@@ -599,9 +601,9 @@ export class MetaScene extends Phaser.Scene {
       zone.on('pointerdown', () => {
         audio.play('click');
         if (isActive) {
-          removeKey('tss-ukaz-pick');
+          saveMetaPreferences({ ...loadMetaPreferences(), ukaz: null });
         } else {
-          saveText('tss-ukaz-pick', o.id);
+          saveMetaPreferences({ ...loadMetaPreferences(), ukaz: o.id });
           track('ukaz_taken', { id: o.id });
         }
         this.renderTab();
