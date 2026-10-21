@@ -146,7 +146,10 @@ async function decodeHistory(payload: unknown): Promise<BufferedEvent[][]> {
     let json: string;
     if (payload.startsWith('gzip:')) {
       if (typeof DecompressionStream === 'undefined') return [];
-      const stream = new Blob([base64ToBytes(payload.slice(5))]).stream()
+      const payloadBytes = base64ToBytes(payload.slice(5));
+      const ownedBuffer = new ArrayBuffer(payloadBytes.byteLength);
+      new Uint8Array(ownedBuffer).set(payloadBytes);
+      const stream = new Blob([ownedBuffer]).stream()
         .pipeThrough(new DecompressionStream('gzip'));
       json = await new Response(stream).text();
     } else {
