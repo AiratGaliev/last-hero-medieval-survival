@@ -343,3 +343,44 @@ test('contract score applies the registered multiplier without replacing the bas
     contract: 'c_hunger', baseScore: 0, multiplier: 1.15, adjustedScore: 0,
   });
 });
+
+
+test('main menu and result payload can expose the daily quest completion ratio', async ({ page }) => {
+  await page.addInitScript(() => {
+    const today = new Date().toISOString().slice(0, 10);
+    localStorage.clear();
+    localStorage.setItem('tss-meta2', JSON.stringify({
+      v: 2,
+      savedAt: Date.now(),
+      matchesPlayed: 10,
+      quests: {
+        date: today,
+        ids: ['q_new_house', 'q_score_10k', 'q_gold_800'],
+        progress: { q_new_house: 3, q_score_10k: 10000 },
+        done: ['q_new_house', 'q_score_10k'],
+        rerolls: 0,
+      },
+      dailyBonus: { last: '', lastAt: 0, streak: 0 },
+    }));
+  });
+
+  await page.goto('/?lang=en&ysdk=mock');
+  await expect(page.locator('#game canvas')).toBeVisible({ timeout: startupTimeout });
+  await expect(page.locator('#boot')).toHaveCount(0, { timeout: startupTimeout });
+
+  const labels = await page.evaluate(() => {
+    const game = (window as unknown as {
+      __tss?: {
+        scene: {
+          getScene: (key: string) => { children: { list: unknown[] } };
+        };
+      };
+    }).__tss;
+    const menu = game?.scene.getScene('Menu');
+    return (menu?.children.list ?? [])
+      .map((item) => (item as { text?: unknown }).text)
+      .filter((value): value is string => typeof value === 'string');
+  });
+
+  expect(labels.some((label) => label.includes('CHRONICLE') && label.includes('Quests 2/3'))).toBe(true);
+});
