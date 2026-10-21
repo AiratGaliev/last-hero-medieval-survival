@@ -290,3 +290,56 @@ test('daily quest and weekly keys use UTC rather than the browser timezone', asy
     await context.close();
   }
 });
+
+
+test('contract score applies the registered multiplier without replacing the base score', async ({ page }) => {
+  await page.goto('/?lang=en&ysdk=mock');
+  await expect(page.locator('#game canvas')).toBeVisible({ timeout: startupTimeout });
+  await expect(page.locator('#boot')).toHaveCount(0, { timeout: startupTimeout });
+
+  const result = await page.evaluate(async () => {
+    const moduleUrl = new URL('/src/game/meta.ts', window.location.origin).href;
+    const meta = await import(/* @vite-ignore */ moduleUrl) as {
+      contractScoreForRun: (
+        score: number,
+        contractId: string | null,
+      ) => {
+        contract: string | null;
+        baseScore: number;
+        multiplier: number;
+        adjustedScore: number;
+      };
+    };
+    const ids = [
+      'c_no_repair', 'c_quiet', 'c_hunger', 'c_lone_hero',
+      'c_black_market', 'c_pacifist', 'c_siege_state', 'c_night',
+    ];
+    return {
+      withoutContract: meta.contractScoreForRun(1_251, null),
+      byContract: ids.map((id) => ({ id, ...meta.contractScoreForRun(1_251, id) })),
+      invalid: meta.contractScoreForRun(1_251, 'unknown-contract'),
+      negative: meta.contractScoreForRun(-50, 'c_hunger'),
+    };
+  });
+
+  expect(result.withoutContract).toEqual({
+    contract: null, baseScore: 1251, multiplier: 1, adjustedScore: 1251,
+  });
+  expect(result.byContract.map((item) => [item.id, item.multiplier, item.adjustedScore])).toEqual([
+    ['c_no_repair', 1.2, 1501],
+    ['c_quiet', 1.25, 1564],
+    ['c_hunger', 1.15, 1439],
+    ['c_lone_hero', 1.3, 1626],
+    ['c_black_market', 1.15, 1439],
+    ['c_pacifist', 1.1, 1376],
+    ['c_siege_state', 1.4, 1751],
+    ['c_night', 1.25, 1564],
+  ]);
+  expect(result.byContract.every((item) => item.baseScore === 1251 && item.contract === item.id)).toBe(true);
+  expect(result.invalid).toEqual({
+    contract: null, baseScore: 1251, multiplier: 1, adjustedScore: 1251,
+  });
+  expect(result.negative).toEqual({
+    contract: 'c_hunger', baseScore: 0, multiplier: 1.15, adjustedScore: 0,
+  });
+});
