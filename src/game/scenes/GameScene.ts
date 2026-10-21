@@ -33,11 +33,11 @@ import { GarrisonDpsBudget } from '../systems/GarrisonDpsBudget';
 import { HUD } from '../systems/HUD';
 import { Joystick } from '../systems/Joystick';
 import { AchTracker, commitMeta } from '../achievements';
-import { depositGold, getShopLevels, type ShopLevels } from '../shop';
+import { depositGold, getShopLevels, loadShop, type ShopLevels } from '../shop';
 import { t } from '../../i18n';
 import { loadText } from '../storage';
 import { gameplayStart, gameplayStop } from '../../platform/lifecycle';
-import { resetPlacementLimits, hideStickyBanner } from '../../platform/ads';
+import { placementAvailable, resetPlacementLimits, hideStickyBanner } from '../../platform/ads';
 import { track, beginRun, flushRunTelemetry } from '../../platform/analytics';
 import {
   consumeRunConfig, loadMetaState, rollMetaDay, nodeEffects, seasonDef,
@@ -1319,48 +1319,53 @@ export class GameScene extends Phaser.Scene {
       }).setDepth(DEPTH.FX);
       this.trailEmitter.startFollow(this.player, 0, 16);
     }
+    const announceSpeedupResult = (reason: string): void => {
+      const key = reason === 'storage'
+        ? 'speedup.storageUnavailable'
+        : reason === 'noTarget'
+          ? 'speedup.noTarget'
+          : reason === 'poor'
+            ? 'speedup.poor'
+            : 'speedup.adUnavailable';
+      this.hud.announce(t(key as Parameters<typeof t>[0]), '#ff8866');
+    };
+    const useCurrency = (kind: 'repair' | 'heal'): void => {
+      // Контракт «Без ремонта» (§H.9): запрет действует для обеих валют.
+      if (kind === 'repair' && this.contractId === 'c_no_repair') {
+        this.hud.feed(t('contract.no_repair.name'), '#ff8866');
+        return;
+      }
+      // Наградной жетон — бесплатный приоритет; рекламный показ никогда не
+      // запускается автоматически из кнопки списания валюты.
+      const token = this.speedup.buyWithToken(kind);
+      if (token.ok) {
+        this.hud.announce(t('speedup.done'), '#7dc95e');
+        return;
+      }
+      if (token.reason === 'storage' || token.reason === 'noTarget') {
+        announceSpeedupResult(token.reason);
+        return;
+      }
+      const wallet = this.speedup.buyWithGold(kind);
+      if (wallet.ok) this.hud.announce(t('speedup.done'), '#7dc95e');
+      else announceSpeedupResult(wallet.reason ?? 'poor');
+    };
+    const useAd = (kind: 'repair' | 'heal'): void => {
+      if (kind === 'repair' && this.contractId === 'c_no_repair') {
+        this.hud.feed(t('contract.no_repair.name'), '#ff8866');
+        return;
+      }
+      // Реклама доступна только по явному нажатию кнопки «Видео».
+      void this.speedup.buyWithAd(kind).then((result) => {
+        if (result.ok) this.hud.announce(t('speedup.done'), '#7dc95e');
+        else announceSpeedupResult(result.reason);
+      });
+    };
     this.hud.setSpeedupHandlers({
-      repair: () => {
-        // Контракт «Без ремонта» (§H.9): ремонт запрещён — причина в ленту
-        if (this.contractId === 'c_no_repair') {
-          this.hud.feed(t('contract.no_repair.name'), '#ff8866');
-          return;
-        }
-        // Порядок валют §G.8 + §J.6.2: жетон (награда) → кошелёк → реклама.
-        const byToken = this.speedup.buyWithToken('repair');
-        if (byToken.ok) {
-          this.hud.announce(t('speedup.done'), '#7dc95e');
-          return;
-        }
-        // §G.8: обе валюты доступны обоим ускорениям — кошелёк первичен,
-        // реклама — резерв, когда золота не хватает
-        const res = this.speedup.buyWithGold('repair');
-        if (res.ok) {
-          this.hud.announce(t('speedup.done'), '#7dc95e');
-          return;
-        }
-        this.speedup.buyWithAd('repair').then((ad) => {
-          if (ad.ok) this.hud.announce(t('speedup.done'), '#7dc95e');
-          else this.hud.announce(t(`speedup.${ad.reason === 'poor' ? 'poor' : ad.reason === 'noTarget' ? 'noTarget' : 'adUnavailable'}` as Parameters<typeof t>[0]), '#ff8866');
-        });
-      },
-      heal: () => {
-        // Порядок валют §G.8 + §J.6.2: жетон → кошелёк → реклама
-        const byToken = this.speedup.buyWithToken('heal');
-        if (byToken.ok) {
-          this.hud.announce(t('speedup.done'), '#7dc95e');
-          return;
-        }
-        const res = this.speedup.buyWithGold('heal');
-        if (res.ok) {
-          this.hud.announce(t('speedup.done'), '#7dc95e');
-          return;
-        }
-        this.speedup.buyWithAd('heal').then((ad) => {
-          if (ad.ok) this.hud.announce(t('speedup.done'), '#7dc95e');
-          else this.hud.announce(t(`speedup.${ad.reason === 'poor' ? 'poor' : ad.reason === 'noTarget' ? 'noTarget' : 'adUnavailable'}` as Parameters<typeof t>[0]), '#ff8866');
-        });
-      },
+      repairCurrency: () => useCurrency('repair'),
+      repairAd: () => useAd('repair'),
+      healCurrency: () => useCurrency('heal'),
+      healAd: () => useAd('heal'),
     });
   }
 
@@ -1844,7 +1849,11 @@ private ordersUnlocked(): boolean {
       );
       this.hud.updateSpeedups(
         this.speedup.hasTarget('repair'),
-        this.speedup.hasTarget('heal') && this.economy.usedHealSlots() + this.economy.pawns.filter((p) => p.state === 'bleeding').length > 0,
+        this.speedup.hasTarget('heal'),
+        loadShop().balance,
+        this.speedup.hasToken(),
+        placementAvailable('repair-speedup'),
+        placementAvailable('heal-speedup'),
       );
       this.hud.updateResources(this.economy.resources);
     }

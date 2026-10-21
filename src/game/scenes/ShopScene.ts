@@ -640,6 +640,8 @@ export class ShopScene extends Phaser.Scene {
         // Не хватило золота: короткая встряска кнопки (как в MenuScene)
         const btnImg = priceBtn.img;
         this.tweens.add({ targets: btnImg, x: { from: btnImg.x - 5, to: btnImg.x }, duration: 180 });
+      } else if (res.reason === 'storage') {
+        this.toast(t('speedup.storageUnavailable'));
       }
     };
     const priceBtn = makeButton(

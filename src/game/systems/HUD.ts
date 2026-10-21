@@ -1,5 +1,5 @@
 import Phaser from 'phaser';
-import { DEPTH, FONT, GAME_DURATION, COMBO, MAX_LEVEL } from '../constants';
+import { DEPTH, FONT, GAME_DURATION, COMBO, MAX_LEVEL, SPEEDUP_COST } from '../constants';
 import type { AchievementDef } from '../achievements';
 import { audio } from './Audio';
 import { hudBottomInset, safeInsets, resetSafeInsets } from '../safeArea';
@@ -149,10 +149,16 @@ export class HUD {
   private settlePopBar!: Phaser.GameObjects.Image;
   private garrisonText!: Phaser.GameObjects.Text;
   private feedItems: Array<Phaser.GameObjects.Container> = [];
-  private speedupBtns: Record<string, Phaser.GameObjects.Container> = {};
-  /** Кнопки ускорения — собраны из ассетов (nine-slice), см. systems/Ui.ts */
+  /** Кнопки оплаты ускорений. Hit-зоны остаются верхнеуровневыми объектами из-за особенностей Phaser 4. */
   private speedupButtons: Record<string, Button> = {};
-  private speedupHandlers: { repair: () => void; heal: () => void } = { repair: () => {}, heal: () => {} };
+  private speedupHandlers: {
+    repairCurrency: () => void;
+    repairAd: () => void;
+    healCurrency: () => void;
+    healAd: () => void;
+  } = {
+    repairCurrency: () => {}, repairAd: () => {}, healCurrency: () => {}, healAd: () => {},
+  };
 
   private resizeHandler = () => { resetSafeInsets(); this.layout(); };
 
@@ -673,8 +679,13 @@ private bottomStack(): { iconsY: number; speedupY: number; feedY: number } {
     });
   }
 
-  /** Кнопки ускорений (§G.8): callback’и GameScene. */
-  setSpeedupHandlers(h: { repair: () => void; heal: () => void }): void {
+  /** Обработчики выбора оплаты: валюта/жетон и rewarded — разные явные действия. */
+  setSpeedupHandlers(h: {
+    repairCurrency: () => void;
+    repairAd: () => void;
+    healCurrency: () => void;
+    healAd: () => void;
+  }): void {
     this.speedupHandlers = h;
   }
 
@@ -687,46 +698,91 @@ private bottomStack(): { iconsY: number; speedupY: number; feedY: number } {
  * механика есть и почему она не работает. Теперь кнопка всегда на месте и
  * меняет подпись на причину отказа.
  */
-  updateSpeedups(repairTarget: boolean, healTarget: boolean): void {
+  updateSpeedups(
+    repairTarget: boolean,
+    healTarget: boolean,
+    walletBalance: number,
+    hasSpeedupToken: boolean,
+    repairAdAvailable: boolean,
+    healAdAvailable: boolean,
+  ): void {
     const W = this.scene.scale.width;
-    const bw = this.sc(148);
+    const groupW = this.sc(148);
+    const currencyW = this.sc(90);
+    const gap = this.sc(4);
+    const adW = groupW - currencyW - gap;
     const bh = this.sc(SPEEDUP_H);
     const rowY = this.bottomStack().speedupY;
-    // Кнопки стоят в ряд над иконками оружия. Раньше они были столбиком и
-    // на телефоне наезжали на ряд иконок и на ленту событий.
-    const defs: Array<[string, string, boolean, number, string]> = [
-      ['repair', t('speedup.repair'), repairTarget, 0, t('speedup.noTarget')],
-      ['heal', t('speedup.heal'), healTarget, 1, t('speedup.noTarget')],
-    ];
-    for (const [key, label, enabled, col, why] of defs) {
-      let c = this.speedupBtns[key];
-      if (!c) {
-        // Кнопка — тот же nine-slice, что и в меню: в HUD кнопки раньше
-        // рисовались голыми прямоугольниками и выглядели инородно.
-        const btn = makeButton(
-          this.scene, 0, 0, bw, bh, label,
-          () => this.speedupHandlers[key as 'repair' | 'heal'](),
-          'red', this.sc(12),
+
+    const currencyLabel = (kind: 'repair' | 'heal', target: boolean): string => {
+      if (!target) return t('speedup.noTarget');
+      if (hasSpeedupToken) return t('speedup.tokenButton');
+      const cost = SPEEDUP_COST[kind];
+      return walletBalance >= cost
+        ? t(kind === 'repair' ? 'speedup.repairGoldLabel' : 'speedup.healGoldLabel', { v: cost })
+        : t('speedup.needGold', { v: cost });
+    };
+
+    const defs = [
+      {
+        key: 'repairCurrency', kind: 'currency', group: 0,
+        label: currencyLabel('repair', repairTarget),
+        enabled: repairTarget && (hasSpeedupToken || walletBalance >= SPEEDUP_COST.repair),
+        click: this.speedupHandlers.repairCurrency,
+      },
+      {
+        key: 'repairAd', kind: 'ad', group: 0,
+        label: !repairTarget ? t('speedup.noTargetShort')
+          : repairAdAvailable ? t('speedup.adButton') : t('speedup.adUnavailableShort'),
+        enabled: repairTarget && repairAdAvailable,
+        click: this.speedupHandlers.repairAd,
+      },
+      {
+        key: 'healCurrency', kind: 'currency', group: 1,
+        label: currencyLabel('heal', healTarget),
+        enabled: healTarget && (hasSpeedupToken || walletBalance >= SPEEDUP_COST.heal),
+        click: this.speedupHandlers.healCurrency,
+      },
+      {
+        key: 'healAd', kind: 'ad', group: 1,
+        label: !healTarget ? t('speedup.noTargetShort')
+          : healAdAvailable ? t('speedup.adButton') : t('speedup.adUnavailableShort'),
+        enabled: healTarget && healAdAvailable,
+        click: this.speedupHandlers.healAd,
+      },
+    ] as const;
+
+    for (const def of defs) {
+      const width = def.kind === 'currency' ? currencyW : adW;
+      const groupCenter = W - this.sc(14) - groupW / 2 - def.group * (groupW + this.sc(8));
+      const groupLeft = groupCenter - groupW / 2;
+      const x = def.kind === 'currency'
+        ? groupLeft + currencyW / 2
+        : groupLeft + currencyW + gap + adW / 2;
+      const fontSize = this.sc(def.kind === 'currency' ? 10 : 9);
+      let btn = this.speedupButtons[def.key];
+      if (!btn) {
+        btn = makeButton(
+          this.scene, x, rowY, width, bh, def.label,
+          def.click, 'blue', fontSize,
+          { hitW: width, hitH: bh },
         );
-        c = this.scene.add.container(0, 0);
-        c.add([btn.img, btn.txt]);
-        this.speedupBtns[key] = c;
-        this.speedupButtons[key] = btn;
-        this.root.add(c);
+        // Текст и графика компенсируют зум через root. В Phaser 4 nested
+        // hit-зоны не получают ту же коррекцию; оставляем hit top-level и
+        // перемещаем его через Button.setPosition вместе с визуалом.
+        this.root.add([btn.img, btn.txt]);
+        btn.hit.setScrollFactor(0).setDepth(DEPTH.HUD + 1);
+        this.speedupButtons[def.key] = btn;
       }
-      const btn = this.speedupButtons[key];
-      if (btn) {
-        btn.setLabel(enabled ? label : why);
-        btn.setEnabled(enabled);
-        // Недоступная кнопка гаснет прозрачностью, а подпись остаётся
-        // светлой: серый текст поверх красной плашки при 55 % прозрачности
-        // сливался в бурое пятно, и причину отказа было не прочитать.
-        btn.txt.setColor('#ffffff');
-      }
-      // Правый край — по ЦЕНТРУ кнопки. Контейнер создаётся в нуле, а
-      // раньше его ставили в точку у самого края экрана: половина кнопки
-      // (74 px) уезжала за границу, и подпись обрезалась.
-      c.setPosition(W - this.sc(14) - bw / 2 - col * (bw + this.sc(8)), rowY);
+      btn.setLabel(def.label);
+      btn.setEnabled(def.enabled);
+      btn.txt.setColor('#ffffff');
+      btn.setPosition(x, rowY, {
+        originX: this.root.x,
+        originY: this.root.y,
+        scaleX: this.root.scaleX,
+        scaleY: this.root.scaleY,
+      });
     }
   }
 
@@ -1096,6 +1152,8 @@ private bottomStack(): { iconsY: number; speedupY: number; feedY: number } {
   destroy(): void {
     this.scene.scale.off('resize', this.resizeHandler);
     window.removeEventListener('orientationchange', this.resizeHandler);
+    for (const button of Object.values(this.speedupButtons)) button.destroy();
+    this.speedupButtons = {};
     this.root.destroy();
     this.pauseBg.destroy();
     this.pauseTxt.destroy();

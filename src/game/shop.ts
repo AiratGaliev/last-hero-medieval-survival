@@ -99,16 +99,19 @@ function cloneEmpty(): ShopState {
   return { ...EMPTY, upgrades: { ...EMPTY.upgrades } };
 }
 
-function saveShop(state: ShopState): void {
-  saveJson(LS_SHOP, state);
+function saveShop(state: ShopState): boolean {
+  return saveJson(LS_SHOP, state);
 }
 
 /** Начисление золота в кошелёк (вызывается в конце матча). */
 export function depositGold(gold: number): void {
-  if (gold <= 0) return;
+  const amount = Math.floor(gold);
+  if (!Number.isFinite(gold) || amount <= 0) return;
   const st = loadShop();
-  st.balance += Math.floor(gold);
-  saveShop(st);
+  st.balance += amount;
+  if (!saveShop(st)) {
+    console.warn('[shop] не удалось сохранить начисленное золото кошелька');
+  }
 }
 
 /**
@@ -117,18 +120,19 @@ export function depositGold(gold: number): void {
  * иначе двойной клик списал бы дважды.
  */
 export function spendGold(amount: number): BuyResult {
-  if (amount <= 0) return { ok: false, reason: 'unknown' };
+  const cost = Math.floor(amount);
+  if (!Number.isFinite(amount) || cost <= 0) return { ok: false, reason: 'unknown' };
   const st = loadShop();
-  if (st.balance < amount) return { ok: false, reason: 'poor' };
-  st.balance -= Math.floor(amount);
-  saveShop(st);
+  if (st.balance < cost) return { ok: false, reason: 'poor' };
+  st.balance -= cost;
+  if (!saveShop(st)) return { ok: false, reason: 'storage' };
   return { ok: true };
 }
 
 /** Текущий баланс кошелька (HUD матча, TZ §G.10). */
 export interface BuyResult {
   ok: boolean;
-  reason?: 'max' | 'poor' | 'unknown';
+  reason?: 'max' | 'poor' | 'unknown' | 'storage';
 }
 
 /** Покупка следующего уровня улучшения за золото из кошелька. */
@@ -142,7 +146,7 @@ export function buyUpgrade(id: ShopUpgradeId): BuyResult {
   if (st.balance < price) return { ok: false, reason: 'poor' };
   st.balance -= price;
   st.upgrades[id] = lvl + 1;
-  saveShop(st);
+  if (!saveShop(st)) return { ok: false, reason: 'storage' };
   return { ok: true };
 }
 

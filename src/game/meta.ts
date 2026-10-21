@@ -1732,7 +1732,12 @@ export function spendSpeedupToken(): boolean {
   const st = rollMetaDay();
   if (st.speedupTokens <= 0) return false;
   st.speedupTokens -= 1;
-  saveMetaState(st);
+  // saveMetaState кэширует объект до записи. При отказе storage возвращаем
+  // токен в тот же объект и запрещаем эффект, иначе ускорение стало бы бесплатным.
+  if (!saveMetaState(st)) {
+    st.speedupTokens += 1;
+    return false;
+  }
   return true;
 }
 
