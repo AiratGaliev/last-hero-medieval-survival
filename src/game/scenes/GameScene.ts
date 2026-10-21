@@ -28,7 +28,7 @@ import { Effects } from '../systems/Effects';
 import { JuicePolicy } from '../systems/Juice';
 import { Pickups } from '../systems/Pickups';
 import { Projectiles } from '../systems/Projectiles';
-import { Spawner, resolveSpawnRateOverride, type SpawnerCtx } from '../systems/Spawner';
+import { Spawner, resolveSpawnRateFactor, type SpawnerCtx } from '../systems/Spawner';
 import { WeaponSystem, type WeaponCtx } from '../systems/Weapons';
 import { GarrisonDpsBudget } from '../systems/GarrisonDpsBudget';
 import { HUD } from '../systems/HUD';
@@ -1202,7 +1202,7 @@ export class GameScene extends Phaser.Scene {
         : (this.contractId === 'c_siege_state' || this.mods.ukaz === 'ukaz_double_siege'
           || this.challengeMods.has('cm_martial')) ? 180
         : this.seasonMod === 'long_siege' ? 270 : null,
-      rateMultOverride: resolveSpawnRateOverride(
+      rateMultFactor: resolveSpawnRateFactor(
         this.mods.ukaz,
         this.challengeMods.has('cm_horde'),
       ),
