@@ -75,6 +75,57 @@ test('phase P: low-quality profile suppresses shakes and ordinary time effects',
 
 
 
+test('phase P: progressive disclosure reads thresholds from one gate table', async ({ page }) => {
+  await page.goto('/?lang=en&ysdk=mock');
+  await expect(page.locator('#game canvas')).toBeVisible({ timeout: startupTimeout });
+
+  const result = await page.evaluate(async () => {
+    const dataUrl = new URL('/src/game/data.ts', location.origin).href;
+    const metaUrl = new URL('/src/game/meta.ts', location.origin).href;
+    const data = await import(/* @vite-ignore */ dataUrl) as {
+      FTUE_MATCH_GATE: Record<string, number>;
+    };
+    const meta = await import(/* @vite-ignore */ metaUrl) as {
+      DAILY_BONUS_AFTER_MATCHES: number;
+      CHALLENGE_AFTER_MATCHES: number;
+      CONTRACTS_AFTER_MATCHES: number;
+      CODEX_AFTER_MATCHES: number;
+      TREE_AFTER_MATCH: number;
+      STOREFRONT_AFTER_MATCH: number;
+      UKAZ_AFTER_MATCH: number;
+    };
+    return {
+      gates: data.FTUE_MATCH_GATE,
+      derived: [
+        meta.DAILY_BONUS_AFTER_MATCHES,
+        meta.CHALLENGE_AFTER_MATCHES,
+        meta.CONTRACTS_AFTER_MATCHES,
+        meta.CODEX_AFTER_MATCHES,
+        meta.TREE_AFTER_MATCH,
+        meta.STOREFRONT_AFTER_MATCH,
+        meta.UKAZ_AFTER_MATCH,
+      ],
+    };
+  });
+
+  expect(result.gates).toEqual({
+    howTo: 1,
+    shop: 1,
+    chronicle: 1,
+    meta: 2,
+    dailyBonus: 2,
+    dailyChest: 2,
+    challenge: 3,
+    valleyChronicle: 3,
+    contracts: 4,
+    codex: 5,
+    storefront: 5,
+    seasonPass: 5,
+    kingOrders: 10,
+  });
+  expect(result.derived).toEqual([2, 3, 4, 5, 3, 5, 10]);
+});
+
 test('phase P: the first tutorial overlay auto-resumes after three seconds', async ({ page }) => {
   await page.addInitScript(() => localStorage.removeItem('tss-hints'));
   await page.goto('/?lang=en&ysdk=mock');
