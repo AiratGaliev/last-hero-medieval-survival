@@ -95,6 +95,8 @@ interface Tune {
 export interface EconomyOpts {
   castleX: number;
   castleY: number;
+  /** Seed-генератор ежедневного вызова; если не задан, используется прежняя случайность. */
+  random?: () => number;
   /** Начисление опыта/очков за завершение стройки (§H.6) */
   onBuildComplete?: (kind: BuildingKind, x: number, y: number) => void;
   onRepairComplete?: () => void;
@@ -184,6 +186,13 @@ export class Economy extends Phaser.Events.EventEmitter {
   private pawnAI: PawnAI;
   private healerAI: HealerAI;
   private opts: EconomyOpts;
+  private random(): number {
+    return this.opts.random ? this.opts.random() : Math.random();
+  }
+  private randomInt(min: number, max: number): number {
+    if (!this.opts.random) return Phaser.Math.Between(min, max);
+    return min + Math.floor(this.random() * (max - min + 1));
+  }
   /** Сводка рана (§K.2): суммарное HP лечения пешек и спасённые обители. */
   healHpTotal = 0;
   monasteryHealed = 0;
@@ -390,17 +399,17 @@ export class Economy extends Phaser.Events.EventEmitter {
 
   spawnPawn(kind: PawnKind, nearX?: number, nearY?: number, announce = true): Pawn | null {
     if (kind !== 'fighter' && kind !== 'healer' && this.civilians.length >= this.pawnLimit) return null;
-    const female = Math.random() < 0.5;
+    const female = this.random() < 0.5;
     // Имена по языку (Приложение A1): RU-пул для русской локали
     const book = lang() === 'ru' ? PAWN_NAMES_RU : PAWN_NAMES;
     const pool = book[female ? 'female' : 'male'];
-    const name = pool[Math.floor(Math.random() * pool.length)];
+    const name = pool[Math.floor(this.random() * pool.length)];
     // Слоты мечника и копейщика общие (одни казармы), сравнивать их лимиты
     // бессмысленно — берём мечника как базовый подтип гарнизона (§B.2).
     const weapon = kind === 'fighter' ? 'sword'
       : kind === 'healer' ? 'staff' : undefined;
-    const a = Math.random() * Math.PI * 2;
-    const r = 90 + Math.random() * 60;
+    const a = this.random() * Math.PI * 2;
+    const r = 90 + this.random() * 60;
     const px = (nearX ?? this.castleX) + Math.cos(a) * r;
     const py = (nearY ?? this.castleY) + Math.sin(a) * r;
     const pawn = new Pawn(this.scene, px, py, kind, name, female, weapon);
@@ -414,11 +423,11 @@ export class Economy extends Phaser.Events.EventEmitter {
 
   /** Пешка по типу оружия (для преемственности §F). */
   spawnFighter(weapon: PawnWeapon, announce = false): Pawn {
-    const female = Math.random() < 0.5;
+    const female = this.random() < 0.5;
     const book = lang() === 'ru' ? PAWN_NAMES_RU : PAWN_NAMES;
     const pool = book[female ? 'female' : 'male'];
-    const name = pool[Math.floor(Math.random() * pool.length)];
-    const pawn = new Pawn(this.scene, this.castleX + Phaser.Math.Between(-70, 70), this.castleY + Phaser.Math.Between(60, 110), 'fighter', name, female, weapon);
+    const name = pool[Math.floor(this.random() * pool.length)];
+    const pawn = new Pawn(this.scene, this.castleX + this.randomInt(-70, 70), this.castleY + this.randomInt(60, 110), 'fighter', name, female, weapon);
     this.applyPawnTuning(pawn);
     this.pawns.push(pawn);
     if (announce) this.emit('pawnArrived', { pawn });
@@ -664,7 +673,7 @@ export class Economy extends Phaser.Events.EventEmitter {
     if (!spot) return false;
     if (!this.spend(this.buildingCost(kind))) return false;
     const tex = plan.sprites
-      ? plan.sprites[Phaser.Math.Between(0, plan.sprites.length - 1)]
+      ? plan.sprites[this.randomInt(0, plan.sprites.length - 1)]
       : kind;
     const scale = kind === 'castle' ? 0.9 : kind === 'house' ? 0.8 : 0.85;
     // HP зданий: «Каменные стены»/«Неприступный дом» (§H.16), «Каменный век»
