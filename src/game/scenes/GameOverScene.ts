@@ -14,7 +14,7 @@ import { gameplayStop } from '../../platform/lifecycle';
 import { track } from '../../platform/analytics';
 import { loadText, saveText } from '../storage';
 import {
-  addGlory, challengeVictoryToday, gloryDoubleExtra, loadMetaState, markChallengeVictory, saveRunConfig,
+  addGlory, challengeVictoryToday, contractDef, gloryDoubleExtra, loadMetaState, markChallengeVictory, saveRunConfig,
 } from '../meta';
 import { depositGold } from '../shop';
 
@@ -40,6 +40,8 @@ export interface GameOverStats {
   level: number;
   gold: number;
   score: number;
+  /** Контрактный счёт только для результата; primary leaderboard использует score. */
+  contractScore?: { id: string; multiplier: number; baseScore: number; adjustedScore: number };
   hero?: string;
   difficulty?: string;
   difficultyId?: string;
@@ -68,6 +70,7 @@ export interface GameOverStats {
   meta?: {
     glory: { base: number; bonus: number; total: number; cap: number } | null;
     questsDone: number;
+    questsTotal: number;
     questsCompletedNow: { descKey: string; reward: number }[];
     passLevels: number;
     passRewards: { kind: string; amount: number }[];
@@ -432,7 +435,17 @@ export class GameOverScene extends Phaser.Scene {
       [t('over.time', { v: clock(s.time) }), t('over.kills', { v: num(s.kills) })],
       [t('over.level', { v: num(s.level) }), (s.bestCombo ?? 0) >= 5 ? t('over.combo', { v: s.bestCombo ?? 0 }) : ''],
       [t('over.gold', { v: num(s.gold) }), t('over.score', { v: num(s.score) })],
-    ].filter(([a, b]) => a.length > 0 || b.length > 0) as Array<[string, string]>;
+    ];
+    if (s.contractScore) {
+      const contract = contractDef(s.contractScore.id);
+      pairs.push([
+        t('over.contractLabel', {
+          name: contract ? t(contract.nameKey as TranslationKey) : t('contract.title'),
+          mult: s.contractScore.multiplier,
+        }),
+        t('over.contractScore', { v: num(s.contractScore.adjustedScore) }),
+      ]);
+    }
 
     const avail = Math.max(60, bottom - top - pad);
     const statFont = compact ? 12 : avail < 220 ? 13 : 15;
@@ -588,11 +601,18 @@ export class GameOverScene extends Phaser.Scene {
       lines.push({ text, color: '#9a6a08' });
     }
 
-    // Задания дня: сколько закрыто всего и какие выполнились сейчас (§H.17)
+    // Показываем ежедневный прогресс каждый раз, даже если в этом ране
+    // ни одно задание не закрыто: игрок должен видеть остаток до 3/3.
+    if (m.questsTotal > 0) {
+      lines.push({
+        text: t('over.questsProgress', { done: num(m.questsDone), total: num(m.questsTotal) }),
+        color: '#3b2410',
+      });
+    }
     const doneNow = m.questsCompletedNow ?? [];
     if (doneNow.length > 0) {
       const list = doneNow.map((q) => t(q.descKey as TranslationKey)).join(' · ');
-      lines.push({ text: `${t('over.questsDone', { v: num(m.questsDone) })}: ${list}`, color: '#3b2410' });
+      lines.push({ text: `${t('over.questsNow', { v: num(doneNow.length) })}: ${list}`, color: '#3b2410' });
     }
 
     // Пропуск «Хроника» и цепочки достижений — по числу (§J, §H.12)
