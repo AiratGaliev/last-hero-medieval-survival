@@ -56,8 +56,9 @@ test('meta progress restores newer Player Data state and flushes subsequent muta
           savedAt: cloudSavedAt,
           matchesPlayed: 11,
           glory: 777,
-          dailyBonus: { last: '2000-01-01', streak: 6 },
+          dailyBonus: { last: '2000-01-01', lastAt: Date.parse('2000-01-01T12:00:00.000Z'), streak: 6 },
         },
+        shop: { balance: 500, upgrades: { might: 2, vitality: 1, speed: 0, magnet: 0, luck: 0 } },
       },
     };
     sessionStorage.setItem(cloudKey, JSON.stringify(playerData));
@@ -67,7 +68,11 @@ test('meta progress restores newer Player Data state and flushes subsequent muta
       savedAt: Date.now() - 60_000,
       matchesPlayed: 2,
       glory: 100,
-      dailyBonus: { last: '2000-01-01', streak: 2 },
+      dailyBonus: { last: '2000-01-01', lastAt: 0, streak: 2 },
+    }));
+    localStorage.setItem('tss-shop', JSON.stringify({
+      balance: 15,
+      upgrades: { might: 0, vitality: 0, speed: 0, magnet: 0, luck: 0 },
     }));
 
     const player = {
@@ -137,17 +142,29 @@ test('meta progress restores newer Player Data state and flushes subsequent muta
       addGlory: (amount: number) => void;
       flushMetaStateToPlayerData: () => Promise<boolean>;
     };
+    const shopUrl = new URL('/src/game/shop.ts', window.location.origin).href;
+    const shopModule = await import(/* @vite-ignore */ shopUrl) as {
+      loadShop: () => { balance: number; upgrades: { might: number } };
+      depositGold: (amount: number) => void;
+    };
     const restored = meta.loadMetaState();
     const restoredSnapshot = {
       matchesPlayed: restored.matchesPlayed,
       glory: restored.glory,
       streak: restored.dailyBonus.streak,
+      wallet: shopModule.loadShop().balance,
+      mightUpgrade: shopModule.loadShop().upgrades.might,
     };
 
     meta.addGlory(17);
+    shopModule.depositGold(23);
     const flushed = await meta.flushMetaStateToPlayerData();
     const playerData = JSON.parse(sessionStorage.getItem('__phase_q_player_data_v1') ?? '{}') as {
-      'tss-meta-state-v1'?: { version?: number; state?: { glory?: number; matchesPlayed?: number } };
+      'tss-meta-state-v1'?: {
+        version?: number;
+        state?: { glory?: number; matchesPlayed?: number };
+        shop?: { balance?: number; upgrades?: { might?: number } };
+      };
     };
     const cloud = playerData['tss-meta-state-v1'];
 
@@ -157,14 +174,20 @@ test('meta progress restores newer Player Data state and flushes subsequent muta
       cloudVersion: cloud?.version,
       cloudGlory: cloud?.state?.glory,
       cloudMatches: cloud?.state?.matchesPlayed,
+      cloudWallet: cloud?.shop?.balance,
+      cloudMightUpgrade: cloud?.shop?.upgrades?.might,
     };
   });
 
-  expect(report.restoredSnapshot).toEqual({ matchesPlayed: 11, glory: 777, streak: 6 });
+  expect(report.restoredSnapshot).toEqual({
+    matchesPlayed: 11, glory: 777, streak: 6, wallet: 500, mightUpgrade: 2,
+  });
   expect(report.flushed).toBe(true);
   expect(report.cloudVersion).toBe(1);
   expect(report.cloudGlory).toBe(794);
   expect(report.cloudMatches).toBe(11);
+  expect(report.cloudWallet).toBe(523);
+  expect(report.cloudMightUpgrade).toBe(2);
 });
 
 
