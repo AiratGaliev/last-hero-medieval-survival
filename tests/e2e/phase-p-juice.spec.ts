@@ -375,3 +375,73 @@ test('phase P: victory announcement reveals letters and completes the full local
 
   await expect.poll(visibleText, { timeout: 1_000 }).toBe('VICTORY');
 });
+
+
+test('phase P: first end screen teaches the chronicle once and persists the marker', async ({ page }) => {
+  await page.addInitScript(() => localStorage.removeItem('tss-hints'));
+  await page.goto('/?lang=en&ysdk=mock');
+  await expect(page.locator('#game canvas')).toBeVisible({ timeout: startupTimeout });
+
+  await page.evaluate(() => {
+    const game = (window as unknown as { __tss?: {
+      scene: { getScene(key: string): unknown; isActive(key: string): boolean };
+    } }).__tss;
+    if (!game) throw new Error('Phaser runtime is unavailable');
+    const menu = game.scene.getScene('Menu') as {
+      selectedDiff?: string;
+      scene: { start(key: string, data?: unknown): void };
+    };
+    menu.scene.start('Game', { hero: 'warrior', diff: menu.selectedDiff ?? 'normal' });
+  });
+
+  await expect.poll(
+    () => page.evaluate(() =>
+      (window as unknown as { __tss?: { scene: { isActive(key: string): boolean } } }).__tss?.scene.isActive('Game') ?? false,
+    ),
+    { timeout: startupTimeout },
+  ).toBe(true);
+
+  // Завершаем живой ран штатным путём: GameScene сама передаёт tutorial flag
+  // в GameOverScene, а callback должен записать marker через Hints/Player Data.
+  await page.evaluate(() => {
+    const game = (window as unknown as { __tss?: { scene: { getScene(key: string): unknown } } }).__tss;
+    if (!game) throw new Error('Phaser runtime is unavailable');
+    (game.scene.getScene('Game') as { gameOver(victory: boolean): void }).gameOver(false);
+  });
+
+  await expect.poll(
+    () => page.evaluate(() =>
+      (window as unknown as { __tss?: { scene: { isActive(key: string): boolean } } }).__tss?.scene.isActive('GameOver') ?? false,
+    ),
+    { timeout: 10_000 },
+  ).toBe(true);
+
+  const result = await page.evaluate(() => {
+    const game = (window as unknown as { __tss?: { scene: { getScene(key: string): unknown } } }).__tss;
+    if (!game) throw new Error('Phaser runtime is unavailable');
+    const scene = game.scene.getScene('GameOver') as {
+      payload: { showChronicleTutorial?: boolean };
+      children: { list: unknown[] };
+    };
+    const collectTexts = (objects: unknown[]): string[] => objects.flatMap((item) => {
+      const object = item as { type?: string; text?: string; list?: unknown[] };
+      const own = object.type === 'Text' && typeof object.text === 'string' ? [object.text] : [];
+      return own.concat(Array.isArray(object.list) ? collectTexts(object.list) : []);
+    });
+    const state = JSON.parse(localStorage.getItem('tss-hints') ?? '{}') as {
+      markers?: string[];
+    };
+    const texts = collectTexts(scene.children.list);
+    return {
+      markerSaved: state.markers?.includes('chronicle') ?? false,
+      tutorialTextVisible: texts.some((text) =>
+        text.includes("This is your settlement's story. Every run tells a new one."),
+      ),
+      tutorialConsumed: scene.payload.showChronicleTutorial === false,
+    };
+  });
+
+  expect(result.markerSaved).toBe(true);
+  expect(result.tutorialTextVisible).toBe(true);
+  expect(result.tutorialConsumed).toBe(true);
+});
