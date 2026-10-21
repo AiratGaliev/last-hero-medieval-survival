@@ -236,6 +236,9 @@ test('phase N: later succession without a resource cost renders safely and keeps
 
 test('phase N: a failed rewarded attempt dims only the ad branch and leaves surrender available', async ({ page }) => {
   await startRun(page);
+  await page.evaluate(() => {
+    window.history.replaceState(null, '', '/?lang=en&ysdk=mock&mockAd=fail');
+  });
 
   const result = await page.evaluate(async () => {
     const game = (window as RuntimeWindow).__tss;
