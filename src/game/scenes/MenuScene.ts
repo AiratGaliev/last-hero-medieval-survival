@@ -892,6 +892,16 @@ export class MenuScene extends Phaser.Scene {
     this.startRun();
   }
 
+  /** Стартует выбранный королевский указ как недельное испытание из вкладки мета. */
+  public startWeeklyChallengeFromMeta(): void {
+    if (!ordersUnlocked() || !loadMetaPreferences().ukaz) return;
+    audio.unlock();
+    if (this.scene.isActive('Meta')) this.scene.stop('Meta');
+    saveText('tss-hero', this.selectedHero);
+    saveText('tss-diff', this.selectedDiff);
+    this.startRun(true);
+  }
+
   private refreshSelection(): void {
     for (const c of this.heroCards) {
       const selected = c.heroId === this.selectedHero;
@@ -2138,7 +2148,7 @@ export class MenuScene extends Phaser.Scene {
   // ----- Благословение перед раном (R4): 1 из 3 за жетон, старт рана -----
 
   /** Поток кнопки «Играть»: сбор RunModifiers → оверлей благословения → старт. */
-  private startRun(): void {
+  private startRun(weeklyChallenge = false): void {
     const preferences = loadMetaPreferences();
     const cfg: RunModifiers = {
       contract: matchesPlayed() >= CONTRACTS_AFTER_MATCHES
@@ -2149,11 +2159,12 @@ export class MenuScene extends Phaser.Scene {
       blessing: null,
       consumables: this.loadPickedConsumables(),
       endless: false,
-      weeklyChallenge: false,
+      weeklyChallenge,
     };
     const go = (): void => {
       // takeConsumables вызывает GameScene при старте рана — не здесь
       saveRunConfig(cfg);
+      if (weeklyChallenge) track('weekly_challenge_start', { ukaz: cfg.ukaz, difficulty: this.selectedDiff });
       this.scene.start('Game', { hero: this.selectedHero, diff: this.selectedDiff });
     };
     // Оверлей благословения — только при жетонах или доступной рекламе R4
