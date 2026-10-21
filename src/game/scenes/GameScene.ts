@@ -2041,7 +2041,14 @@ private ordersUnlocked(): boolean {
     this.physics.world.timeScale = this.juiceSlowOriginalScales.physics / this.juiceSlowFactor;
     this.time.timeScale = this.juiceSlowOriginalScales.clock * this.juiceSlowFactor;
     this.tweens.timeScale = this.juiceSlowOriginalScales.tweens * this.juiceSlowFactor;
-    this.juiceSlowRestoreEvent = this.time.delayedCall(durationMs, () => this.restoreJuiceSlowMotion());
+    // Timer Events сами подчиняются Clock.timeScale. Компенсируем текущий
+    // scale, чтобы durationMs оставался фактической длительностью эффекта:
+    // при 0.5× Clock для 1 500 мс достаточно 750 мс его собственного времени.
+    const clockScale = Math.max(Number.EPSILON, this.time.timeScale);
+    this.juiceSlowRestoreEvent = this.time.delayedCall(
+      durationMs * clockScale,
+      () => this.restoreJuiceSlowMotion(),
+    );
   }
 
   private restoreJuiceSlowMotion(): void {
