@@ -76,6 +76,8 @@ export interface SpawnerOpts {
   ftueSoftStart?: boolean;
   /** Поднабор врагов из ежедневного вызова; undefined сохраняет обычный рандом. */
   dailyPool?: readonly EnemyKind[];
+  /** Seed-генератор ежедневного вызова; вне режима поведение остаётся случайным. */
+  random?: () => number;
   /** Ранг карты «Набат»: 8/11 сек предупреждения на рангах I/II. */
   alarmLevel?: () => number;
 }
@@ -96,6 +98,10 @@ export class Spawner {
   /** Бесконечный режим: момент следующего босса после штатного (900 с). */
   private nextBossAt = 1200;
   stopped = false;
+
+  private random(): number {
+    return this.o.random?.() ?? Math.random();
+  }
 
   constructor(scene: Phaser.Scene, ctx: SpawnerCtx, difficulty: DifficultyId = 'normal', opts: SpawnerOpts = {}) {
     this.scene = scene;
@@ -191,15 +197,15 @@ export class Spawner {
     // Бесконечный: с 21:00 — 100% «чёрный» состав (§H.12)
     if (this.o.endless && minute >= 21) {
       const black: EnemyKind[] = ['skull', 'shaman', 'pig-rider', 'bomb-fish'];
-      return black[Math.floor(Math.random() * black.length)];
+      return black[Math.floor(this.random() * black.length)];
     }
-    const kind = pickRegularKind(minute, Math.random, this.o.dailyPool);
+    const kind = pickRegularKind(minute, () => this.random(), this.o.dailyPool);
     // «Красная долина»: в окне 7–12 минут черепа и шаманы приходят на 25%
     // чаще — если выпало другое существо, с вероятностью 0.2 перебрасываем
     // ещё раз (буст ~×1.25 к доле этих видов без правки весов data.ts).
     if (this.o.redValley && minute >= 7 && minute < 12
-      && kind !== 'skull' && kind !== 'shaman' && Math.random() < 0.2) {
-      return pickRegularKind(minute, Math.random, this.o.dailyPool);
+      && kind !== 'skull' && kind !== 'shaman' && this.random() < 0.2) {
+      return pickRegularKind(minute, () => this.random(), this.o.dailyPool);
     }
     return kind;
   }
@@ -317,7 +323,7 @@ export class Spawner {
     const cy = this.ctx.playerY();
     const m = WORLD.GRASS_MARGIN + 60;
     for (let i = 0; i < count; i++) {
-      const a = (i / count) * Math.PI * 2 + Math.random() * 0.2;
+      const a = (i / count) * Math.PI * 2 + this.random() * 0.2;
       let x = cx + Math.cos(a) * r;
       let y = cy + Math.sin(a) * r;
       x = Phaser.Math.Clamp(x, m, WORLD.SIZE - m);
@@ -328,8 +334,8 @@ export class Spawner {
 
   /** Спавн за экраном в случайном направлении */
   spawnAtEdge(kind: EnemyKind): void {
-    const r = this.ctx.spawnRadius() * (0.85 + Math.random() * 0.3);
-    const a = Math.random() * Math.PI * 2;
+    const r = this.ctx.spawnRadius() * (0.85 + this.random() * 0.3);
+    const a = this.random() * Math.PI * 2;
     const cx = this.ctx.playerX();
     const cy = this.ctx.playerY();
     const m = WORLD.GRASS_MARGIN + 50;
