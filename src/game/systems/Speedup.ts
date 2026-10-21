@@ -72,7 +72,7 @@ export class Speedup {
       return { ok: false, reason: hadToken ? 'storage' : 'noToken' };
     }
     this.apply(kind);
-    track('speedup_bought', { kind, currency: 'token' });
+    track('speedup_bought', { kind, currency: 'token', cost: 1 });
     return { ok: true };
   }
 
@@ -100,7 +100,7 @@ export class Speedup {
     const res = await showPlacementRewarded(placement);
     if (!res.rewarded) return { ok: false, reason: 'adUnavailable' };
     this.apply(kind);
-    track('speedup_bought', { kind, currency: 'ad' });
+    track('speedup_bought', { kind, currency: 'ad', cost: 1 });
     return { ok: true };
   }
 
