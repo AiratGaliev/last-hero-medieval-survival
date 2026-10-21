@@ -17,7 +17,7 @@ import { makePanel, resizePanel } from './Ui';
 
 export type HintId =
   | 'move' | 'pawns' | 'house' | 'barracks' | 'siege'
-  | 'monastery' | 'orders' | 'veteran';
+  | 'monastery' | 'monasteryBuilt' | 'monasteryLoss' | 'orders' | 'veteran';
 
 /** Формат показа (§I.1): banner — строка сверху, overlay — пауза с объяснением. */
 export type HintUi = 'banner' | 'overlay';
@@ -56,9 +56,12 @@ export const HINTS: readonly HintDef[] = [
   { id: 'barracks', priority: 2, ui: 'banner', ttl: 4000 },
   { id: 'orders', priority: 3, ui: 'banner', ttl: 4000 },
   { id: 'monastery', priority: 2, ui: 'banner', ttl: 4000 },
+  { id: 'monasteryBuilt', priority: 2, ui: 'banner', anchor: 'center', ttl: 4000 },
+  { id: 'monasteryLoss', priority: 0, ui: 'banner', ttl: 4000, urgent: true },
   { id: 'veteran', priority: 1, ui: 'banner', ttl: 4000 },
   // Первая осада — приоритетный обучающий overlay: мир останавливается,
-  // цель подсвечивается стрелкой, продолжение подтверждает сам игрок.
+  // цель подсвечивается стрелкой; через 2 секунды мир продолжится автоматически,
+  // но игрок может пропустить объяснение раньше.
   { id: 'siege', priority: 0, ui: 'overlay', anchor: 'center', ttl: 2000, urgent: true },
 ];
 
@@ -365,8 +368,7 @@ export class Hints {
   }
 
   /**
-   * Поставить подсказку в очередь (§I.1). Показывается немедленно, только
-   * если очередь пуста, прошёл кулдаун и нет подсказки важнее.
+   * Поставить подсказку в очередь (§I.1); приоритеты и cooldown определяют момент показа.
    */
   show(id: HintId, target?: HintTargetResolver): void {
     if (!this.enabled || this.shown.has(id)) return;
@@ -407,7 +409,7 @@ export class Hints {
     const text = t(`hint.${id}` as `hint.${typeof id}`);
     track('hint_shown', { hint_id: id, ui: def.ui });
 
-    // Overlay must pause the actual world and stay until the player explicitly continues.
+    // Overlay pauses the world; its wall-clock TTL resumes it automatically, and a tap skips earlier.
     const layout = getHintLayout(w, h, def.ui, def.anchor);
     const dim = def.ui === 'overlay'
       ? this.scene.add.rectangle(w / 2, h / 2, w + 8, h + 8, 0x07070d, 0.62)
