@@ -213,7 +213,7 @@ export function getSdk(): YandexSdk | null {
 }
 
 /** Синхронизирует локальные часы с официальным SDK serverTime(). */
-export async function syncServerTime(): Promise<void> {
+export function syncServerTime(): void {
   const s = sdk;
   if (!s || typeof s.serverTime !== 'function') return;
   try {
