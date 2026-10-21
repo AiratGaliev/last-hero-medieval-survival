@@ -15,9 +15,56 @@ let loaded = false;
 
 const SUCCESSION_FREE_USED_KEY = 'successionFreeUsed';
 const SUCCESSION_FLAG_TIMEOUT_MS = 2_500;
+const SUCCESSION_LOCAL_PREFIX = 'tss-succession-free@';
+const SUCCESSION_OWNER_KEY = 'tss-succession-free-owner';
 let successionFreeUsed: boolean | null = null;
 let successionFreeHydrated = false;
+let successionLocalStorageKey: string | null = null;
+let successionAccountId: string | null = null;
 let successionSaveQueue: Promise<void> = Promise.resolve();
+
+function playerUniqueId(player: YandexPlayer | null): string | null {
+  try {
+    const id = player?.getUniqueID().trim();
+    return id || null;
+  } catch {
+    return null;
+  }
+}
+
+function accountSuccessionKey(id: string): string {
+  return `${SUCCESSION_LOCAL_PREFIX}${encodeURIComponent(id)}`;
+}
+
+function readLegacySuccessionFlag(): boolean {
+  let used = loadJson<boolean>('succession-free') === true;
+  try {
+    // Старые релизы могли хранить raw '1' вместо JSON-boolean.
+    used ||= window.localStorage.getItem('tss-succession-free') === '1';
+  } catch {
+    // Приватный режим: ниже останется false, пока облако не восстановит запись.
+  }
+  return used;
+}
+
+function saveSuccessionLocal(used: boolean): void {
+  const id = playerUniqueId(cached) ?? successionAccountId;
+  if (id) {
+    const key = accountSuccessionKey(id);
+    successionAccountId = id;
+    successionLocalStorageKey = key;
+    try {
+      window.localStorage.setItem(key, String(used));
+      // Владелец нужен только для одноразовой миграции старого общего ключа.
+      window.localStorage.setItem(SUCCESSION_OWNER_KEY, id);
+    } catch {
+      // Облачная запись остаётся доступным источником.
+    }
+    return;
+  }
+  // Вне Yandex Games нет стабильного ID профиля: остаётся прежний локальный ключ.
+  saveJson('succession-free', used);
+}
 
 /** Время ответа SDK ограничено: сбой облака не должен блокировать старт игры. */
 async function playerDataWithTimeout(
@@ -37,10 +84,10 @@ async function playerDataWithTimeout(
   }
 }
 
-function saveSuccessionFreeUsedToCloud(player: YandexPlayer): void {
+function saveSuccessionFreeUsedToCloud(player: YandexPlayer, used: boolean): void {
   if (!player.setData) return;
   successionSaveQueue = successionSaveQueue
-    .then(() => player.setData!({ [SUCCESSION_FREE_USED_KEY]: true }, true))
+    .then(() => player.setData!({ [SUCCESSION_FREE_USED_KEY]: used }, true))
     .catch((error: unknown) => {
       // Локальная запись уже сохранена; ошибка синхронизации не должна ломать матч.
       console.warn('[player] не удалось синхронизировать преемственность:', error);
@@ -48,43 +95,70 @@ function saveSuccessionFreeUsedToCloud(player: YandexPlayer): void {
 }
 
 /**
- * Однократно объединяет локальный флаг с данными игрока Yandex Games.
- * Значение монотонное: уже использованная бесплатная смена не сбрасывается
- * из-за пустого/устаревшего локального значения на другом устройстве.
+ * Синхронизирует lifetime-флаг аккаунта. Локальный fallback изолирован по
+ * getUniqueID(), а глобальный ключ мигрируется один раз к первому увиденному
+ * профилю. Успешный cloud false не наследует флаг другого аккаунта с устройства.
  */
 export async function hydrateSuccessionFreeUsed(): Promise<void> {
   if (successionFreeHydrated) return;
 
-  let localUsed = loadJson<boolean>('succession-free') === true;
-  try {
-    // Совместимость со старой версией, которая хранила строку '1'.
-    localUsed ||= window.localStorage.getItem('tss-succession-free') === '1';
-  } catch {
-    // Приватный режим/запрещённое хранилище: облачный слой всё ещё доступен.
-  }
-
   const player = await loadPlayer();
-  let cloudUsed = false;
-  let cloudReadSucceeded = false;
-  if (player?.getData) {
+  const accountId = playerUniqueId(player);
+  successionAccountId = accountId;
+  successionLocalStorageKey = accountId ? accountSuccessionKey(accountId) : null;
+
+  let localUsed = readLegacySuccessionFlag();
+  if (accountId) {
     try {
-      const data = await playerDataWithTimeout(player);
-      cloudUsed = data[SUCCESSION_FREE_USED_KEY] === true;
-      cloudReadSucceeded = true;
+      const localAccountValue = window.localStorage.getItem(successionLocalStorageKey!);
+      const owner = window.localStorage.getItem(SUCCESSION_OWNER_KEY);
+      if (localAccountValue === 'true') {
+        localUsed = true;
+      } else if (localAccountValue === 'false') {
+        localUsed = false;
+      } else if (owner === accountId) {
+        // Этот профиль уже владел старым ключом до локальной миграции.
+        localUsed = readLegacySuccessionFlag();
+      } else if (!owner) {
+        // Миграция старого общего значения ровно для первого профиля после обновления.
+        try { window.localStorage.setItem(SUCCESSION_OWNER_KEY, accountId); } catch { /* storage недоступен */ }
+      } else {
+        // На этом устройстве старый ключ принадлежал другому профилю.
+        localUsed = false;
+      }
     } catch {
-      // Сеть и доступность облака — внешние условия; продолжаем с localStorage.
+      // Профиль остаётся работоспособным даже при заблокированном localStorage.
     }
   }
 
-  successionFreeUsed = localUsed || cloudUsed;
-  successionFreeHydrated = true;
-  if (successionFreeUsed) {
-    saveJson('succession-free', true);
+  let cloudUsed = false;
+  let cloudReadSucceeded = false;
+  let cloudHasFlag = false;
+  if (player?.getData) {
+    try {
+      const data = await playerDataWithTimeout(player);
+      const value = data[SUCCESSION_FREE_USED_KEY];
+      cloudHasFlag = typeof value === 'boolean';
+      cloudUsed = value === true;
+      cloudReadSucceeded = true;
+    } catch {
+      // Сеть и доступность облака — внешние условия; продолжаем с локальным fallback.
+    }
   }
 
-  // Если локальная запись есть, а облачная — нет, восстанавливаем облако.
-  if (localUsed && !cloudUsed && cloudReadSucceeded && player) {
-    saveSuccessionFreeUsedToCloud(player);
+  // Использованный lifetime-флаг никогда не сбрасывается ответом stale-cloud false.
+  successionFreeUsed = localUsed || cloudUsed;
+  successionFreeHydrated = true;
+  saveSuccessionLocal(successionFreeUsed);
+
+  // true локально восстанавливает облако, если оно пустое/stale или чтение не прошло.
+  // При первом успешном чтении записываем и false, чтобы новый профиль был отделён
+  // от общего legacy-ключа на следующих устройствах/сессиях.
+  if (player?.setData && (
+    (successionFreeUsed && !cloudUsed)
+    || (cloudReadSucceeded && !cloudHasFlag)
+  )) {
+    saveSuccessionFreeUsedToCloud(player, successionFreeUsed);
   }
 }
 
@@ -97,7 +171,8 @@ export function getSuccessionFreeUsed(): boolean | null {
 export function persistSuccessionFreeUsed(): void {
   successionFreeUsed = true;
   successionFreeHydrated = true;
-  if (cached) saveSuccessionFreeUsedToCloud(cached);
+  saveSuccessionLocal(true);
+  if (cached) saveSuccessionFreeUsedToCloud(cached, true);
 }
 
 /** Загружает объект игрока (один раз за сессию). */
