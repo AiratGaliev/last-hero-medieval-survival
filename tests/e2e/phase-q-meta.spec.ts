@@ -209,3 +209,44 @@ test('daily bonus cannot be claimed twice across a UTC date boundary', async ({ 
   expect(outcome.streak).toBe(4);
   expect(outcome.lastAt).toBeGreaterThan(0);
 });
+
+
+test('daily quest and weekly keys use UTC rather than the browser timezone', async ({ browser }) => {
+  const context = await browser.newContext({
+    baseURL: 'http://127.0.0.1:3000',
+    timezoneId: 'Pacific/Kiritimati',
+  });
+  const page = await context.newPage();
+
+  try {
+    await page.addInitScript(() => {
+      // 23:30 UTC воскресенья уже является понедельником в часовом поясе теста.
+      Date.now = () => Date.UTC(2026, 9, 18, 23, 30, 0);
+    });
+    await page.goto('/?lang=en&ysdk=mock');
+    await expect(page.locator('#game canvas')).toBeVisible({ timeout: startupTimeout });
+    await expect(page.locator('#boot')).toHaveCount(0, { timeout: startupTimeout });
+
+    const keys = await page.evaluate(async () => {
+      const moduleUrl = new URL('/src/game/meta.ts', window.location.origin).href;
+      const meta = await import(/* @vite-ignore */ moduleUrl) as {
+        rollMetaDay: () => { quests: { date: string } };
+        currentWeekKey: () => string;
+      };
+      const state = meta.rollMetaDay();
+      return {
+        localDate: new Date(Date.now()).toISOString().slice(0, 10),
+        localDay: new Date(Date.now()).getDate(),
+        questDate: state.quests.date,
+        week: meta.currentWeekKey(),
+      };
+    });
+
+    expect(keys.localDate).toBe('2026-10-18');
+    expect(keys.localDay).toBe(19);
+    expect(keys.questDate).toBe('2026-10-18');
+    expect(keys.week).toBe('2026-10-12');
+  } finally {
+    await context.close();
+  }
+});
