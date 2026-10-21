@@ -3601,6 +3601,10 @@ private bossDeathSequence(e: Enemy): boolean {
     // Подсказки FTUE тоже гасим: их слой лежит выше игрового мира, и
     // текст «Нажми, чтобы продолжить» просвечивал сквозь экран итогов.
     this.hints.reset();
+    // Обучение хронике показывается в самом end-screen, где находится цель.
+    // Маркер отмечается только после того, как GameOverScene реально разместила
+    // подсказку рядом с хроникой (на компактном экране блок может не поместиться).
+    const showChronicleTutorial = this.hints.isEnabled() && !this.hints.hasSeen('chronicle');
 
     const settlementScore = this.settlement.settlementScore();
     const ideal = this.settlement.isIdealVictory(victory);
@@ -3697,7 +3701,11 @@ private bossDeathSequence(e: Enemy): boolean {
     // applyRunMeta — иначе glory_earned/quest_done/pass_level попадали
     // в буфер СЛЕДУЮЩЕГО рана, и группировка событий по ранам сдвигалась.
     flushRunTelemetry();
-    this.scene.launch('GameOver', { stats });
+    this.scene.launch('GameOver', {
+      stats,
+      showChronicleTutorial,
+      onChronicleTutorialShown: () => this.hints?.markSeen('chronicle'),
+    });
     this.scene.pause();
   }
 
