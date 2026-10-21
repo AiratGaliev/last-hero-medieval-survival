@@ -601,17 +601,18 @@ test('weekly mini-board ignores ordinary runs even when an order is selected', a
       blessing: string | null;
       consumables: string[];
     };
+    type TestMetaState = {
+      weekly: { week: string };
+      weeklyChallenge: { week: string; best: number };
+    };
     const meta = await import('/src/game/meta.ts') as unknown as {
-      rollMetaDay: () => {
-        weekly: { week: string };
-        weeklyChallenge: { week: string; best: number };
-      };
-      saveMetaState: (state: ReturnType<import('/src/game/meta.ts')['loadMetaState']>) => boolean;
-      loadMetaState: () => { weeklyChallenge: { week: string; best: number } };
+      rollMetaDay: () => TestMetaState;
+      saveMetaState: (state: TestMetaState) => boolean;
+      loadMetaState: () => TestMetaState;
       applyRunToMeta: (summary: RunSummary) => unknown;
     };
 
-    const state = meta.rollMetaDay() as ReturnType<import('/src/game/meta.ts')['loadMetaState']>;
+    const state = meta.rollMetaDay();
     state.weeklyChallenge = { week: state.weekly.week, best: 0 };
     meta.saveMetaState(state);
 
