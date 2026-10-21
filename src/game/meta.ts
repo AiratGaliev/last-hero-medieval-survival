@@ -804,7 +804,7 @@ export interface MetaState {
   codex: Record<string, number>;
   quests: QuestDayState;
   weekly: { week: string; progress: number; stage: number; claimed: boolean };
-  dailyBonus: { last: string; streak: number };
+  dailyBonus: { last: string; lastAt: number; streak: number };
   contractsDone: number;
   chains: { counters: Record<string, number>; claimed: string[] };
   pass: { season: string; xp: number; premium: boolean; claimedFree: number; claimedPrem: number };
@@ -832,14 +832,15 @@ export interface MetaState {
 const LS_META2 = 'tss-meta2';
 
 function todayKey(now = serverNow()): string {
-  const d = new Date(now);
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  // Для всех игроков граница ежедневок едина: используем UTC-день серверной эпохи,
+  // а не часовой пояс конкретного браузера.
+  return new Date(now).toISOString().slice(0, 10);
 }
 
 function weekKey(now = serverNow()): string {
   const d = new Date(now);
-  const day = (d.getDay() + 6) % 7; // понедельник = 0
-  d.setDate(d.getDate() - day);
+  const day = (d.getUTCDay() + 6) % 7; // понедельник = 0, UTC
+  d.setUTCDate(d.getUTCDate() - day);
   return todayKey(d.getTime());
 }
 
@@ -919,7 +920,7 @@ const EMPTY: MetaState = {
   codex: {},
   quests: { date: '', ids: [], progress: {}, done: [], rerolls: 0 },
   weekly: { week: '', progress: 0, stage: 0, claimed: false },
-  dailyBonus: { last: '', streak: 0 },
+  dailyBonus: { last: '', lastAt: 0, streak: 0 },
   contractsDone: 0,
   chains: { counters: {}, claimed: [] },
   pass: { season: '', xp: 0, premium: false, claimedFree: 0, claimedPrem: 0 },
@@ -1014,7 +1015,13 @@ function sanitize(raw: unknown): MetaState {
       stage: int(w.stage),
       claimed: w.claimed === true,
     },
-    dailyBonus: { last: typeof db.last === 'string' ? db.last.slice(0, 10) : '', streak: int(db.streak) },
+    // Старые сохранения не содержали времени получения: lastAt=0 означает
+    // один безопасный переход без штрафа, после чего точный timestamp сохраняется.
+    dailyBonus: {
+      last: typeof db.last === 'string' ? db.last.slice(0, 10) : '',
+      lastAt: int(db.lastAt),
+      streak: int(db.streak),
+    },
     dailyChest: ((): MetaState['dailyChest'] => {
       const dc = (o.dailyChest ?? {}) as Partial<MetaState['dailyChest']>;
       return { date: typeof dc.date === 'string' ? dc.date.slice(0, 10) : '', count: int(dc.count) };
@@ -1618,13 +1625,15 @@ export function claimDailyBonus(useAd = false): BonusClaimResult {
   if (st.dailyBonus.last === today) {
     return { ok: false, day: st.dailyBonus.streak % 7, def: null, doubled: false, streak: st.dailyBonus.streak };
   }
-  const gap = st.dailyBonus.last ? daysBetween(st.dailyBonus.last, today) : 999;
-  // Пропуск дня откатывает стрик на ОДИН шаг, а не в ноль (§H.7, гейт Q):
-  // каждый пропущенный день съедает один шаг, но за сегодня шаг всё же +1.
+  // 26-часовое окно рассчитывается по серверному времени, а не по датам браузера.
+  // Превышение окна снимает ровно одну ступень (§H.7); длинный перерыв не обнуляет стрик.
+  const now = serverNow();
   const prev = st.dailyBonus.streak;
-  const effective = gap <= 1 ? prev : Math.max(0, prev - 1);
+  const missedWindow = st.dailyBonus.lastAt > 0
+    && now - st.dailyBonus.lastAt > BONUS_RESET_HOURS * 60 * 60 * 1000;
+  const effective = missedWindow ? Math.max(0, prev - 1) : prev;
   const streak = effective + 1;
-  st.dailyBonus = { last: today, streak };
+  st.dailyBonus = { last: today, lastAt: now, streak };
   const dayIdx = (streak - 1) % 7;
   const def = DAILY_BONUS[dayIdx];
   const doubled = useAd === true;
