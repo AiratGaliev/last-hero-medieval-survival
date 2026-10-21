@@ -80,6 +80,8 @@ export interface GameOverStats {
     challenge: boolean;
     ukaz: string | null;
     endless: boolean;
+    weeklyChallenge?: boolean;
+    weeklyChallengeBest?: number;
   };
 }
 
@@ -599,6 +601,13 @@ export class GameOverScene extends Phaser.Scene {
       if (m.glory.base >= m.glory.cap) text += ` · ${t('over.gloryCap', { v: num(m.glory.cap) })}`;
       if (m.glory.bonus > 0) text += ` · ${t('over.gloryIdeal', { v: num(m.glory.bonus) })}`;
       lines.push({ text, color: '#9a6a08' });
+    }
+
+    if (m.weeklyChallenge) {
+      lines.push({
+        text: t('weekly.runResult', { score: num(s.score), best: num(m.weeklyChallengeBest ?? s.score) }),
+        color: '#9a6a08',
+      });
     }
 
     // Показываем ежедневный прогресс каждый раз, даже если в этом ране
