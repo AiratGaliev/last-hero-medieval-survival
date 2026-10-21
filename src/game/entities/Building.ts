@@ -31,6 +31,10 @@ export class Building extends Phaser.GameObjects.Image {
   alive = true;
   /** Индекс осады, в которую здание получало урон (для потолка). */
   lastSiegeIdx = -1;
+  /** Источник последнего повреждения для точной телеметрии разрушения. */
+  lastDamageSource: 'siege' | 'boss' | null = null;
+  /** HP непосредственно перед последним применённым уроном. */
+  hpBeforeLastDamage = 0;
   /** Стройка: нулевой HP до завершения. */
   underConstruction = false;
   /** Монастырь: занятые места (индексы 0..9, null = свободно). */
@@ -103,6 +107,8 @@ export class Building extends Phaser.GameObjects.Image {
   damage(amount: number, siegeIdx: number): void {
     // Руины (hp=0, uc=true) и стройка урон не принимают
     if (!this.alive || this.underConstruction) return;
+    this.hpBeforeLastDamage = this.hp;
+    this.lastDamageSource = siegeIdx >= 0 ? 'siege' : 'boss';
     this.hp = Math.max(0, this.hp - amount);
     // ⚠️ Метку осады обновляем только осадным уроном. Раньше `lastSiegeIdx`
     // перезаписывался при ЛЮБОМ уроне, в том числе уроном босса (−1), —
@@ -188,6 +194,7 @@ export class Building extends Phaser.GameObjects.Image {
     );
     if (this.monasteryCollapseRemainingMs > 0) return;
     this.monasteryCollapseRemainingMs = null;
+    this.hpBeforeLastDamage = this.hp;
     this.hp = 0;
     this.destroy();
   }

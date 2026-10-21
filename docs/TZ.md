@@ -3468,8 +3468,9 @@ allowlist и в Консоли; неизвестные SKU не показыва
    покупок и рекламы SDK; игровые события шлём сами — `ym(counterId, 'reachGoal',
    eventName, params)` через обёртку.
 3. **Событийная шина (фаза T0, сразу после A):** `src/platform/analytics.ts` —
-   `track(event: AnalyticsEvent, params?)`. Единая точка: no-op вне YG (локальная
-   dev-сборка пишет в console-таблицу), debounce, очередь при офлайне. Все
+   `track(event: AnalyticsEvent, params?)`. Единая точка: внешняя доставка отключена вне настоящего Yandex Games SDK; в dev доступны
+   консоль и debug-overlay, offline/error outbox сохраняется локально и повторяется
+   при возврате сети. Все
    последующие фазы обязаны вызывать `track()` в своих гейтовых точках —
    инструментирование задним числом дороже.
 4. Dev-режим: оверлей `?debug` с живым логом событий (помогает гейт-ревью).
@@ -3486,10 +3487,10 @@ Data** — это уже есть и работает:
 
 | Слой | Что | Зачем |
 |---|---|---|
-| Очередь в Player Data | буфер последних **50 ранов** (сжатый JSON) | Пережить потерю сети; выгрузить постфактум |
+| Очередь в Player Data | архив до **50 последних ранов**, gzip при поддержке/пользе, не более 150 000 байт UTF-8; отправка через `setData(..., true)` | Пережить закрытие/смену устройства и сохранить события для экспорта |
 | Debug-экспорт | `?export` → JSON-файл событий локально | Разбор гейта без доступа к консоли |
 | Прямая отправка в Метрику | `track()` → `ym(...)` | Единственный канал «в облако», не требует бэкенда |
-| **A/B-флаги** | `MetaState.flags` — то же сохранение | Разбиение переживает смену устройства (§K.4) |
+| **A/B-флаги** | `MetaState.flags` плюс Player Data; локальный ключ scoped по хешу profile identity | Стабильное плечо между сессиями/устройствами без повторного использования локального варианта другим аккаунтом; raw ID не отправляется в Метрику |
 
 ⚠️ Внешний HTTP-эндпоинт сбора — **вне рамок раунда 1**. Эскиз решения на
 следующий раунд: батч-выгрузка при закрытии сессии.
@@ -3502,7 +3503,8 @@ Data** — это уже есть и работает:
 | Событие | Параметры | Фаза |
 |---|---|---|
 | `session_start` | **sessionIdx**, new_user, matches_total | T0 |
-| `run_start` | seed, hero, difficulty, **sessionIdx**, contract(q), ukaz(q), blessing(q) | T0 |
+| `run_start` | фактический числовой seed ГПСЧ, hero, difficulty, **sessionIdx**, contract(q), ukaz(q), blessing(q), experiment/variant при назначении | T0 |
+| `ab_assignment` | experiment, variant; без raw player ID | T |
 | `run_end` | cause: victory/hero/castle/population/surrender, duration_s, score, kills, level, buildings, population, sieges_defended, ideal | K |
 | `first_house` | t_sec | E |
 | `first_barracks` | t_sec | E |
@@ -3518,13 +3520,13 @@ Data** — это уже есть и работает:
 | `ally_kill` | weapon, target_kind, **player_combo_grew: false** | J |
 | `field_heal_save` | target_kind, hp_restored, **monastery_slot_freed** | M |
 | `succession_shown` | branch_available[1/2/3], buildings | N |
-| `succession_taken` | branch: free/warrior/resources/ad/gold, cost, first_lifetime | N |
+| `succession_taken` | branch: warrior/resources/ad/gold, cost (0, ресурсы, золото или ad=1), first_lifetime | N/T |
 | `succession_refused` | — | N |
 | `ad_impression` / `ad_rewarded_complete` / `ad_error` | placement(R1–R11, interstitial, banner) | O |
-| `speedup_bought` | kind: repair/heal, currency: wallet/ad | O |
+| `speedup_bought` | kind: repair/heal, currency: wallet/ad/token, cost | O |
 | `combo_milestone` | tier: 25/50/100/200 | L |
 | `levelup_card_picked` | card_id, settlement_card(bool) | L |
-| `perf_fps` | p50/p10 за ран, device_class, enemies_peak | T |
+| `perf_fps` | одно событие в конце рана: p50/p10 по секундным сэмплам, device_class, enemies_peak, samples, duration_s | T |
 | `end_screen_action` | block: chronicle/nearmiss/hook, action: rerun/shop/close | L |
 | `hint_shown` / `hint_dismissed` | hint_id | P |
 | (Q) `daily_claim`, `challenge_result`, `endless_death(wave)`, `codex_entry` | — | Q |

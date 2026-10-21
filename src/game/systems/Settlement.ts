@@ -43,6 +43,14 @@ export class Settlement {
   get capApplied(): boolean {
     return this.siegeCapApplied;
   }
+  /** Фактически применённый осадный урон по инфраструктуре для §K.2. */
+  get siegeDamageTaken(): number {
+    return Math.round(this.siegeDmg * 10) / 10;
+  }
+  /** Число реальных переходов пешек в ранение за текущую осаду (§E.4). */
+  get siegeWoundsCount(): number {
+    return this.siegeWounds;
+  }
   private siegeWounds = 0;
   private siegeWoundCap = 1;
   private siegeEnemies: Set<Enemy> = new Set();
@@ -177,7 +185,7 @@ export class Settlement {
       if (sword) {
         const share = Math.min(amount * TAUNT.SHARE, sword.hp);
         amount -= share;
-        this.eco.woundPawn(sword, share, this.simulationTimeMs);
+        this.eco.woundPawn(sword, share, this.simulationTimeMs, 'taunt');
         this.flashTaunt(sword);
         // Телеметрия §K.2: таунт перетянул долю урона на себя
         track('garrison_taunt', { weapon: sword.weapon ?? 'sword', building_kind: b.kind, dmg_redirected: Math.round(share * 10) / 10 });
@@ -234,7 +242,7 @@ export class Settlement {
     const sword = this.tauntingSwordAt(victim);
     if (!sword) return raw;
     const share = Math.min(raw * TAUNT.SHARE, sword.hp);
-    this.eco.woundPawn(sword, share, this.simulationTimeMs);
+    this.eco.woundPawn(sword, share, this.simulationTimeMs, 'taunt');
     this.flashTaunt(sword);
     track('garrison_taunt', {
       weapon: sword.weapon ?? 'sword', building_kind: 'pawn', dmg_redirected: Math.round(share * 10) / 10,
@@ -276,7 +284,7 @@ export class Settlement {
   /** Осадный враг ранит пешку: лимит расходуется только на реальный переход в wounded (§E.4). */
   siegeWoundPawn(pawn: Pawn, dmg: number, now: number): void {
     if (!this.canWoundInSiege()) return;
-    if (this.eco.woundPawn(pawn, dmg, now)) this.registerWound();
+    if (this.eco.woundPawn(pawn, dmg, now, 'siege')) this.registerWound();
   }
 
   // ================= РАЗРУШЕНИЕ =================
