@@ -40,6 +40,20 @@ export interface SpawnerCtx {
  * Мета-модификаторы директора волн (фазы Q/S). Все опции optional —
  * обычный режим работает ровно как раньше.
  */
+/**
+ * Выбирает оверрайд интервала для модификаторов плотности волн.
+ * «Орда» и мод вызова cm_horde используют один и тот же множитель ×0.85:
+ * при одновременном выборе эффект не возводится в квадрат, как и другие
+ * взаимоисключающие оверрайды одного параметра спавнера.
+ * null сохраняет штатный rateMult выбранной сложности.
+ */
+export function resolveSpawnRateOverride(
+  ukaz: string | null | undefined,
+  challengeHorde: boolean,
+): number | null {
+  return ukaz === 'ukaz_horde' || challengeHorde ? 0.85 : null;
+}
+
 export interface SpawnerOpts {
   /** Бесконечный режим (§H.12): осады каждые 90 с, боссы каждые 300 с. */
   endless?: boolean;
