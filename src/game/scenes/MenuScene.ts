@@ -2164,7 +2164,6 @@ export class MenuScene extends Phaser.Scene {
     const go = (): void => {
       // takeConsumables вызывает GameScene при старте рана — не здесь
       saveRunConfig(cfg);
-      if (weeklyChallenge) track('weekly_challenge_start', { ukaz: cfg.ukaz, difficulty: this.selectedDiff });
       this.scene.start('Game', { hero: this.selectedHero, diff: this.selectedDiff });
     };
     // Оверлей благословения — только при жетонах или доступной рекламе R4
