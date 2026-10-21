@@ -114,7 +114,6 @@ test('phase P: progressive disclosure reads thresholds from one gate table', asy
     chronicle: 1,
     meta: 2,
     dailyBonus: 2,
-    dailyChest: 2,
     challenge: 3,
     valleyChronicle: 3,
     contracts: 4,
@@ -162,6 +161,51 @@ test('phase P: the first tutorial overlay auto-resumes after three seconds', asy
     return (game.scene.getScene('Game') as { activeTimeMs: number }).activeTimeMs;
   });
   expect(activeTime).toBeGreaterThan(0);
+});
+
+test('phase P: building completion raises the construction flag', async ({ page }) => {
+  await page.goto('/?lang=en&ysdk=mock');
+  await expect(page.locator('#game canvas')).toBeVisible({ timeout: startupTimeout });
+
+  await page.evaluate(() => {
+    const game = (window as unknown as {
+      __tss?: { scene: { getScene(key: string): unknown } };
+    }).__tss;
+    if (!game) throw new Error('Phaser runtime is unavailable');
+    const menu = game.scene.getScene('Menu') as {
+      selectedDiff?: string;
+      scene: { start(key: string, data?: unknown): void };
+    };
+    menu.scene.start('Game', { hero: 'warrior', diff: menu.selectedDiff ?? 'normal' });
+  });
+
+  await expect.poll(() => page.evaluate(() => {
+    const game = (window as unknown as {
+      __tss?: { scene: { getScene(key: string): unknown } };
+    }).__tss;
+    if (!game) return false;
+    const scene = game.scene.getScene('Game') as { effects?: { buildFlag?: unknown } };
+    return typeof scene.effects?.buildFlag === 'function';
+  }), { timeout: startupTimeout }).toBe(true);
+
+  const calls = await page.evaluate(() => {
+    const game = (window as unknown as {
+      __tss?: { scene: { getScene(key: string): unknown } };
+    }).__tss;
+    if (!game) throw new Error('Phaser runtime is unavailable');
+    const scene = game.scene.getScene('Game') as {
+      effects: { buildFlag: (x: number, y: number) => void };
+      onBuildComplete: (kind: 'house', x: number, y: number) => void;
+    };
+    const calls: Array<[number, number]> = [];
+    const original = scene.effects.buildFlag;
+    scene.effects.buildFlag = (x, y) => calls.push([x, y]);
+    scene.onBuildComplete('house', 140, 200);
+    scene.effects.buildFlag = original;
+    return calls;
+  });
+
+  expect(calls).toEqual([[140, 182]]);
 });
 
 test('phase P: anchor arrows stay attached to banner edges and inside the viewport', async ({ page }) => {
