@@ -1080,7 +1080,7 @@ let metaCloudHydrated = false;
 let metaCloudDirty = false;
 let metaCloudSaveTimer: ReturnType<typeof setTimeout> | null = null;
 let metaCloudWriteInFlight: Promise<boolean> | null = null;
-let lastMetaCloudWriteAt = 0;
+let lastMetaCloudWriteAt: number | null = null;
 let metaCloudLifecycleInstalled = false;
 
 /** Текущее мета-состояние (кэшируется; мутируйте через helpers + saveMetaState()). */
@@ -1112,7 +1112,9 @@ function scheduleMetaCloudSave(): void {
   if (!metaCloudHydrated || !metaCloudDirty || metaCloudSaveTimer !== null) return;
   // Yandex Player.setData имеет лимит запросов; сохраняем полный снимок не чаще
   // одного раза в 20 секунд, объединяя частые обновления боевого матча.
-  const wait = Math.max(0, META_CLOUD_WRITE_INTERVAL_MS - (Date.now() - lastMetaCloudWriteAt));
+  const wait = lastMetaCloudWriteAt === null
+    ? 0
+    : Math.max(0, META_CLOUD_WRITE_INTERVAL_MS - (performance.now() - lastMetaCloudWriteAt));
   metaCloudSaveTimer = setTimeout(() => {
     metaCloudSaveTimer = null;
     void persistMetaStateToPlayerData(false);
@@ -1136,7 +1138,7 @@ function persistMetaStateToPlayerData(flush: boolean): Promise<boolean> {
     shop: loadShop(),
   };
   metaCloudDirty = false;
-  lastMetaCloudWriteAt = Date.now();
+  lastMetaCloudWriteAt = performance.now();
   const write = writePlayerDataValue(META_PLAYER_DATA_KEY, envelope, flush)
     .then((success) => {
       if (!success || loadMetaState().savedAt !== snapshot.savedAt) metaCloudDirty = true;
@@ -1155,10 +1157,36 @@ function persistMetaStateToPlayerData(flush: boolean): Promise<boolean> {
   return write;
 }
 
+function isValidCloudMetaState(raw: unknown): raw is Record<string, unknown> {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return false;
+  const state = raw as Record<string, unknown>;
+  const dailyBonus = state.dailyBonus;
+  const quests = state.quests;
+  return state.v === 2
+    && Number.isSafeInteger(state.savedAt) && Number(state.savedAt) >= 0
+    && typeof state.glory === 'number' && Number.isFinite(state.glory) && state.glory >= 0
+    && typeof state.matchesPlayed === 'number' && Number.isFinite(state.matchesPlayed) && state.matchesPlayed >= 0
+    && Array.isArray(state.nodes)
+    && !!dailyBonus && typeof dailyBonus === 'object' && !Array.isArray(dailyBonus)
+    && !!quests && typeof quests === 'object' && !Array.isArray(quests);
+}
+
+function isValidCloudShopState(raw: unknown): raw is ShopState {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return false;
+  const shop = raw as Partial<ShopState>;
+  if (typeof shop.balance !== 'number' || !Number.isSafeInteger(shop.balance) || shop.balance < 0
+    || !shop.upgrades || typeof shop.upgrades !== 'object' || Array.isArray(shop.upgrades)) return false;
+  const ids = ['might', 'vitality', 'speed', 'magnet', 'luck'] as const;
+  return ids.every((id) => {
+    const level = shop.upgrades?.[id];
+    return typeof level === 'number' && Number.isInteger(level) && level >= 0 && level <= 3;
+  });
+}
+
 /**
  * Восстанавливает общий мета-прогресс до создания игровых сцен.
  * При недоступности Player Data ничего не перезаписываем: локальный прогресс
- * продолжает работать, а неизвестное облачное состояние не затирается.
+ * продолжает работать, а неизвестное или повреждённое облачное состояние не затирается.
  */
 export async function hydrateMetaStateFromPlayerData(): Promise<void> {
   if (typeof window === 'undefined') return;
@@ -1176,20 +1204,28 @@ export async function hydrateMetaStateFromPlayerData(): Promise<void> {
 
   const local = loadMetaState();
   const value = cloud.value as Partial<MetaCloudEnvelope> | null;
-  const remoteState = value && value.version === 1
-    && value.state && typeof value.state === 'object' && !Array.isArray(value.state)
+  const envelopeSavedAt = Number(value?.savedAt);
+  const remoteState = value?.version === 1 && isValidCloudMetaState(value.state)
     ? sanitize(value.state)
     : null;
+  const validEnvelope = remoteState !== null
+    && Number.isSafeInteger(envelopeSavedAt)
+    && envelopeSavedAt >= 0
+    && remoteState.savedAt === envelopeSavedAt;
 
-  if (remoteState && Number.isFinite(Number(value?.savedAt))
-    && Number(value?.savedAt) >= local.savedAt) {
+  if (validEnvelope && remoteState && envelopeSavedAt >= local.savedAt) {
     // Облачный снимок новее или равен локальному; его sanitized-форма
     // записывается локально без обновления savedAt и без обратной записи в облако.
-    remoteState.savedAt = Math.max(remoteState.savedAt, Math.floor(Number(value?.savedAt)));
     cached = remoteState;
     saveJson(LS_META2, remoteState);
-    if (value?.shop && typeof value.shop === 'object') restoreShopState(value.shop);
-    metaCloudDirty = false;
+    if (isValidCloudShopState(value?.shop)) {
+      restoreShopState(value.shop);
+      metaCloudDirty = false;
+    } else {
+      // Не затираем локальный кошелёк повреждёнными/устаревшими данными магазина.
+      metaCloudDirty = true;
+      scheduleMetaCloudSave();
+    }
     return;
   }
 
@@ -1208,9 +1244,8 @@ export async function flushMetaStateToPlayerData(): Promise<boolean> {
     metaCloudSaveTimer = null;
   }
   if (metaCloudWriteInFlight) await metaCloudWriteInFlight;
-  // A failed/in-flight write can schedule a debounce while the page is already
-  // being hidden. Cancel that timer before the explicit flush to avoid a second
-  // write racing with the flush on the same snapshot.
+  // Ошибка или незавершённая запись может поставить debounce-таймер уже во время
+  // ухода со страницы. Перед явным flush отменяем его, чтобы не было гонки снимков.
   if (metaCloudSaveTimer !== null) {
     clearTimeout(metaCloudSaveTimer);
     metaCloudSaveTimer = null;
