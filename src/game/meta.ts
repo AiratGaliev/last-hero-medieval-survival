@@ -404,6 +404,11 @@ export const CHALLENGE_MODS: ChallengeModDef[] = [
   { id: 'cm_fog', nameKey: 'challenge.fog.name', descKey: 'challenge.fog.desc' },
 ];
 
+/** Числовой seed карты и волн ежедневного вызова — стабилен для серверной даты. */
+export function dailyChallengeSeedNumber(date: string): number {
+  return hashStr(`daily-run:${date}`) >>> 0;
+}
+
 export function challengeModsForDate(date: string, rerollSalt = ''): ChallengeModId[] {
   const rng = mulberry32(hashStr(`challenge:${date}:${rerollSalt}`));
   const pool = [...CHALLENGE_MODS.map((m) => m.id)];
@@ -747,6 +752,8 @@ export interface RunModifiers {
   endless: boolean;
   /** Испытание недели — тот же указ, но с локальной мини-таблицей. */
   weeklyChallenge: boolean;
+  /** Серверная дата YYYY-MM-DD для детерминированного вызова дня. */
+  challengeSeed?: string | null;
 }
 
 export const RUN_KEY = 'tss-run';
@@ -766,6 +773,7 @@ export function consumeRunConfig(): RunModifiers {
     consumables: [],
     endless: false,
     weeklyChallenge: false,
+    challengeSeed: null,
   };
   if (raw) {
     cfg.contract = typeof raw.contract === 'string' ? raw.contract : null;
@@ -780,6 +788,8 @@ export function consumeRunConfig(): RunModifiers {
     }
     cfg.endless = raw.endless === true;
     cfg.weeklyChallenge = raw.weeklyChallenge === true;
+    cfg.challengeSeed = typeof raw.challengeSeed === 'string' && /^\\d{4}-\\d{2}-\\d{2}$/.test(raw.challengeSeed)
+      ? raw.challengeSeed : null;
   }
   return cfg;
 }
