@@ -30,7 +30,7 @@ interface DeliveryEvent { e: AnalyticsEvent; p: Params; t: number }
 const MAX_BUFFER = 400;
 const MAX_RUNS = 50;
 const MAX_OUTBOX = 400;
-const MAX_PLAYER_DATA_CHARS = 150_000;
+const MAX_PLAYER_DATA_BYTES = 150_000;
 const RUNS_KEY = 'tss-telemetry';
 const OUTBOX_KEY = 'tss-analytics-outbox';
 const PLAYER_DATA_RUNS_KEY = 'tss-telemetry-runs';
@@ -164,16 +164,20 @@ async function decodeHistory(payload: unknown): Promise<BufferedEvent[][]> {
       .slice(-MAX_RUNS);
   } catch { return []; }
 }
+function utf8ByteLength(value: string): number {
+  return new TextEncoder().encode(value).byteLength;
+}
+
 async function persistCloudHistory(history: BufferedEvent[][]): Promise<void> {
   if (!history.length) return;
   let limited = history.slice(-MAX_RUNS);
   let payload = await encodeHistory(limited);
-  while (payload.length > MAX_PLAYER_DATA_CHARS && limited.length > 1) {
+  while (utf8ByteLength(payload) > MAX_PLAYER_DATA_BYTES && limited.length > 1) {
     limited = limited.slice(1);
     payload = await encodeHistory(limited);
   }
-  if (payload.length <= MAX_PLAYER_DATA_CHARS) {
-    await writePlayerDataValue(PLAYER_DATA_RUNS_KEY, payload);
+  if (utf8ByteLength(payload) <= MAX_PLAYER_DATA_BYTES) {
+    await writePlayerDataValue(PLAYER_DATA_RUNS_KEY, payload, true);
   }
 }
 

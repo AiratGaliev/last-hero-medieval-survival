@@ -213,13 +213,13 @@ export async function readPlayerDataValue(key: string): Promise<unknown> {
 }
 
 /** Последовательно выполняет облачные записи, чтобы параллельные setData не перезаписывали новое состояние. */
-export function writePlayerDataValue(key: string, value: unknown): Promise<boolean> {
+export function writePlayerDataValue(key: string, value: unknown, flush = false): Promise<boolean> {
   const player = cached;
   if (!isOnYandex() || !player?.setData) return Promise.resolve(false);
   let persisted = false;
   playerDataWriteQueue = playerDataWriteQueue
     .then(async () => {
-      await player.setData!({ [key]: value }, false);
+      await player.setData!({ [key]: value }, flush);
       persisted = true;
     })
     .catch((error: unknown) => {
@@ -245,7 +245,7 @@ export async function loadExperimentFlagsFromPlayerData(): Promise<Record<string
 /** Синхронизируются только варианты экспериментов; идентификаторы игроков не передаются. */
 export function persistExperimentFlagsToPlayerData(flags: Record<string, string>): void {
   if (Object.keys(flags).length === 0) return;
-  void writePlayerDataValue(ANALYTICS_EXPERIMENTS_KEY, flags);
+  void writePlayerDataValue(ANALYTICS_EXPERIMENTS_KEY, flags, true);
 }
 
 /** Загружает объект игрока (один раз за сессию). */
