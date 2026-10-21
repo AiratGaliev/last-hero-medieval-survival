@@ -509,7 +509,9 @@ export const en: Record<TranslationKey, string> = {
   'hint.house': 'Enough wood — a house will rise here soon',
   'hint.barracks': 'Barracks are your insurance. If the hero falls, a warrior steps up',
   'hint.siege': 'SIEGE! Enemies march on the houses, not on you. Repel them or repair after',
-  'hint.monastery': 'The abbey: 10 beds, 1 wood per 15 HP. No bed — the wounded bleed out',
+  'hint.monastery': 'Build an abbey to save the wounded: 10 beds, 1 wood restores 15 HP. Without a free bed, they bleed out',
+  'hint.monasteryBuilt': 'The abbey heals up to 10 wounded; 1 wood restores 15 HP. If it falls, everyone inside dies',
+  'hint.monasteryLoss': 'The abbey has fallen: everyone inside died. Watch its HP and repair damage before another siege'
   'hint.orders': 'Shift+click or long-press a pawn to give an order',
   'hint.veteran': 'A pawn who survives 3 sieges becomes a veteran',
   'hint.chronicle': "This is your settlement's story. Every run tells a new one.",
