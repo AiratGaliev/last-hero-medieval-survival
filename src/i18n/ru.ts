@@ -137,7 +137,7 @@ export const ru = {
   'over.combo': 'ЛУЧШАЯ СЕРИЯ: ×{v}',
   'over.gold': 'ЗОЛОТО: {v}',
   'over.score': 'СЧЁТ: {v}',
-  'over.contractLabel': 'С контрактом ×{mult}',
+  'over.contractLabel': '{name} ×{mult}',
   'over.contractScore': '{v} очков',
   'over.difficulty': 'СЛОЖНОСТЬ: {v}',
   'over.newAch': 'НОВЫЕ ДОСТИЖЕНИЯ:',
