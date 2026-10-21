@@ -3867,3 +3867,15 @@ catalog» оказался не тестовым артефактом, а нас
   Полный Playwright-прогон на desktop/mobile не запускался; визуальное соответствие
   и тайминг ещё требуют браузерной проверки. Общий §H.13 остаётся открытым до
   проверки всех 14 пунктов.
+
+
+### Результаты проверок перед приёмкой PR #35 (21.10.2026)
+
+- GitHub Actions **CI Fast** для commit `fe506f9edfc1898883db358a97795e264ead4f22`
+  завершился успешно: run [#39601851969](https://github.com/AiratGaliev/last-hero-medieval-survival/actions/runs/39601851969),
+  шаги `npm ci`, `Typecheck and lint`, `Production build` — success.
+- Это подтверждает проверку типов/линтера и production build, но не браузерные
+  сценарии. Playwright E2E и визуальный прогон desktop/mobile в этой сессии не
+  запускались: workflow не стартует автоматически на PR в `dev`, а доступный
+  набор операций не позволяет отправить ручной `workflow_dispatch`. Настоящие
+  Yandex Games Player Data и мобильное поведение остаются внешней приёмкой.
