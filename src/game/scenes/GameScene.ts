@@ -2498,6 +2498,7 @@ private ordersUnlocked(): boolean {
     this.addXp(15);
     this.score += 50;
     this.economy.emit('change');
+    audio.play('levelup'); // Короткая fanfare завершения постройки (§H.13 №3).
     this.effects.dust(x, y - 18, 8);
     this.effects.buildFlag(x, y - 18);
     for (const pawn of this.economy.pawns) {
