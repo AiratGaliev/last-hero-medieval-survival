@@ -42,7 +42,7 @@ import { placementAvailable, resetPlacementLimits, hideStickyBanner } from '../.
 import { track, beginRun, flushRunTelemetry, detectDeviceClass } from '../../platform/analytics';
 import { analyticsIdentity } from '../../platform/player';
 import {
-  consumeRunConfig, loadMetaState, rollMetaDay, nodeEffects, seasonDef,
+  consumeRunConfig, dailyChallengeSeedNumber, loadMetaState, rollMetaDay, nodeEffects, seasonDef,
   takeConsumables, applyRunToMeta, contractDef, contractScoreForRun, QUEST_POOL, markCodex,
   heroSkinTint, buildingSkinTint, trailSkinTint, activeBanner, matchesPlayed,
   type RunModifiers, type NodeEffects, type SeasonModifier, type RunSummary,
@@ -143,6 +143,20 @@ export class GameScene extends Phaser.Scene {
     t = Math.imul(t ^ (t >>> 15), t | 1);
     t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
     return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  }
+
+  /** Случайность, влияющая на ежедневный вызов, берётся из общего seed рана. */
+  private gameplayRandom(): number {
+    return this.mods.challenge && this.mods.challengeSeed ? this.runRng() : Math.random();
+  }
+
+  private gameplayInt(min: number, max: number): number {
+    if (!this.mods.challenge || !this.mods.challengeSeed) return Phaser.Math.Between(min, max);
+    return min + Math.floor(this.gameplayRandom() * (max - min + 1));
+  }
+
+  private get isSeededDailyChallenge(): boolean {
+    return !!this.mods.challenge && !!this.mods.challengeSeed;
   }
   private level = 1;
   private xp = 0;
