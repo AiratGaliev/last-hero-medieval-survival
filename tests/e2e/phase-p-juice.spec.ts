@@ -240,15 +240,23 @@ test('phase P: building completion raises the construction flag', async ({ page 
       effects: { buildFlag: (x: number, y: number) => void };
       onBuildComplete: (kind: 'house', x: number, y: number) => void;
     };
-    const calls: Array<[number, number]> = [];
-    const original = scene.effects.buildFlag;
-    scene.effects.buildFlag = (x, y) => calls.push([x, y]);
+    const audioModule = await import(/* @vite-ignore */ new URL('/src/game/systems/Audio.ts', location.origin).href) as {
+      audio: { play: (name: string) => void };
+    };
+    const soundCalls: string[] = [];
+    const originalSound = audioModule.audio.play;
+    const originalFlag = scene.effects.buildFlag;
+    const flagCalls: Array<[number, number]> = [];
+    audioModule.audio.play = (name) => soundCalls.push(name);
+    scene.effects.buildFlag = (x, y) => flagCalls.push([x, y]);
     scene.onBuildComplete('house', 140, 200);
-    scene.effects.buildFlag = original;
-    return calls;
+    scene.effects.buildFlag = originalFlag;
+    audioModule.audio.play = originalSound;
+    return { flagCalls, soundCalls };
   });
 
-  expect(calls).toEqual([[140, 182]]);
+  expect(calls.flagCalls).toEqual([[140, 182]]);
+  expect(calls.soundCalls).toContain('levelup');
 });
 
 test('phase P: anchor arrows stay attached to banner edges and inside the viewport', async ({ page }) => {
