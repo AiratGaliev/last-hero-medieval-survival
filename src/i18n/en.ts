@@ -671,6 +671,7 @@ export const en: Record<TranslationKey, string> = {
 
   'blessing.title': 'BLESSING',
   'blessing.pick': 'Pick one of three',
+  'blessing.skip': 'Continue without',
   'blessing.needToken': 'A blessing token or an ad is required',
   'blessing.adToken': 'Ad: +1 token',
   'blessing.pawn_speed.name': 'Swift steeds',
