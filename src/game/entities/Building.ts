@@ -200,8 +200,12 @@ export class Building extends Phaser.GameObjects.Image {
   }
 
   /** Поджог: DoT SIEGE.BURN_DMG за SIEGE.BURN_MS (TZ §E.4.1). */
-  ignite(siegeIdx: number): void {
-    if (!this.alive || this.underConstruction) return;
+  /** Возвращает true только когда огонь действительно начался/был восстановлен. */
+  ignite(siegeIdx: number): boolean {
+    if (!this.alive || this.underConstruction) return false;
+    // burnRemainingMs — источник истины о горении: fireFx может остаться
+    // active, но скрытым после окончания предыдущего DoT.
+    const ignitionStarted = this.burnRemainingMs <= 0 || !this.fireFx || !this.fireFx.active;
     this.burnRemainingMs = Math.max(this.burnRemainingMs, SIEGE.BURN_MS);
     this.lastSiegeIdx = siegeIdx;
     if (!this.burnSprite || !this.burnSprite.active) {
@@ -215,6 +219,7 @@ export class Building extends Phaser.GameObjects.Image {
         .setScale(1.1).setDepth(DEPTH.FX - 5).setAlpha(0.9);
       this.fireFx.play('building-fire-loop');
     }
+    return ignitionStarted;
   }
 
   /** Тик горения; возвращает урон только за реально прошедшее игровое время. */

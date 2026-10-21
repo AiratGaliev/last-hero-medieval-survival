@@ -3,7 +3,7 @@
 
 type SfxName =
   | 'hit' | 'shoot' | 'pickup' | 'levelup' | 'hurt' | 'die'
-  | 'explosion' | 'boss' | 'click' | 'victory' | 'gameover' | 'slam' | 'ach' | 'evolve';
+  | 'explosion' | 'boss' | 'click' | 'victory' | 'gameover' | 'slam' | 'ach' | 'evolve' | 'fire';
 
 class AudioSystem {
   private ctx: AudioContext | null = null;
@@ -144,6 +144,12 @@ class AudioSystem {
       case 'die': this.tone(300, 0.12, 'square', 0.08, 0, 90); this.noise(0.08, 0.06); break;
       case 'explosion': this.noise(0.5, 0.3, 0, 700); this.tone(90, 0.4, 'sawtooth', 0.2, 0, 35); break;
       case 'slam': this.noise(0.25, 0.22, 0, 400); this.tone(70, 0.25, 'square', 0.18, 0, 40); break;
+      case 'fire':
+        // Короткий шорох пламени с низким потрескиванием; вызывается только
+        // при начале горения, а не при каждом тике DoT или повторном попадании.
+        this.noise(0.22, 0.065, 0, 1500);
+        this.tone(92, 0.16, 'sawtooth', 0.045, 0, 58);
+        break;
       case 'boss':
         this.tone(80, 0.7, 'sawtooth', 0.25, 0, 45);
         this.tone(120, 0.7, 'square', 0.15, 0.15, 60);

@@ -103,6 +103,8 @@ export const ru = {
   'pause.resume': 'ПРОДОЛЖИТЬ',
   'pause.restart': 'ЗАНОВО',
   'pause.toMenu': 'В МЕНЮ',
+  'pause.trainingOn': 'ОБУЧЕНИЕ: ВКЛ',
+  'pause.trainingOff': 'ОБУЧЕНИЕ: ВЫКЛ',
   'pause.weapons': 'ОРУЖИЯ',
   'pause.bonuses': 'БОНУСЫ',
 
@@ -429,6 +431,7 @@ export const ru = {
   'siege.partial': 'Осада отбита частично',
   'siege.monasteryFalling': '⚠ МОНАСТЫРЬ ПАДАЕТ — ПОГИБНЕТ {v}',
   'siege.monasteryCollapsed': 'ОБИТЕЛЬ ПАЛА: {v} РАНЕНЫХ ПОГИБЛИ',
+  'siege.monasteryCollapsedNames': 'Погибли: {names}',
   'boss.siege': '⚠ ОГР ИДЁТ НА ЗАМОК!',
 
   // ---------- Условия поражения (TZ §E.3) ----------
@@ -465,6 +468,8 @@ export const ru = {
   // ---------- Преемственность (TZ §F) ----------
   'succession.title': 'ГЕРОЙ ПАЛ',
   'succession.subtitle': 'Казармы уцелели — поселение держит вас',
+  'succession.tutorialTitle': 'ПОСЕЛЕНИЕ НЕ БРОСАЕТ СВОИХ',
+  'succession.tutorialBody': 'Возьми живого воина или призови нового. Первая смена героя за ресурсы бесплатна.',
   'succession.warriorOnField': 'ВОИН НА ПОЛЕ ({v})',
   'succession.takeCommand': 'ВОЗЬМИ КОМАНДОВАНИЕ',
   'succession.newWarrior': 'НОВЫЙ ВОИН',

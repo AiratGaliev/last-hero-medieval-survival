@@ -20,7 +20,7 @@ export type LoseCause = 'hero' | 'castle' | 'population';
 export interface SettlementCtx {
   onFeed(text: string, color?: string): void;
   onDefeat(cause: LoseCause): void;
-  onMonasteryCollapsed(victims: number): void;
+  onMonasteryCollapsed(victims: Pawn[], building: Building): void;
   onBuildingDestroyed(b: Building): void;
   onSiegeScore(outcome: 'defended' | 'partial', index: number): void;
   /** Пешка стала ветераном 3★ — микро-награды §H.6/§E.8 (+100 очков, +25 XP). */
@@ -330,7 +330,7 @@ export class Settlement {
       }
       // Этот callback отвечает и за объявление числа жертв, и за единственное
       // событие аналитики. Он нужен для каждого обрушения, не только первого.
-      this.ctx.onMonasteryCollapsed(victims.length);
+      this.ctx.onMonasteryCollapsed(victims, b);
     }
     // Дом падает — лимит рабочих уменьшается; лишние пешки уходят (§B.4).
       // Уход — не смерть: восстановление за дерево и мясо не запускается.

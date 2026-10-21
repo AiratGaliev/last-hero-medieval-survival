@@ -159,6 +159,12 @@ export class Pawn extends Phaser.Physics.Arcade.Sprite {
     return Pawn.spritePrefix(this.kind, this.weapon ?? undefined);
   }
 
+  /** Коротко поворачивает спрайт к завершённой постройке (juice №3 §H.13). */
+  faceToward(targetX: number): void {
+    if (!this.active || this.dead || !Number.isFinite(targetX)) return;
+    if (Math.abs(targetX - this.x) > 2) this.setFlipX(targetX < this.x);
+  }
+
   // ---------- Анимации ----------
 
   /** Цикл: run с carry-листом, если несёт добычу (§B.2 «ресурс виден на руках»). */

@@ -12,6 +12,7 @@ import { initSdk, isOnYandex, isMockMode, getSdk } from './platform/sdk';
 import { initPayments } from './platform/payments';
 import { initAnalytics, exportBuffer, hydrateRunTelemetryFromPlayerData } from './platform/analytics';
 import { installAnalyticsDebugOverlay } from './platform/analyticsDebug';
+import { hydrateHintsFromPlayerData } from './game/systems/Hints';
 import {
   hydrateSuccessionFreeUsed, loadPlayer, loadExperimentFlagsFromPlayerData,
   persistExperimentFlagsToPlayerData,
@@ -201,12 +202,13 @@ const boot = async (): Promise<void> => {
   saveMetaState(localMeta);
   persistExperimentFlagsToPlayerData(localMeta.flags);
 
-  // Восстанавливаем историю последних ранов из Player Data, если она доступна.
-  await hydrateRunTelemetryFromPlayerData();
-
-  // Lifetime-преемственность читается до создания сцен, чтобы не показывать
-  // повторно бесплатную смену на другом устройстве. При ошибке останется локальный fallback.
-  await hydrateSuccessionFreeUsed();
+  // Состояния аккаунта восстанавливаются до создания сцен. Облако необязательно:
+  // при таймауте или вне Yandex Games каждый подсервис использует локальный fallback.
+  await Promise.all([
+    hydrateHintsFromPlayerData(),
+    hydrateRunTelemetryFromPlayerData(),
+    hydrateSuccessionFreeUsed(),
+  ]);
 
   await waitForFont();
 
