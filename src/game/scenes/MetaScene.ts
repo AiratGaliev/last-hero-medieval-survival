@@ -6,7 +6,6 @@ import { makeButton, makePanel, makeRibbon, resizePanel, fitTextWidth, type Butt
 import { t, num, type TranslationKey, type TranslateParams } from '../../i18n';
 import { FTUE_MATCH_GATE } from '../data';
 import { track } from '../../platform/analytics';
-import { track } from '../../platform/analytics';
 import { placementAvailable, showPlacementRewarded, showStickyBanner } from '../../platform/ads';
 import { purchaseSku } from '../../platform/payments';
 import {
