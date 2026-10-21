@@ -125,6 +125,49 @@ test('phase P: progressive disclosure reads thresholds from one gate table', asy
   expect(result.derived).toEqual([2, 3, 4, 5, 3, 5, 10]);
 });
 
+test('phase P: premium shop tabs stay hidden until the fifth finished match', async ({ page }) => {
+  await page.goto('/?lang=en&ysdk=mock');
+  await expect(page.locator('#game canvas')).toBeVisible({ timeout: startupTimeout });
+
+  const result = await page.evaluate(async () => {
+    const game = (window as unknown as {
+      __tss?: { scene: { launch(key: string): void; getScene(key: string): unknown } };
+    }).__tss;
+    if (!game) throw new Error('Phaser runtime is unavailable');
+    const meta = await import(/* @vite-ignore */ new URL('/src/game/meta.ts', location.origin).href) as {
+      rollMetaDay: () => { matchesPlayed: number };
+      saveMetaState: (state: unknown) => void;
+    };
+    const state = meta.rollMetaDay();
+    state.matchesPlayed = 0;
+    meta.saveMetaState(state);
+
+    game.scene.launch('Shop');
+    const shop = game.scene.getScene('Shop') as {
+      tab: string;
+      availableTabs: () => string[];
+      openTab: (id: string) => void;
+      renderTabs: () => void;
+    };
+    const before = shop.availableTabs();
+    shop.openTab('pass');
+    const afterRejectedNavigation = shop.tab;
+
+    state.matchesPlayed = 5;
+    meta.saveMetaState(state);
+    shop.renderTabs();
+    return {
+      before,
+      after: shop.availableTabs(),
+      afterRejectedNavigation,
+    };
+  });
+
+  expect(result.before).toEqual(['shop', 'skins']);
+  expect(result.afterRejectedNavigation).toBe('shop');
+  expect(result.after).toEqual(['shop', 'skins', 'pass', 'crowns']);
+});
+
 test('phase P: the first tutorial overlay auto-resumes after three seconds', async ({ page }) => {
   await page.addInitScript(() => localStorage.removeItem('tss-hints'));
   await page.goto('/?lang=en&ysdk=mock');
