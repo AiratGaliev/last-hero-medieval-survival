@@ -46,6 +46,14 @@ type GameSceneRuntime = {
 
 type SuccessionSceneRuntime = {
   data_: SuccessionUiData | null;
+  adUsed: boolean;
+  adInFlight: boolean;
+  adButton: {
+    setEnabled(on: boolean): void;
+    img: { alpha: number };
+    hit: { getData(key: string): unknown };
+  } | null;
+  takeAd(): Promise<void>;
   children: { list: Array<{ type?: string; text?: string }> };
 };
 
@@ -217,4 +225,46 @@ test('phase N: later succession without a resource cost renders safely and keeps
   expect(result.resourcesAffordable).toBe(false);
   expect(result.goldAffordable).toBe(false);
   expect(result.hasFreeLabel).toBe(false);
+});
+
+test('phase N: a failed rewarded attempt dims only the ad branch and leaves surrender available', async ({ page }) => {
+  await startRun(page);
+
+  const result = await page.evaluate(async () => {
+    const game = (window as RuntimeWindow).__tss;
+    if (!game) throw new Error('Phaser runtime is unavailable');
+    const scene = game.scene.getScene('Game') as GameSceneRuntime;
+    scene.economy.buildings.push({
+      kind: 'barracks',
+      alive: true,
+      underConstruction: false,
+    });
+    scene.succession.freeUsed = true;
+    scene.succession.successionsDone = 1;
+    scene.onHeroDeath();
+
+    const succession = game.scene.getScene('Succession') as SuccessionSceneRuntime;
+    if (!succession.adButton) throw new Error('Rewarded button was not created');
+    await succession.takeAd();
+    const labels = succession.children.list
+      .filter((child) => child.type === 'Text')
+      .map((child) => child.text ?? '');
+    const result = {
+      active: game.scene.isActive('Succession'),
+      adUsed: succession.adUsed,
+      adInFlight: succession.adInFlight,
+      adButtonAlpha: succession.adButton.img.alpha,
+      adButtonCursorState: succession.adButton.hit.getData('cursor'),
+      surrenderVisible: labels.some((label) => label.toUpperCase().includes('SURRENDER')),
+    };
+    game.scene.stop('Succession');
+    return result;
+  });
+
+  expect(result.active).toBe(true);
+  expect(result.adUsed).toBe(true);
+  expect(result.adInFlight).toBe(false);
+  expect(result.adButtonAlpha).toBeLessThan(1);
+  expect(result.adButtonCursorState).toBe('disabled');
+  expect(result.surrenderVisible).toBe(true);
 });
