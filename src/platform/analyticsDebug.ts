@@ -33,7 +33,7 @@ export function installAnalyticsDebugOverlay(): void {
   document.body.appendChild(root);
   const render = (events: BufferedEvent[]): void => {
     log.textContent = events.slice(-36).map((event) => {
-      let params = '';
+      let params: string;
       try { params = JSON.stringify(event.p); } catch { params = '[params unavailable]'; }
       return `${new Date(event.t).toLocaleTimeString()}  ${event.e}\n${params.slice(0, 420)}`;
     }).join('\n\n');
