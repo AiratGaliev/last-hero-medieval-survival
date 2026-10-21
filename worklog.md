@@ -3924,3 +3924,11 @@ catalog» оказался не тестовым артефактом, а нас
 - GitHub Actions CI Fast для SHA `907af13ac14276c056018e884223e1c4e9016de6` завершился `success`: [run #39664391502](https://github.com/AiratGaliev/last-hero-medieval-survival/actions/runs/39664391502). Подтверждены locked dependency install, TypeScript typecheck + ESLint и production build.
 - Предыдущие ревизии этого PR не прошли typecheck: были обнаружены nullable narrowing `MetaPreferences` и дублированный import `track` в `MetaScene`. Исправления внесены, актуальная ревизия прошла полный CI Fast.
 - Playwright-сценарии не запускались в PR workflow по правилам README. Межустройственная проверка выбора контракта/указа в опубликованном Yandex Games runtime остаётся внешним гейтом; KPI §K.3 и прочие критерии фазы Q не закрыты.
+
+### Фаза Q — контрактный множитель в результатах (21.10.2026)
+
+- Сверка §H.9 с `GameScene` подтвердила дефект: игровые правила восьми контрактов применялись, а `ContractDef.mult` нигде не участвовал в результате матча. В выборе контракта множитель показывался, но итоговые очки не отличались.
+- Добавлен `contractScoreForRun()` в `src/game/meta.ts`: возвращает валидный ID, исходный базовый SCORE, множитель и отдельно округлённый контрактный SCORE. Неизвестный контракт безопасно трактуется как отсутствующий, отрицательный/нечисловой счёт не создаёт отрицательных очков.
+- `GameScene` прикрепляет контрактный результат к `GameOverStats` и добавляет `contract_id`, `contract_multiplier`, `contract_score` к событию `run_end`. Экран результатов показывает название выбранного контракта, множитель и очки с контрактом.
+- Важно для совместимости (§E.9-A): базовый `stats.score` не мутируется; основной лидерборд сохраняет прежний SCORE и прежний формат `extraData`. Контрактный SCORE — отдельная метрика результата/аналитики, он не подменяет основной рекорд.
+- Добавлен сценарий `contract score applies the registered multiplier without replacing the base score`: проверяет все восемь множителей, отсутствующий/неизвестный контракт и отрицательное значение. Playwright в этой среде не запускался; PR CI Fast проверит typecheck/ESLint и production build, browser E2E остаётся отдельным гейтом.
