@@ -74,6 +74,45 @@ test('phase P: low-quality profile suppresses shakes and ordinary time effects',
 });
 
 
+
+test('phase P: the first tutorial overlay auto-resumes after three seconds', async ({ page }) => {
+  await page.addInitScript(() => localStorage.removeItem('tss-hints'));
+  await page.goto('/?lang=en&ysdk=mock');
+  await expect(page.locator('#game canvas')).toBeVisible({ timeout: startupTimeout });
+
+  await page.evaluate(() => {
+    const game = (window as unknown as {
+      __tss?: { scene: { getScene(key: string): unknown } };
+    }).__tss;
+    if (!game) throw new Error('Phaser runtime is unavailable');
+    const menu = game.scene.getScene('Menu') as {
+      selectedDiff?: string;
+      scene: { start(key: string, data?: unknown): void };
+    };
+    menu.scene.start('Game', { hero: 'warrior', diff: menu.selectedDiff ?? 'normal' });
+  });
+
+  const overlayPaused = () => page.evaluate(() => {
+    const game = (window as unknown as {
+      __tss?: { scene: { getScene(key: string): unknown } };
+    }).__tss;
+    if (!game) return false;
+    return (game.scene.getScene('Game') as { hintOverlayPaused?: boolean }).hintOverlayPaused === true;
+  });
+
+  await expect.poll(overlayPaused, { timeout: startupTimeout }).toBe(true);
+  await expect.poll(overlayPaused, { timeout: 6_000 }).toBe(false);
+
+  const activeTime = await page.evaluate(() => {
+    const game = (window as unknown as {
+      __tss?: { scene: { getScene(key: string): unknown } };
+    }).__tss;
+    if (!game) throw new Error('Phaser runtime is unavailable');
+    return (game.scene.getScene('Game') as { activeTimeMs: number }).activeTimeMs;
+  });
+  expect(activeTime).toBeGreaterThan(0);
+});
+
 test('phase P: anchor arrows stay attached to banner edges and inside the viewport', async ({ page }) => {
   await page.goto('/?lang=en&ysdk=mock');
   await expect(page.locator('#game canvas')).toBeVisible({ timeout: startupTimeout });
@@ -81,7 +120,8 @@ test('phase P: anchor arrows stay attached to banner edges and inside the viewpo
   const geometry = await page.evaluate(async () => {
     const url = new URL('/src/game/systems/Hints.ts', location.origin).href;
     const hints = await import(/* @vite-ignore */ url) as {
-      HINTS: readonly { id: string; ui: 'banner' | 'overlay'; urgent?: boolean }[];
+      HINTS: readonly { id: string; ui: 'banner' | 'overlay'; urgent?: boolean; ttl: number }[];
+      hintsStorageKeyForScope: (scope: string | null) => string;
       getHintArrowGeometry: (
         panel: { x: number; y: number; width: number; height: number },
         target: { x: number; y: number },
@@ -93,16 +133,28 @@ test('phase P: anchor arrows stay attached to banner edges and inside the viewpo
     };
     const panel = { x: 200, y: 90, width: 180, height: 50 };
     const siegeHint = hints.HINTS.find((hint) => hint.id === 'siege');
+    const moveHint = hints.HINTS.find((hint) => hint.id === 'move');
     return {
       outward: hints.getHintArrowGeometry(panel, { x: -100, y: 450 }, { width: 400, height: 300 }),
       inside: hints.getHintArrowGeometry(panel, { x: 200, y: 100 }, { width: 400, height: 300 }),
       siegeUi: siegeHint?.ui,
       siegeUrgent: siegeHint?.urgent,
+      moveTtl: moveHint?.ttl,
+      siegeTtl: siegeHint?.ttl,
+      accountAKey: hints.hintsStorageKeyForScope('profile-A'),
+      accountBKey: hints.hintsStorageKeyForScope('profile-B'),
+      guestKey: hints.hintsStorageKeyForScope(null),
     };
   });
 
   expect(geometry.siegeUi).toBe('overlay');
   expect(geometry.siegeUrgent).toBe(true);
+  expect(geometry.moveTtl).toBe(3_000);
+  expect(geometry.siegeTtl).toBe(2_000);
+  expect(geometry.accountAKey).toBe('hints@profile-A');
+  expect(geometry.accountBKey).toBe('hints@profile-B');
+  expect(geometry.accountAKey).not.toBe(geometry.accountBKey);
+  expect(geometry.guestKey).toBe('hints');
   expect(geometry.outward).not.toBeNull();
   expect(geometry.outward?.targetX).toBe(10);
   expect(geometry.outward?.targetY).toBe(290);

@@ -3,7 +3,7 @@
 // требование платформы (п. 1.2: игра должна работать без входа в сторонние
 // сервисы, а предложение авторизоваться — только по явному действию игрока).
 
-import { getSdk, isOnYandex, type YandexPlayer } from './sdk';
+import { getSdk, isMockMode, isOnYandex, type YandexPlayer } from './sdk';
 import { loadJson, saveJson } from '../game/storage';
 import { t } from '../i18n';
 
@@ -30,6 +30,19 @@ function playerUniqueId(player: YandexPlayer | null): string | null {
   try {
     const id = player?.getUniqueID().trim();
     return id || null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Область локального fallback для активного профиля. В QA-mock и у гостя
+ * остаётся прежнее локальное пространство; ID используется только как ключ.
+ */
+export async function getPlayerLocalDataScope(): Promise<string | null> {
+  if (!isOnYandex() || isMockMode()) return null;
+  try {
+    return playerUniqueId(cached ?? await loadPlayer());
   } catch {
     return null;
   }

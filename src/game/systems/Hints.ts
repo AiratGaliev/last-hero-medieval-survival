@@ -2,8 +2,10 @@ import Phaser from 'phaser';
 import { DEPTH, FONT } from '../constants';
 import { t } from '../../i18n';
 import { track } from '../../platform/analytics';
-import { loadJson, saveJson } from '../storage';
-import { readPlayerDataEntry, writePlayerDataValue } from '../../platform/player';
+import { loadJson, loadText, saveJson, saveText } from '../storage';
+import {
+  getPlayerLocalDataScope, readPlayerDataEntry, writePlayerDataValue,
+} from '../../platform/player';
 import { makePanel, resizePanel } from './Ui';
 
 // ============ Движок подсказок FTUE (TZ §I.1) ============
@@ -35,7 +37,7 @@ export interface HintDef {
   ui: HintUi;
   /** Экранная привязка: позиция пересчитывается при resize. */
   anchor?: HintAnchor;
-  /** Время жизни в мс (§I.1: banner — 4 сек). Overlay требует явного подтверждения. */
+  /** Время показа в мс: banner автоматически скрывается, overlay возобновляет мир по TTL; тап пропускает раньше. */
   ttl: number;
   /** Подсказка-исключение: показывается, минуя кулдаун очереди. */
   urgent?: boolean;
@@ -46,7 +48,7 @@ export interface HintDef {
  * Значения `priority` кодируют порядок раскрытия из сценария §I.2.
  */
 export const HINTS: readonly HintDef[] = [
-  { id: 'move', priority: 5, ui: 'overlay', anchor: 'center', ttl: 0 },
+  { id: 'move', priority: 5, ui: 'overlay', anchor: 'center', ttl: 3000 },
   // Ресурсный блок находится в левом верхнем углу: обучающий баннер
   // уходит вниз, чтобы не перекрывать цель, а стрелка ведёт к запасу дерева.
   { id: 'pawns', priority: 4, ui: 'banner', anchor: 'bottom', ttl: 4000 },
@@ -57,7 +59,7 @@ export const HINTS: readonly HintDef[] = [
   { id: 'veteran', priority: 1, ui: 'banner', ttl: 4000 },
   // Первая осада — приоритетный обучающий overlay: мир останавливается,
   // цель подсвечивается стрелкой, продолжение подтверждает сам игрок.
-  { id: 'siege', priority: 0, ui: 'overlay', anchor: 'center', ttl: 0, urgent: true },
+  { id: 'siege', priority: 0, ui: 'overlay', anchor: 'center', ttl: 2000, urgent: true },
 ];
 
 const HINT_BY_ID = new Map<HintId, HintDef>(HINTS.map((h) => [h.id, h]));
@@ -164,7 +166,14 @@ interface HintState {
 }
 
 const HINTS_PLAYER_DATA_KEY = 'tss-ftue-hints';
+const HINTS_LOCAL_SCOPE_OWNER_KEY = 'ftue-hints-owner';
 let hintsCloudReady = false;
+let hintsLocalStorageKey = 'hints';
+
+/** Ключ fallback: настоящий профиль получает отдельное пространство на устройстве. */
+export function hintsStorageKeyForScope(scope: string | null): string {
+  return scope ? `hints@${encodeURIComponent(scope)}` : 'hints';
+}
 
 function normalizeHintState(raw: unknown): HintState {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
@@ -194,7 +203,24 @@ function normalizeHintState(raw: unknown): HintState {
  * При недоступности облака игра продолжает использовать localStorage.
  */
 export async function hydrateHintsFromPlayerData(): Promise<void> {
-  const localRaw = loadJson<unknown>('hints');
+  const scope = await getPlayerLocalDataScope();
+  hintsLocalStorageKey = hintsStorageKeyForScope(scope);
+  let localRaw: unknown = loadJson<unknown>(hintsLocalStorageKey);
+
+  if (scope) {
+    const owner = loadText(HINTS_LOCAL_SCOPE_OWNER_KEY);
+    // Legacy-ключ мог содержать состояние только первого профиля на устройстве.
+    // Переносим его один раз, не передавая этот прогресс следующим аккаунтам.
+    if (localRaw === null && (!owner || owner === scope)) {
+      const legacyRaw = loadJson<unknown>('hints');
+      if (legacyRaw !== null) {
+        localRaw = legacyRaw;
+        saveJson(hintsLocalStorageKey, legacyRaw);
+      }
+    }
+    if (!owner) saveText(HINTS_LOCAL_SCOPE_OWNER_KEY, scope);
+  }
+
   const local = normalizeHintState(localRaw);
   const remoteResult = await readPlayerDataEntry(HINTS_PLAYER_DATA_KEY);
   hintsCloudReady = remoteResult.available;
@@ -209,7 +235,7 @@ export async function hydrateHintsFromPlayerData(): Promise<void> {
     enabled: preferRemote ? remote.enabled : local.enabled,
     updatedAt: Math.max(Date.now(), local.updatedAt, remote.updatedAt),
   };
-  saveJson('hints', merged);
+  saveJson(hintsLocalStorageKey, merged);
   // Не затираем облачный прогресс после таймаута чтения: сначала требуется
   // подтверждённый ответ Player Data, даже если ответ означает пустое поле.
   if (hintsCloudReady) void writePlayerDataValue(HINTS_PLAYER_DATA_KEY, merged, true);
@@ -242,6 +268,8 @@ export class Hints {
   private readonly onOverlayChange?: (paused: boolean) => void;
   /** Fallback на уровне сцены: касание overlay должно продолжать игру на mobile. */
   private overlayInputHandler: (() => void) | null = null;
+  /** Нативный таймер работает, пока Phaser Clock заморожен обучающим overlay. */
+  private overlayTimeout: ReturnType<typeof setTimeout> | null = null;
   private readonly resizeHandler = (): void => this.relayoutCurrent();
   private readonly updateHandler = (): void => this.updateAnchor();
   /**
@@ -258,13 +286,17 @@ export class Hints {
     this.onOverlayChange = onOverlayChange;
     this.layer = scene.add.container(0, 0).setScrollFactor(0).setDepth(DEPTH.OVERLAY);
     this.applyZoom();
-    const st = normalizeHintState(loadJson<unknown>('hints'));
+    const st = normalizeHintState(loadJson<unknown>(hintsLocalStorageKey));
     for (const id of st.shown) this.shown.add(id);
     for (const marker of st.markers) this.markers.add(marker);
     this.enabled = st.enabled;
     scene.scale.on('resize', this.resizeHandler);
     scene.events.on('update', this.updateHandler);
     scene.events.once('shutdown', () => {
+      if (this.overlayTimeout !== null) {
+        clearTimeout(this.overlayTimeout);
+        this.overlayTimeout = null;
+      }
       if (this.overlayInputHandler) {
         scene.input.off('pointerdown', this.overlayInputHandler);
         this.overlayInputHandler = null;
@@ -309,7 +341,7 @@ export class Hints {
       shown: [...this.shown], markers: [...this.markers],
       enabled: this.enabled, updatedAt: Date.now(),
     };
-    saveJson('hints', state);
+    saveJson(hintsLocalStorageKey, state);
     if (hintsCloudReady) void writePlayerDataValue(HINTS_PLAYER_DATA_KEY, state, true);
   }
 
@@ -416,8 +448,10 @@ export class Hints {
       this.overlayInputHandler = () => this.hide(true);
       this.scene.input.on('pointerdown', this.overlayInputHandler);
       this.onOverlayChange?.(true);
+      if (def.ttl > 0) this.overlayTimeout = setTimeout(() => this.hide(), def.ttl);
+    } else if (def.ttl > 0) {
+      this.scene.time.delayedCall(def.ttl, () => this.hide());
     }
-    else this.scene.time.delayedCall(def.ttl, () => this.hide());
   }
 
   private extra: Array<Phaser.GameObjects.Rectangle | null> = [];
@@ -481,6 +515,10 @@ export class Hints {
   private hide(byUser = false): void {
     const current = this.current;
     if (!current) return;
+    if (this.overlayTimeout !== null) {
+      clearTimeout(this.overlayTimeout);
+      this.overlayTimeout = null;
+    }
     track('hint_dismissed', { hint_id: current.id, source: byUser ? 'user' : 'ttl' });
     current.text.destroy();
     current.bg.destroy();
