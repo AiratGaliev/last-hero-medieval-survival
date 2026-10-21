@@ -3157,11 +3157,13 @@ camera shake и обычный hitstop. Кульминационные эффе�
 
 | Файл | Что |
 |---|---|
-| `src/game/systems/Hints.ts` (**новый**, фаза P) | движок подсказок §I.1: очередь, флаги, форматы UI |
-| `src/game/data.ts` | `HINTS[]`, `FTUE_MATCH_GATE` (таблица §I.3), `ftueSoftStart` |
+| `src/game/systems/Hints.ts` | реестр `HINTS[]`, очередь, локальные/облачные флаги и форматы UI §I.1 |
+| `src/game/data.ts` | `FTUE_MATCH_GATE` — единая таблица порогов §I.3 |
+| `src/game/meta.ts`, `src/game/scenes/MenuScene.ts`, `MetaScene.ts`, `ShopScene.ts` | guards прогрессивного раскрытия меню и мета-функций из `FTUE_MATCH_GATE` |
+| `src/game/scenes/GameScene.ts`, `src/game/systems/Spawner.ts` | триггеры первого матча и эффект `ftueSoftStart` |
 | `src/game/scenes/SuccessionScene.ts` | обучающий режим первого показа (§I.4) |
-| `src/game/systems/HUD.ts` | лента событий, якоря подсказок |
-| `src/game/shop.ts` / облако | хранение флагов `hint.*`, `ftue.matchesPlayed`, `succession.freeUsed` |
+| `src/game/systems/HUD.ts` | лента событий, якоря подсказок и крупная заставка преемника |
+| `src/game/shop.ts` / Player Data | хранение флагов `hint.*`, `ftue.matchesPlayed`, `succession.freeUsed` |
 | `src/i18n/*` | `hint.*`, `ftue.*` |
 
 ---
