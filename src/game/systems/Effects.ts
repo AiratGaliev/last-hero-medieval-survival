@@ -92,6 +92,40 @@ export class Effects {
     this.scene.time.delayedCall(800, () => emitter.destroy());
   }
 
+  /** Короткое поднятие знамени по завершении постройки (§H.13 №3). */
+  buildFlag(x: number, y: number): void {
+    const flag = this.scene.add.container(x, y - 10).setDepth(DEPTH.FX + 6)
+      .setAlpha(0).setScale(0.72);
+    const pole = this.scene.add.rectangle(-2, 1, 2.5, 27, 0x4b2c1b, 1);
+    const pennant = this.scene.add.graphics();
+    pennant.fillStyle(0xd9a520, 1).fillTriangle(0, -12, 20, -6, 0, 1);
+    pennant.lineStyle(1.5, 0x4b2c1b, 1).strokeTriangle(0, -12, 20, -6, 0, 1);
+    pennant.fillStyle(0xffe9a6, 0.9).fillTriangle(2, -10, 13, -6, 2, -2);
+    flag.add([pole, pennant]);
+
+    this.scene.tweens.add({
+      targets: flag,
+      y: y - 28,
+      alpha: 1,
+      scale: 1,
+      duration: 230,
+      ease: 'Back.Out',
+      onComplete: () => {
+        this.scene.time.delayedCall(430, () => {
+          if (!flag.active) return;
+          this.scene.tweens.add({
+            targets: flag,
+            y: y - 34,
+            alpha: 0,
+            duration: 220,
+            ease: 'Quad.easeIn',
+            onComplete: () => flag.destroy(),
+          });
+        });
+      },
+    });
+  }
+
   /** Брызги при попадании по врагу */
   hitSpark(x: number, y: number): void {
     this.sparkEmitter.explode(3, x, y);
