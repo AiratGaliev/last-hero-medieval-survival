@@ -14,7 +14,7 @@ import { gameplayStop } from '../../platform/lifecycle';
 import { track } from '../../platform/analytics';
 import { loadText, saveText } from '../storage';
 import {
-  addGlory, challengeVictoryToday, gloryDoubleExtra, loadMetaState, markChallengeVictory, saveRunConfig,
+  addGlory, challengeVictoryToday, contractDef, gloryDoubleExtra, loadMetaState, markChallengeVictory, saveRunConfig,
 } from '../meta';
 import { depositGold } from '../shop';
 
@@ -436,8 +436,12 @@ export class GameOverScene extends Phaser.Scene {
       [t('over.gold', { v: num(s.gold) }), t('over.score', { v: num(s.score) })],
     ];
     if (s.contractScore) {
+      const contract = contractDef(s.contractScore.id);
       pairs.push([
-        t('over.contractLabel', { mult: s.contractScore.multiplier }),
+        t('over.contractLabel', {
+          name: contract ? t(contract.nameKey as TranslationKey) : t('contract.title'),
+          mult: s.contractScore.multiplier,
+        }),
         t('over.contractScore', { v: num(s.contractScore.adjustedScore) }),
       ]);
     }
