@@ -134,6 +134,9 @@ test('phase P: anchor arrows stay attached to banner edges and inside the viewpo
     const panel = { x: 200, y: 90, width: 180, height: 50 };
     const siegeHint = hints.HINTS.find((hint) => hint.id === 'siege');
     const moveHint = hints.HINTS.find((hint) => hint.id === 'move');
+    const monasteryBuiltHint = hints.HINTS.find((hint) => hint.id === 'monasteryBuilt');
+    const monasteryLossHint = hints.HINTS.find((hint) => hint.id === 'monasteryLoss');
+    const overlayHints = hints.HINTS.filter((hint) => hint.ui === 'overlay').map((hint) => hint.id);
     return {
       outward: hints.getHintArrowGeometry(panel, { x: -100, y: 450 }, { width: 400, height: 300 }),
       inside: hints.getHintArrowGeometry(panel, { x: 200, y: 100 }, { width: 400, height: 300 }),
@@ -144,6 +147,9 @@ test('phase P: anchor arrows stay attached to banner edges and inside the viewpo
       accountAKey: hints.hintsStorageKeyForScope('profile-A'),
       accountBKey: hints.hintsStorageKeyForScope('profile-B'),
       guestKey: hints.hintsStorageKeyForScope(null),
+      monasteryBuiltUi: monasteryBuiltHint?.ui,
+      monasteryLossUi: monasteryLossHint?.ui,
+      overlayHints,
     };
   });
 
@@ -155,6 +161,9 @@ test('phase P: anchor arrows stay attached to banner edges and inside the viewpo
   expect(geometry.accountBKey).toBe('hints@profile-B');
   expect(geometry.accountAKey).not.toBe(geometry.accountBKey);
   expect(geometry.guestKey).toBe('hints');
+  expect(geometry.monasteryBuiltUi).toBe('banner');
+  expect(geometry.monasteryLossUi).toBe('banner');
+  expect(geometry.overlayHints).toEqual(['move', 'siege']);
   expect(geometry.outward).not.toBeNull();
   expect(geometry.outward?.targetX).toBe(10);
   expect(geometry.outward?.targetY).toBe(290);
