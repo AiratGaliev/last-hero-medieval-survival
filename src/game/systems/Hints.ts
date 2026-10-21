@@ -218,7 +218,7 @@ export async function hydrateHintsFromPlayerData(): Promise<void> {
 export class Hints {
   private scene: Phaser.Scene;
   private shown = new Set<HintId>();
-  private markers = new Set<string>();
+  private markers = new Set<FtueMarkerId>();
   // A new run's first hint must not inherit an artificial 20-second startup wait.
   private lastShownAt = -COOLDOWN_MS;
   /**
