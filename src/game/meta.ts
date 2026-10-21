@@ -1432,6 +1432,13 @@ export function claimWeeklyFinal(): { kind: 'crowns' | 'banner'; amount: number;
 // Ежедневный бонус: забор из меню одним кликом (§H.7)
 // ============================================================
 
+/** Прогрессивное раскрытие считает именно завершённые раны. Матч 3 начинается
+ * после двух завершённых ранов; эти пороги используются UI и игровыми guard-ами. */
+export const DAILY_BONUS_AFTER_MATCHES = 2;
+export const CHALLENGE_AFTER_MATCHES = 3;
+export const CONTRACTS_AFTER_MATCHES = 4;
+export const CODEX_AFTER_MATCHES = 5;
+
 export interface BonusClaimResult {
   ok: boolean;
   day: number;
@@ -1447,6 +1454,9 @@ export interface BonusClaimResult {
 export function claimDailyBonus(useAd = false): BonusClaimResult {
   const st = rollMetaDay();
   const today = todayKey();
+  if (st.matchesPlayed < DAILY_BONUS_AFTER_MATCHES) {
+    return { ok: false, day: st.dailyBonus.streak % 7, def: null, doubled: false, streak: st.dailyBonus.streak };
+  }
   if (st.dailyBonus.last === today) {
     return { ok: false, day: st.dailyBonus.streak % 7, def: null, doubled: false, streak: st.dailyBonus.streak };
   }
@@ -1485,7 +1495,8 @@ export function applyBonus(st: MetaState, def: DailyBonusDef, doubled: boolean):
 /** Требование R11: удвоение дара дня — только пока день не забран. */
 export function bonusAvailable(): boolean {
   const st = rollMetaDay();
-  return st.dailyBonus.last !== todayKey();
+  return st.matchesPlayed >= DAILY_BONUS_AFTER_MATCHES
+    && st.dailyBonus.last !== todayKey();
 }
 
 // ============================================================
@@ -1499,6 +1510,7 @@ export interface DailyChestReward { kind: 'gold' | 'blessing' | 'speedup'; amoun
 /** Осталось показов сундука сегодня (0 — кнопка скрыта). */
 export function dailyChestLeft(): number {
   const st = rollMetaDay();
+  if (st.matchesPlayed < DAILY_BONUS_AFTER_MATCHES) return 0;
   if (st.dailyChest.date !== todayKey()) return DAILY_CHEST_LIMIT;
   return Math.max(0, DAILY_CHEST_LIMIT - st.dailyChest.count);
 }
