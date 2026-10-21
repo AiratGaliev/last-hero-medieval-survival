@@ -49,7 +49,6 @@ export class Succession {
       this.freeUsed = true;
       saveJson('succession-free', true);
       persistSuccessionFreeUsed();
-      try { localStorage.removeItem('tss-succession-free'); } catch { /* приватный режим */ }
     } else {
       this.freeUsed = getSuccessionFreeUsed() ?? (loadJson<boolean>('succession-free') === true);
     }
