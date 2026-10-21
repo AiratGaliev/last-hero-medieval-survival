@@ -18,7 +18,9 @@
 // Единственный источник — gloryForRun() по итогам матча.
 
 import { loadJson, saveJson } from './storage';
-import { depositGold } from './shop';
+import {
+  depositGold, loadShop, restoreShopState, setShopSavedListener, type ShopState,
+} from './shop';
 import { serverNow } from '../platform/sdk';
 import { track } from '../platform/analytics';
 import {
@@ -1071,6 +1073,7 @@ interface MetaCloudEnvelope {
   version: 1;
   savedAt: number;
   state: MetaState;
+  shop?: ShopState;
 }
 
 let metaCloudHydrated = false;
@@ -1126,7 +1129,12 @@ function persistMetaStateToPlayerData(flush: boolean): Promise<boolean> {
   }
 
   const snapshot = structuredCloneSafe(loadMetaState());
-  const envelope: MetaCloudEnvelope = { version: 1, savedAt: snapshot.savedAt, state: snapshot };
+  const envelope: MetaCloudEnvelope = {
+    version: 1,
+    savedAt: snapshot.savedAt,
+    state: snapshot,
+    shop: loadShop(),
+  };
   metaCloudDirty = false;
   lastMetaCloudWriteAt = Date.now();
   const write = writePlayerDataValue(META_PLAYER_DATA_KEY, envelope, flush)
@@ -1180,6 +1188,7 @@ export async function hydrateMetaStateFromPlayerData(): Promise<void> {
     remoteState.savedAt = Math.max(remoteState.savedAt, Math.floor(Number(value?.savedAt)));
     cached = remoteState;
     saveJson(LS_META2, remoteState);
+    if (value?.shop && typeof value.shop === 'object') restoreShopState(value.shop);
     metaCloudDirty = false;
     return;
   }
@@ -1223,6 +1232,12 @@ export function saveMetaState(st: MetaState): boolean {
   }
   return saved;
 }
+
+/** Изменения постоянного кошелька/апгрейдов должны попасть в тот же облачный снимок. */
+setShopSavedListener(() => {
+  if (metaCloudHydrated) saveMetaState(loadMetaState());
+});
+
 
 /** Гарантирует актуальность дневных/недельных/сезонных секций. */
 export function rollMetaDay(): MetaState {
