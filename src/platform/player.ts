@@ -14,6 +14,7 @@ let cached: YandexPlayer | null = null;
 let loaded = false;
 
 const SUCCESSION_FREE_USED_KEY = 'successionFreeUsed';
+const ANALYTICS_EXPERIMENTS_KEY = 'tss-ab-flags';
 const SUCCESSION_FLAG_TIMEOUT_MS = 2_500;
 const SUCCESSION_LOCAL_PREFIX = 'tss-succession-free@';
 const SUCCESSION_OWNER_KEY = 'tss-succession-free-owner';
@@ -22,6 +23,8 @@ let successionFreeHydrated = false;
 let successionLocalStorageKey: string | null = null;
 let successionAccountId: string | null = null;
 let successionSaveQueue: Promise<void> = Promise.resolve();
+let playerDataWriteQueue: Promise<void> = Promise.resolve();
+let localAnalyticsIdentity: string | null = null;
 
 function playerUniqueId(player: YandexPlayer | null): string | null {
   try {
@@ -69,12 +72,13 @@ function saveSuccessionLocal(used: boolean): void {
 /** Время ответа SDK ограничено: сбой облака не должен блокировать старт игры. */
 async function playerDataWithTimeout(
   player: YandexPlayer,
+  keys: string[] = [SUCCESSION_FREE_USED_KEY],
 ): Promise<Record<string, unknown>> {
   if (!player.getData) throw new Error('Yandex Player.getData unavailable');
   let timer: ReturnType<typeof setTimeout> | undefined;
   try {
     return await Promise.race([
-      player.getData([SUCCESSION_FREE_USED_KEY]),
+      player.getData(keys),
       new Promise<never>((_, reject) => {
         timer = setTimeout(() => reject(new Error('Yandex Player.getData timed out')), SUCCESSION_FLAG_TIMEOUT_MS);
       }),
@@ -173,6 +177,75 @@ export function persistSuccessionFreeUsed(): void {
   successionFreeHydrated = true;
   saveSuccessionLocal(true);
   if (cached) saveSuccessionFreeUsedToCloud(cached, true);
+}
+
+
+/** Stable experiment key; the raw identity is never sent to analytics. */
+export function analyticsIdentity(): string {
+  const id = playerUniqueId(cached);
+  if (id) return `yg:${id}`;
+  if (localAnalyticsIdentity) return localAnalyticsIdentity;
+  try {
+    const key = 'tss-analytics-identity';
+    let value = window.localStorage.getItem(key);
+    if (!value) {
+      value = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
+      window.localStorage.setItem(key, value);
+    }
+    localAnalyticsIdentity = `local:${value}`;
+  } catch {
+    localAnalyticsIdentity = `session:${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
+  }
+  return localAnalyticsIdentity;
+}
+
+/** Read one Player Data field with a timeout; unavailable cloud is a soft failure. */
+export async function readPlayerDataValue(key: string): Promise<unknown> {
+  if (!isOnYandex()) return null;
+  const player = cached ?? await loadPlayer();
+  if (!player?.getData) return null;
+  try {
+    const data = await playerDataWithTimeout(player, [key]);
+    return data[key] ?? null;
+  } catch {
+    return null;
+  }
+}
+
+/** Serialize cloud writes to avoid concurrent setData calls overwriting a newer snapshot. */
+export function writePlayerDataValue(key: string, value: unknown): Promise<boolean> {
+  const player = cached;
+  if (!isOnYandex() || !player?.setData) return Promise.resolve(false);
+  let persisted = false;
+  playerDataWriteQueue = playerDataWriteQueue
+    .then(async () => {
+      await player.setData!({ [key]: value }, false);
+      persisted = true;
+    })
+    .catch((error: unknown) => {
+      console.warn('[player] не удалось сохранить данные аналитики:', error);
+    });
+  return playerDataWriteQueue.then(() => persisted);
+}
+
+/** Fetch existing assigned arms before any game scene starts. */
+export async function loadExperimentFlagsFromPlayerData(): Promise<Record<string, string>> {
+  const value = await readPlayerDataValue(ANALYTICS_EXPERIMENTS_KEY);
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
+  const flags: Record<string, string> = {};
+  for (const [key, variant] of Object.entries(value as Record<string, unknown>)) {
+    if (key.startsWith('ab:') && key.length <= 100
+      && typeof variant === 'string' && variant.length > 0 && variant.length <= 48) {
+      flags[key] = variant;
+    }
+  }
+  return flags;
+}
+
+/** Only assigned variants are synchronized; player IDs are not included. */
+export function persistExperimentFlagsToPlayerData(flags: Record<string, string>): void {
+  if (Object.keys(flags).length === 0) return;
+  void writePlayerDataValue(ANALYTICS_EXPERIMENTS_KEY, flags);
 }
 
 /** Загружает объект игрока (один раз за сессию). */

@@ -21,6 +21,7 @@ import { loadJson, saveJson } from './storage';
 import { depositGold } from './shop';
 import { serverNow } from '../platform/sdk';
 import { track } from '../platform/analytics';
+import { persistExperimentFlagsToPlayerData } from '../platform/player';
 
 // ============================================================
 // Справочник дерева «Хроника Долины» (§H.16): 30 узлов, 3 ветви
@@ -791,6 +792,8 @@ export interface MetaState {
   glory: number;
   nodes: NodeId[];
   matchesPlayed: number;
+  /** Сохранённые A/B-варианты; синхронизируются с Player Data. */
+  flags: Record<string, string>;
   codex: Record<string, number>;
   quests: QuestDayState;
   weekly: { week: string; progress: number; stage: number; claimed: boolean };
@@ -848,6 +851,33 @@ function hashStr(s: string): number {
   return h >>> 0;
 }
 
+/** Закрепляет вариант A/B за идентичностью игрока; raw identity не отправляется в аналитику. */
+export function getOrAssignExperimentVariant(
+  experiment: string,
+  identity: string,
+  variants: readonly string[] = ['control', 'variant'],
+): string {
+  const experimentId = experiment.trim().slice(0, 64);
+  const choices = [...new Set(variants.filter((value) =>
+    typeof value === 'string' && value.length > 0 && value.length <= 48,
+  ))];
+  if (!experimentId || !identity || choices.length === 0) {
+    throw new Error('Для A/B-эксперимента нужны имя, identity и минимум один вариант');
+  }
+
+  const key = `ab:${experimentId}`;
+  const state = loadMetaState();
+  const existing = state.flags[key];
+  if (existing && choices.includes(existing)) return existing;
+
+  const variant = choices[hashStr(`${experimentId}:${identity}`) % choices.length]!;
+  state.flags[key] = variant;
+  const persisted = saveMetaState(state);
+  persistExperimentFlagsToPlayerData(state.flags);
+  track('ab_assignment', { experiment: experimentId, variant, persisted });
+  return variant;
+}
+
 function mulberry32(seed: number): () => number {
   let a = seed >>> 0;
   return () => {
@@ -874,6 +904,7 @@ const EMPTY: MetaState = {
   glory: 0,
   nodes: [],
   matchesPlayed: 0,
+  flags: {},
   codex: {},
   quests: { date: '', ids: [], progress: {}, done: [], rerolls: 0 },
   weekly: { week: '', progress: 0, stage: 0, claimed: false },
@@ -933,6 +964,18 @@ function sanitize(raw: unknown): MetaState {
     glory: int(o.glory),
     nodes: strArr(o.nodes, knownNodes),
     matchesPlayed: int(o.matchesPlayed),
+    flags: (() => {
+      const out: Record<string, string> = {};
+      if (o.flags && typeof o.flags === 'object' && !Array.isArray(o.flags)) {
+        for (const [key, value] of Object.entries(o.flags)) {
+          if (key.startsWith('ab:') && key.length <= 100
+            && typeof value === 'string' && value.length > 0 && value.length <= 48) {
+            out[key] = value;
+          }
+        }
+      }
+      return out;
+    })(),
     codex: (() => {
       const out: Record<string, number> = {};
       if (o.codex && typeof o.codex === 'object') {
