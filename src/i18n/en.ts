@@ -512,6 +512,7 @@ export const en: Record<TranslationKey, string> = {
   'hint.monastery': 'The abbey: 10 beds, 1 wood per 15 HP. No bed — the wounded bleed out',
   'hint.orders': 'Shift+click or long-press a pawn to give an order',
   'hint.veteran': 'A pawn who survives 3 sieges becomes a veteran',
+  'hint.chronicle': "This is your settlement's story. Every run tells a new one.",
   'hint.tapToContinue': 'Tap to continue',
 
   // ---------- Settlement cards (TZ §H.5) ----------
