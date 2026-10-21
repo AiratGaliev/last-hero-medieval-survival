@@ -1020,6 +1020,11 @@ private bottomStack(): { iconsY: number; speedupY: number; feedY: number } {
     });
   }
 
+  /** Кинематографичное представление преемника крупным именем у врат (§H.13 #12). */
+  successorIntro(name: string, heroTitle: string): void {
+    this.bossIntro(name, heroTitle);
+  }
+
   announce(text: string, color = '#ffffff'): void {
     if (this.announcementTypewriterEvent) {
       this.scene.time.removeEvent(this.announcementTypewriterEvent);
