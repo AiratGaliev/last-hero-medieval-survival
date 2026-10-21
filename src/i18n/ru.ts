@@ -683,6 +683,7 @@ export const ru = {
   // ---------- Благословения (A2, R4) ----------
   'blessing.title': 'БЛАГОСЛОВЕНИЕ',
   'blessing.pick': 'Выбери один из трёх',
+  'blessing.skip': 'Без благословения',
   'blessing.needToken': 'Нужен жетон благословения или ролик',
   'blessing.adToken': 'Ролик: +1 жетон',
   'blessing.pawn_speed.name': 'Ретивые кони',
