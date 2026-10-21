@@ -3793,8 +3793,7 @@ private bossDeathSequence(e: Enemy): boolean {
           const dmgToPawn = this.settlement.siegeIdx >= 0
             ? this.settlement.tauntCivilian(pawn, dmg, this.settlement.siegeIdx)
             : dmg;
-          const wounded = this.economy.woundPawn(pawn, dmgToPawn, this.activeTimeMs);
-          if (wounded) track('pawn_wounded', { name_role: `${pawn.kind}:${pawn.name}`, cause: 'regular' });
+          this.economy.woundPawn(pawn, dmgToPawn, this.activeTimeMs, 'regular');
         }
         this.effects.hitSound(this.activeTimeMs);
       },
