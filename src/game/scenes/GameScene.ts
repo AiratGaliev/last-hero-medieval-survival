@@ -308,6 +308,7 @@ export class GameScene extends Phaser.Scene {
       hero: this.heroDef.id,
       difficulty: this.diffDef.id,
       seed: this.runSeed,
+      challenge_seed: this.mods.challengeSeed ?? null,
       contract: this.contractId,
       ukaz: this.mods.ukaz ?? null,
       blessing: this.mods.blessing ?? null,
@@ -433,8 +434,11 @@ export class GameScene extends Phaser.Scene {
     this.comboTimer = 0;
     this.bestCombo = 0;
     this.xpMagnetUntil = 0;
-    // Числовой seed RNG совпадает с передаваемым в событии run_start.
-    this.runSeed = (Date.now() ^ Math.floor(Math.random() * 0x1_0000_0000)) >>> 0;
+    // Сначала погашаем конфиг: ежедневный вызов обязан использовать seed серверной даты.
+    this.mods = consumeRunConfig();
+    this.runSeed = this.isSeededDailyChallenge
+      ? dailyChallengeSeedNumber(this.mods.challengeSeed!)
+      : (Date.now() ^ Math.floor(Math.random() * 0x1_0000_0000)) >>> 0;
     this.rngState = this.runSeed | 0;
     this.registry.set('tss-freeze', 0);
     this.lastMove = { x: 1, y: 0 };
@@ -442,8 +446,7 @@ export class GameScene extends Phaser.Scene {
     this.trailEmitter?.destroy();
     this.trailEmitter = null;
 
-    // ---- Конфиг рана (фазы Q/S): читается и гасится один раз (§H.7–H.18, §J) ----
-    this.mods = consumeRunConfig();
+    // ---- Конфиг уже погашен до выбора seed выше ----
     if (this.mods.endless) track('endless_start', {});
     takeConsumables(this.mods.consumables);
     const meta = loadMetaState();
@@ -565,7 +568,9 @@ export class GameScene extends Phaser.Scene {
     this.physics.world.setBounds(m, m, S - m * 2, S - m * 2);
 
     // Детерминированный декор
-    const rng = new Phaser.Math.RandomDataGenerator(['tiny-sword-survivors']);
+    const rng = new Phaser.Math.RandomDataGenerator([
+      this.isSeededDailyChallenge ? `daily-map:${this.mods.challengeSeed}` : 'tiny-sword-survivors',
+    ]);
     const cx = S / 2, cy = S / 2;
     const placed: { x: number; y: number; r: number }[] = [];
     const canPlace = (x: number, y: number, r: number): boolean => {
@@ -612,6 +617,7 @@ export class GameScene extends Phaser.Scene {
     this.economy = new Economy(this, {
       castleX: this.castleX,
       castleY: this.castleY,
+      random: this.isSeededDailyChallenge ? () => this.runRng() : undefined,
       onBuildComplete: (kind, x, y) => this.onBuildComplete(kind, x, y),
       onRepairComplete: () => {},
       onBurnDamage: (b, amount) => this.settlement.damageBuilding(b, amount, b.lastSiegeIdx, false),
@@ -757,7 +763,9 @@ export class GameScene extends Phaser.Scene {
     for (let i = 0; i < 8; i++) {
       const [x, y] = randPos();
       if (canPlace(x, y, 120)) {
-        const k = Phaser.Math.RND.pick(['house1', 'house2', 'house3']);
+        const k = this.isSeededDailyChallenge
+          ? rng.pick(['house1', 'house2', 'house3'])
+          : Phaser.Math.RND.pick(['house1', 'house2', 'house3']);
         this.add.image(x, y, k).setScale(0.75).setDepth(DEPTH.ENTITY_BASE + y);
         place(x, y, 120);
       }
@@ -1163,7 +1171,7 @@ export class GameScene extends Phaser.Scene {
         // Игрок узнаёт о ней по объявлению, звуку и указателю за краем.
         const cam = this.cameras.main;
         const r = Math.hypot(cam.width, cam.height) / (2 * cam.zoom) + 140;
-        const a = Math.random() * Math.PI * 2;
+        const a = this.gameplayRandom() * Math.PI * 2;
         const x = this.player.x + Math.cos(a) * r;
         const y = this.player.y + Math.sin(a) * r;
         if (this.spawnEnemy(kind, x, y)) {
@@ -1189,7 +1197,7 @@ export class GameScene extends Phaser.Scene {
       randomSpawnX: () => {
         const cam = this.cameras.main;
         const r = Math.hypot(cam.width, cam.height) / (2 * cam.zoom) + 80;
-        const a = Math.random() * Math.PI * 2;
+        const a = this.gameplayRandom() * Math.PI * 2;
         return Phaser.Math.Clamp(
           this.player.x + Math.cos(a) * r,
           WORLD.GRASS_MARGIN + 60,
@@ -1199,7 +1207,7 @@ export class GameScene extends Phaser.Scene {
       randomSpawnY: () => {
         const cam = this.cameras.main;
         const r = Math.hypot(cam.width, cam.height) / (2 * cam.zoom) + 80;
-        const a = Math.random() * Math.PI * 2;
+        const a = this.gameplayRandom() * Math.PI * 2;
         return Phaser.Math.Clamp(
           this.player.y + Math.sin(a) * r,
           WORLD.GRASS_MARGIN + 60,
@@ -1221,6 +1229,7 @@ export class GameScene extends Phaser.Scene {
         this.mods.ukaz,
         this.challengeMods.has('cm_horde'),
       ),
+      random: this.isSeededDailyChallenge ? () => this.runRng() : undefined,
       season: this.seasonMod,
       contractQuiet: this.contractId === 'c_quiet',
       bloodMoon: this.challengeMods.has('cm_blood_moon'),
@@ -2145,7 +2154,7 @@ private ordersUnlocked(): boolean {
   private damageEnemy(e: Enemy, dmg: number, kx = 0, ky = 0, force = 0, src?: WeaponId): void {
     if (!e.active || e.dead) return;
     let final = dmg * this.mightMult;
-    const crit = Math.random() < this.critChance;
+    const crit = this.gameplayRandom() < this.critChance;
     if (crit) final *= 2;
     final = Math.max(1, Math.round(final));
     this.effects.damage(e.x, e.y - 40 * e.def.scale, final, crit);
@@ -2178,8 +2187,8 @@ private ordersUnlocked(): boolean {
     // (мини-бомбы сами кластеры не порождают — без рекурсии)
     if (allowCluster && src === 'bomb' && this.weapons.isEvolved('bomb')) {
       for (let i = 0; i < 4; i++) {
-        const a = (i / 4) * Math.PI * 2 + Math.random() * 0.7;
-        const dist = 90 + Math.random() * 70;
+        const a = (i / 4) * Math.PI * 2 + this.gameplayRandom() * 0.7;
+        const dist = 90 + this.gameplayRandom() * 70;
         const tx = Phaser.Math.Clamp(x + Math.cos(a) * dist, WORLD.GRASS_MARGIN + 20, WORLD.SIZE - WORLD.GRASS_MARGIN - 20);
         const ty = Phaser.Math.Clamp(y + Math.sin(a) * dist, WORLD.GRASS_MARGIN + 20, WORLD.SIZE - WORLD.GRASS_MARGIN - 20);
         this.projectiles.throwBomb(x, y, tx, ty, Math.round(dmg * 0.45), 90, true);
@@ -2233,7 +2242,7 @@ private ordersUnlocked(): boolean {
     const enemies: Enemy[] = [];
     // Обычные осады подходят с одной стороны; «Клещи» делят отряд
     // на два противоположных фланга (TZ §E.4.3).
-    const baseA = Math.random() * Math.PI * 2;
+    const baseA = this.gameplayRandom() * Math.PI * 2;
     const unitCount = profile.squad.reduce((total, part) => total + part.n, 0);
     const spawnAngles = calculateSiegeSpawnAngles(profile.formation ?? 'single', unitCount, baseA);
     let unitIdx = 0;
@@ -2241,7 +2250,7 @@ private ordersUnlocked(): boolean {
       for (let i = 0; i < part.n; i++) {
         const a = spawnAngles[unitIdx] ?? baseA;
         unitIdx++;
-        const r = 760 + Math.random() * 220;
+        const r = 760 + this.gameplayRandom() * 220;
         const x = Phaser.Math.Clamp(this.castleX + Math.cos(a) * r, WORLD.GRASS_MARGIN + 60, WORLD.SIZE - WORLD.GRASS_MARGIN - 60);
         const y = Phaser.Math.Clamp(this.castleY + Math.sin(a) * r, WORLD.GRASS_MARGIN + 60, WORLD.SIZE - WORLD.GRASS_MARGIN - 60);
         const e = this.spawnSiegeUnit(part.kind, x, y, part.firer === true);
@@ -2690,7 +2699,7 @@ private ordersUnlocked(): boolean {
       this.ach?.event({ type: 'elites', value: this.elitesSlain });
     }
     // Золотые кристаллы: теперь дают золото
-    if (Math.random() < 0.03) this.pickups.spawnGoldGem(x, y, Phaser.Math.Between(3, 8));
+    if (this.gameplayRandom() < 0.03) this.pickups.spawnGoldGem(x, y, this.gameplayInt(3, 8));
     if (e.def.isBoss) {
       // Награда за весь матч: BOSS_GOLD кристаллами по кругу (TZ §A.4).
       // Очки (SCORE.BOSS) начисляет victory(), здесь — золото в лавку
@@ -2701,7 +2710,7 @@ private ordersUnlocked(): boolean {
         this.pickups.spawnGoldGem(x + Math.cos(a) * 70, y + Math.sin(a) * 70, per);
       }
       for (let i = 0; i < 4; i++) {
-        this.pickups.spawnMeat(x + Phaser.Math.Between(-80, 80), y + Phaser.Math.Between(-80, 80));
+        this.pickups.spawnMeat(x + this.gameplayInt(-80, 80), y + this.gameplayInt(-80, 80));
       }
     }
 
@@ -3037,8 +3046,8 @@ private bossDeathSequence(e: Enemy): boolean {
   }
 
   private spawnChest(): void {
-    const a = Math.random() * Math.PI * 2;
-    const r = Phaser.Math.Between(320, 520);
+    const a = this.gameplayRandom() * Math.PI * 2;
+    const r = this.gameplayInt(320, 520);
     const m = WORLD.GRASS_MARGIN + 120;
     const x = Phaser.Math.Clamp(this.player.x + Math.cos(a) * r, m, WORLD.SIZE - m);
     const y = Phaser.Math.Clamp(this.player.y + Math.sin(a) * r, m, WORLD.SIZE - m);
@@ -3069,8 +3078,8 @@ private bossDeathSequence(e: Enemy): boolean {
     const minute = this.elapsed / 60;
     const tier = minute > 8 ? 'gem-green' : 'gem-blue';
     for (let i = 0; i < 14; i++) {
-      const a = Math.random() * Math.PI * 2;
-      const d = Phaser.Math.Between(20, 110);
+      const a = this.gameplayRandom() * Math.PI * 2;
+      const d = this.gameplayInt(20, 110);
       this.pickups.spawnGem(x + Math.cos(a) * d, y + Math.sin(a) * d, tier, 1);
     }
     if (minute >= 3) {
@@ -3099,7 +3108,7 @@ private bossDeathSequence(e: Enemy): boolean {
   private enemyCtxStore: EnemyContext | null = null;
 
   private spawnBoss(hpMult = 1): void {
-    const a = Math.random() * Math.PI * 2;
+    const a = this.gameplayRandom() * Math.PI * 2;
     const cam = this.cameras.main;
     const r = Math.hypot(cam.width, cam.height) / (2 * cam.zoom) + 160;
     const x = Phaser.Math.Clamp(this.player.x + Math.cos(a) * r, 400, WORLD.SIZE - 400);
@@ -4020,7 +4029,7 @@ private bossDeathSequence(e: Enemy): boolean {
         // босса при полной толпе не вызывал ничего, и игрок его не замечал.
         let summoned = 0;
         for (let i = 0; i < 6; i++) {
-          const a = (i / 6) * Math.PI * 2 + Math.random();
+          const a = (i / 6) * Math.PI * 2 + this.gameplayRandom();
           const gx = x + Math.cos(a) * 170;
           const gy = y + Math.sin(a) * 170;
           let ok = this.spawnEnemy('goblin', gx, gy);
