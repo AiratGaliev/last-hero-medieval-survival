@@ -45,7 +45,6 @@ import {
   type ConsumableId,
   type ContractId,
   type DailyBonusKind,
-  type OrderId,
   type RunModifiers,
 } from '../meta';
 
