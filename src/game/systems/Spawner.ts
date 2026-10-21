@@ -40,14 +40,26 @@ export interface SpawnerCtx {
  * Мета-модификаторы директора волн (фазы Q/S). Все опции optional —
  * обычный режим работает ровно как раньше.
  */
+/**
+ * Множитель интервала спавна для добровольного указа и вызова дня.
+ * Оба horde-модификатора дают одинаковые −15% и не складываются друг с другом;
+ * возвращённый коэффициент применяется поверх множителя выбранной сложности.
+ */
+export function resolveSpawnRateFactor(
+  ukaz: string | null | undefined,
+  challengeHorde: boolean,
+): number {
+  return ukaz === 'ukaz_horde' || challengeHorde ? 0.85 : 1;
+}
+
 export interface SpawnerOpts {
   /** Бесконечный режим (§H.12): осады каждые 90 с, боссы каждые 300 с. */
   endless?: boolean;
   /** Фиксированный интервал осад в сек (контракт «Осадное положение»/
    *  указ «Двойные осады» — 180, сезон «Долгая осада» — 270, §H.9/§H.17/§H.18). */
   siegeIntervalSec?: number | null;
-  /** Множитель частоты спавна вместо diff.rateMult (указ «Орда» ×0.85). */
-  rateMultOverride?: number | null;
+  /** Множитель интервала поверх rateMult сложности (указ/вызов «Орда» ×0.85). */
+  rateMultFactor?: number;
   /** Сезонный модификатор мира (§H.18). */
   season?: SeasonModifier | null;
   /** Контракт «Тихий час» (§H.9): без текстовых анонсов осад. */
@@ -94,7 +106,7 @@ export class Spawner {
     // позволяет проверить волны/эскалацию E2E без 15-минутного ожидания.
     const q = qaNumber('qa_siege');
     if (q && this.o.endless) this.o.siegeIntervalSec = q;
-    const rate = opts.rateMultOverride ?? this.diff.rateMult;
+    const rate = this.diff.rateMult * (opts.rateMultFactor ?? 1);
     this.interval = 850 * rate;
     this.timer = 1200 * rate;
   }
@@ -127,7 +139,7 @@ export class Spawner {
       if (ev.diff && ev.diff !== this.diff.id) continue;
       switch (ev.type) {
         case 'rate':
-          if (ev.interval) this.interval = ev.interval * (this.o.rateMultOverride ?? this.diff.rateMult);
+          if (ev.interval) this.interval = ev.interval * this.diff.rateMult * (this.o.rateMultFactor ?? 1);
           break;
         case 'ring':
           if (ev.enemy && ev.count) {
