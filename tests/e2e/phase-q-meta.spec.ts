@@ -437,3 +437,107 @@ test('game over always shows daily quest progress even when this run completes n
     return labels;
   })).toContain('Daily quests: 2/3');
 });
+
+
+test('king order Horde applies the spawn-rate modifier without stacking the same challenge modifier', async ({ page }) => {
+  await page.goto('/?lang=en&ysdk=mock');
+  await expect(page.locator('#game canvas')).toBeVisible({ timeout: startupTimeout });
+  await expect(page.locator('#boot')).toHaveCount(0, { timeout: startupTimeout });
+  await expect.poll(() => page.evaluate(() => {
+    const runtime = (window as Window & {
+      __tss?: { scene: { isActive: (key: string) => boolean } };
+    }).__tss;
+    return runtime?.scene.isActive('Menu') ?? false;
+  }), { timeout: startupTimeout }).toBe(true);
+
+  await page.evaluate(async () => {
+    const meta = await import('/src/game/meta.ts') as {
+      saveRunConfig: (config: {
+        contract: null;
+        ukaz: 'ukaz_horde';
+        challenge: null;
+        blessing: null;
+        consumables: [];
+        endless: false;
+        weeklyChallenge: false;
+      }) => void;
+    };
+    const runtime = (window as Window & {
+      __tss?: {
+        scene: {
+          getScene: (key: string) => unknown;
+        };
+      };
+    }).__tss;
+    if (!runtime) throw new Error('Phaser runtime is unavailable');
+    const menu = runtime.scene.getScene('Menu') as {
+      selectedHero?: string;
+      selectedDiff?: string;
+      scene: {
+        start: (key: string, data: { hero: string; diff: string }) => void;
+      };
+    };
+    meta.saveRunConfig({
+      contract: null,
+      ukaz: 'ukaz_horde',
+      challenge: null,
+      blessing: null,
+      consumables: [],
+      endless: false,
+      weeklyChallenge: false,
+    });
+    menu.scene.start('Game', {
+      hero: menu.selectedHero ?? 'warrior',
+      diff: menu.selectedDiff ?? 'normal',
+    });
+  });
+
+  await expect.poll(() => page.evaluate(() => {
+    const runtime = (window as Window & {
+      __tss?: { scene: { isActive: (key: string) => boolean } };
+    }).__tss;
+    return runtime?.scene.isActive('Game') ?? false;
+  }), { timeout: startupTimeout }).toBe(true);
+
+  const report = await page.evaluate(async () => {
+    const spawnerModule = await import('/src/game/systems/Spawner.ts') as {
+      resolveSpawnRateOverride: (ukaz: string | null, challengeHorde: boolean) => number | null;
+    };
+    const runtime = (window as Window & {
+      __tss?: { scene: { getScene: (key: string) => unknown } };
+    }).__tss;
+    if (!runtime) throw new Error('Phaser runtime is unavailable');
+    const scene = runtime.scene.getScene('Game') as {
+      spawner: unknown;
+      diffDef: { rateMult: number; scoreMult: number };
+    };
+    const spawner = scene.spawner as {
+      o: { rateMultOverride?: number | null };
+      interval: number;
+      timer: number;
+    };
+    return {
+      rateMultOverride: spawner.o.rateMultOverride ?? null,
+      initialIntervalMs: spawner.interval,
+      initialTimerMs: spawner.timer,
+      difficultyRateMult: scene.diffDef.rateMult,
+      difficultyScoreMult: scene.diffDef.scoreMult,
+      noOrder: spawnerModule.resolveSpawnRateOverride(null, false),
+      anotherOrder: spawnerModule.resolveSpawnRateOverride('ukaz_drought', false),
+      ukazHorde: spawnerModule.resolveSpawnRateOverride('ukaz_horde', false),
+      challengeHorde: spawnerModule.resolveSpawnRateOverride(null, true),
+      bothHordes: spawnerModule.resolveSpawnRateOverride('ukaz_horde', true),
+    };
+  });
+
+  expect(report.rateMultOverride).toBe(0.85);
+  expect(report.initialIntervalMs).toBeCloseTo(850 * 0.85);
+  expect(report.initialTimerMs).toBeCloseTo(1200 * 0.85);
+  expect(report.difficultyRateMult).toBe(1);
+  expect(report.difficultyScoreMult).toBe(1);
+  expect(report.noOrder).toBeNull();
+  expect(report.anotherOrder).toBeNull();
+  expect(report.ukazHorde).toBe(0.85);
+  expect(report.challengeHorde).toBe(0.85);
+  expect(report.bothHordes).toBe(0.85);
+});
