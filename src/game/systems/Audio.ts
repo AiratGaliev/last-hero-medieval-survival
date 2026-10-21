@@ -3,7 +3,7 @@
 
 type SfxName =
   | 'hit' | 'shoot' | 'pickup' | 'levelup' | 'hurt' | 'die'
-  | 'explosion' | 'boss' | 'click' | 'victory' | 'gameover' | 'slam' | 'ach' | 'evolve' | 'fire';
+  | 'explosion' | 'boss' | 'click' | 'victory' | 'gameover' | 'slam' | 'ach' | 'evolve' | 'fire' | 'bell';
 
 class AudioSystem {
   private ctx: AudioContext | null = null;
@@ -139,6 +139,12 @@ class AudioSystem {
       case 'pickup': this.tone(660, 0.05, 'square', 0.06); this.tone(990, 0.06, 'square', 0.06, 0.05); break;
       case 'levelup':
         [523, 659, 784, 1047].forEach((f, i) => this.tone(f, 0.12, 'square', 0.12, i * 0.09));
+        break;
+      case 'bell':
+        // Отдельный высокий звон (level-up); не заменяет восходящую fanfare.
+        this.tone(1318, 0.42, 'sine', 0.13, 0, 1800);
+        this.tone(1976, 0.3, 'sine', 0.075, 0.025, 1600);
+        this.tone(2637, 0.18, 'sine', 0.035, 0.04, 1400);
         break;
       case 'hurt': this.tone(160, 0.18, 'sawtooth', 0.16, 0, 70); this.noise(0.1, 0.1); break;
       case 'die': this.tone(300, 0.12, 'square', 0.08, 0, 90); this.noise(0.08, 0.06); break;
