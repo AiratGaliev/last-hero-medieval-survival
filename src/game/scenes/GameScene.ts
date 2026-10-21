@@ -1869,7 +1869,9 @@ private ordersUnlocked(): boolean {
     const magnetNow = this.activeTimeMs < this.xpMagnetUntil
       ? this.magnetRadius * 6
       : this.magnetRadius;
-    this.pickups.update(delta, this.player.x, this.player.y, magnetNow, this.activeTimeMs);
+    // Подбор кристаллов — часть игровой симуляции, поэтому slow-motion
+    // должен замедлять их движение и притяжение так же, как оружие и снаряды.
+    this.pickups.update(dtMs, this.player.x, this.player.y, magnetNow, this.activeTimeMs);
 
     // Регенерация
     if (this.regen > 0 && this.player.hp < this.player.maxHp) {
