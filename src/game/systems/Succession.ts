@@ -43,14 +43,18 @@ export class Succession {
     this.settlement = settlement;
     this.resourcesBranchDisabled = opts.resourcesBranchDisabled === true;
     this.costMult = Math.max(0.1, opts.successionCostMult ?? 1);
-    // lifetime-флаг через storage.ts (префикс tss-); миграция старого ключа
-    const legacy = (() => { try { return localStorage.getItem('tss-succession-free'); } catch { return null; } })();
-    if (legacy === '1') {
-      this.freeUsed = true;
-      saveJson('succession-free', true);
-      persistSuccessionFreeUsed();
+    // После bootstrap cloud/local результат уже привязан к текущему профилю.
+    // Старый общий ключ читаем только в автономном режиме без гидратации.
+    const hydrated = getSuccessionFreeUsed();
+    if (hydrated !== null) {
+      this.freeUsed = hydrated;
     } else {
-      this.freeUsed = getSuccessionFreeUsed() ?? (loadJson<boolean>('succession-free') === true);
+      const legacy = (() => { try { return localStorage.getItem('tss-succession-free'); } catch { return null; } })();
+      this.freeUsed = legacy === '1' || loadJson<boolean>('succession-free') === true;
+      if (this.freeUsed) {
+        saveJson('succession-free', true);
+        persistSuccessionFreeUsed();
+      }
     }
   }
 
