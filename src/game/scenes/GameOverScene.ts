@@ -391,7 +391,7 @@ export class GameOverScene extends Phaser.Scene {
     // Победа в вызове дня: награда раз в UTC-день.
     // Если сохранить награду не удалось, итоговый экран обязан сообщить об этом.
     if (m.challenge && s.victory && !challengeVictoryToday()) {
-      s.meta.challengeRewardSaved = markChallengeVictory();
+      m.challengeRewardSaved = markChallengeVictory();
     }
 
     // Авто-сабмит технических бордов. Имя — без зависимости от input:
