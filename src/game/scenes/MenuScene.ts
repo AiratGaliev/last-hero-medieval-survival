@@ -11,7 +11,7 @@ import { ACHIEVEMENTS, loadUnlocked, loadMeta } from '../achievements';
 import { t, num, clock, type TranslationKey, type TranslateParams } from '../../i18n';
 import { topScores } from '../../platform/leaderboard';
 import { notifyReady } from '../../platform/lifecycle';
-import { loadText, saveText, removeKey } from '../storage';
+import { loadText, saveText } from '../storage';
 import { resetSafeInsets, safeInsets } from '../safeArea';
 import { isAuthorized, offerAuth, displayName } from '../../platform/player';
 import { isOnYandex } from '../../platform/sdk';
