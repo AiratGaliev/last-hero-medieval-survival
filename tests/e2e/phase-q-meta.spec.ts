@@ -760,6 +760,7 @@ test('daily challenge date deterministically seeds the map, economy and wave dir
     spawnPositions: Array<{ x: number; y: number }>;
     economyRandom: number[];
     waveRandom: number[];
+    weaponTargetRandom: number[];
     choices: Array<{ kind: string; id: string | null; title: string }>;
   }> => {
     if (target !== page) await target.goto(new URL('/?lang=en&ysdk=mock', appOrigin).toString());
@@ -837,6 +838,7 @@ test('daily challenge date deterministically seeds the map, economy and wave dir
           nodes: Array<{ kind: string; res: string; x: number; y: number }>;
           opts: { random?: () => number };
         };
+        weapons: { ctx: { randomInt?: (min: number, max: number) => number } };
       };
       // Сбрасываем поток спавнера, чтобы время загрузки контекстов не влияло на сравнение.
       scene.spawner.stopped = true;
@@ -847,6 +849,8 @@ test('daily challenge date deterministically seeds the map, economy and wave dir
         id: id ?? null,
         title,
       }));
+      const weaponTargetRandom = Array.from({ length: 8 }, () =>
+        scene.weapons.ctx.randomInt?.(0, 100) ?? -1);
       if (perturbGameplayRng) {
         for (let i = 0; i < 32; i++) scene.gameplayRandom();
       }
@@ -866,6 +870,7 @@ test('daily challenge date deterministically seeds the map, economy and wave dir
         })),
         economyRandom: Array.from({ length: 8 }, () => scene.economy.opts.random?.() ?? -1),
         waveRandom: Array.from({ length: 8 }, () => scene.spawner.o.random?.() ?? -1),
+        weaponTargetRandom,
         choices,
       };
     }, { challengeDate: date, perturbGameplayRng });
@@ -884,6 +889,8 @@ test('daily challenge date deterministically seeds the map, economy and wave dir
     expect(repeat.spawnPositions).toEqual(first.spawnPositions);
     expect(repeat.economyRandom).toEqual(first.economyRandom);
     expect(repeat.waveRandom).toEqual(first.waveRandom);
+    expect(first.weaponTargetRandom.every((value) => value >= 0)).toBe(true);
+    expect(repeat.weaponTargetRandom).toEqual(first.weaponTargetRandom);
     expect(repeat.choices).toEqual(first.choices);
 
     const seeds = await page.evaluate(async (challengeDate) => {
