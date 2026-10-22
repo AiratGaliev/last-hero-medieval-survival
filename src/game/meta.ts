@@ -29,7 +29,7 @@ import {
   readPlayerDataEntry,
   writePlayerDataValue,
 } from '../platform/player';
-import { FTUE_MATCH_GATE } from './data';
+import { FTUE_MATCH_GATE, type BuildingKind } from './data';
 
 // ============================================================
 // Справочник дерева «Хроника Долины» (§H.16): 30 узлов, 3 ветви
@@ -1463,6 +1463,8 @@ export interface RunSummary {
   score: number;
   difficulty: string;
   buildingsBuilt: number;
+  /** Количество построек каждого вида, завершённых за этот ран (без стартового замка). */
+  buildingKindsBuilt?: Partial<Record<Exclude<BuildingKind, 'castle'>, number>>;
   /** Число занятых базовых пятен (из 10) в конце рана. */
   occupiedBaseBuildSpots?: number;
   pawnsAlive: number;
@@ -1594,10 +1596,29 @@ export function applyRunToMeta(s: RunSummary): RunMetaResult {
   for (const [k, v] of Object.entries(s.killsByKind)) {
     st.codex[k] = (st.codex[k] ?? 0) + v;
   }
-  st.codex['b_house'] = (st.codex['b_house'] ?? 0) + s.buildingsBuilt;
-  if (s.barracks > 0) st.codex['b_barracks'] = (st.codex['b_barracks'] ?? 0) + 1;
-  if (s.monastery > 0) st.codex['b_monastery'] = (st.codex['b_monastery'] ?? 0) + 1;
-  if (s.archery > 0) st.codex['b_archery'] = (st.codex['b_archery'] ?? 0) + 1;
+  // Старые сохранения использовали b_* ключи. Три из них однозначно означают
+  // встречу соответствующего здания; b_house не переносим, потому что раньше
+  // в него ошибочно суммировались вообще все постройки.
+  for (const [legacyId, buildingId] of [
+    ['b_barracks', 'barracks'],
+    ['b_monastery', 'monastery'],
+    ['b_archery', 'archery'],
+  ] as const) {
+    if ((st.codex[legacyId] ?? 0) > 0 && (st.codex[buildingId] ?? 0) === 0) {
+      st.codex[buildingId] = 1;
+      track('codex_entry', { entry: buildingId });
+    }
+  }
+  const buildingKinds: Exclude<BuildingKind, 'castle'>[] = [
+    'house', 'barracks', 'tower', 'archery', 'monastery',
+  ];
+  for (const buildingId of buildingKinds) {
+    const count = Math.max(0, Math.floor(s.buildingKindsBuilt?.[buildingId] ?? 0));
+    if (count <= 0) continue;
+    const previous = st.codex[buildingId] ?? 0;
+    st.codex[buildingId] = previous + count;
+    if (previous === 0) track('codex_entry', { entry: buildingId });
+  }
   if (s.bossKilled) st.codex['boss_ogre'] = (st.codex['boss_ogre'] ?? 0) + 1;
   for (const c of s.cardsPicked) st.codex[`card_${c}`] = (st.codex[`card_${c}`] ?? 0) + 1;
 

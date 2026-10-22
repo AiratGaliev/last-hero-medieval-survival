@@ -1532,3 +1532,95 @@ test('daily meta, weekly progress and rewarded day limits share the Moscow calen
     adAvailableAtMidnight: true,
   });
 });
+
+test('codex records each completed building under the exact entry ID', async ({ page }) => {
+  await page.addInitScript(() => localStorage.clear());
+  await page.goto('/?lang=en&ysdk=mock');
+  await expect(page.locator('#game canvas')).toBeVisible({ timeout: startupTimeout });
+  await expect(page.locator('#boot')).toHaveCount(0, { timeout: startupTimeout });
+
+  const outcome = await page.evaluate(async () => {
+    type RunSummary = {
+      victory: boolean; ideal: boolean; endless: boolean; weeklyChallenge: boolean;
+      wave: number; time: number; kills: number; level: number; gold: number; score: number;
+      difficulty: string; buildingsBuilt: number;
+      buildingKindsBuilt?: Partial<Record<'house' | 'barracks' | 'tower' | 'archery' | 'monastery', number>>;
+      occupiedBaseBuildSpots?: number; pawnsAlive: number; siegesDefended: number; siegesTotal: number;
+      monasteryHealed: number; healHp: number; hires: number; successions: number; veterans: number;
+      firstHouseMin: number; barracks: number; monastery: number; archery: number; bestCombo: number;
+      bossKilled: boolean; killsByKind: Record<string, number>; cardsPicked: string[];
+      contract: string | null; ukaz: string | null; challengeMods: string[];
+      blessing: string | null; consumables: string[];
+    };
+    type TestMetaState = {
+      glory: number;
+      codex: Record<string, number>;
+      quests: { date: string; ids: string[]; progress: Record<string, number>; done: string[]; rerolls: number };
+      chains: { counters: Record<string, number>; claimed: string[] };
+      pass: { season: string; xp: number; premium: boolean; claimedFree: number; claimedPrem: number };
+      weekly: { week: string; progress: number; stage: number; claimed: boolean };
+    };
+    const meta = await import('/src/game/meta.ts') as unknown as {
+      rollMetaDay: () => TestMetaState;
+      saveMetaState: (state: TestMetaState) => boolean;
+      loadMetaState: () => TestMetaState;
+      applyRunToMeta: (summary: RunSummary) => unknown;
+      codexCount: (id: string) => number;
+      codexProgress: () => { seen: number; total: number; ratio: number };
+    };
+
+    const state = meta.rollMetaDay();
+    state.codex = {
+      // Старые корректные алиасы должны мигрировать; b_house намеренно не считается домом.
+      b_barracks: 1, b_monastery: 1, b_archery: 1, b_house: 99,
+    };
+    state.quests.ids = [];
+    state.quests.progress = {};
+    state.quests.done = [];
+    state.chains.counters = {};
+    state.chains.claimed = [];
+    state.pass.xp = 5_000;
+    state.pass.premium = false;
+    meta.saveMetaState(state);
+
+    const base: RunSummary = {
+      victory: false, ideal: false, endless: false, weeklyChallenge: false,
+      wave: 0, time: 120, kills: 0, level: 1, gold: 0, score: 0, difficulty: 'normal',
+      buildingsBuilt: 5,
+      buildingKindsBuilt: { house: 2, barracks: 1, tower: 1, archery: 1, monastery: 1 },
+      occupiedBaseBuildSpots: 0, pawnsAlive: 0, siegesDefended: 0, siegesTotal: 0,
+      monasteryHealed: 0, healHp: 0, hires: 0, successions: 0, veterans: 0,
+      firstHouseMin: 0, barracks: 0, monastery: 0, archery: 0, bestCombo: 0,
+      bossKilled: false, killsByKind: {}, cardsPicked: [], contract: null, ukaz: null,
+      challengeMods: [], blessing: null, consumables: [],
+    };
+
+    const before = meta.codexProgress();
+    meta.applyRunToMeta(base);
+    const after = meta.codexProgress();
+
+    return {
+      counts: {
+        house: meta.codexCount('house'),
+        barracks: meta.codexCount('barracks'),
+        tower: meta.codexCount('tower'),
+        archery: meta.codexCount('archery'),
+        monastery: meta.codexCount('monastery'),
+        invalidLegacyHouse: meta.codexCount('b_house'),
+      },
+      seenDelta: after.seen - before.seen,
+      total: after.total,
+    };
+  });
+
+  expect(outcome.counts).toEqual({
+    house: 2,
+    barracks: 2,
+    tower: 1,
+    archery: 2,
+    monastery: 2,
+    invalidLegacyHouse: 99,
+  });
+  expect(outcome.seenDelta).toBe(5);
+  expect(outcome.total).toBeGreaterThanOrEqual(5);
+});
