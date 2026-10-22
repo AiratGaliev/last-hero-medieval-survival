@@ -2336,11 +2336,14 @@ export function activeBanner(): BannerDef | null {
 // Утилиты доступа
 // ============================================================
 
-export function addGlory(n: number): void {
-  if (n === 0) return;
+export function addGlory(n: number): boolean {
+  if (!Number.isFinite(n)) return false;
+  const amount = Math.floor(n);
+  if (amount === 0) return true;
   const st = rollMetaDay();
-  st.glory = Math.max(0, st.glory + Math.floor(n));
-  saveMetaState(st);
+  const before = structuredCloneSafe(st);
+  st.glory = Math.max(0, st.glory + amount);
+  return saveMetaStateOrRollback(st, before);
 }
 
 export function gloryBalance(): number {
