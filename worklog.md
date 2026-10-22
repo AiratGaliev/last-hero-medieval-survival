@@ -4032,3 +4032,9 @@ catalog» оказался не тестовым артефактом, а нас
 
 - GitHub Actions run [#39727972775](https://github.com/AiratGaliev/last-hero-medieval-survival/actions/runs/39727972775) завершился с `success` на SHA `0b915c606cb950e1a5cd87686199f4cf2cb38911` после выделения `dailyProgressionRng`. Все шаги `Validate pull request routing`, `npm ci`, `npm run check` (TypeScript + ESLint) и `npm run build` успешны.
 - После этого результата тест дополнительно стабилизирован: перед сравнением предложений левел-апа HP игрока принудительно приводится к `maxHp`, чтобы условная карта лечения не зависела от количества стартовых кадров. Это изменение входит в следующий коммит и требует очередного CI Fast; Playwright не запускался.
+
+
+### CI Fast — финальная проверка изоляции RNG прогрессии (22.10.2026)
+
+- GitHub Actions run [#39728085803](https://github.com/AiratGaliev/last-hero-medieval-survival/actions/runs/39728085803) успешно завершился на SHA `f58c575095d3ba83d3f270f66eb51056a8bdf7e0` после выделения `dailyProgressionRng` и стабилизации сценария сравнения карточек. Все шаги `Validate pull request routing`, `npm ci`, `npm run check` (TypeScript + ESLint) и `npm run build` завершились с `success`.
+- Playwright-тест не запускался: README исключает его из стандартного PR в `dev`. Сам сценарий расширен и готов для предусмотренного E2E-гейта, однако его результат и совместимость с реальным Yandex Games SDK ещё не подтверждены. §H.8 / фаза Q остаются незакрытыми.
