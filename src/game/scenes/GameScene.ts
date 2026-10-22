@@ -3964,6 +3964,7 @@ private bossDeathSequence(e: Enemy): boolean {
       passLevels: res.passLevelsGained,
       passRewards: res.passRewards.map((r) => ({ kind: r.kind, amount: r.amount })),
       chainUnlocks: res.chainUnlocked.map((c) => ({ nameKey: c.nameKey, tier: c.tier })),
+      seasonStepReward: res.seasonStepReward,
       endlessWave: wave,
       crownsEarned: res.crownsEarned,
       persisted: res.persisted,
