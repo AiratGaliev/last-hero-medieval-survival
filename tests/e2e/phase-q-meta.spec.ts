@@ -2035,7 +2035,7 @@ test('achievement chain rejects fractional reward tiers without granting crowns'
   await expect(page.locator('#game canvas')).toBeVisible({ timeout: startupTimeout });
   await expect(page.locator('#boot')).toHaveCount(0, { timeout: startupTimeout });
 
-  const outcome = await page.evaluate(() => {
+  const outcome = await page.evaluate(async () => {
     type TestMetaState = {
       matchesPlayed: number;
       crowns: number;
