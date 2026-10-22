@@ -497,6 +497,7 @@ export const ru = {
   'speedup.poor': 'не хватает золота кошелька',
   'speedup.adUnavailable': 'РОЛИК НЕДОСТУПЕН',
   'speedup.storageUnavailable': 'Не удалось сохранить покупку',
+  'meta.saveFailed': 'Не удалось сохранить жетон. Попробуйте ещё раз.',
   'speedup.repairGoldLabel': 'РЕМ. {v} ЗОЛ.',
   'speedup.healGoldLabel': 'ЛЕЧ. {v} ЗОЛ.',
   'speedup.needGold': 'НУЖНО {v} ЗОЛ.',

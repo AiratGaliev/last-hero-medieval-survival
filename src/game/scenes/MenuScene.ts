@@ -25,6 +25,8 @@ import {
   CHALLENGE_MODS,
   claimDailyBonus,
   claimDailyChest,
+  grantBlessingToken,
+  spendBlessingToken,
   CONSUMABLES,
   CONSUMABLE_MAX,
   contractDef,
@@ -2202,6 +2204,8 @@ export class MenuScene extends Phaser.Scene {
     const rowH = 64;
     const rowW = paperW - 60;
     const tokens = loadMetaState().blessingTokens;
+    // Одна операция выбора/рекламы за раз: повторный тап не тратит два жетона.
+    let actionInFlight = false;
     options.forEach((bid, i) => {
       const def = BLESSINGS.find((b) => b.id === bid);
       if (!def) return;
@@ -2222,14 +2226,19 @@ export class MenuScene extends Phaser.Scene {
 
       const zone = this.add.zone(cx, rowCy, rowW, rowH).setInteractive({ useHandCursor: affordable });
       zone.on('pointerdown', () => {
-        if (!affordable) return;
-        const st = loadMetaState();
-        st.blessingTokens = Math.max(0, st.blessingTokens - 1);
-        saveMetaState(st);
-        cfg.blessing = bid;
-        audio.play('levelup');
-        this.closeOverlay();
-        go();
+        if (!affordable || actionInFlight) return;
+        actionInFlight = true;
+        void (async () => {
+          if (!await spendBlessingToken()) {
+            actionInFlight = false;
+            this.showToast(t('meta.saveFailed'));
+            return;
+          }
+          cfg.blessing = bid;
+          audio.play('levelup');
+          this.closeOverlay();
+          go();
+        })();
       });
       this.addExtra(zone);
     });
@@ -2238,19 +2247,26 @@ export class MenuScene extends Phaser.Scene {
     const footY = top + paperH - 56;
     if (placementAvailable('blessing')) {
       const adBtn = makeButton(this, cx - 98, footY, 184, 44, t('blessing.adToken'), () => {
+        if (actionInFlight) return;
+        actionInFlight = true;
         void (async () => {
           const res = await showPlacementRewarded('blessing');
           if (res.rewarded && this.overlay) {
-            const st = loadMetaState();
-            st.blessingTokens += 1;
-            saveMetaState(st);
+            if (!await grantBlessingToken()) {
+              actionInFlight = false;
+              this.showToast(t('meta.saveFailed'));
+              return;
+            }
             this.showBlessingOverlay(cfg, go);
+          } else {
+            actionInFlight = false;
           }
         })();
       }, 'red', 10);
       this.addExtra(adBtn.img); this.addExtra(adBtn.txt); this.addExtra(adBtn.hit);
     }
     const skip = makeButton(this, cx + 98, footY, 150, 44, t('blessing.skip'), () => {
+      if (actionInFlight) return;
       this.closeOverlay();
       go();
     }, 'blue', 11);

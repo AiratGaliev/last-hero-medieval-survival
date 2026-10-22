@@ -492,6 +492,7 @@ export const en: Record<TranslationKey, string> = {
   'speedup.poor': 'not enough shop gold',
   'speedup.adUnavailable': 'AD UNAVAILABLE',
   'speedup.storageUnavailable': 'Purchase could not be saved',
+  'meta.saveFailed': 'Could not save the token. Please try again.',
   'speedup.repairGoldLabel': 'FIX {v} GOLD',
   'speedup.healGoldLabel': 'HEAL {v} GOLD',
   'speedup.needGold': 'NEED {v} GOLD',

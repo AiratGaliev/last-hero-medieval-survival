@@ -1795,3 +1795,56 @@ test('enemy codex unlocks on encounter while mastery remains based on kills', as
   expect(outcome.seenDelta).toBe(1);
   expect(outcome.masteryGoal).toBe(30);
 });
+
+test('blessing token changes roll back when storage rejects a write', async ({ page }) => {
+  await page.addInitScript(() => localStorage.clear());
+  await page.goto('/?lang=en&ysdk=mock');
+  await expect(page.locator('#game canvas')).toBeVisible({ timeout: startupTimeout });
+  await expect(page.locator('#boot')).toHaveCount(0, { timeout: startupTimeout });
+
+  const outcome = await page.evaluate(async () => {
+    type TestMetaState = {
+      blessingTokens: number;
+      quests: { date: string; ids: string[]; progress: Record<string, number>; done: string[]; rerolls: number };
+    };
+    const meta = await import('/src/game/meta.ts') as unknown as {
+      rollMetaDay: () => TestMetaState;
+      saveMetaState: (state: TestMetaState) => boolean;
+      loadMetaState: () => TestMetaState;
+      spendBlessingToken: () => Promise<boolean>;
+      grantBlessingToken: () => Promise<boolean>;
+    };
+    const state = meta.rollMetaDay();
+    state.blessingTokens = 1;
+    meta.saveMetaState(state);
+
+    const originalSetItem = Storage.prototype.setItem;
+    Storage.prototype.setItem = function (key: string, value: string): void {
+      if (key === 'tss-meta2') throw new DOMException('storage disabled', 'QuotaExceededError');
+      originalSetItem.call(this, key, value);
+    };
+    const spendSaved = await meta.spendBlessingToken();
+    const tokensAfterFailedSpend = meta.loadMetaState().blessingTokens;
+    Storage.prototype.setItem = originalSetItem;
+
+    const beforeGrant = meta.loadMetaState();
+    beforeGrant.blessingTokens = 0;
+    meta.saveMetaState(beforeGrant);
+    Storage.prototype.setItem = function (key: string, value: string): void {
+      if (key === 'tss-meta2') throw new DOMException('storage disabled', 'QuotaExceededError');
+      originalSetItem.call(this, key, value);
+    };
+    const grantSaved = await meta.grantBlessingToken();
+    const tokensAfterFailedGrant = meta.loadMetaState().blessingTokens;
+    Storage.prototype.setItem = originalSetItem;
+
+    return { spendSaved, tokensAfterFailedSpend, grantSaved, tokensAfterFailedGrant };
+  });
+
+  expect(outcome).toEqual({
+    spendSaved: false,
+    tokensAfterFailedSpend: 1,
+    grantSaved: false,
+    tokensAfterFailedGrant: 0,
+  });
+});
