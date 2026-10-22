@@ -2142,7 +2142,7 @@ export class MenuScene extends Phaser.Scene {
       track('daily_claim', { day: res.day, doubled });
       audio.play('levelup');
       this.showToast(t('bonus.claimed'));
-    } else {
+    } else if (res.reason === 'storage') {
       this.showToast(t('store.fail'));
     }
   }
