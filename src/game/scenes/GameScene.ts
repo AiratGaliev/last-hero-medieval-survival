@@ -1607,6 +1607,7 @@ export class GameScene extends Phaser.Scene {
     this.physics.add.overlap(this.player, this.projectiles.enemyShots, (_p, proj) => {
       const p = proj as unknown as import('../systems/Projectiles').Proj & { shotKind?: import('../entities/Enemy').EnemyShotKind };
       if (!p.active) return;
+      if (this.projectiles.impactEnemyShot(p)) return;
       if (p.shotKind === 'hex') this.effects.hexBlast(p.x, p.y);
       this.projectiles.releaseEnemyShot(p);
       this.hurtPlayer(p.dmg);
@@ -3119,11 +3120,37 @@ private bossDeathSequence(e: Enemy): boolean {
     void weapon;
   }
 
-  /** Взрыв рыбы-бомбы. selfDestruct=true — сама доехала до игрока. */
+  /** Короткая анимация зажжённого фитиля из набора bomb/; удаляется по завершении. */
+  private playBombFuseEffect(x: number, y: number): void {
+    if (!this.anims.exists('proj-bomb-fuse-lit')) return;
+    const fuse = this.add.sprite(x, y, 'proj-bomb-fuse', 0)
+      .setScale(0.9)
+      .setDepth(DEPTH.FX);
+    fuse.play('proj-bomb-fuse-lit');
+    fuse.once('animationcomplete', () => fuse.destroy());
+  }
+
+  /** Взрыв выплюнутой бомбы в обычном бою: урон герою и цепная реакция по толпе. */
+  private fishBombProjectileExplode(x: number, y: number, dmg: number, radius: number): void {
+    this.playBombFuseEffect(x, y);
+    this.effects.explosion(x, y, 1.05, 2);
+    audio.play('explosion');
+    this.shakeCamera(140, 0.0035);
+    this.hitstop(45);
+    if (Math.hypot(this.player.x - x, this.player.y - y) <= radius) this.hurtPlayer(dmg);
+    for (const sprite of this.enemiesNear(x, y, radius + 40)) {
+      const enemy = sprite as Enemy;
+      if (!enemy.active || enemy.def.isBoss) continue;
+      this.damageEnemy(enemy, dmg * 0.65, enemy.x - x, enemy.y - y, 180);
+    }
+  }
+
+  /** Взрыв рыбы-бомбы при смерти: сохраняет цепную реакцию, но не самоубийственную атаку. */
   private fishBombExplode(x: number, y: number, selfDestruct: boolean, src?: WeaponId): void {
     const def = ENEMIES['bomb-fish'];
     const dmg = Math.round((def.explodeDmg ?? 24) * this.spawner.dmgMult);
     const R = def.explodeRadius ?? 150;
+    this.playBombFuseEffect(x, y);
     this.effects.explosion(x, y, 1.05, 2);
     audio.play('explosion');
     this.shakeCamera(170, 0.0045);
@@ -4112,8 +4139,16 @@ private bossDeathSequence(e: Enemy): boolean {
       playerY: () => this.player.y,
       siegeInterceptRadius: () => SIEGE.INTERCEPT_R + 40 * this.economy.card('militia'),
       onEnemyShoot: (x, y, proj) => {
-        // Бросок выполняется по ТЕКУЩЕЙ позиции игрока в момент выпуска
+        // Бросок выполняется по текущей позиции героя; бомбу можно уклонением вывести из радиуса.
         const tx = this.player.x, ty = this.player.y;
+        if (proj === 'bomb') {
+          const fish = ENEMIES['bomb-fish'];
+          const dmg = Math.round((fish.shotDmg ?? 14) * this.spawner.dmgMult);
+          this.projectiles.shootEnemyBomb(x, y, tx, ty, dmg, (ix, iy) => {
+            this.fishBombProjectileExplode(ix, iy, dmg, fish.shotRadius ?? 110);
+          });
+          return;
+        }
         const a = Math.atan2(ty - y, tx - x);
         const srcDmg = proj === 'bone' ? ENEMIES.gnoll.damage
           : proj === 'hex' ? ENEMIES.shaman.damage
@@ -4179,10 +4214,22 @@ private bossDeathSequence(e: Enemy): boolean {
       // окна атаки, и к попаданию `settlement.siegeIdx` уже мог сброситься —
       // тогда урон пришёл бы в обход потолка 12% (§E.4.4).
       siegeShoot: (kind, x, y, tx, ty, fire, building) => {
-        const dmg = kind === 'hex' ? (ENEMIES.shaman.buildingDmg ?? 5) : (ENEMIES.gnoll.buildingDmg ?? 2);
+        const dmg = kind === 'hex' ? (ENEMIES.shaman.buildingDmg ?? 5)
+          : kind === 'bomb' ? (ENEMIES['bomb-fish'].buildingDmg ?? 8)
+            : (ENEMIES.gnoll.buildingDmg ?? 2);
         const firedAt = this.settlement.siegeIdx;
+        const blastRadius = ENEMIES['bomb-fish'].shotRadius ?? 110;
         this.projectiles.shootAtBuilding(kind, x, y, tx, ty, dmg, fire, (shot) => {
           const b = building as Building;
+          if (kind === 'bomb') {
+            this.playBombFuseEffect(shot.x, shot.y);
+            this.effects.explosion(shot.x, shot.y, 1.05, 2);
+            audio.play('explosion');
+            this.shakeCamera(140, 0.0035);
+            if (Math.hypot(this.player.x - shot.x, this.player.y - shot.y) <= blastRadius) {
+              this.hurtPlayer(Math.round((ENEMIES['bomb-fish'].shotDmg ?? 14) * this.spawner.dmgMult));
+            }
+          }
           if (b && b.alive) {
             if (fire) {
               if (b.ignite(firedAt)) audio.play('fire');
