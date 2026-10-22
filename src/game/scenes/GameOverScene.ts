@@ -8,7 +8,7 @@ import { submitScore, LEADERBOARD_DAILY, LEADERBOARD_ENDLESS } from '../../platf
 import { isAuthorized, displayName } from '../../platform/player';
 import {
   placementAvailable, placementBlockReason, registerRunOutcome, showInterstitial, showPlacementRewarded,
-  showStickyBanner,
+  showStickyBanner, refundPlacement,
 } from '../../platform/ads';
 import { gameplayStop } from '../../platform/lifecycle';
 import { track } from '../../platform/analytics';
@@ -75,8 +75,16 @@ export interface GameOverStats {
     passLevels: number;
     passRewards: { kind: string; amount: number }[];
     chainUnlocks: { nameKey: string; tier: number }[];
+    /** Скин сезона, выданный после достижения пятой вехи. */
+    seasonStepReward?: string | null;
     endlessWave: number;
     crownsEarned: number;
+    /** False means the run's meta rewards were not committed durably. */
+    persisted?: boolean;
+    /** False means a run's separate gold wallet credit was not persisted. */
+    walletRewardSaved?: boolean;
+    /** False means a successful daily challenge did not persist its daily reward. */
+    challengeRewardSaved?: boolean;
     challenge: boolean;
     ukaz: string | null;
     endless: boolean;
@@ -384,8 +392,11 @@ export class GameOverScene extends Phaser.Scene {
     const m = s.meta;
     if (!m) return;
 
-    // Победа в вызове дня: награда раз в сутки, функция сама защищена
-    if (m.challenge && s.victory && !challengeVictoryToday()) markChallengeVictory();
+    // Победа в вызове дня: награда раз в UTC-день.
+    // Если сохранить награду не удалось, итоговый экран обязан сообщить об этом.
+    if (m.challenge && s.victory && !challengeVictoryToday()) {
+      m.challengeRewardSaved = markChallengeVictory();
+    }
 
     // Авто-сабмит технических бордов. Имя — без зависимости от input:
     // гость берётся из 'tss-name', авторизованному подставит профиль
@@ -594,6 +605,9 @@ export class GameOverScene extends Phaser.Scene {
     const cx = width / 2;
     const fs = compact ? 10 : 12;
     const lines: Array<{ text: string; color: string }> = [];
+    if (m.persisted === false || m.walletRewardSaved === false || m.challengeRewardSaved === false) {
+      lines.push({ text: t('meta.runSaveFailed'), color: '#b3261e' });
+    }
 
     // Начисление славы за матч; потолок и бонус идеальной победы (§H.16)
     if (m.glory) {
@@ -631,6 +645,10 @@ export class GameOverScene extends Phaser.Scene {
       passParts.push(t('over.chainsUp', { v: num(m.chainUnlocks.length) }));
     }
     if (passParts.length > 0) lines.push({ text: passParts.join('   '), color: '#3b2410' });
+    if (m.seasonStepReward) {
+      const skinKey = `skins.skin.${m.seasonStepReward.replace(/^skin_/, '')}` as TranslationKey;
+      lines.push({ text: t('over.seasonReward', { v: t(skinKey) }), color: '#9a6a08' });
+    }
 
     // Победа в вызове дня (§H.8) и волны бесконечного режима (§H.7)
     if (m.challenge && s.victory) lines.push({ text: t('over.challengeWin'), color: '#9a6a08' });
@@ -1093,7 +1111,12 @@ export class GameOverScene extends Phaser.Scene {
       resume: () => audio.unsilence(),
     });
     if (res.rewarded) {
-      depositGold(gold);
+      if (!depositGold(gold)) {
+        refundPlacement('wallet-x2');
+        this.goldBtn?.setLabel(t('over.x2SaveFailed'));
+        this.goldBtn?.setEnabled(placementAvailable('wallet-x2'));
+        return;
+      }
       this.goldDoubled = true;
       this.goldBtn?.setLabel(t('over.x2Done'));
       audio.play('ach');
@@ -1113,7 +1136,12 @@ export class GameOverScene extends Phaser.Scene {
       resume: () => audio.unsilence(),
     });
     if (res.rewarded) {
-      addGlory(gloryDoubleExtra(g));
+      if (!addGlory(gloryDoubleExtra(g))) {
+        refundPlacement('glory-x2');
+        this.gloryBtn?.setLabel(t('over.x2SaveFailed'));
+        this.gloryBtn?.setEnabled(placementAvailable('glory-x2'));
+        return;
+      }
       this.gloryDoubled = true;
       this.gloryBtn?.setLabel(t('over.x2Done'));
       audio.play('ach');

@@ -593,3 +593,37 @@ test('gameplay spawns the opening goblin and keeps Ogre death animation alive to
   ).toBe(false);
   expect(pageErrors).toEqual([]);
 });
+
+
+test('Red Valley increases the expected skull/shaman share by exactly 25% in its active window', async ({ page }) => {
+  await openApp(page);
+  const shares = await page.evaluate(async () => {
+    const data = await import('/src/game/data.ts') as unknown as {
+      pickRegularKind: (
+        minute: number,
+        rng: () => number,
+        allowedPool?: readonly string[],
+        redTierShareMultiplier?: number,
+      ) => string;
+    };
+    const samples = 100_000;
+    const measure = (multiplier: number): number => {
+      let red = 0;
+      for (let i = 0; i < samples; i++) {
+        // Равномерная сетка [0, 1): детерминированно измеряем интервалы весов,
+        // без статистического шума и нестабильного Math.random в CI.
+        const point = i / samples;
+        const kind = data.pickRegularKind(7.5, () => point, undefined, multiplier);
+        if (kind === 'skull' || kind === 'shaman') red++;
+      }
+      return red / samples;
+    };
+    const baseline = measure(1);
+    const redValley = measure(1.25);
+    return { baseline, redValley, relativeIncrease: redValley / baseline };
+  });
+
+  expect(shares.baseline).toBeCloseTo(0.38, 4);
+  expect(shares.redValley).toBeCloseTo(0.475, 4);
+  expect(shares.relativeIncrease).toBeCloseTo(1.25, 3);
+});

@@ -96,6 +96,8 @@ export class Enemy extends Phaser.Physics.Arcade.Sprite {
   get aimedPawn(): Pawn | null { return this.targetPawn; }
   private lastPick = 0;
   private buildingAtkCd = 0;
+  /** Сезон «Возвращение Огра» ускоряет только атаки по замку во второй фазе. */
+  private ogreReturnAggression = false;
   /** Отдельный цикл рывка свиногоблина по зданию в режиме осады (§E.4.1). */
   private siegeChargeStage: 'idle' | 'windup' | 'charge' | 'recover' = 'idle';
   private siegeChargeTimerMs = 0;
@@ -411,7 +413,7 @@ export class Enemy extends Phaser.Physics.Arcade.Sprite {
         // — замок (~500 HP, потолка для босса нет) держится ~33 с (§E.6)
         // §E.4.1: обычная атака — 1.5 с; шар шамана — 2.4 с
         // (5 / 2.4 + 3 / 6 ≈ 2.58 HP/с с учётом DoT); босс фазы 2 — 535 мс.
-        this.buildingAtkCd = this.kind === 'boss' ? 535 : this.kind === 'shaman' ? 2400 : 1500;
+        this.buildingAtkCd = this.buildingAttackIntervalMs;
         if (ranged) {
           // Бросок по зданию: шаман — огненный шар (поджог), гнолл — кость
           this.playOnce(`${this.kind}-shoot`, () => {
@@ -431,6 +433,17 @@ export class Enemy extends Phaser.Physics.Arcade.Sprite {
       }
     }
     void time;
+  }
+
+  /** Включает сезонное усиление только после перехода Огра во вторую фазу. */
+  enableOgreReturnAggression(): void {
+    if (this.def.isBoss) this.ogreReturnAggression = true;
+  }
+
+  /** Фактический интервал атак по зданию, также читается регрессионной проверкой. */
+  get buildingAttackIntervalMs(): number {
+    if (this.kind === 'boss') return this.ogreReturnAggression ? 400 : 535;
+    return this.kind === 'shaman' ? 2400 : 1500;
   }
 
   /** Красный телеграф осадного рывка: FILL tint не зависит от случайного фидбека урона. */

@@ -503,3 +503,39 @@ test('concurrent calls cannot claim the same single-use rewarded placement twice
   expect(result.consumed).toBe(1);
   expect(result.availableAfter).toBe(false);
 });
+
+
+test('failed daily offer persistence refunds the rewarded placement and keeps old offers', async ({ page }) => {
+  await openShop(page, { language: 'en' });
+  const before = await readRotation(page);
+  expect(before).not.toBeNull();
+  if (!before) throw new Error('Daily rotation was not persisted');
+
+  await page.evaluate(() => {
+    const w = window as Window & { __restoreShopRotationWrite?: () => void };
+    const originalSetItem = Storage.prototype.setItem;
+    w.__restoreShopRotationWrite = () => {
+      Storage.prototype.setItem = originalSetItem;
+    };
+    Storage.prototype.setItem = function (key: string, value: string): void {
+      if (key === 'tss-shop-rotation-v1' && value.includes('"refreshed":true')) {
+        throw new DOMException('rotation storage disabled', 'QuotaExceededError');
+      }
+      originalSetItem.call(this, key, value);
+    };
+  });
+
+  try {
+    await clickSceneText(page, refreshLabel('en', 'available'));
+    await expect.poll(async () => readAdDay(page)).toMatchObject({ used: {} });
+    expect(await readRotation(page)).toEqual(before);
+    await expect.poll(async () => sceneTexts(page)).toContain('Purchase failed');
+    expect(await sceneTexts(page)).toContain(refreshLabel('en', 'available'));
+  } finally {
+    await page.evaluate(() => {
+      const w = window as Window & { __restoreShopRotationWrite?: () => void };
+      w.__restoreShopRotationWrite?.();
+      delete w.__restoreShopRotationWrite;
+    });
+  }
+});

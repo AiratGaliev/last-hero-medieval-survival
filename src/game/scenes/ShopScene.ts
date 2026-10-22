@@ -6,12 +6,12 @@ import { makeButton, makePanel, makeRibbon, resizePanel, fitTextWidth, type Butt
 import { t, num, type TranslationKey } from '../../i18n';
 import { track } from '../../platform/analytics';
 import { fetchCatalog, purchaseSku, showcaseVisible, SKUS, type CatalogProduct } from '../../platform/payments';
-import { isMockMode, isOnYandex } from '../../platform/sdk';
-import { placementAvailable, showPlacementRewarded, showStickyBanner } from '../../platform/ads';
+import { isMockMode, isOnYandex, serverNow } from '../../platform/sdk';
+import { placementAvailable, showPlacementRewarded, showStickyBanner, refundPlacement } from '../../platform/ads';
 import {
   rollMetaDay,
+  grantConsumableFromAd,
   seasonPassUnlocked,
-  saveMetaState,
   hasIapEntitlement,
   buySkinWithCrowns,
   setActiveSkin,
@@ -783,10 +783,15 @@ export class ShopScene extends Phaser.Scene {
     try {
       const result = await showPlacementRewarded('shop-refresh');
       if (result.rewarded) {
-        refreshDailyShopRotation();
+        const rotation = refreshDailyShopRotation();
+        if (!rotation) {
+          refundPlacement('shop-refresh');
+          this.toast(t('store.fail'));
+          return;
+        }
         audio.play('levelup');
         this.pageIdx = 0;
-        track('shop_refreshed', { date: getDailyShopRotation().date });
+        track('shop_refreshed', { date: rotation.date });
       } else if (!result.available) {
         this.toast(t('store.refreshUnavailable'));
       }
@@ -830,6 +835,8 @@ export class ShopScene extends Phaser.Scene {
           audio.play('levelup');
           track('skin_equipped', { id: def.id });
           this.renderTab();
+        } else {
+          this.toast(t('skins.applyFailed'));
         }
       }, 'blue', 11, { hitW: 94, hitH: 42, stopPropagation: true });
       row.add([btn.img, btn.txt, btn.hit]);
@@ -888,6 +895,8 @@ export class ShopScene extends Phaser.Scene {
           audio.play('levelup');
           track('skin_equipped', { id: def.id });
           this.renderTab();
+        } else {
+          this.toast(t('skins.applyFailed'));
         }
       }, 'blue', 11, { hitW: 94, hitH: 42, stopPropagation: true });
       row.add([btn.img, btn.txt, btn.hit]);
@@ -911,9 +920,12 @@ export class ShopScene extends Phaser.Scene {
     row.add(this.label(-w / 2 + 16, 0, t('skins.none'), 12, '#8a5b12', 0));
     if (st.skins.banner !== '') {
       const btn = makeButton(this, w / 2 - 54, 0, 88, 34, t('skins.none'), () => {
-        setActiveSkin('banner', '');
-        audio.play('click');
-        this.renderTab();
+        if (setActiveSkin('banner', '')) {
+          audio.play('click');
+          this.renderTab();
+        } else {
+          this.toast(t('skins.applyFailed'));
+        }
       }, 'red', 11, { hitW: 94, hitH: 42, stopPropagation: true });
       row.add([btn.img, btn.txt, btn.hit]);
       this.contentButtons.push(btn);
@@ -942,9 +954,12 @@ export class ShopScene extends Phaser.Scene {
     const res = buySkinWithCrowns(def.id);
     if (res.ok) {
       // Купил — сразу надел: витрина не оставляет шаг «а теперь найди НАДЕТЬ»
-      setActiveSkin(def.kind, def.id);
-      audio.play('levelup');
-      track('skin_equipped', { id: def.id });
+      if (setActiveSkin(def.kind, def.id)) {
+        audio.play('levelup');
+        track('skin_equipped', { id: def.id });
+      } else {
+        this.toast(t('skins.applyFailed'));
+      }
       this.renderTab();
     } else {
       this.toast(t('store.fail'));
@@ -1170,7 +1185,9 @@ export class ShopScene extends Phaser.Scene {
    *  Окно starter_castellan: 48ч после первой победы и не куплен (§J.6.2). */
   private starterCastellanAvailable(st: MetaState): boolean {
     if (st.purchasedSkus.includes('starter_castellan')) return false;
-    return st.firstWinAt > 0 && Date.now() - st.firstWinAt < 48 * 3600 * 1000;
+    const now = serverNow();
+    const elapsed = now - st.firstWinAt;
+    return st.firstWinAt > 0 && elapsed >= 0 && elapsed < 48 * 3600 * 1000;
   }
 
   /** Строка полки SKU: имя + цена-примечание (note) в кнопке / «Куплено». */
@@ -1285,11 +1302,16 @@ export class ShopScene extends Phaser.Scene {
     this.busy = true;
     try {
       const res = await showPlacementRewarded('consumable');
-      if (!this.scene.isActive()) return;
+      if (!this.scene.isActive()) {
+        if (res.rewarded) refundPlacement('consumable');
+        return;
+      }
       if (res.rewarded) {
-        const st = rollMetaDay();
-        st.consumables.cs_horseshoe += 1;
-        saveMetaState(st);
+        if (!grantConsumableFromAd('cs_horseshoe')) {
+          refundPlacement('consumable');
+          this.toast(t('store.fail'));
+          return;
+        }
         audio.play('levelup');
         this.renderTab();
       }

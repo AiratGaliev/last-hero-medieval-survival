@@ -6,10 +6,11 @@ import { makeButton, makePanel, makeRibbon, resizePanel, fitTextWidth, type Butt
 import { t, num, clock, type TranslationKey, type TranslateParams } from '../../i18n';
 import { FTUE_MATCH_GATE } from '../data';
 import { track } from '../../platform/analytics';
-import { placementAvailable, showPlacementRewarded, showStickyBanner } from '../../platform/ads';
+import { placementAvailable, showPlacementRewarded, showStickyBanner, refundPlacement } from '../../platform/ads';
 import { purchaseSku } from '../../platform/payments';
 import {
   bonusAvailable,
+  dailyBonusPreviewIndex,
   buyNode,
   claimChainReward,
   chainClaimed,
@@ -491,6 +492,8 @@ export class MetaScene extends Phaser.Scene {
         track('tree_node_bought', { id: node.id });
         audio.play('levelup');
         this.renderTab();
+      } else if (res.reason === 'storage') {
+        this.flashNote(t('store.fail'));
       }
     }, 'blue', 10, { disabled: !afford, hitW: 184, hitH: 48, stopPropagation: true });
     box.add([btn.img, btn.txt, btn.hit]);
@@ -564,6 +567,7 @@ export class MetaScene extends Phaser.Scene {
     const res = await showPlacementRewarded('quest-reroll');
     if (!res.rewarded) return;
     const out = rerollQuestSlot(slot);
+    if (!out.ok) refundPlacement('quest-reroll');
     if (out.ok) {
       track('quest_reroll', { slot });
       this.renderTab();
@@ -571,6 +575,9 @@ export class MetaScene extends Phaser.Scene {
       this.flashNote(t('quest.rerollLimit'));
     } else if (out.reason === 'completed' || out.reason === 'bad-slot') {
       this.flashNote(t('quest.done'));
+      this.renderTab();
+    } else if (out.reason === 'storage') {
+      this.flashNote(t('store.fail'));
       this.renderTab();
     }
   }
@@ -789,6 +796,8 @@ export class MetaScene extends Phaser.Scene {
                   if (res.ok) {
                     audio.play('levelup');
                     this.renderTab();
+                  } else if (ready && res.reason === 'storage') {
+                    this.flashNote(t('store.fail'));
                   }
                 }, 'blue', 8, { disabled: !ready, hitW: 74, hitH: 44, stopPropagation: true });
               box.add([btn.img, btn.txt, btn.hit]);
@@ -975,6 +984,8 @@ export class MetaScene extends Phaser.Scene {
             if (res) {
               audio.play('levelup');
               this.renderTab();
+            } else if (canClaim) {
+              this.flashNote(t('store.fail'));
             }
           }, 'red', 10, { disabled: !canClaim, hitW: 158, hitH: 44, stopPropagation: true });
           box.add([btn.img, btn.txt, btn.hit]);
@@ -1076,14 +1087,14 @@ export class MetaScene extends Phaser.Scene {
       fontFamily: FONT, fontSize: '22px', color: '#3b2410',
     }).setOrigin(0.5));
     container.add(this.add.text(cx, top + 62, [
-      t('bonus.day', { v: (st.dailyBonus.streak % 7) + 1 }),
+      t('bonus.day', { v: dailyBonusPreviewIndex() + 1 }),
       t('bonus.streak', { v: st.dailyBonus.streak }),
     ].join('   '), {
       fontFamily: FONT, fontSize: '12px', color: '#8a5b12',
     }).setOrigin(0.5));
 
-    // Кружки недели: подсвечен текущий день стрика (streak % 7)
-    const todayIdx = st.dailyBonus.streak % 7;
+    // Кружки недели подсвечивают награду, которая фактически выдастся с учётом отката стрика.
+    const todayIdx = dailyBonusPreviewIndex();
     const circleY = top + 128;
     const span = w - 110;
     const step = span / 6;
@@ -1132,10 +1143,15 @@ export class MetaScene extends Phaser.Scene {
 
   private async claimBonusWithAd(): Promise<void> {
     const res = await showPlacementRewarded('bonus-x2');
-    if (res.rewarded) this.finishBonusClaim(true);
+    if (!res.rewarded) return;
+    if (!this.bonusOverlay) {
+      refundPlacement('bonus-x2');
+      return;
+    }
+    if (!this.finishBonusClaim(true)) refundPlacement('bonus-x2');
   }
 
-  private finishBonusClaim(doubled: boolean): void {
+  private finishBonusClaim(doubled: boolean): boolean {
     const res = claimDailyBonus(doubled);
     if (res.ok) {
       track('daily_claim', { day: res.day, doubled });
@@ -1143,6 +1159,8 @@ export class MetaScene extends Phaser.Scene {
     }
     this.closeBonusOverlay();
     this.renderTab();
+    if (res.reason === 'storage') this.flashNote(t('store.fail'));
+    return res.ok;
   }
 
   private closeBonusOverlay(): void {

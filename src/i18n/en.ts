@@ -415,6 +415,7 @@ export const en: Record<TranslationKey, string> = {
   'hire.staff': 'Monk',
   'hire.limit': 'Limit reached',
   'hire.started': 'Hiring: {v}',
+  'hire.barracksRequired': 'Build your first barracks before hiring guards',
 
   // ---------- Sieges (TZ §E.4) ----------
   'siege.warn': '⚠ SIEGE INCOMING ON THE SETTLEMENT',
@@ -852,13 +853,13 @@ export const en: Record<TranslationKey, string> = {
   'season.progress': 'Runs this season: {v}',
   'season.modifier': 'Season world: {v}',
   'season.0.name': 'Red Valley',
-  'season.0.desc': '+25% black-tier enemies share in 7:00–12:00',
+  'season.0.desc': 'Skull/shaman share +25% from 7:00 to 12:00',
   'season.1.name': 'Long siege',
   'season.1.desc': 'Sieges every 4:30 instead of 6:00',
   'season.2.name': 'Gold fever',
-  'season.2.desc': 'Vein ore +50%, hire ore cost ×1.25',
+  'season.2.desc': 'Vein ore +50%, all ore costs ×1.25',
   'season.3.name': 'Ogre returns',
-  'season.3.desc': 'Boss arrives at 12:00 instead of 15:00',
+  'season.3.desc': 'Boss arrives at 12:00 and attacks faster in phase two',
 
   'weekly.title': 'CHRONICLE OF THE WEEK',
   'weekly.stage': 'Stage {v} of 5',
@@ -892,6 +893,7 @@ export const en: Record<TranslationKey, string> = {
 
   'skins.title': 'SKINS',
   'skins.apply': 'WEAR',
+  'skins.applyFailed': 'Could not save the selected skin.',
   'skins.applied': 'WORN',
   'skins.hero': 'Hero',
   'skins.building': 'Buildings',
@@ -944,6 +946,8 @@ export const en: Record<TranslationKey, string> = {
   'store.firstBonus': 'First purchase ×2!',
   'store.sold': 'Owned',
   'store.fail': 'Purchase failed',
+  'meta.runSaveFailed': 'Progress could not be saved. Check storage access.',
+  'meta.consumableSaveFailed': 'Consumables were not activated because the spend could not be saved.',
   'store.dailyOffers': 'DAILY OFFERS',
   'store.refreshAd': 'REFRESH FOR AD',
   'store.refreshUnavailable': 'AD UNAVAILABLE',
@@ -955,6 +959,7 @@ export const en: Record<TranslationKey, string> = {
   'over.gloryX2': 'Watch ad: glory ×2',
   'over.goldX2': 'Watch ad: gold ×2',
   'over.x2Done': 'Already doubled',
+  'over.x2SaveFailed': 'Not saved',
   // §J.3: button unavailable → grey out WITH a reason
   'ad.reasonLimit': 'Ad already used',
   'ad.reasonUnavailable': 'Ad unavailable',
@@ -963,6 +968,7 @@ export const en: Record<TranslationKey, string> = {
   'over.questsProgress': 'Daily quests: {done}/{total}',
   'over.questsNow': 'Completed this run: {v}',
   'over.passUp': 'Pass +{v} lv.',
+  'over.seasonReward': 'Season cosmetic: {v}',
   'over.chainsUp': 'Chains: {v}',
   'over.endlessEnter': 'HOLD THE FORT',
   'over.challengeWin': 'Daily challenge victory!',

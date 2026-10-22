@@ -205,15 +205,15 @@ export class Spawner {
       const black: EnemyKind[] = ['skull', 'shaman', 'pig-rider', 'bomb-fish'];
       return black[Math.floor(this.random() * black.length)];
     }
-    const kind = pickRegularKind(minute, () => this.random(), this.o.dailyPool);
-    // «Красная долина»: в окне 7–12 минут черепа и шаманы приходят на 25%
-    // чаще — если выпало другое существо, с вероятностью 0.2 перебрасываем
-    // ещё раз (буст ~×1.25 к доле этих видов без правки весов data.ts).
-    if (this.o.redValley && minute >= 7 && minute < 12
-      && kind !== 'skull' && kind !== 'shaman' && this.random() < 0.2) {
-      return pickRegularKind(minute, () => this.random(), this.o.dailyPool);
-    }
-    return kind;
+    // «Красная долина»: в окне 7–12 минут доля черепов и шаманов возрастает
+    // ровно на 25% относительно базового распределения, в том числе в dailyPool.
+    const redValleyActive = this.o.redValley && minute >= 7 && minute < 12;
+    return pickRegularKind(
+      minute,
+      () => this.random(),
+      this.o.dailyPool,
+      redValleyActive ? 1.25 : 1,
+    );
   }
 
   /** Ранг «Набата» даёт +3 секунды предупреждения за уровень: 5 → 8 → 11. */

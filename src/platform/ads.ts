@@ -237,8 +237,8 @@ function loadDay(): AdDayState {
   return { date, used: raw.used ?? {} };
 }
 
-function saveDay(st: AdDayState): void {
-  saveJson(LS_AD_DAY, st);
+function saveDay(st: AdDayState): boolean {
+  return saveJson(LS_AD_DAY, st);
 }
 
 function usedCount(p: AdPlacement): number {
@@ -286,12 +286,47 @@ export async function showPlacementRewarded(
     if (PLACEMENT_LIMITS[placement].period === 'day') {
       const day = loadDay();
       day.used[placement] = (day.used[placement] ?? 0) + 1;
-      saveDay(day);
+      if (!saveDay(day)) {
+        lastError = 'daily_rewarded_limit_persistence_failed';
+        track('ad_error', { kind: 'rewarded', placement, message: lastError });
+        console.warn('[ads] дневной лимит rewarded не удалось сохранить:', placement);
+        // Показ был завершён, но без надёжного счётчика нельзя выдавать награду:
+        // перезапуск страницы иначе сбросит ограничение и позволит повторный забор.
+        return { rewarded: false, available: false };
+      }
     } else {
       usedPlacements.set(placement, (usedPlacements.get(placement) ?? 0) + 1);
     }
   }
   return res;
+}
+
+/**
+ * Возвращает лимит, если rewarded-показ завершился, но награду не удалось
+ * надёжно сохранить. Нельзя оставлять игрока без награды и одновременно
+ * списывать лимит за неё; при отказе записи дневного счётчика возвращаем false.
+ */
+export function refundPlacement(placement: AdPlacement): boolean {
+  if (PLACEMENT_LIMITS[placement].period === 'day') {
+    const day = loadDay();
+    const used = day.used[placement] ?? 0;
+    if (used <= 0) return true;
+    if (used === 1) delete day.used[placement];
+    else day.used[placement] = used - 1;
+    if (!saveDay(day)) {
+      lastError = 'daily_rewarded_refund_persistence_failed';
+      track('ad_error', { kind: 'rewarded', placement, message: lastError });
+      console.warn('[ads] не удалось вернуть дневной лимит rewarded:', placement);
+      return false;
+    }
+    return true;
+  }
+
+  const used = usedPlacements.get(placement) ?? 0;
+  if (used <= 0) return true;
+  if (used === 1) usedPlacements.delete(placement);
+  else usedPlacements.set(placement, used - 1);
+  return true;
 }
 
 /** Сброс лимитов за ран (в начале матча). Дневные лимиты не трогаем. */

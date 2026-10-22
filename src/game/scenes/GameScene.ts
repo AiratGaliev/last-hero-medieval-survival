@@ -271,6 +271,8 @@ export class GameScene extends Phaser.Scene {
   private contractId: string | null = null;
   private challengeMods = new Set<string>();
   private consumableSet = new Set<string>();
+  /** Не удалось надёжно списать расходники до запуска их эффектов. */
+  private consumablesCommitFailed = false;
   /** Узел m8 «Клятва долины»: стартовый мечник получает +20 HP. */
   private oathM8 = false;
   /** applyRunToMeta вызывается ровно один раз за ран (§K.2). */
@@ -509,7 +511,13 @@ export class GameScene extends Phaser.Scene {
 
     // ---- Конфиг уже погашен до выбора seed выше ----
     if (this.mods.endless) track('endless_start', {});
-    takeConsumables(this.mods.consumables);
+    const consumablesCommitted = takeConsumables(this.mods.consumables);
+    this.consumablesCommitFailed = !consumablesCommitted;
+    if (!consumablesCommitted) {
+      // Нельзя применять выбранные расходники, пока их списание не сохранено.
+      // Возвращаемся к обычному рану и сохраняем предметы в инвентаре.
+      this.mods.consumables = [];
+    }
     const meta = loadMetaState();
     this.fx = nodeEffects(meta.nodes);
     // «Дозорные» (узел d3, §H.16): +2 сек к анонсу осады — Spawner читает реестр
@@ -696,6 +704,7 @@ export class GameScene extends Phaser.Scene {
         * (this.challengeMods.has('cm_winter') ? 0.85 : 1),
       workSpeedMult: this.fx.workSpeedMult * (this.consumableSet.has('cs_forester') ? 1.25 : 1),
       buildCostMult: this.fx.buildCostMult * (this.contractId === 'c_black_market' ? 1.5 : 1),
+      oreCostMult: this.seasonMod === 'gold_rush_world' ? 1.25 : 1,
       houseCostMult: this.challengeMods.has('cm_winter') ? 0.8 : 1,
       buildTimeMult: this.challengeMods.has('cm_stone') ? 1.3 : 1,
       hireCostMult: this.fx.hireCostMult,
@@ -1337,6 +1346,9 @@ export class GameScene extends Phaser.Scene {
     });
     this.hud.setIcon(startId, WEAPONS[startId].icon, 1, false);
     this.ach = new AchTracker((a) => this.hud.achievementToast(a));
+    if (this.consumablesCommitFailed) {
+      this.hud.announce(t('meta.consumableSaveFailed'), '#b3261e');
+    }
     this.setupDpsDebug();
 
     // ---- Подписки HUD на экономику (обновление по событию, §B.8) ----
@@ -1751,6 +1763,12 @@ private ordersUnlocked(): boolean {
 
   /** Меню найма гарнизона на здании (§B.9.1): казармы/тир/обитель. */
   private openHireMenu(b: Building, wx: number, wy: number): void {
+    // По §I.3 найм гарнизона открывается после первой казармы, а не после
+    // номера матча. Монах в обители — отдельная ветка раскрытия (§I.5).
+    if (b.kind !== 'monastery' && this.builtBarracks <= 0) {
+      this.hud?.feed(t('hire.barracksRequired'), '#ffd76e');
+      return;
+    }
     const weapons: Array<import('../data').PawnWeapon> =
       b.kind === 'barracks' ? ['sword', 'lance'] : b.kind === 'archery' ? ['bow'] : ['staff'];
     const entries = weapons.map((w) => ({
@@ -2648,6 +2666,7 @@ private ordersUnlocked(): boolean {
       this.boss.siege = true;
       this.boss.buildingTarget = this.settlement.castle;
       this.boss.aiState = 'bossPhase2';
+      if (this.seasonMod === 'ogre_return') this.boss.enableOgreReturnAggression();
       this.hud.announce(t('boss.siege'), '#ff5544');
       audio.play('boss');
       this.shakeCamera(300, 0.006);
@@ -3895,8 +3914,9 @@ private bossDeathSequence(e: Enemy): boolean {
     }
     this.metaApplied = true;
     // Контракт «Пацифист-герой» (§H.9): золото героя уходит в кошелёк лавки
-    // (depositGold из '../shop'), минуя сводку матча — без задвоения
-    if (this.pacifistGold > 0) depositGold(Math.floor(this.pacifistGold));
+    // (depositGold из '../shop'), минуя сводку матча — без задвоения.
+    // Сохраняем результат записи, чтобы экран итогов не скрывал потерю награды.
+    const walletRewardSaved = this.pacifistGold <= 0 || depositGold(Math.floor(this.pacifistGold));
     const wave = this.mods.endless ? this.spawner.wave : 0;
     const summary: RunSummary = {
       victory,
@@ -3944,8 +3964,11 @@ private bossDeathSequence(e: Enemy): boolean {
       passLevels: res.passLevelsGained,
       passRewards: res.passRewards.map((r) => ({ kind: r.kind, amount: r.amount })),
       chainUnlocks: res.chainUnlocked.map((c) => ({ nameKey: c.nameKey, tier: c.tier })),
+      seasonStepReward: res.seasonStepReward,
       endlessWave: wave,
       crownsEarned: res.crownsEarned,
+      persisted: res.persisted,
+      walletRewardSaved,
       challenge: !!this.mods.challenge,
       ukaz: this.mods.ukaz,
       endless: this.mods.endless,

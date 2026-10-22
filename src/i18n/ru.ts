@@ -420,6 +420,7 @@ export const ru = {
   'hire.staff': 'Монах',
   'hire.limit': 'Лимит исчерпан',
   'hire.started': 'Наём: {v}',
+  'hire.barracksRequired': 'Сначала постройте первые казармы',
 
   // ---------- Осады (TZ §E.4) ----------
   'siege.warn': '⚠ ОСАДА ИДЁТ НА ПОСЕЛЕНИЕ',
@@ -869,13 +870,13 @@ export const ru = {
   'season.progress': 'Ранов в сезоне: {v}',
   'season.modifier': 'Мир сезона: {v}',
   'season.0.name': 'Красная Долина',
-  'season.0.desc': '+25% доли чёрного тира врагов в 7:00–12:00',
+  'season.0.desc': '+25% к доле черепов и шаманов в 7:00–12:00',
   'season.1.name': 'Долгая осада',
   'season.1.desc': 'Осады каждые 4:30 вместо 6:00',
   'season.2.name': 'Золотая лихорадка',
-  'season.2.desc': 'Руды с жил +50%, наём дороже по руде ×1.25',
+  'season.2.desc': 'Руды с жил +50%, все расходы руды ×1.25',
   'season.3.name': 'Возвращение Огра',
-  'season.3.desc': 'Босс приходит в 12:00 вместо 15:00',
+  'season.3.desc': 'Босс приходит в 12:00; во второй фазе атакует чаще',
 
   // ---------- Недельная цепочка (§H.17) ----------
   'weekly.title': 'ХРОНИКА НЕДЕЛИ',
@@ -913,6 +914,7 @@ export const ru = {
   // ---------- Скины и знамёна (§J.6.2) ----------
   'skins.title': 'СКИНЫ',
   'skins.apply': 'НАДЕТЬ',
+  'skins.applyFailed': 'Не удалось сохранить выбор скина.',
   'skins.applied': 'НАДЕТО',
   'skins.hero': 'Герой',
   'skins.building': 'Постройки',
@@ -967,6 +969,8 @@ export const ru = {
   'store.firstBonus': 'Первая покупка ×2!',
   'store.sold': 'Куплено',
   'store.fail': 'Покупка не состоялась',
+  'meta.runSaveFailed': 'Не удалось сохранить прогресс. Проверьте доступ к хранилищу.',
+  'meta.consumableSaveFailed': 'Расходники не активированы: не удалось сохранить списание.',
   'store.dailyOffers': 'ПРЕДЛОЖЕНИЯ ДНЯ',
   'store.refreshAd': 'ОБНОВИТЬ ЗА РОЛИК',
   'store.refreshUnavailable': 'РОЛИК НЕДОСТУПЕН',
@@ -979,6 +983,7 @@ export const ru = {
   'over.gloryX2': 'Смотреть ролик: слава ×2',
   'over.goldX2': 'Смотреть ролик: золото ×2',
   'over.x2Done': 'Уже удвоено',
+  'over.x2SaveFailed': 'Не сохранено',
   // §J.3: кнопка недоступна → гаснет С ПОДПИСЬЮ причины
   'ad.reasonLimit': 'Реклама уже использована',
   'ad.reasonUnavailable': 'Реклама недоступна',
@@ -987,6 +992,7 @@ export const ru = {
   'over.questsProgress': 'Задания дня: {done}/{total}',
   'over.questsNow': 'В этом ране выполнено {v}',
   'over.passUp': 'Пропуск +{v} ур.',
+  'over.seasonReward': 'Сезонная косметика: {v}',
   'over.chainsUp': 'Цепи: {v}',
   'over.endlessEnter': 'ДЕРЖАТЬ КРЕПОСТЬ',
   'over.challengeWin': 'Победа в вызове дня!',

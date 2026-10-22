@@ -5,27 +5,29 @@ import { FONT } from '../constants';
 import { HEROES, WEAPONS, PASSIVES, DIFFICULTIES, EVOLUTIONS, FTUE_MATCH_GATE, type HeroId, type DifficultyId } from '../data';
 import { audio } from '../systems/Audio';
 import { makePanel, makeButton, makeChip, makeRibbon, fitTextWidth } from '../systems/Ui';
+import { BLESSINGS, rollBlessings } from '../systems/Blessing';
 import { shrinkToHeight, FONT_FLOOR, FS } from '../systems/Text';
 import { loadShop } from '../shop';
 import { ACHIEVEMENTS, loadUnlocked, loadMeta } from '../achievements';
 import { t, num, clock, type TranslationKey, type TranslateParams } from '../../i18n';
 import { topScores } from '../../platform/leaderboard';
 import { notifyReady } from '../../platform/lifecycle';
-import { loadText, saveText, removeKey } from '../storage';
+import { loadText, saveText } from '../storage';
 import { resetSafeInsets, safeInsets } from '../safeArea';
 import { isAuthorized, offerAuth, displayName } from '../../platform/player';
 import { isOnYandex } from '../../platform/sdk';
-import { placementAvailable, showPlacementRewarded, showStickyBanner, rewardedAvailable } from '../../platform/ads';
+import { placementAvailable, showPlacementRewarded, showStickyBanner, rewardedAvailable, refundPlacement } from '../../platform/ads';
 import { track } from '../../platform/analytics';
 import {
-  BLESSINGS,
   bonusAvailable,
+  dailyBonusPreviewIndex,
   challengeForToday,
   challengeVictoryToday,
   CHALLENGE_MODS,
   claimDailyBonus,
   claimDailyChest,
   grantBlessingToken,
+  grantConsumableFromAd,
   spendBlessingToken,
   CONSUMABLES,
   CONSUMABLE_MAX,
@@ -41,9 +43,7 @@ import {
   matchesPlayed,
   ORDERS,
   ordersUnlocked,
-  rollBlessings,
   rollMetaDay,
-  saveMetaState,
   saveRunConfig,
   type ConsumableId,
   type ContractId,
@@ -1644,7 +1644,11 @@ export class MenuScene extends Phaser.Scene {
       return;
     }
     const reward = claimDailyChest();
-    if (!reward) return;
+    if (!reward) {
+      refundPlacement('daily-chest');
+      this.showToast(t('store.fail'));
+      return;
+    }
     const label = reward.kind === 'gold'
       ? t('bonus.kind.gold', { v: reward.amount })
       : reward.kind === 'blessing'
@@ -1960,9 +1964,11 @@ export class MenuScene extends Phaser.Scene {
   private async buyConsumableAd(cx: number, rowsTop: number, rowW: number): Promise<void> {
     const res = await showPlacementRewarded('consumable');
     if (!res.rewarded) return;
-    const st = loadMetaState();
-    st.consumables.cs_horseshoe += 1;
-    saveMetaState(st);
+    if (!grantConsumableFromAd('cs_horseshoe')) {
+      refundPlacement('consumable');
+      this.showToast(t('store.fail'));
+      return;
+    }
     if (this.overlay) this.renderConsumableRows(cx, rowsTop, rowW);
   }
 
@@ -2031,7 +2037,9 @@ export class MenuScene extends Phaser.Scene {
       const reroll = makeButton(this, cx - 100, btnY, 180, 44, t('challenge.reroll'), () => {
         void (async () => {
           const res = await showPlacementRewarded('challenge-reroll');
-          if (res.rewarded && this.overlay) this.showChallengeOverlay(`ad${Date.now()}`);
+          if (!res.rewarded) return;
+          if (this.overlay) this.showChallengeOverlay(`ad${Date.now()}`);
+          else refundPlacement('challenge-reroll');
         })();
       }, 'red', 10);
       this.addExtra(reroll.img); this.addExtra(reroll.txt); this.addExtra(reroll.hit);
@@ -2070,7 +2078,7 @@ export class MenuScene extends Phaser.Scene {
     const top = cy - paperH / 2;
 
     const streak = loadMetaState().dailyBonus.streak;
-    const todayIdx = streak % 7;
+    const todayIdx = dailyBonusPreviewIndex();
     this.overlay?.add(this.add.text(cx, top + 36, t('bonus.title'), {
       fontFamily: FONT, fontSize: '24px', color: '#3b2410',
     }).setOrigin(0.5));
@@ -2131,21 +2139,28 @@ export class MenuScene extends Phaser.Scene {
     this.backButton(top + paperH + 42);
   }
 
-  private claimBonus(doubled: boolean): void {
+  private claimBonus(doubled: boolean): boolean {
     const res = claimDailyBonus(doubled);
+    this.closeOverlay();
+    this.refreshBonusChip();
     if (res.ok) {
       track('daily_claim', { day: res.day, doubled });
       audio.play('levelup');
+      this.showToast(t('bonus.claimed'));
+    } else if (res.reason === 'storage') {
+      this.showToast(t('store.fail'));
     }
-    this.closeOverlay();
-    this.refreshBonusChip();
-    this.showToast(t('bonus.claimed'));
+    return res.ok;
   }
 
   private async claimBonusWithAd(): Promise<void> {
     const res = await showPlacementRewarded('bonus-x2');
-    if (!this.overlay) return;
-    if (res.rewarded) this.claimBonus(true);
+    if (!res.rewarded) return;
+    if (!this.overlay) {
+      refundPlacement('bonus-x2');
+      return;
+    }
+    if (!this.claimBonus(true)) refundPlacement('bonus-x2');
   }
 
   // ----- Благословение перед раном (R4): 1 из 3 за жетон, старт рана -----
@@ -2253,12 +2268,14 @@ export class MenuScene extends Phaser.Scene {
           const res = await showPlacementRewarded('blessing');
           if (res.rewarded && this.overlay) {
             if (!await grantBlessingToken()) {
+              refundPlacement('blessing');
               actionInFlight = false;
               this.showToast(t('meta.saveFailed'));
               return;
             }
             this.showBlessingOverlay(cfg, go);
           } else {
+            if (res.rewarded) refundPlacement('blessing');
             actionInFlight = false;
           }
         })();

@@ -20,7 +20,9 @@ test('daily streak loses only one step after a long absence', async ({ page }) =
     const moduleUrl = new URL('/src/game/meta.ts', window.location.origin).href;
     const meta = await import(/* @vite-ignore */ moduleUrl) as {
       claimDailyBonus: () => { ok: boolean; day: number; streak: number };
+      dailyBonusPreviewIndex: () => number;
     };
+    const previewIndex = meta.dailyBonusPreviewIndex();
     const result = meta.claimDailyBonus();
     const raw = localStorage.getItem('tss-meta2');
     const stored = raw
@@ -29,14 +31,17 @@ test('daily streak loses only one step after a long absence', async ({ page }) =
 
     return {
       result,
+      previewIndex,
       storedStreak: stored?.dailyBonus?.streak,
       storedLast: stored?.dailyBonus?.last,
     };
   });
 
   expect(outcome.result.ok).toBe(true);
-  // После пропуска нескольких дней снимается одна ступень: 5 -> 4, затем
-  // за сегодняшний вход начисляется следующий шаг цикла (стрик остаётся 5).
+  // Preview должен совпасть с фактической выдачей после отката стрика: 5 -> 4.
+  expect(outcome.previewIndex).toBe(outcome.result.day);
+  expect(outcome.previewIndex).toBe(4);
+  // За сегодняшний вход начисляется следующий шаг цикла, стрик остаётся 5.
   expect(outcome.result.streak).toBe(5);
   expect(outcome.storedStreak).toBe(5);
   expect(outcome.storedLast).not.toBe('2000-01-01');
@@ -1846,5 +1851,1266 @@ test('blessing token changes roll back when storage rejects a write', async ({ p
     tokensAfterFailedSpend: 1,
     grantSaved: false,
     tokensAfterFailedGrant: 0,
+  });
+});
+
+
+test('meta purchases and daily rewards roll back when storage rejects a write', async ({ page }) => {
+  await page.addInitScript(() => localStorage.clear());
+  await page.goto('/?lang=en&ysdk=mock');
+  await expect(page.locator('#game canvas')).toBeVisible({ timeout: startupTimeout });
+  await expect(page.locator('#boot')).toHaveCount(0, { timeout: startupTimeout });
+
+  const outcome = await page.evaluate(async () => {
+    type TestMetaState = {
+      matchesPlayed: number;
+      glory: number;
+      nodes: string[];
+      crowns: number;
+      crownConvert: { date: string; count: number };
+      dailyBonus: { last: string; lastAt: number; streak: number };
+      pass: { xp: number; premium: boolean };
+      purchasedSkus: string[];
+      processedIapTokens: string[];
+      consumables: Record<string, number>;
+      speedupTokens: number;
+      skins: { owned: string[]; hero: string };
+      codexSeen: Record<string, boolean>;
+      codex: Record<string, number>;
+    };
+    const meta = await import('/src/game/meta.ts') as unknown as {
+      rollMetaDay: () => TestMetaState;
+      saveMetaState: (state: TestMetaState) => boolean;
+      loadMetaState: () => TestMetaState;
+      TREE_NODES: Array<{ id: string; cost: number }>;
+      buyNode: (id: string) => { ok: boolean; reason?: string };
+      claimDailyBonus: () => { ok: boolean; reason?: string; streak: number; day: number };
+      convertCrownsToGold: () => { ok: boolean; reason?: string };
+      grantSkuForPurchase: (sku: string, token: string) => {
+        supported: boolean; duplicate: boolean; persisted: boolean; granted: { crowns: number };
+      };
+      takeConsumables: (ids: string[]) => boolean;
+      addGlory: (amount: number) => boolean;
+      setActiveSkin: (kind: 'hero', id: string) => boolean;
+      markCodexSeen: (id: string) => void;
+      spendSpeedupToken: () => boolean;
+    };
+    const state = meta.rollMetaDay();
+    const parts = new Intl.DateTimeFormat('en-GB', {
+      timeZone: 'Europe/Moscow', day: '2-digit', month: '2-digit', year: 'numeric',
+    }).formatToParts(new Date());
+    const part = (type: string): string => parts.find((item) => item.type === type)?.value ?? '';
+    const today = `${part('year')}-${part('month')}-${part('day')}`;
+    state.matchesPlayed = 3;
+    state.glory = 5000;
+    state.consumables.cs_horseshoe = 1;
+    state.speedupTokens = 1;
+    state.skins.owned = ['skin_hero_monk_red'];
+    state.skins.hero = '';
+    state.codexSeen = {};
+    state.codex = {};
+    state.nodes = [];
+    state.crowns = 250;
+    state.crownConvert = { date: today, count: 0 };
+    state.dailyBonus = {
+      last: '2000-01-01',
+      lastAt: Date.parse('2000-01-01T12:00:00.000Z'),
+      streak: 4,
+    };
+    meta.saveMetaState(state);
+
+    const originalSetItem = Storage.prototype.setItem;
+    Storage.prototype.setItem = function (key: string, value: string): void {
+      if (key === 'tss-meta2') throw new DOMException('storage disabled', 'QuotaExceededError');
+      originalSetItem.call(this, key, value);
+    };
+
+    const activeSkinSaved = meta.setActiveSkin('hero', 'skin_hero_monk_red');
+    const afterSkin = meta.loadMetaState();
+    meta.markCodexSeen('boss_ogre');
+    const afterCodex = meta.loadMetaState();
+    const speedupSpent = meta.spendSpeedupToken();
+    const afterSpeedup = meta.loadMetaState();
+    const node = meta.buyNode(meta.TREE_NODES[0]!.id);
+    const afterNode = meta.loadMetaState();
+    const glorySaved = meta.addGlory(25);
+    const afterGlory = meta.loadMetaState();
+    const consumablesSaved = meta.takeConsumables(['cs_horseshoe']);
+    const afterConsumables = meta.loadMetaState();
+    const bonus = meta.claimDailyBonus();
+    const afterBonus = meta.loadMetaState();
+    const conversion = meta.convertCrownsToGold();
+    const finalState = meta.loadMetaState();
+    Storage.prototype.setItem = originalSetItem;
+
+    // Метаснимок записывается, но начисление отдельного кошелька может завершиться ошибкой.
+    // Ежедневная награда золота должна откатить и сам факт забора.
+    const walletState = meta.loadMetaState();
+    walletState.matchesPlayed = 3;
+    walletState.dailyBonus = { last: '2000-01-01', lastAt: 0, streak: 0 };
+    meta.saveMetaState(walletState);
+    const shop = await import('/src/game/shop.ts') as unknown as {
+      loadShop: () => { balance: number };
+    };
+    const walletBefore = shop.loadShop().balance;
+    Storage.prototype.setItem = function (key: string, value: string): void {
+      if (key === 'tss-shop') throw new DOMException('wallet storage disabled', 'QuotaExceededError');
+      originalSetItem.call(this, key, value);
+    };
+    const walletBonus = meta.claimDailyBonus();
+    const afterWalletBonus = meta.loadMetaState();
+    const walletAfter = shop.loadShop().balance;
+    Storage.prototype.setItem = originalSetItem;
+
+    const passState = meta.loadMetaState();
+    passState.pass.xp = 2500;
+    passState.pass.premium = false;
+    passState.purchasedSkus = [];
+    passState.processedIapTokens = [];
+    meta.saveMetaState(passState);
+    const passWalletBefore = shop.loadShop().balance;
+    Storage.prototype.setItem = function (key: string, value: string): void {
+      if (key === 'tss-shop') throw new DOMException('wallet storage disabled', 'QuotaExceededError');
+      originalSetItem.call(this, key, value);
+    };
+    const passPurchase = meta.grantSkuForPurchase('pass_chronicle', 'phase-q-pass-wallet-failure');
+    const afterPassPurchase = meta.loadMetaState();
+    const passWalletAfter = shop.loadShop().balance;
+    Storage.prototype.setItem = originalSetItem;
+
+    return {
+      activeSkin: { saved: activeSkinSaved, hero: afterSkin.skins.hero },
+      codex: { seen: afterCodex.codexSeen.boss_ogre === true },
+      speedup: { spent: speedupSpent, tokens: afterSpeedup.speedupTokens },
+      node: { ok: node.ok, reason: node.reason, glory: afterNode.glory, owned: afterNode.nodes.length > 0 },
+      glory: { ok: glorySaved, balance: afterGlory.glory },
+      consumables: { ok: consumablesSaved, horseshoe: afterConsumables.consumables.cs_horseshoe },
+      bonus: { ok: bonus.ok, streak: afterBonus.dailyBonus.streak, last: afterBonus.dailyBonus.last },
+      conversion: {
+        ok: conversion.ok,
+        reason: conversion.reason,
+        crowns: finalState.crowns,
+        count: finalState.crownConvert.count,
+      },
+      walletBonus: {
+        ok: walletBonus.ok,
+        reason: walletBonus.reason,
+        streak: afterWalletBonus.dailyBonus.streak,
+        last: afterWalletBonus.dailyBonus.last,
+        balanceUnchanged: walletAfter === walletBefore,
+      },
+      passPurchase: {
+        persisted: passPurchase.persisted,
+        premium: afterPassPurchase.pass.premium,
+        tokenRecorded: afterPassPurchase.processedIapTokens.includes('phase-q-pass-wallet-failure'),
+        balanceUnchanged: passWalletAfter === passWalletBefore,
+      },
+    };
+  });
+
+  expect(outcome).toEqual({
+    activeSkin: { saved: false, hero: '' },
+    codex: { seen: false },
+    speedup: { spent: false, tokens: 1 },
+    node: { ok: false, reason: 'storage', glory: 5000, owned: false },
+    glory: { ok: false, balance: 5000 },
+    consumables: { ok: false, horseshoe: 1 },
+    bonus: { ok: false, streak: 4, last: '2000-01-01' },
+    conversion: { ok: false, reason: 'storage', crowns: 250, count: 0 },
+    walletBonus: {
+      ok: false,
+      reason: 'storage',
+      streak: 0,
+      last: '2000-01-01',
+      balanceUnchanged: true,
+    },
+    passPurchase: {
+      persisted: false,
+      premium: false,
+      tokenRecorded: false,
+      balanceUnchanged: true,
+    },
+  });
+});
+
+
+test('daily challenge reward resets on UTC rollover while the Moscow day is unchanged', async ({ page }) => {
+  await page.addInitScript(() => localStorage.clear());
+  await page.goto('/?lang=en&ysdk=mock');
+  await expect(page.locator('#game canvas')).toBeVisible({ timeout: startupTimeout });
+  await expect(page.locator('#boot')).toHaveCount(0, { timeout: startupTimeout });
+
+  const outcome = await page.evaluate(async () => {
+    type TestMetaState = {
+      matchesPlayed: number;
+      crowns: number;
+      challengeWinDate: string;
+    };
+    const meta = await import('/src/game/meta.ts') as unknown as {
+      rollMetaDay: () => TestMetaState;
+      saveMetaState: (state: TestMetaState) => boolean;
+      loadMetaState: () => TestMetaState;
+      challengeForToday: () => { seed: string };
+      markChallengeVictory: () => boolean;
+      challengeVictoryToday: () => boolean;
+    };
+    const calendar = await import('/src/platform/calendar.ts') as {
+      mskDayKey: (epochMs: number) => string;
+    };
+    const originalNow = Date.now;
+
+    try {
+      Date.now = () => Date.UTC(2026, 9, 21, 23, 59, 59, 999);
+      const initial = meta.rollMetaDay();
+      initial.matchesPlayed = 3;
+      initial.crowns = 0;
+      initial.challengeWinDate = '';
+      meta.saveMetaState(initial);
+
+      const seedBefore = meta.challengeForToday().seed;
+      const moscowBefore = calendar.mskDayKey(Date.now());
+      const firstClaim = meta.markChallengeVictory();
+
+      Date.now = () => Date.UTC(2026, 9, 22, 0, 0, 0, 0);
+      const seedAfter = meta.challengeForToday().seed;
+      const moscowAfter = calendar.mskDayKey(Date.now());
+      const secondClaim = meta.markChallengeVictory();
+      const duplicateClaim = meta.markChallengeVictory();
+      const state = meta.loadMetaState();
+
+      return {
+        seedBefore, seedAfter, moscowBefore, moscowAfter,
+        firstClaim, secondClaim, duplicateClaim,
+        crowns: state.crowns,
+        challengeWinDate: state.challengeWinDate,
+        claimedForCurrentSeed: meta.challengeVictoryToday(),
+      };
+    } finally {
+      Date.now = originalNow;
+    }
+  });
+
+  expect(outcome).toEqual({
+    seedBefore: '2026-10-21',
+    seedAfter: '2026-10-22',
+    moscowBefore: '2026-10-22',
+    moscowAfter: '2026-10-22',
+    firstClaim: true,
+    secondClaim: true,
+    duplicateClaim: false,
+    crowns: 6,
+    challengeWinDate: '2026-10-22',
+    claimedForCurrentSeed: true,
+  });
+});
+
+test('achievement chain rejects fractional reward tiers without granting crowns', async ({ page }) => {
+  await page.addInitScript(() => localStorage.clear());
+  await page.goto('/?lang=en&ysdk=mock');
+  await expect(page.locator('#game canvas')).toBeVisible({ timeout: startupTimeout });
+  await expect(page.locator('#boot')).toHaveCount(0, { timeout: startupTimeout });
+
+  const outcome = await page.evaluate(async () => {
+    type TestMetaState = {
+      matchesPlayed: number;
+      crowns: number;
+      chains: { counters: Record<string, number>; claimed: string[] };
+    };
+    const meta = await import('/src/game/meta.ts') as unknown as {
+      rollMetaDay: () => TestMetaState;
+      saveMetaState: (state: TestMetaState) => boolean;
+      loadMetaState: () => TestMetaState;
+      claimChainReward: (chainId: string, tier: number) => { ok: boolean };
+    };
+    const state = meta.rollMetaDay();
+    state.matchesPlayed = 3;
+    state.crowns = 11;
+    state.chains.counters = { idealWins: 15 };
+    state.chains.claimed = [];
+    meta.saveMetaState(state);
+
+    const result = meta.claimChainReward('ch_keeper', 1.5);
+    const after = meta.loadMetaState();
+    return { result, crowns: after.crowns, claimed: after.chains.claimed };
+  });
+
+  expect(outcome).toEqual({ result: { ok: false }, crowns: 11, claimed: [] });
+});
+
+
+test('run meta progress rolls back when a pass gold reward cannot reach the shop wallet', async ({ page }) => {
+  await page.addInitScript(() => localStorage.clear());
+  await page.goto('/?lang=en&ysdk=mock');
+  await expect(page.locator('#game canvas')).toBeVisible({ timeout: startupTimeout });
+  await expect(page.locator('#boot')).toHaveCount(0, { timeout: startupTimeout });
+
+  const outcome = await page.evaluate(async () => {
+    type RunSummary = {
+      victory: boolean; ideal: boolean; endless: boolean; weeklyChallenge: boolean;
+      wave: number; time: number; kills: number; level: number; gold: number; score: number;
+      difficulty: string; buildingsBuilt: number; pawnsAlive: number;
+      siegesDefended: number; siegesTotal: number; monasteryHealed: number; healHp: number;
+      hires: number; successions: number; veterans: number; firstHouseMin: number;
+      barracks: number; monastery: number; archery: number; bestCombo: number;
+      bossKilled: boolean; killsByKind: Record<string, number>; cardsPicked: string[];
+      contract: string | null; ukaz: string | null; challengeMods: string[];
+      blessing: string | null; consumables: string[];
+    };
+    type TestMetaState = {
+      matchesPlayed: number;
+      pass: { xp: number; premium: boolean };
+      quests: { ids: string[]; progress: Record<string, number>; done: string[] };
+      chains: { counters: Record<string, number>; claimed: string[] };
+    };
+    const meta = await import('/src/game/meta.ts') as unknown as {
+      rollMetaDay: () => TestMetaState;
+      saveMetaState: (state: TestMetaState) => boolean;
+      loadMetaState: () => TestMetaState;
+      applyRunToMeta: (summary: RunSummary) => { persisted: boolean; newMatchesPlayed: number };
+    };
+    const shop = await import('/src/game/shop.ts') as unknown as {
+      loadShop: () => { balance: number };
+    };
+    const state = meta.rollMetaDay();
+    state.matchesPlayed = 6;
+    state.pass.xp = 99; // Завершение рана должно открыть первый уровень и начислить 104 золота.
+    state.pass.premium = false;
+    state.quests.ids = [];
+    state.quests.progress = {};
+    state.quests.done = [];
+    state.chains.counters = {};
+    state.chains.claimed = [];
+    meta.saveMetaState(state);
+    const before = meta.loadMetaState();
+    const walletBefore = shop.loadShop().balance;
+
+    const originalSetItem = Storage.prototype.setItem;
+    Storage.prototype.setItem = function (key: string, value: string): void {
+      if (key === 'tss-shop') throw new DOMException('wallet storage disabled', 'QuotaExceededError');
+      originalSetItem.call(this, key, value);
+    };
+    const result = meta.applyRunToMeta({
+      victory: false, ideal: false, endless: false, weeklyChallenge: false,
+      wave: 0, time: 25, kills: 0, level: 1, gold: 0, score: 0, difficulty: 'normal',
+      buildingsBuilt: 0, pawnsAlive: 0, siegesDefended: 0, siegesTotal: 0,
+      monasteryHealed: 0, healHp: 0, hires: 0, successions: 0, veterans: 0,
+      firstHouseMin: 0, barracks: 0, monastery: 0, archery: 0, bestCombo: 0,
+      bossKilled: false, killsByKind: {}, cardsPicked: [], contract: null, ukaz: null,
+      challengeMods: [], blessing: null, consumables: [],
+    });
+    const after = meta.loadMetaState();
+    const walletAfter = shop.loadShop().balance;
+    Storage.prototype.setItem = originalSetItem;
+
+    return {
+      persisted: result.persisted,
+      resultMatchesPlayed: result.newMatchesPlayed,
+      matchesPlayed: after.matchesPlayed,
+      passXpBefore: before.pass.xp,
+      passXpAfter: after.pass.xp,
+      passPremiumAfter: after.pass.premium,
+      walletUnchanged: walletAfter === walletBefore,
+    };
+  });
+
+  expect(outcome).toEqual({
+    persisted: false,
+    resultMatchesPlayed: 6,
+    matchesPlayed: 6,
+    passXpBefore: 99,
+    passXpAfter: 99,
+    passPremiumAfter: false,
+    walletUnchanged: true,
+  });
+});
+
+
+test('daily rewarded placement is not granted when its quota cannot be persisted', async ({ page }) => {
+  await page.addInitScript(() => localStorage.clear());
+  await page.goto('/?lang=en&ysdk=mock');
+  await expect(page.locator('#game canvas')).toBeVisible({ timeout: startupTimeout });
+  await expect(page.locator('#boot')).toHaveCount(0, { timeout: startupTimeout });
+
+  const outcome = await page.evaluate(async () => {
+    const ads = await import('/src/platform/ads.ts') as unknown as {
+      showPlacementRewarded: (placement: 'daily-chest') => Promise<{ rewarded: boolean; available: boolean }>;
+    };
+    const originalSetItem = Storage.prototype.setItem;
+    Storage.prototype.setItem = function (key: string, value: string): void {
+      if (key === 'tss-ads-day') throw new DOMException('quota storage disabled', 'QuotaExceededError');
+      originalSetItem.call(this, key, value);
+    };
+
+    try {
+      const result = await ads.showPlacementRewarded('daily-chest');
+      return { result, storedQuota: localStorage.getItem('tss-ads-day') };
+    } finally {
+      Storage.prototype.setItem = originalSetItem;
+    }
+  });
+
+  expect(outcome).toEqual({
+    result: { rewarded: false, available: false },
+    storedQuota: null,
+  });
+});
+
+
+test('chronicle pass progresses for 30 days independently from 14-day world seasons', async ({ page }) => {
+  await page.addInitScript(() => localStorage.clear());
+  await page.goto('/?lang=en&ysdk=mock');
+  await expect(page.locator('#game canvas')).toBeVisible({ timeout: startupTimeout });
+  await expect(page.locator('#boot')).toHaveCount(0, { timeout: startupTimeout });
+
+  const outcome = await page.evaluate(async () => {
+    const meta = await import('/src/game/meta.ts') as unknown as {
+      passSeasonIndexFor: (now?: number) => number;
+      seasonIndexFor: (now?: number) => number;
+      rollMetaDay: () => {
+        pass: { season: string; xp: number; premium: boolean; claimedFree: number; claimedPrem: number };
+      };
+      saveMetaState: (state: unknown) => boolean;
+    };
+    const originalNow = Date.now;
+    const dayMs = 86_400_000;
+    const basePassStart = Math.floor(originalNow() / (30 * dayMs)) * 30 * dayMs;
+    const nextThemeBoundary = (Math.floor(basePassStart / (14 * dayMs)) + 1) * 14 * dayMs;
+    const beforeThemeBoundary = nextThemeBoundary - 1_000;
+    const afterThemeBoundary = nextThemeBoundary + 1_000;
+
+    try {
+      Date.now = () => beforeThemeBoundary;
+      const state = meta.rollMetaDay();
+      state.pass = {
+        season: `s${meta.seasonIndexFor(beforeThemeBoundary)}`,
+        xp: 777,
+        premium: true,
+        claimedFree: 7,
+        claimedPrem: 7,
+      };
+      meta.saveMetaState(state);
+
+      const migrated = meta.rollMetaDay();
+      const afterTheme = (() => {
+        Date.now = () => afterThemeBoundary;
+        return meta.rollMetaDay();
+      })();
+      const atNextPassBoundary = (() => {
+        Date.now = () => basePassStart + 30 * dayMs + 1_000;
+        return meta.rollMetaDay();
+      })();
+
+      return {
+        themeChanged: meta.seasonIndexFor(beforeThemeBoundary) !== meta.seasonIndexFor(afterThemeBoundary),
+        migratedSeason: migrated.pass.season,
+        expectedPassSeason: `p${meta.passSeasonIndexFor(beforeThemeBoundary)}`,
+        migratedXp: migrated.pass.xp,
+        migratedPremium: migrated.pass.premium,
+        passSurvivedThemeChange: afterTheme.pass.xp === 777 && afterTheme.pass.premium,
+        newPassSeason: atNextPassBoundary.pass.season,
+        expectedNextPassSeason: `p${meta.passSeasonIndexFor(basePassStart + 30 * dayMs + 1_000)}`,
+        passXpAfterThirtyDays: atNextPassBoundary.pass.xp,
+        premiumAfterThirtyDays: atNextPassBoundary.pass.premium,
+      };
+    } finally {
+      Date.now = originalNow;
+    }
+  });
+
+  expect(outcome).toEqual({
+    themeChanged: true,
+    migratedSeason: outcome.expectedPassSeason,
+    expectedPassSeason: outcome.expectedPassSeason,
+    migratedXp: 777,
+    migratedPremium: true,
+    passSurvivedThemeChange: true,
+    newPassSeason: outcome.expectedNextPassSeason,
+    expectedNextPassSeason: outcome.expectedNextPassSeason,
+    passXpAfterThirtyDays: 0,
+    premiumAfterThirtyDays: false,
+  });
+});
+
+
+test('gold rush season increases vein output and every ore expenditure', async ({ page }) => {
+  await page.addInitScript(() => {
+    localStorage.clear();
+    const nativeNow = Date.now.bind(Date);
+    const targetNow = 29 * 86_400_000 + 60_000; // сезон 2: «Золотая лихорадка»
+    const offset = targetNow - nativeNow();
+    Date.now = () => nativeNow() + offset;
+  });
+  await page.goto('/?lang=en&ysdk=mock');
+  await expect(page.locator('#game canvas')).toBeVisible({ timeout: startupTimeout });
+  await expect(page.locator('#boot')).toHaveCount(0, { timeout: startupTimeout });
+  await expect.poll(() => page.evaluate(() =>
+    ((window as Window & { __tss?: { scene: { isActive(key: string): boolean } } }).__tss?.scene.isActive('Menu')) ?? false,
+  ), { timeout: startupTimeout }).toBe(true);
+  await page.evaluate(() => {
+    const game = (window as Window & {
+      __tss?: { scene: { getScene(key: string): unknown } };
+    }).__tss;
+    if (!game) throw new Error('Phaser runtime is unavailable');
+    const menu = game.scene.getScene('Menu') as {
+      selectedHero?: string; selectedDiff?: string;
+      scene: { start(key: string, data: { hero: string; diff: string }): void };
+    };
+    menu.scene.start('Game', { hero: menu.selectedHero ?? 'warrior', diff: menu.selectedDiff ?? 'normal' });
+  });
+  await expect.poll(() => page.evaluate(() =>
+    ((window as Window & { __tss?: { scene: { isActive(key: string): boolean } } }).__tss?.scene.isActive('Game')) ?? false,
+  ), { timeout: startupTimeout }).toBe(true);
+
+  const result = await page.evaluate(async () => {
+    const game = (window as Window & { __tss?: { scene: { getScene(key: string): unknown } } }).__tss;
+    if (!game) throw new Error('Phaser runtime is unavailable');
+    const scene = game.scene.getScene('Game') as {
+      seasonMod: string | null;
+      economy: {
+        resources: { wood: number; ore: number; meat: number };
+        buildingCost(kind: string): { wood?: number; ore?: number; meat?: number };
+        hireCost(weapon: string): { wood?: number; ore?: number; meat?: number };
+        repair(building: unknown, pawn: null): boolean;
+      };
+    };
+    const data = await import('/src/game/data.ts') as {
+      BUILDING_PLANS: Record<string, { cost: { wood?: number; ore?: number; meat?: number } }>;
+    };
+    const constants = await import('/src/game/constants.ts') as {
+      HIRE_COST: Record<string, { wood?: number; ore?: number; meat?: number }>;
+      REPAIR: { REBUILD_BARRACKS_ORE: number };
+    };
+    const building = scene.economy.buildingCost('barracks');
+    const hire = scene.economy.hireCost('lance');
+    scene.economy.resources.wood = 10_000;
+    scene.economy.resources.ore = 10_000;
+    scene.economy.resources.meat = 10_000;
+    const repairTarget = {
+      kind: 'barracks', hp: 0, maxHp: 250, alive: true, underConstruction: false,
+      plan: { noRepair: false }, scaleX: 1, setScale: () => {},
+    };
+    const repairOreBefore = scene.economy.resources.ore;
+    const repairAccepted = scene.economy.repair(repairTarget, null);
+    const repairOreSpent = repairOreBefore - scene.economy.resources.ore;
+    return {
+      season: scene.seasonMod,
+      buildingOre: building.ore,
+      expectedBuildingOre: Math.round((data.BUILDING_PLANS.barracks.cost.ore ?? 0) * 1.25),
+      buildingWood: building.wood,
+      baseBuildingWood: data.BUILDING_PLANS.barracks.cost.wood,
+      hireOre: hire.ore,
+      expectedHireOre: Math.round((constants.HIRE_COST.lance.ore ?? 0) * 1.25),
+      hireWood: hire.wood,
+      baseHireWood: constants.HIRE_COST.lance.wood,
+      repairAccepted,
+      repairOreSpent,
+      expectedRepairOreSpent: Math.round(constants.REPAIR.REBUILD_BARRACKS_ORE * 1.25),
+    };
+  });
+
+  expect(result.season).toBe('gold_rush_world');
+  expect(result.buildingOre).toBe(result.expectedBuildingOre);
+  expect(result.buildingOre).toBe(19);
+  expect(result.buildingWood).toBe(result.baseBuildingWood);
+  expect(result.hireOre).toBe(result.expectedHireOre);
+  expect(result.hireOre).toBe(13);
+  expect(result.hireWood).toBe(result.baseHireWood);
+  expect(result.repairAccepted).toBe(true);
+  expect(result.repairOreSpent).toBe(result.expectedRepairOreSpent);
+  expect(result.repairOreSpent).toBe(19);
+});
+
+test('ogre return season increases only phase-two castle attack cadence', async ({ page }) => {
+  await page.addInitScript(() => {
+    localStorage.clear();
+    const nativeNow = Date.now.bind(Date);
+    const targetNow = 43 * 86_400_000 + 60_000; // сезон 3: «Возвращение Огра»
+    const offset = targetNow - nativeNow();
+    Date.now = () => nativeNow() + offset;
+  });
+  await page.goto('/?lang=en&ysdk=mock');
+  await expect(page.locator('#game canvas')).toBeVisible({ timeout: startupTimeout });
+  await expect(page.locator('#boot')).toHaveCount(0, { timeout: startupTimeout });
+  await expect.poll(() => page.evaluate(() =>
+    ((window as Window & { __tss?: { scene: { isActive(key: string): boolean } } }).__tss?.scene.isActive('Menu')) ?? false,
+  ), { timeout: startupTimeout }).toBe(true);
+  await page.evaluate(() => {
+    const game = (window as Window & {
+      __tss?: { scene: { getScene(key: string): unknown } };
+    }).__tss;
+    if (!game) throw new Error('Phaser runtime is unavailable');
+    const menu = game.scene.getScene('Menu') as {
+      selectedHero?: string; selectedDiff?: string;
+      scene: { start(key: string, data: { hero: string; diff: string }): void };
+    };
+    menu.scene.start('Game', { hero: menu.selectedHero ?? 'warrior', diff: menu.selectedDiff ?? 'normal' });
+  });
+  await expect.poll(() => page.evaluate(() =>
+    ((window as Window & { __tss?: { scene: { isActive(key: string): boolean } } }).__tss?.scene.isActive('Game')) ?? false,
+  ), { timeout: startupTimeout }).toBe(true);
+
+  const result = await page.evaluate(async () => {
+    const game = (window as Window & { __tss?: { scene: { getScene(key: string): unknown } } }).__tss;
+    if (!game) throw new Error('Phaser runtime is unavailable');
+    const scene = game.scene.getScene('Game') as {
+      seasonMod: string | null;
+      bossPhaseCheck(): void;
+      spawner: {
+        elapsed: number; eventIdx: number; siegeIdx: number; stopped: boolean;
+        update(dtSec: number): void;
+      };
+      boss: {
+        hp: number; maxHp: number; siege: boolean; aiState: string;
+        buildingAttackIntervalMs: number;
+      } | null;
+    };
+    const data = await import('/src/game/data.ts') as {
+      WAVE_EVENTS: Array<{ type: string; t: number }>;
+    };
+    const bossEventIndex = data.WAVE_EVENTS.findIndex(event => event.type === 'boss');
+    if (bossEventIndex < 0) throw new Error('Scheduled boss event is missing');
+    const spawner = scene.spawner;
+    // Пропускаем прежние события и осады; проверяем именно сезонный перенос
+    // штатного события босса 900 → 720 секунд без 15-минутного ожидания.
+    spawner.elapsed = 719;
+    spawner.eventIdx = bossEventIndex;
+    spawner.siegeIdx = 5;
+    spawner.stopped = false;
+    spawner.update(0.5);
+    const bossBeforeSeasonalTime = scene.boss !== null;
+    spawner.update(0.5);
+    const bossSpawnedAtSeasonalTime = scene.boss !== null;
+    const boss = scene.boss;
+    if (!boss) throw new Error('Boss was not created');
+    const normalInterval = boss.buildingAttackIntervalMs;
+    boss.hp = boss.maxHp * 0.49;
+    scene.bossPhaseCheck();
+    return {
+      season: scene.seasonMod,
+      bossBeforeSeasonalTime,
+      bossSpawnedAtSeasonalTime,
+      normalInterval,
+      phaseTwoInterval: boss.buildingAttackIntervalMs,
+      phaseTwo: boss.aiState === 'bossPhase2' && boss.siege,
+    };
+  });
+
+  expect(result.season).toBe('ogre_return');
+  expect(result.bossBeforeSeasonalTime).toBe(false);
+  expect(result.bossSpawnedAtSeasonalTime).toBe(true);
+  expect(result.normalInterval).toBe(535);
+  expect(result.phaseTwo).toBe(true);
+  expect(result.phaseTwoInterval).toBe(400);
+});
+
+
+test('guard recruiting from an archery range until a barracks has been built', async ({ page }) => {
+  await page.addInitScript(() => {
+    localStorage.clear();
+    localStorage.setItem('tss-meta2', JSON.stringify({ v: 2, matchesPlayed: 99 }));
+  });
+  await page.goto('/?lang=en&ysdk=mock');
+  await expect(page.locator('#game canvas')).toBeVisible({ timeout: startupTimeout });
+  await expect(page.locator('#boot')).toHaveCount(0, { timeout: startupTimeout });
+  await expect.poll(() => page.evaluate(() =>
+    ((window as Window & { __tss?: { scene: { isActive(key: string): boolean } } }).__tss?.scene.isActive('Menu')) ?? false,
+  ), { timeout: startupTimeout }).toBe(true);
+  await page.evaluate(() => {
+    const game = (window as Window & {
+      __tss?: { scene: { getScene(key: string): unknown } };
+    }).__tss;
+    if (!game) throw new Error('Phaser runtime is unavailable');
+    const menu = game.scene.getScene('Menu') as {
+      selectedHero?: string; selectedDiff?: string;
+      scene: { start(key: string, data: { hero: string; diff: string }): void };
+    };
+    menu.scene.start('Game', { hero: menu.selectedHero ?? 'warrior', diff: menu.selectedDiff ?? 'normal' });
+  });
+  await expect.poll(() => page.evaluate(() =>
+    ((window as Window & { __tss?: { scene: { isActive(key: string): boolean } } }).__tss?.scene.isActive('Game')) ?? false,
+  ), { timeout: startupTimeout }).toBe(true);
+
+  const outcome = await page.evaluate(async () => {
+    const game = (window as Window & { __tss?: { scene: { getScene(key: string): unknown } } }).__tss;
+    if (!game) throw new Error('Phaser runtime is unavailable');
+    const scene = game.scene.getScene('Game') as {
+      builtBarracks: number;
+      openHireMenu(building: unknown, x: number, y: number): void;
+      orderMenu: { isOpen: boolean; close(): void };
+    };
+    const meta = await import('/src/game/meta.ts') as { matchesPlayed: () => number };
+    const archery = { kind: 'archery', x: 200, y: 200, alive: true, underConstruction: false };
+    scene.builtBarracks = 0;
+    scene.openHireMenu(archery, 640, 360);
+    const archeryBeforeBarracks = scene.orderMenu.isOpen;
+
+    scene.builtBarracks = 1;
+    scene.openHireMenu(archery, 640, 360);
+    const archeryAfterBarracks = scene.orderMenu.isOpen;
+    scene.orderMenu.close();
+
+    scene.builtBarracks = 0;
+    const monastery = { kind: 'monastery', x: 200, y: 200, alive: true, underConstruction: false };
+    scene.openHireMenu(monastery, 640, 360);
+    const monasteryWithoutBarracks = scene.orderMenu.isOpen;
+    scene.orderMenu.close();
+
+    return {
+      matchesPlayed: meta.matchesPlayed(),
+      archeryBeforeBarracks,
+      archeryAfterBarracks,
+      monasteryWithoutBarracks,
+    };
+  });
+
+  expect(outcome).toEqual({
+    matchesPlayed: 99,
+    archeryBeforeBarracks: false,
+    archeryAfterBarracks: true,
+    monasteryWithoutBarracks: true,
+  });
+});
+
+
+test('refund daily rewarded quota when the related meta reward cannot be persisted', async ({ page }) => {
+  await page.addInitScript(() => localStorage.clear());
+  await page.goto('/?lang=en&ysdk=mock');
+  await expect(page.locator('#game canvas')).toBeVisible({ timeout: startupTimeout });
+  await expect(page.locator('#boot')).toHaveCount(0, { timeout: startupTimeout });
+
+  const outcome = await page.evaluate(async () => {
+    type TestMetaState = {
+      matchesPlayed: number;
+      consumables: Record<string, number>;
+      dailyChest: { date: string; count: number };
+    };
+    const meta = await import('/src/game/meta.ts') as unknown as {
+      rollMetaDay: () => TestMetaState;
+      saveMetaState: (state: TestMetaState) => boolean;
+      loadMetaState: () => TestMetaState;
+      claimDailyChest: () => unknown;
+      grantConsumableFromAd: (id: string) => boolean;
+    };
+    const ads = await import('/src/platform/ads.ts') as unknown as {
+      showPlacementRewarded: (placement: 'daily-chest' | 'consumable') =>
+        Promise<{ rewarded: boolean; available: boolean }>;
+      refundPlacement: (placement: 'daily-chest' | 'consumable') => boolean;
+      placementAvailable: (placement: 'daily-chest' | 'consumable') => boolean;
+    };
+
+    const state = meta.rollMetaDay();
+    state.matchesPlayed = 5;
+    state.consumables.cs_horseshoe = 2;
+    meta.saveMetaState(state);
+
+    const chestAd = await ads.showPlacementRewarded('daily-chest');
+    const originalSetItem = Storage.prototype.setItem;
+    Storage.prototype.setItem = function (key: string, value: string): void {
+      if (key === 'tss-meta2') throw new DOMException('meta storage disabled', 'QuotaExceededError');
+      originalSetItem.call(this, key, value);
+    };
+
+    try {
+      const chestReward = chestAd.rewarded ? meta.claimDailyChest() : 'ad-not-rewarded';
+      const chestRefund = chestAd.rewarded && chestReward === null
+        ? ads.refundPlacement('daily-chest')
+        : false;
+      const chestAvailable = ads.placementAvailable('daily-chest');
+
+      const consumableAd = await ads.showPlacementRewarded('consumable');
+      const consumableSaved = consumableAd.rewarded
+        ? meta.grantConsumableFromAd('cs_horseshoe')
+        : false;
+      const consumableRefund = consumableAd.rewarded && !consumableSaved
+        ? ads.refundPlacement('consumable')
+        : false;
+      const consumablesAfter = meta.loadMetaState().consumables.cs_horseshoe;
+
+      return {
+        chestAd, chestReward: chestReward === null ? null : chestReward,
+        chestRefund, chestAvailable,
+        consumableAd, consumableSaved, consumableRefund,
+        consumablesAfter,
+        consumableAvailable: ads.placementAvailable('consumable'),
+      };
+    } finally {
+      Storage.prototype.setItem = originalSetItem;
+    }
+  });
+
+  expect(outcome.chestAd.rewarded).toBe(true);
+  expect(outcome.chestReward).toBeNull();
+  expect(outcome.chestRefund).toBe(true);
+  expect(outcome.chestAvailable).toBe(true);
+  expect(outcome.consumableAd.rewarded).toBe(true);
+  expect(outcome.consumableSaved).toBe(false);
+  expect(outcome.consumableRefund).toBe(true);
+  expect(outcome.consumablesAfter).toBe(2);
+  expect(outcome.consumableAvailable).toBe(true);
+});
+
+
+test('seasonal cosmetic is granted once, only at the fifth progress milestone', async ({ page }) => {
+  await page.addInitScript(() => localStorage.clear());
+  await page.goto('/?lang=en&ysdk=mock');
+  await expect(page.locator('#game canvas')).toBeVisible({ timeout: startupTimeout });
+  await expect(page.locator('#boot')).toHaveCount(0, { timeout: startupTimeout });
+
+  const outcome = await page.evaluate(async () => {
+    type RunSummary = {
+      victory: boolean; ideal: boolean; endless: boolean; weeklyChallenge: boolean;
+      wave: number; time: number; kills: number; level: number; gold: number; score: number;
+      difficulty: string; buildingsBuilt: number; pawnsAlive: number;
+      siegesDefended: number; siegesTotal: number; monasteryHealed: number; healHp: number;
+      hires: number; successions: number; veterans: number; firstHouseMin: number;
+      barracks: number; monastery: number; archery: number; bestCombo: number;
+      bossKilled: boolean; killsByKind: Record<string, number>; cardsPicked: string[];
+      contract: string | null; ukaz: string | null; challengeMods: string[];
+      blessing: string | null; consumables: string[];
+    };
+    type RuntimeMetaState = {
+      season: { index: number; runs: number; claimed: number };
+      skins: { owned: string[] };
+    };
+    const meta = await import('/src/game/meta.ts') as unknown as {
+      rollMetaDay: () => RuntimeMetaState;
+      saveMetaState: (state: RuntimeMetaState) => boolean;
+      loadMetaState: () => RuntimeMetaState;
+      applyRunToMeta: (summary: RunSummary) => {
+        persisted: boolean; seasonStepReward?: string; newMatchesPlayed: number;
+      };
+      seasonDef: () => { skinReward: string };
+    };
+    const run: RunSummary = {
+      victory: false, ideal: false, endless: false, weeklyChallenge: false,
+      wave: 0, time: 25, kills: 0, level: 1, gold: 0, score: 0, difficulty: 'normal',
+      buildingsBuilt: 0, pawnsAlive: 0, siegesDefended: 0, siegesTotal: 0,
+      monasteryHealed: 0, healHp: 0, hires: 0, successions: 0, veterans: 0, firstHouseMin: 0,
+      barracks: 0, monastery: 0, archery: 0, bestCombo: 0,
+      bossKilled: false, killsByKind: {}, cardsPicked: [], contract: null, ukaz: null,
+      challengeMods: [], blessing: null, consumables: [],
+    };
+
+    const firstState = meta.rollMetaDay();
+    firstState.season.runs = 2; // следующий ранг — третий ран, не финальная косметика
+    firstState.season.claimed = 0;
+    firstState.skins.owned = [];
+    meta.saveMetaState(firstState);
+    const firstRun = meta.applyRunToMeta(run);
+    const afterFirst = meta.loadMetaState();
+
+    const finalState = meta.rollMetaDay();
+    finalState.season.runs = 20;
+    finalState.season.claimed = 4;
+    finalState.skins.owned = [];
+    meta.saveMetaState(finalState);
+    const finalRun = meta.applyRunToMeta(run);
+    const afterFinal = meta.loadMetaState();
+
+    return {
+      firstPersisted: firstRun.persisted,
+      firstClaimed: afterFirst.season.claimed,
+      firstHasSkin: afterFirst.skins.owned.includes(meta.seasonDef().skinReward),
+      firstReward: firstRun.seasonStepReward ?? null,
+      finalPersisted: finalRun.persisted,
+      finalClaimed: afterFinal.season.claimed,
+      finalHasSkin: afterFinal.skins.owned.includes(meta.seasonDef().skinReward),
+      finalReward: finalRun.seasonStepReward ?? null,
+      expectedSkin: meta.seasonDef().skinReward,
+    };
+  });
+
+  expect(outcome).toEqual({
+    firstPersisted: true,
+    firstClaimed: 1,
+    firstHasSkin: false,
+    firstReward: null,
+    finalPersisted: true,
+    finalClaimed: 5,
+    finalHasSkin: true,
+    finalReward: outcome.expectedSkin,
+    expectedSkin: outcome.expectedSkin,
+  });
+});
+
+
+test('game over announces the seasonal cosmetic unlocked on milestone five', async ({ page }) => {
+  await page.goto('/?lang=en&ysdk=mock');
+  await expect(page.locator('#game canvas')).toBeVisible({ timeout: startupTimeout });
+  await expect(page.locator('#boot')).toHaveCount(0, { timeout: startupTimeout });
+
+  await page.evaluate(() => {
+    const game = (window as unknown as {
+      __tss?: { scene: { launch: (key: string, payload?: unknown) => void } };
+    }).__tss;
+    game?.scene.launch('GameOver', {
+      stats: {
+        victory: false, time: 120, kills: 30, level: 3, gold: 50, score: 1000,
+        meta: {
+          glory: null,
+          questsDone: 0,
+          questsTotal: 0,
+          questsCompletedNow: [],
+          passLevels: 0,
+          passRewards: [],
+          chainUnlocks: [],
+          seasonStepReward: 'skin_hero_monk_red',
+          endlessWave: 0,
+          crownsEarned: 0,
+          challenge: false,
+          ukaz: null,
+          endless: false,
+        },
+      },
+    });
+  });
+
+  await expect.poll(async () => page.evaluate(() => {
+    const game = (window as unknown as {
+      __tss?: { scene: { getScene: (key: string) => { children: { list: unknown[] } } } };
+    }).__tss;
+    const scene = game?.scene.getScene('GameOver');
+    const labels: string[] = [];
+    const visit = (object: unknown): void => {
+      if (!object || typeof object !== 'object') return;
+      const item = object as { text?: unknown; list?: unknown[] };
+      if (typeof item.text === 'string') labels.push(item.text);
+      if (Array.isArray(item.list)) item.list.forEach(visit);
+    };
+    scene?.children.list.forEach(visit);
+    return labels;
+  })).toContain('Season cosmetic: Vow (monk)');
+});
+
+
+test('blessing domain picker returns three unique deterministic options', async ({ page }) => {
+  await page.goto('/?lang=en&ysdk=mock');
+  await expect(page.locator('#game canvas')).toBeVisible({ timeout: startupTimeout });
+  await expect(page.locator('#boot')).toHaveCount(0, { timeout: startupTimeout });
+
+  const outcome = await page.evaluate(async () => {
+    const blessing = await import('/src/game/systems/Blessing.ts') as {
+      BLESSINGS: readonly { id: string }[];
+      rollBlessings: (seed: string) => string[];
+    };
+    const first = blessing.rollBlessings('phase-q-r4-regression');
+    const second = blessing.rollBlessings('phase-q-r4-regression');
+    const otherSeed = blessing.rollBlessings('phase-q-r4-other');
+    return {
+      first,
+      second,
+      otherSeed,
+      poolSize: blessing.BLESSINGS.length,
+      known: first.every((id) => blessing.BLESSINGS.some((item) => item.id === id)),
+    };
+  });
+
+  expect(outcome.first).toHaveLength(3);
+  expect(new Set(outcome.first).size).toBe(3);
+  expect(outcome.second).toEqual(outcome.first);
+  expect(outcome.first.every((id) => typeof id === 'string')).toBe(true);
+  expect(outcome.poolSize).toBe(8);
+  expect(outcome.known).toBe(true);
+});
+
+
+test('long siege season starts the first siege at 270 seconds', async ({ page }) => {
+  await page.addInitScript(() => {
+    localStorage.clear();
+    const nativeNow = Date.now.bind(Date);
+    const targetNow = 15 * 86_400_000 + 60_000; // сезон с индексом 1: «Долгая осада»
+    const offset = targetNow - nativeNow();
+    Date.now = () => nativeNow() + offset;
+  });
+  await page.goto('/?lang=en&ysdk=mock');
+  await expect(page.locator('#game canvas')).toBeVisible({ timeout: startupTimeout });
+  await expect(page.locator('#boot')).toHaveCount(0, { timeout: startupTimeout });
+  await expect.poll(() => page.evaluate(() =>
+    ((window as Window & { __tss?: { scene: { isActive(key: string): boolean } } }).__tss?.scene.isActive('Menu')) ?? false,
+  ), { timeout: startupTimeout }).toBe(true);
+  await page.evaluate(() => {
+    const game = (window as Window & {
+      __tss?: { scene: { getScene(key: string): unknown } };
+    }).__tss;
+    if (!game) throw new Error('Phaser runtime is unavailable');
+    const menu = game.scene.getScene('Menu') as {
+      selectedHero?: string; selectedDiff?: string;
+      scene: { start(key: string, data: { hero: string; diff: string }): void };
+    };
+    menu.scene.start('Game', { hero: menu.selectedHero ?? 'warrior', diff: menu.selectedDiff ?? 'normal' });
+  });
+  await expect.poll(() => page.evaluate(() =>
+    ((window as Window & { __tss?: { scene: { isActive(key: string): boolean } } }).__tss?.scene.isActive('Game')) ?? false,
+  ), { timeout: startupTimeout }).toBe(true);
+
+  const result = await page.evaluate(async () => {
+    const game = (window as Window & { __tss?: { scene: { getScene(key: string): unknown } } }).__tss;
+    if (!game) throw new Error('Phaser runtime is unavailable');
+    const data = await import('/src/game/data.ts') as { WAVE_EVENTS: unknown[] };
+    const scene = game.scene.getScene('Game') as {
+      seasonMod: string | null;
+      spawner: {
+        elapsed: number;
+        siegeIdx: number;
+        eventIdx: number;
+        timer: number;
+        o: { siegeIntervalSec: number | null };
+        update(dtSec: number): void;
+      };
+    };
+    const spawner = scene.spawner;
+    // Проверяем только расписание осад, не проигрывая пачку прошлых волн.
+    spawner.elapsed = 0;
+    spawner.siegeIdx = 0;
+    spawner.eventIdx = data.WAVE_EVENTS.length;
+    spawner.timer = Number.MAX_SAFE_INTEGER;
+    const interval = spawner.o.siegeIntervalSec;
+    spawner.update(269.9);
+    const beforeBoundary = spawner.siegeIdx;
+    spawner.update(0.2);
+    return {
+      season: scene.seasonMod,
+      interval,
+      beforeBoundary,
+      afterBoundary: spawner.siegeIdx,
+      elapsed: spawner.elapsed,
+    };
+  });
+
+  expect(result.season).toBe('long_siege');
+  expect(result.interval).toBe(270);
+  expect(result.beforeBoundary).toBe(0);
+  expect(result.afterBoundary).toBe(1);
+  expect(result.elapsed).toBeGreaterThanOrEqual(270);
+});
+
+
+test('red valley seasonal spawner wiring boosts the red tier only from minute 7 up to minute 12', async ({ page }) => {
+  await page.addInitScript(() => {
+    localStorage.clear();
+    const nativeNow = Date.now.bind(Date);
+    const targetNow = 2 * 86_400_000 + 60_000; // сезон 0: «Красная долина»
+    const offset = targetNow - nativeNow();
+    Date.now = () => nativeNow() + offset;
+  });
+  await page.goto('/?lang=en&ysdk=mock');
+  await expect(page.locator('#game canvas')).toBeVisible({ timeout: startupTimeout });
+  await expect(page.locator('#boot')).toHaveCount(0, { timeout: startupTimeout });
+  await expect.poll(() => page.evaluate(() =>
+    ((window as Window & { __tss?: { scene: { isActive(key: string): boolean } } }).__tss?.scene.isActive('Menu')) ?? false,
+  ), { timeout: startupTimeout }).toBe(true);
+  await page.evaluate(() => {
+    const game = (window as Window & {
+      __tss?: { scene: { getScene(key: string): unknown } };
+    }).__tss;
+    if (!game) throw new Error('Phaser runtime is unavailable');
+    const menu = game.scene.getScene('Menu') as {
+      selectedHero?: string; selectedDiff?: string;
+      scene: { start(key: string, data: { hero: string; diff: string }): void };
+    };
+    menu.scene.start('Game', { hero: menu.selectedHero ?? 'warrior', diff: menu.selectedDiff ?? 'normal' });
+  });
+  await expect.poll(() => page.evaluate(() =>
+    ((window as Window & { __tss?: { scene: { isActive(key: string): boolean } } }).__tss?.scene.isActive('Game')) ?? false,
+  ), { timeout: startupTimeout }).toBe(true);
+
+  const result = await page.evaluate(() => {
+    const game = (window as Window & { __tss?: { scene: { getScene(key: string): unknown } } }).__tss;
+    if (!game) throw new Error('Phaser runtime is unavailable');
+    const scene = game.scene.getScene('Game') as {
+      seasonMod: string | null;
+      spawner: {
+        elapsed: number;
+        o: { redValley?: boolean; random?: () => number };
+        pickKind(): string;
+      };
+    };
+    const spawner = scene.spawner;
+    const samples = 100_000;
+    const measure = (minute: number): number => {
+      spawner.elapsed = minute * 60;
+      let index = 0;
+      spawner.o.random = () => index++ / samples;
+      let redCount = 0;
+      for (let i = 0; i < samples; i++) {
+        const kind = spawner.pickKind();
+        if (kind === 'skull' || kind === 'shaman') redCount++;
+      }
+      return redCount / samples;
+    };
+    return {
+      season: scene.seasonMod,
+      optionEnabled: spawner.o.redValley,
+      beforeWindow: measure(6.99),
+      activeWindow: measure(7.5),
+      atUpperBoundary: measure(12),
+    };
+  });
+
+  expect(result.season).toBe('red_valley');
+  expect(result.optionEnabled).toBe(true);
+  expect(result.beforeWindow).toBeCloseTo(0.38, 4);
+  expect(result.activeWindow).toBeCloseTo(0.475, 4);
+  expect(result.atUpperBoundary).toBeCloseTo(0.38, 4);
+});
+
+
+test('calendar rollover keeps the previous snapshot when meta storage rejects the new day', async ({ page }) => {
+  await page.addInitScript(() => localStorage.clear());
+  await page.goto('/?lang=en&ysdk=mock');
+  await expect(page.locator('#game canvas')).toBeVisible({ timeout: startupTimeout });
+  await expect(page.locator('#boot')).toHaveCount(0, { timeout: startupTimeout });
+
+  const outcome = await page.evaluate(async () => {
+    type CalendarState = {
+      quests: { date: string; ids: string[]; progress: Record<string, number>; done: string[]; rerolls: number };
+      weekly: { week: string; progress: number; stage: number; claimed: boolean };
+      season: { index: number; runs: number; claimed: number };
+      pass: { season: string; xp: number; premium: boolean; claimedFree: number; claimedPrem: number };
+      crownConvert: { date: string; count: number };
+    };
+    const meta = await import('/src/game/meta.ts') as unknown as {
+      rollMetaDay: () => CalendarState;
+      saveMetaState: (state: CalendarState) => boolean;
+      loadMetaState: () => CalendarState;
+    };
+    const state = meta.rollMetaDay();
+    state.quests = { date: '2000-01-01', ids: [], progress: {}, done: [], rerolls: 0 };
+    state.weekly = { week: '2000-01-01', progress: 12, stage: 2, claimed: false };
+    state.season = { index: -1, runs: 9, claimed: 2 };
+    state.pass = { season: 's0', xp: 777, premium: true, claimedFree: 7, claimedPrem: 7 };
+    state.crownConvert = { date: '2000-01-01', count: 1 };
+    meta.saveMetaState(state);
+    const originalSetItem = Storage.prototype.setItem;
+    Storage.prototype.setItem = function (key: string, value: string): void {
+      if (key === 'tss-meta2') throw new DOMException('storage disabled', 'QuotaExceededError');
+      originalSetItem.call(this, key, value);
+    };
+
+    try {
+      const rolled = meta.rollMetaDay();
+      const loaded = meta.loadMetaState();
+      const persisted = JSON.parse(localStorage.getItem('tss-meta2') ?? '{}') as CalendarState;
+      return {
+        rolledQuestDate: rolled.quests.date,
+        rolledWeek: rolled.weekly.week,
+        rolledSeason: rolled.season.index,
+        rolledPass: rolled.pass.season,
+        rolledXp: rolled.pass.xp,
+        loadedQuestDate: loaded.quests.date,
+        persistedQuestDate: persisted.quests?.date,
+        persistedPass: persisted.pass?.season,
+      };
+    } finally {
+      Storage.prototype.setItem = originalSetItem;
+    }
+  });
+
+  expect(outcome).toEqual({
+    rolledQuestDate: '2000-01-01',
+    rolledWeek: '2000-01-01',
+    rolledSeason: -1,
+    rolledPass: 's0',
+    rolledXp: 777,
+    loadedQuestDate: '2000-01-01',
+    persistedQuestDate: '2000-01-01',
+    persistedPass: 's0',
+  });
+});
+
+
+test('weekly final reward is blocked if the new week cannot be persisted', async ({ page }) => {
+  await page.addInitScript(() => localStorage.clear());
+  await page.goto('/?lang=en&ysdk=mock');
+  await expect(page.locator('#game canvas')).toBeVisible({ timeout: startupTimeout });
+  await expect(page.locator('#boot')).toHaveCount(0, { timeout: startupTimeout });
+
+  const outcome = await page.evaluate(async () => {
+    type TestState = {
+      crowns: number;
+      weekly: { week: string; progress: number; stage: number; claimed: boolean };
+    };
+    const meta = await import('/src/game/meta.ts') as unknown as {
+      rollMetaDay: () => TestState;
+      loadMetaState: () => TestState;
+      saveMetaState: (state: TestState) => boolean;
+      claimWeeklyFinal: () => { kind: 'crowns' | 'banner'; amount: number; id?: string } | null;
+      currentWeekKey: () => string;
+    };
+    const state = meta.rollMetaDay();
+    state.crowns = 17;
+    state.weekly = { week: '2000-01-03', progress: 20, stage: 5, claimed: false };
+    meta.saveMetaState(state);
+
+    const originalSetItem = Storage.prototype.setItem;
+    Storage.prototype.setItem = function (key: string, value: string): void {
+      if (key === 'tss-meta2') throw new DOMException('storage disabled', 'QuotaExceededError');
+      originalSetItem.call(this, key, value);
+    };
+    try {
+      const currentWeek = meta.currentWeekKey();
+      const reward = meta.claimWeeklyFinal();
+      const after = meta.loadMetaState();
+      const persisted = JSON.parse(localStorage.getItem('tss-meta2') ?? '{}') as TestState;
+      return {
+        currentWeek,
+        reward,
+        inMemoryWeek: after.weekly.week,
+        persistedWeek: persisted.weekly?.week,
+        claimed: after.weekly.claimed,
+        crowns: after.crowns,
+      };
+    } finally {
+      Storage.prototype.setItem = originalSetItem;
+    }
+  });
+
+  expect(outcome.currentWeek).not.toBe('2000-01-03');
+  expect(outcome.reward).toBeNull();
+  expect(outcome.inMemoryWeek).toBe('2000-01-03');
+  expect(outcome.persistedWeek).toBe('2000-01-03');
+  expect(outcome.claimed).toBe(false);
+  expect(outcome.crowns).toBe(17);
+});
+
+
+test('starter offer uses server-time window and rejects future first-win timestamps', async ({ page }) => {
+  await page.goto('/?lang=en&ysdk=mock');
+  await expect(page.locator('#game canvas')).toBeVisible({ timeout: startupTimeout });
+  await expect(page.locator('#boot')).toHaveCount(0, { timeout: startupTimeout });
+
+  const result = await page.evaluate(async () => {
+    const shopModule = await import('/src/game/scenes/ShopScene.ts') as unknown as {
+      ShopScene: {
+        prototype: {
+          starterCastellanAvailable: (state: {
+            firstWinAt: number;
+            purchasedSkus: string[];
+          }) => boolean;
+        };
+      };
+    };
+    const check = shopModule.ShopScene.prototype.starterCastellanAvailable;
+    const originalNow = Date.now;
+    const now = 1_800_000_000_000;
+    const windowMs = 48 * 60 * 60 * 1000;
+    try {
+      Date.now = () => now;
+      return {
+        insideWindow: check.call({}, { firstWinAt: now - windowMs + 1, purchasedSkus: [] }),
+        exactlyExpired: check.call({}, { firstWinAt: now - windowMs, purchasedSkus: [] }),
+        futureTimestamp: check.call({}, { firstWinAt: now + 60_000, purchasedSkus: [] }),
+        alreadyPurchased: check.call({}, { firstWinAt: now - 1_000, purchasedSkus: ['starter_castellan'] }),
+      };
+    } finally {
+      Date.now = originalNow;
+    }
+  });
+
+  expect(result).toEqual({
+    insideWindow: true,
+    exactlyExpired: false,
+    futureTimestamp: false,
+    alreadyPurchased: false,
   });
 });
