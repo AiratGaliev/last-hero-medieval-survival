@@ -8,7 +8,7 @@ import { submitScore, LEADERBOARD_DAILY, LEADERBOARD_ENDLESS } from '../../platf
 import { isAuthorized, displayName } from '../../platform/player';
 import {
   placementAvailable, placementBlockReason, registerRunOutcome, showInterstitial, showPlacementRewarded,
-  showStickyBanner,
+  showStickyBanner, refundPlacement,
 } from '../../platform/ads';
 import { gameplayStop } from '../../platform/lifecycle';
 import { track } from '../../platform/analytics';
@@ -1106,7 +1106,9 @@ export class GameOverScene extends Phaser.Scene {
     });
     if (res.rewarded) {
       if (!depositGold(gold)) {
+        refundPlacement('wallet-x2');
         this.goldBtn?.setLabel(t('over.x2SaveFailed'));
+        this.goldBtn?.setEnabled(placementAvailable('wallet-x2'));
         return;
       }
       this.goldDoubled = true;
@@ -1129,7 +1131,9 @@ export class GameOverScene extends Phaser.Scene {
     });
     if (res.rewarded) {
       if (!addGlory(gloryDoubleExtra(g))) {
+        refundPlacement('glory-x2');
         this.gloryBtn?.setLabel(t('over.x2SaveFailed'));
+        this.gloryBtn?.setEnabled(placementAvailable('glory-x2'));
         return;
       }
       this.gloryDoubled = true;
