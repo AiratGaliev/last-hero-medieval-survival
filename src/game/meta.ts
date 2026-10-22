@@ -2569,8 +2569,8 @@ export function ownedBanners(): string[] {
     out.add('banner_codex_100');
     out.add('banner_codex_all');
   }
-  // Миграция прежней модели: закрепляем полученные знамёна до сброса календаря.
-  if (st.weekly.claimed) out.add('banner_weekly');
+  // Флаг claimed есть и у недели с наградой в кронах: переносим только реально заработанное знамя.
+  if (st.weekly.claimed && weeklyFinalReward(st.weekly.week) === 'banner') out.add('banner_weekly');
   if (st.pass.premium && st.pass.xp >= PASS.LEVELS * PASS.XP_PER_LEVEL) out.add('banner_pass');
   if (st.purchasedSkus.includes('starter_castellan')) out.add('banner_store_1');
   if (SKINS.some((s) => s.kind === 'building' && st.skins.owned.includes(s.id))) out.add('banner_store_2');
