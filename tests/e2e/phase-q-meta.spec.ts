@@ -1873,6 +1873,9 @@ test('meta purchases and daily rewards roll back when storage rejects a write', 
       purchasedSkus: string[];
       processedIapTokens: string[];
       consumables: Record<string, number>;
+      skins: { owned: string[]; hero: string };
+      codexSeen: Record<string, boolean>;
+      codex: Record<string, number>;
     };
     const meta = await import('/src/game/meta.ts') as unknown as {
       rollMetaDay: () => TestMetaState;
@@ -1887,6 +1890,8 @@ test('meta purchases and daily rewards roll back when storage rejects a write', 
       };
       takeConsumables: (ids: string[]) => boolean;
       addGlory: (amount: number) => boolean;
+      setActiveSkin: (kind: 'hero', id: string) => boolean;
+      markCodexSeen: (id: string) => void;
     };
     const state = meta.rollMetaDay();
     const parts = new Intl.DateTimeFormat('en-GB', {
@@ -1897,6 +1902,10 @@ test('meta purchases and daily rewards roll back when storage rejects a write', 
     state.matchesPlayed = 3;
     state.glory = 5000;
     state.consumables.cs_horseshoe = 1;
+    state.skins.owned = ['skin_hero_monk_red'];
+    state.skins.hero = '';
+    state.codexSeen = {};
+    state.codex = {};
     state.nodes = [];
     state.crowns = 250;
     state.crownConvert = { date: today, count: 0 };
@@ -1913,6 +1922,10 @@ test('meta purchases and daily rewards roll back when storage rejects a write', 
       originalSetItem.call(this, key, value);
     };
 
+    const activeSkinSaved = meta.setActiveSkin('hero', 'skin_hero_monk_red');
+    const afterSkin = meta.loadMetaState();
+    meta.markCodexSeen('boss_ogre');
+    const afterCodex = meta.loadMetaState();
     const node = meta.buyNode(meta.TREE_NODES[0]!.id);
     const afterNode = meta.loadMetaState();
     const glorySaved = meta.addGlory(25);
@@ -1961,6 +1974,8 @@ test('meta purchases and daily rewards roll back when storage rejects a write', 
     Storage.prototype.setItem = originalSetItem;
 
     return {
+      activeSkin: { saved: activeSkinSaved, hero: afterSkin.skins.hero },
+      codex: { seen: afterCodex.codexSeen.boss_ogre === true },
       node: { ok: node.ok, reason: node.reason, glory: afterNode.glory, owned: afterNode.nodes.length > 0 },
       glory: { ok: glorySaved, balance: afterGlory.glory },
       consumables: { ok: consumablesSaved, horseshoe: afterConsumables.consumables.cs_horseshoe },
@@ -1988,6 +2003,8 @@ test('meta purchases and daily rewards roll back when storage rejects a write', 
   });
 
   expect(outcome).toEqual({
+    activeSkin: { saved: false, hero: '' },
+    codex: { seen: false },
     node: { ok: false, reason: 'storage', glory: 5000, owned: false },
     glory: { ok: false, balance: 5000 },
     consumables: { ok: false, horseshoe: 1 },
