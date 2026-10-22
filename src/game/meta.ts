@@ -1552,7 +1552,8 @@ export function rollMetaDay(): MetaState {
   // и premium. После миграции пойдёт обычная смена 30-дневных ключей p<N>.
   const pSeason = `p${passSeasonIndexFor(now)}`;
   if (st.pass.season !== pSeason) {
-    if (/^s\\d+$/.test(st.pass.season)) {
+    if (st.pass.season.startsWith('s')
+      && Number.isSafeInteger(Number(st.pass.season.slice(1)))) {
       const legacyIndex = Number(st.pass.season.slice(1));
       const legacyStart = legacyIndex * SEASON_DAYS * DAY_MS;
       const legacyAge = now - legacyStart;
