@@ -1840,7 +1840,7 @@ export function applyRunToMeta(s: RunSummary): RunMetaResult {
   // стартового набора (§J.6.2: starter_castellan продаётся двое суток)
   if (s.victory && !s.endless) {
     st.firstWin = true;
-    if (!st.firstWinAt) st.firstWinAt = Date.now();
+    if (!st.firstWinAt) st.firstWinAt = serverNow();
   }
 
   res.persisted = saveMetaStateWithWalletCredit(st, before, walletGold);
