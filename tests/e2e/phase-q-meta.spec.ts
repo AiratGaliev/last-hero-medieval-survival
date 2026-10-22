@@ -3017,3 +3017,58 @@ test('calendar rollover keeps the previous snapshot when meta storage rejects th
     persistedPass: 's0',
   });
 });
+
+
+test('weekly final reward is blocked if the new week cannot be persisted', async ({ page }) => {
+  await page.addInitScript(() => localStorage.clear());
+  await page.goto('/?lang=en&ysdk=mock');
+  await expect(page.locator('#game canvas')).toBeVisible({ timeout: startupTimeout });
+  await expect(page.locator('#boot')).toHaveCount(0, { timeout: startupTimeout });
+
+  const outcome = await page.evaluate(async () => {
+    type TestState = {
+      crowns: number;
+      weekly: { week: string; progress: number; stage: number; claimed: boolean };
+    };
+    const meta = await import('/src/game/meta.ts') as unknown as {
+      rollMetaDay: () => TestState;
+      loadMetaState: () => TestState;
+      saveMetaState: (state: TestState) => boolean;
+      claimWeeklyFinal: () => { kind: 'crowns' | 'banner'; amount: number; id?: string } | null;
+      currentWeekKey: () => string;
+    };
+    const state = meta.rollMetaDay();
+    state.crowns = 17;
+    state.weekly = { week: '2000-01-03', progress: 20, stage: 5, claimed: false };
+    meta.saveMetaState(state);
+
+    const originalSetItem = Storage.prototype.setItem;
+    Storage.prototype.setItem = function (key: string, value: string): void {
+      if (key === 'tss-meta2') throw new DOMException('storage disabled', 'QuotaExceededError');
+      originalSetItem.call(this, key, value);
+    };
+    try {
+      const currentWeek = meta.currentWeekKey();
+      const reward = meta.claimWeeklyFinal();
+      const after = meta.loadMetaState();
+      const persisted = JSON.parse(localStorage.getItem('tss-meta2') ?? '{}') as TestState;
+      return {
+        currentWeek,
+        reward,
+        inMemoryWeek: after.weekly.week,
+        persistedWeek: persisted.weekly?.week,
+        claimed: after.weekly.claimed,
+        crowns: after.crowns,
+      };
+    } finally {
+      Storage.prototype.setItem = originalSetItem;
+    }
+  });
+
+  expect(outcome.currentWeek).not.toBe('2000-01-03');
+  expect(outcome.reward).toBeNull();
+  expect(outcome.inMemoryWeek).toBe('2000-01-03');
+  expect(outcome.persistedWeek).toBe('2000-01-03');
+  expect(outcome.claimed).toBe(false);
+  expect(outcome.crowns).toBe(17);
+});
