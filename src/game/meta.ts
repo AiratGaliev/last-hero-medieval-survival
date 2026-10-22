@@ -2296,6 +2296,15 @@ export function hasNoInterstitial(): boolean {
   return loadMetaState().purchasedSkus.includes('no_interstitial');
 }
 
+/** Начисляет расходник после подтверждённого rewarded callback с атомарным сохранением. */
+export function grantConsumableFromAd(id: ConsumableId): boolean {
+  if (!CONSUMABLES.some((def) => def.id === id)) return false;
+  const st = rollMetaDay();
+  const before = structuredCloneSafe(st);
+  st.consumables[id] += 1;
+  return saveMetaStateOrRollback(st, before);
+}
+
 /** Списывает выбранные расходники атомарно до применения их эффектов в ране. */
 export function takeConsumables(ids: ConsumableId[]): boolean {
   if (ids.length === 0) return true;
