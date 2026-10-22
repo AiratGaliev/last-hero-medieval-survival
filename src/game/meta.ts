@@ -1630,15 +1630,16 @@ export function applyRunToMeta(s: RunSummary): RunMetaResult {
   for (const c of s.cardsPicked) st.codex[`card_${c}`] = (st.codex[`card_${c}`] ?? 0) + 1;
 
   // --- Вехи полноты кодекса (§H.10): 50% золото, 75% титул, 100% скин
-  const beforeRatio = codexProgress().ratio;
-  if (beforeRatio >= 0.5 && !st.chains.claimed.includes('codex:50')) {
+  // Оцениваем изменённый снимок текущего рана, а не сохранение предыдущего матча.
+  const codexRatio = codexProgressForState(st).ratio;
+  if (codexRatio >= 0.5 && !st.chains.claimed.includes('codex:50')) {
     st.chains.claimed.push('codex:50');
     depositGoldWallet(200);
   }
-  if (beforeRatio >= 0.75 && !st.chains.claimed.includes('codex:75')) {
+  if (codexRatio >= 0.75 && !st.chains.claimed.includes('codex:75')) {
     st.chains.claimed.push('codex:75'); // титул — косметический статус
   }
-  if (beforeRatio >= 1 && !st.chains.claimed.includes('codex:100')) {
+  if (codexRatio >= 1 && !st.chains.claimed.includes('codex:100')) {
     st.chains.claimed.push('codex:100');
     grantSkin(st, 'golden_goblin');
   }
@@ -2254,23 +2255,23 @@ export function markCodex(id: string, n = 1): void {
   if (was === 0) track('codex_entry', { entry: id });
 }
 
-/** Прогресс полноты кодекса: открытые записи / всего. */
-export function codexProgress(): { seen: number; total: number; ratio: number } {
-  const st = rollMetaDay();
+/** Вычисляет полноту кодекса для указанного снимка, в том числе ещё не сохранённого. */
+function codexProgressForState(st: MetaState): { seen: number; total: number; ratio: number } {
   let seen = 0;
   let total = 0;
   for (const sec of CODEX_SECTIONS) {
     for (const e of sec.entries) {
       total += 1;
-      // Запись открыта, если счётчик встречаемости > 0
-      const count = e.id.startsWith('w_') ? (st.codex[e.id] ?? 0)
-        : e.id.startsWith('e_') ? (st.codex[e.id] ?? 0)
-        : e.id.startsWith('card_') ? (st.codex[e.id] ?? 0)
-        : (st.codex[e.id] ?? 0);
-      if (count > 0 || (e.id.startsWith('card_') && (st.codex[e.id] ?? 0) > 0)) seen += 1;
+      const count = st.codex[e.id] ?? 0;
+      if (count > 0) seen += 1;
     }
   }
   return { seen, total, ratio: total > 0 ? seen / total : 0 };
+}
+
+/** Прогресс полноты кодекса: открытые записи / всего. */
+export function codexProgress(): { seen: number; total: number; ratio: number } {
+  return codexProgressForState(rollMetaDay());
 }
 
 export function codexCount(id: string): number {

@@ -1634,3 +1634,80 @@ test('codex records each completed building under the exact entry ID', async ({ 
   expect(outcome.seenDelta).toBe(2);
   expect(outcome.total).toBeGreaterThanOrEqual(5);
 });
+
+test('codex completion rewards are granted in the same run that fills the final entry', async ({ page }) => {
+  await page.addInitScript(() => localStorage.clear());
+  await page.goto('/?lang=en&ysdk=mock');
+  await expect(page.locator('#game canvas')).toBeVisible({ timeout: startupTimeout });
+  await expect(page.locator('#boot')).toHaveCount(0, { timeout: startupTimeout });
+
+  const outcome = await page.evaluate(async () => {
+    type RunSummary = {
+      victory: boolean; ideal: boolean; endless: boolean; weeklyChallenge: boolean;
+      wave: number; time: number; kills: number; level: number; gold: number; score: number;
+      difficulty: string; buildingsBuilt: number;
+      buildingKindsBuilt?: Partial<Record<'house' | 'barracks' | 'tower' | 'archery' | 'monastery', number>>;
+      occupiedBaseBuildSpots?: number; pawnsAlive: number; siegesDefended: number; siegesTotal: number;
+      monasteryHealed: number; healHp: number; hires: number; successions: number; veterans: number;
+      firstHouseMin: number; barracks: number; monastery: number; archery: number; bestCombo: number;
+      bossKilled: boolean; killsByKind: Record<string, number>; cardsPicked: string[];
+      contract: string | null; ukaz: string | null; challengeMods: string[];
+      blessing: string | null; consumables: string[];
+    };
+    type TestMetaState = {
+      codex: Record<string, number>;
+      chains: { counters: Record<string, number>; claimed: string[] };
+      skins: { owned: string[] };
+      quests: { date: string; ids: string[]; progress: Record<string, number>; done: string[]; rerolls: number };
+      pass: { season: string; xp: number; premium: boolean; claimedFree: number; claimedPrem: number };
+    };
+    const meta = await import('/src/game/meta.ts') as unknown as {
+      CODEX_SECTIONS: Array<{ entries: Array<{ id: string }> }>;
+      rollMetaDay: () => TestMetaState;
+      saveMetaState: (state: TestMetaState) => boolean;
+      loadMetaState: () => TestMetaState;
+      applyRunToMeta: (summary: RunSummary) => unknown;
+      codexProgress: () => { seen: number; total: number; ratio: number };
+    };
+    const state = meta.rollMetaDay();
+    state.codex = {};
+    for (const section of meta.CODEX_SECTIONS) {
+      for (const entry of section.entries) {
+        if (entry.id !== 'house') state.codex[entry.id] = 1;
+      }
+    }
+    state.chains.claimed = state.chains.claimed.filter((id) => !id.startsWith('codex:'));
+    state.skins.owned = state.skins.owned.filter((id) => id !== 'golden_goblin');
+    state.quests.ids = [];
+    state.quests.progress = {};
+    state.quests.done = [];
+    state.pass.xp = 5_000;
+    state.pass.premium = false;
+    meta.saveMetaState(state);
+    const before = meta.codexProgress();
+
+    const run: RunSummary = {
+      victory: false, ideal: false, endless: false, weeklyChallenge: false,
+      wave: 0, time: 120, kills: 0, level: 1, gold: 0, score: 0, difficulty: 'normal',
+      buildingsBuilt: 1, buildingKindsBuilt: { house: 1 }, occupiedBaseBuildSpots: 0,
+      pawnsAlive: 0, siegesDefended: 0, siegesTotal: 0, monasteryHealed: 0, healHp: 0,
+      hires: 0, successions: 0, veterans: 0, firstHouseMin: 0, barracks: 0, monastery: 0,
+      archery: 0, bestCombo: 0, bossKilled: false, killsByKind: {}, cardsPicked: [],
+      contract: null, ukaz: null, challengeMods: [], blessing: null, consumables: [],
+    };
+    meta.applyRunToMeta(run);
+    const saved = meta.loadMetaState();
+    const after = meta.codexProgress();
+    return {
+      beforeRatio: before.ratio,
+      afterRatio: after.ratio,
+      milestoneClaims: saved.chains.claimed.filter((id) => id.startsWith('codex:')).sort(),
+      goldenGoblinGranted: saved.skins.owned.includes('golden_goblin'),
+    };
+  });
+
+  expect(outcome.beforeRatio).toBeLessThan(1);
+  expect(outcome.afterRatio).toBe(1);
+  expect(outcome.milestoneClaims).toEqual(['codex:100', 'codex:50', 'codex:75']);
+  expect(outcome.goldenGoblinGranted).toBe(true);
+});
