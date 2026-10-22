@@ -18,6 +18,8 @@ export interface WeaponCtx {
   moveDir(): { x: number; y: number };
   mightMult(): number;
   cdMult(): number;
+  /** Seeded выбор цели для ежедневного вызова; обычный ран использует прежний RNG. */
+  randomInt?: (min: number, max: number) => number;
 }
 
 export class WeaponSystem {
@@ -37,6 +39,10 @@ export class WeaponSystem {
   constructor(scene: Phaser.Scene, ctx: WeaponCtx) {
     this.scene = scene;
     this.ctx = ctx;
+  }
+
+  private randomInt(min: number, max: number): number {
+    return this.ctx.randomInt?.(min, max) ?? Phaser.Math.Between(min, max);
   }
 
   add(id: WeaponId): void {
@@ -292,7 +298,7 @@ export class WeaponSystem {
         if (!p.active) return;
         const targets = this.nearestEnemies(6);
         if (targets.length === 0) return;
-        const t = targets[Phaser.Math.Between(0, Math.min(2, targets.length - 1))];
+        const t = targets[this.randomInt(0, Math.min(2, targets.length - 1))];
         this.hammerSlam(t.x, t.y, dmg, radius);
       });
     }
@@ -306,7 +312,7 @@ export class WeaponSystem {
         if (!p.active) return;
         const targets = this.nearestEnemies(6);
         if (targets.length === 0) return;
-        const t = targets[Phaser.Math.Between(0, Math.min(2, targets.length - 1))];
+        const t = targets[this.randomInt(0, Math.min(2, targets.length - 1))];
         this.hammerSlam(t.x, t.y, dmg, radius, true);
       });
     }
@@ -344,7 +350,7 @@ export class WeaponSystem {
           for (let i = 0; i < 2; i++) {
             const alive = pool.filter((e) => e.active);
             if (alive.length === 0) break;
-            const t = alive[Phaser.Math.Between(0, alive.length - 1)];
+            const t = alive[this.randomInt(0, alive.length - 1)];
             this.scene.time.delayedCall(160 + i * 190, () => {
               if (!t.active) return;
               this.echoSlam(t.x, t.y, Math.round(dmg * 0.6), Math.round(radius * 0.7));
@@ -376,7 +382,7 @@ export class WeaponSystem {
         if (!p.active) return;
         const targets = this.nearestEnemies(12);
         if (targets.length === 0) return;
-        const t = targets[Phaser.Math.Between(0, targets.length - 1)];
+        const t = targets[this.randomInt(0, targets.length - 1)];
         const body = t.body as Phaser.Physics.Arcade.Body;
         const tx = t.x + body.velocity.x * 0.35;
         const ty = t.y + body.velocity.y * 0.35;
