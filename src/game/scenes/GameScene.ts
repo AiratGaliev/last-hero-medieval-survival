@@ -1282,6 +1282,7 @@ export class GameScene extends Phaser.Scene {
       moveDir: () => this.lastMove,
       mightMult: () => this.mightMult,
       cdMult: () => this.cdMult,
+      randomInt: this.isSeededDailyChallenge ? (min, max) => this.gameplayInt(min, max) : undefined,
     };
     this.weapons = new WeaponSystem(this, weaponCtx);
     this.weapons.add(this.heroDef.startWeapon);
