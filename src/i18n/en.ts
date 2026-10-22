@@ -893,6 +893,7 @@ export const en: Record<TranslationKey, string> = {
 
   'skins.title': 'SKINS',
   'skins.apply': 'WEAR',
+  'skins.applyFailed': 'Could not save the selected skin.',
   'skins.applied': 'WORN',
   'skins.hero': 'Hero',
   'skins.building': 'Buildings',
