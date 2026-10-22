@@ -237,8 +237,8 @@ function loadDay(): AdDayState {
   return { date, used: raw.used ?? {} };
 }
 
-function saveDay(st: AdDayState): void {
-  saveJson(LS_AD_DAY, st);
+function saveDay(st: AdDayState): boolean {
+  return saveJson(LS_AD_DAY, st);
 }
 
 function usedCount(p: AdPlacement): number {
@@ -286,7 +286,14 @@ export async function showPlacementRewarded(
     if (PLACEMENT_LIMITS[placement].period === 'day') {
       const day = loadDay();
       day.used[placement] = (day.used[placement] ?? 0) + 1;
-      saveDay(day);
+      if (!saveDay(day)) {
+        lastError = 'daily_rewarded_limit_persistence_failed';
+        track('ad_error', { kind: 'rewarded', placement, message: lastError });
+        console.warn('[ads] дневной лимит rewarded не удалось сохранить:', placement);
+        // Показ был завершён, но без надёжного счётчика нельзя выдавать награду:
+        // перезапуск страницы иначе сбросит ограничение и позволит повторный забор.
+        return { rewarded: false, available: false };
+      }
     } else {
       usedPlacements.set(placement, (usedPlacements.get(placement) ?? 0) + 1);
     }
