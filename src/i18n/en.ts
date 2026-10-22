@@ -944,7 +944,7 @@ export const en: Record<TranslationKey, string> = {
   'store.firstBonus': 'First purchase ×2!',
   'store.sold': 'Owned',
   'store.fail': 'Purchase failed',
-  'meta.saveFailed': 'Progress could not be saved. Check storage access.',
+  'meta.runSaveFailed': 'Progress could not be saved. Check storage access.',
   'store.dailyOffers': 'DAILY OFFERS',
   'store.refreshAd': 'REFRESH FOR AD',
   'store.refreshUnavailable': 'AD UNAVAILABLE',
