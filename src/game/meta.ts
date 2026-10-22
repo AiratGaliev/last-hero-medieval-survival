@@ -2144,7 +2144,9 @@ export interface IapGrantResult {
   granted: { crowns: number; skin?: string; consumable?: ConsumableId };
 }
 
-function applySkuGrant(st: MetaState, sku: string): { crowns: number; skin?: string; consumable?: ConsumableId } {
+function applySkuGrant(st: MetaState, sku: string): {
+  crowns: number; skin?: string; consumable?: ConsumableId; walletGold?: number;
+} {
   if (!GRANTABLE_IAP_SKUS.has(sku)) return { crowns: 0 };
   if (!st.purchasedSkus.includes(sku)) st.purchasedSkus.push(sku);
 
@@ -2157,6 +2159,7 @@ function applySkuGrant(st: MetaState, sku: string): { crowns: number; skin?: str
   let crowns = 0;
   let skin: string | undefined;
   let consumable: ConsumableId | undefined;
+  let walletGold = 0;
   if (PAKS[sku]) {
     // Первая покупка ×2 (§J.6.4)
     const first = !st.purchasedSkus.includes('first_topup');
@@ -2176,7 +2179,7 @@ function applySkuGrant(st: MetaState, sku: string): { crowns: number; skin?: str
     const lvl = Math.min(PASS.LEVELS, Math.floor(st.pass.xp / PASS.XP_PER_LEVEL));
     for (let i = 1; i <= lvl; i++) {
       const pr = passReward(i, true);
-      if (pr) grantPassReward(st, pr);
+      if (pr) walletGold += grantPassReward(st, pr);
     }
   } else if (sku.startsWith('skin_')) {
     skin = sku;
@@ -2188,15 +2191,16 @@ function applySkuGrant(st: MetaState, sku: string): { crowns: number; skin?: str
     consumable = sku;
     st.consumables[sku] += 1;
   }
-  return { crowns, skin, consumable };
+  return { crowns, skin, consumable, walletGold };
 }
 
 /** Local/dev grant. Platform purchases must use grantSkuForPurchase() instead. */
 export function grantSku(sku: string): { crowns: number; skin?: string; consumable?: ConsumableId } {
+  if (!GRANTABLE_IAP_SKUS.has(sku)) return { crowns: 0 };
   const st = rollMetaDay();
-  const granted = applySkuGrant(st, sku);
-  if (GRANTABLE_IAP_SKUS.has(sku)) saveMetaState(st);
-  return granted;
+  const before = structuredCloneSafe(st);
+  const { walletGold = 0, ...granted } = applySkuGrant(st, sku);
+  return saveMetaStateWithWalletCredit(st, before, walletGold) ? granted : { crowns: 0 };
 }
 
 /**
@@ -2222,11 +2226,16 @@ export function grantSkuForPurchase(sku: string, purchaseToken: string): IapGran
   const beforeGrant = structuredCloneSafe(st);
   const alreadyOwned = (NON_REPLAYABLE_IAP_SKUS.has(sku) && hasIapEntitlement(st, sku))
     || (sku === 'pass_chronicle' && st.pass.premium);
-  const granted = alreadyOwned ? { crowns: 0 } : applySkuGrant(st, sku);
+  const grant = alreadyOwned ? { crowns: 0 } : applySkuGrant(st, sku);
+  const { walletGold = 0, ...granted } = grant;
   st.processedIapTokens.push(token);
-  const persisted = saveMetaState(st);
-  if (!persisted) cached = beforeGrant;
-  return { supported: true, duplicate: alreadyOwned, persisted, granted };
+  const persisted = saveMetaStateWithWalletCredit(st, beforeGrant, walletGold);
+  return {
+    supported: true,
+    duplicate: alreadyOwned,
+    persisted,
+    granted: persisted ? granted : { crowns: 0 },
+  };
 }
 
 /** True when the profile already owns the entitlement represented by an IAP SKU. */
