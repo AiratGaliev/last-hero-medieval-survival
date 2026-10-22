@@ -29,6 +29,8 @@ interface EnemyShot extends Phaser.Physics.Arcade.Sprite {
   onArrive?: (s: EnemyShot) => void;
   /** Переиспользуемые спрайты пламени позади огненной стрелы. */
   trailSprites?: Phaser.GameObjects.Sprite[];
+  /** Детонировать при столкновении с героем (только полевая бомба, не осадный бросок). */
+  detonateOnPlayer?: boolean;
 }
 
 interface Bomb {
@@ -48,6 +50,7 @@ const ENEMY_SHOTS: Record<EnemyShotKind, { tex: string; anim?: string; speed: nu
   bone:    { tex: 'proj-bone', anim: 'proj-bone-spin', speed: 340, life: 2200, body: 26, scale: 1 },
   hex:     { tex: 'proj-hex',  anim: 'proj-hex-orb',  speed: 300, life: 2600, body: 30, scale: 1 },
   harpoon: { tex: 'proj-harpoon', speed: 320, life: 2400, body: 22, scale: 0.72 },
+  bomb:     { tex: 'proj-bomb', anim: 'proj-bomb-spin', speed: 260, life: 2800, body: 24, scale: 0.72 },
 };
 
 export interface ProjectileCtx {
@@ -183,6 +186,32 @@ export class Projectiles {
     audio.play('shoot');
   }
 
+  /** Рыба выплёвывает настоящую бомбу по позиции героя; урон наносится при подрыве. */
+  shootEnemyBomb(
+    x: number, y: number, tx: number, ty: number, dmg: number,
+    onImpact: (x: number, y: number) => void,
+  ): void {
+    const p = this.acquireShot('bomb');
+    if (!p) return;
+    const cfg = ENEMY_SHOTS.bomb;
+    p.shotKind = 'bomb';
+    p.fire = false;
+    p.targetB = { x: tx, y: ty };
+    p.onArrive = (shot) => onImpact(shot.x, shot.y);
+    p.detonateOnPlayer = true;
+    p.setPosition(x, y);
+    const angle = Math.atan2(ty - y, tx - x);
+    p.setVelocity(Math.cos(angle) * cfg.speed, Math.sin(angle) * cfg.speed);
+    p.setRotation(angle);
+    p.dmg = dmg;
+    p.pierceLeft = 0;
+    p.life = cfg.life;
+    p.setDepth(DEPTH.PROJECTILE);
+    p.setScale(cfg.scale);
+    (p.body as Phaser.Physics.Arcade.Body).setSize(cfg.body, cfg.body, true);
+    audio.play('shoot');
+  }
+
   /** Бросок по зданию осады (§E.4.1): снаряд летит к точке и наносит урон. */
   shootAtBuilding(
     kind: EnemyShotKind, x: number, y: number, tx: number, ty: number,
@@ -193,6 +222,7 @@ export class Projectiles {
     const cfg = ENEMY_SHOTS[kind];
     p.shotKind = kind;
     p.fire = fire;
+    p.detonateOnPlayer = false;
     p.onArrive = onArrive;
     p.targetB = { x: tx, y: ty };
     p.setPosition(x, y);
@@ -328,7 +358,13 @@ export class Projectiles {
           continue;
         }
       }
-      if (p.life <= 0) this.release(p as unknown as Proj);
+      if (p.life <= 0) {
+        // Бомба всё равно подрывается, если дальность/граница кадра не дала
+        // ей пересечь радиус прибытия у целевой точки.
+        const impact = p.shotKind === 'bomb' ? p.onArrive : undefined;
+        this.release(p as unknown as Proj);
+        impact?.(p);
+      }
     }
   }
 
@@ -450,9 +486,21 @@ export class Projectiles {
     shot.targetB = null;
     shot.onArrive = undefined;
     shot.fire = false;
+    shot.detonateOnPlayer = false;
     for (const flame of shot.trailSprites ?? []) {
       flame.setActive(false).setVisible(false);
     }
+  }
+
+  /** Полевая бомба подрывается при прямом столкновении с героем. */
+  impactEnemyShot(p: Proj): boolean {
+    if (!p.active) return false;
+    const shot = p as unknown as EnemyShot;
+    if (shot.shotKind !== 'bomb' || !shot.detonateOnPlayer || !shot.onArrive) return false;
+    const impact = shot.onArrive;
+    this.release(p);
+    impact(shot);
+    return true;
   }
 
   releaseEnemyShot(p: Proj): void {
