@@ -686,7 +686,7 @@ test('bomb fish spits the bundled bomb projectile in normal combat instead of se
       scene: RuntimeScene & { __bombImpactCount?: number };
     } }).__bombFishProbe;
     return probe?.scene.__bombImpactCount ?? 0;
-  }), { timeout: 5_000, message: 'The launched bomb should resolve its impact callback' }).toBeGreaterThan(0);
+  }), { timeout: 5_000, message: 'The launched bomb should resolve its impact callback exactly once' }).toBe(1);
 
   const report = await page.evaluate(() => {
     const game = (window as unknown as { __tss?: RuntimeGame }).__tss;
@@ -713,7 +713,7 @@ test('bomb fish spits the bundled bomb projectile in normal combat instead of se
   expect(report.hasFuseAnimation).toBe(true);
   expect(report.fishStillAlive).toBe(true);
   expect(report.damagedHero).toBe(true);
-  expect(report.impacts).toBeGreaterThan(0);
+  expect(report.impacts).toBe(1);
   expect(pageErrors).toEqual([]);
 });
 
