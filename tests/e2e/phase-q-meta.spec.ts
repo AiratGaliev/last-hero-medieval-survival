@@ -2095,3 +2095,90 @@ test('achievement chain rejects fractional reward tiers without granting crowns'
 
   expect(outcome).toEqual({ result: { ok: false }, crowns: 11, claimed: [] });
 });
+
+
+test('run meta progress rolls back when a pass gold reward cannot reach the shop wallet', async ({ page }) => {
+  await page.addInitScript(() => localStorage.clear());
+  await page.goto('/?lang=en&ysdk=mock');
+  await expect(page.locator('#game canvas')).toBeVisible({ timeout: startupTimeout });
+  await expect(page.locator('#boot')).toHaveCount(0, { timeout: startupTimeout });
+
+  const outcome = await page.evaluate(async () => {
+    type RunSummary = {
+      victory: boolean; ideal: boolean; endless: boolean; weeklyChallenge: boolean;
+      wave: number; time: number; kills: number; level: number; gold: number; score: number;
+      difficulty: string; buildingsBuilt: number; pawnsAlive: number;
+      siegesDefended: number; siegesTotal: number; monasteryHealed: number; healHp: number;
+      hires: number; successions: number; veterans: number; firstHouseMin: number;
+      barracks: number; monastery: number; archery: number; bestCombo: number;
+      bossKilled: boolean; killsByKind: Record<string, number>; cardsPicked: string[];
+      contract: string | null; ukaz: string | null; challengeMods: string[];
+      blessing: string | null; consumables: string[];
+    };
+    type TestMetaState = {
+      matchesPlayed: number;
+      pass: { xp: number; premium: boolean };
+      quests: { ids: string[]; progress: Record<string, number>; done: string[] };
+      chains: { counters: Record<string, number>; claimed: string[] };
+    };
+    const meta = await import('/src/game/meta.ts') as unknown as {
+      rollMetaDay: () => TestMetaState;
+      saveMetaState: (state: TestMetaState) => boolean;
+      loadMetaState: () => TestMetaState;
+      applyRunToMeta: (summary: RunSummary) => { persisted: boolean; newMatchesPlayed: number };
+    };
+    const shop = await import('/src/game/shop.ts') as unknown as {
+      loadShop: () => { balance: number };
+    };
+    const state = meta.rollMetaDay();
+    state.matchesPlayed = 6;
+    state.pass.xp = 99; // Завершение рана должно открыть первый уровень и начислить 104 золота.
+    state.pass.premium = false;
+    state.quests.ids = [];
+    state.quests.progress = {};
+    state.quests.done = [];
+    state.chains.counters = {};
+    state.chains.claimed = [];
+    meta.saveMetaState(state);
+    const before = meta.loadMetaState();
+    const walletBefore = shop.loadShop().balance;
+
+    const originalSetItem = Storage.prototype.setItem;
+    Storage.prototype.setItem = function (key: string, value: string): void {
+      if (key === 'tss-shop') throw new DOMException('wallet storage disabled', 'QuotaExceededError');
+      originalSetItem.call(this, key, value);
+    };
+    const result = meta.applyRunToMeta({
+      victory: false, ideal: false, endless: false, weeklyChallenge: false,
+      wave: 0, time: 25, kills: 0, level: 1, gold: 0, score: 0, difficulty: 'normal',
+      buildingsBuilt: 0, pawnsAlive: 0, siegesDefended: 0, siegesTotal: 0,
+      monasteryHealed: 0, healHp: 0, hires: 0, successions: 0, veterans: 0,
+      firstHouseMin: 0, barracks: 0, monastery: 0, archery: 0, bestCombo: 0,
+      bossKilled: false, killsByKind: {}, cardsPicked: [], contract: null, ukaz: null,
+      challengeMods: [], blessing: null, consumables: [],
+    });
+    const after = meta.loadMetaState();
+    const walletAfter = shop.loadShop().balance;
+    Storage.prototype.setItem = originalSetItem;
+
+    return {
+      persisted: result.persisted,
+      resultMatchesPlayed: result.newMatchesPlayed,
+      matchesPlayed: after.matchesPlayed,
+      passXpBefore: before.pass.xp,
+      passXpAfter: after.pass.xp,
+      passPremiumAfter: after.pass.premium,
+      walletUnchanged: walletAfter === walletBefore,
+    };
+  });
+
+  expect(outcome).toEqual({
+    persisted: false,
+    resultMatchesPlayed: 6,
+    matchesPlayed: 6,
+    passXpBefore: 99,
+    passXpAfter: 99,
+    passPremiumAfter: false,
+    walletUnchanged: true,
+  });
+});
