@@ -117,14 +117,17 @@ export function restoreShopState(raw: unknown): boolean {
 }
 
 /** Начисление золота в кошелёк (вызывается в конце матча). */
-export function depositGold(gold: number): void {
+export function depositGold(gold: number): boolean {
   const amount = Math.floor(gold);
-  if (!Number.isFinite(gold) || amount <= 0) return;
+  if (!Number.isFinite(gold)) return false;
+  if (amount <= 0) return true;
   const st = loadShop();
   st.balance += amount;
   if (!saveShop(st)) {
     console.warn('[shop] не удалось сохранить начисленное золото кошелька');
+    return false;
   }
+  return true;
 }
 
 /**
