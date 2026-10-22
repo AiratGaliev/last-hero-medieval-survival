@@ -1873,6 +1873,7 @@ test('meta purchases and daily rewards roll back when storage rejects a write', 
       purchasedSkus: string[];
       processedIapTokens: string[];
       consumables: Record<string, number>;
+      speedupTokens: number;
       skins: { owned: string[]; hero: string };
       codexSeen: Record<string, boolean>;
       codex: Record<string, number>;
@@ -1892,6 +1893,7 @@ test('meta purchases and daily rewards roll back when storage rejects a write', 
       addGlory: (amount: number) => boolean;
       setActiveSkin: (kind: 'hero', id: string) => boolean;
       markCodexSeen: (id: string) => void;
+      spendSpeedupToken: () => boolean;
     };
     const state = meta.rollMetaDay();
     const parts = new Intl.DateTimeFormat('en-GB', {
@@ -1902,6 +1904,7 @@ test('meta purchases and daily rewards roll back when storage rejects a write', 
     state.matchesPlayed = 3;
     state.glory = 5000;
     state.consumables.cs_horseshoe = 1;
+    state.speedupTokens = 1;
     state.skins.owned = ['skin_hero_monk_red'];
     state.skins.hero = '';
     state.codexSeen = {};
@@ -1926,6 +1929,8 @@ test('meta purchases and daily rewards roll back when storage rejects a write', 
     const afterSkin = meta.loadMetaState();
     meta.markCodexSeen('boss_ogre');
     const afterCodex = meta.loadMetaState();
+    const speedupSpent = meta.spendSpeedupToken();
+    const afterSpeedup = meta.loadMetaState();
     const node = meta.buyNode(meta.TREE_NODES[0]!.id);
     const afterNode = meta.loadMetaState();
     const glorySaved = meta.addGlory(25);
@@ -1976,6 +1981,7 @@ test('meta purchases and daily rewards roll back when storage rejects a write', 
     return {
       activeSkin: { saved: activeSkinSaved, hero: afterSkin.skins.hero },
       codex: { seen: afterCodex.codexSeen.boss_ogre === true },
+      speedup: { spent: speedupSpent, tokens: afterSpeedup.speedupTokens },
       node: { ok: node.ok, reason: node.reason, glory: afterNode.glory, owned: afterNode.nodes.length > 0 },
       glory: { ok: glorySaved, balance: afterGlory.glory },
       consumables: { ok: consumablesSaved, horseshoe: afterConsumables.consumables.cs_horseshoe },
@@ -2005,6 +2011,7 @@ test('meta purchases and daily rewards roll back when storage rejects a write', 
   expect(outcome).toEqual({
     activeSkin: { saved: false, hero: '' },
     codex: { seen: false },
+    speedup: { spent: false, tokens: 1 },
     node: { ok: false, reason: 'storage', glory: 5000, owned: false },
     glory: { ok: false, balance: 5000 },
     consumables: { ok: false, horseshoe: 1 },
