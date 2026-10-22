@@ -3889,7 +3889,8 @@ private bossDeathSequence(e: Enemy): boolean {
     if (this.metaApplied) return undefined;
     // Кодекс (§H.10): использованное оружие (dmg > 0) и эволюции — один раз за ран.
     for (const id of this.weapons.ownedIds()) {
-      if ((WEAPONS[id].levels[0]?.dmg ?? 0) > 0) markCodex(`w_${id}`);
+      // Владения недостаточно: запись оружия открывается, если оно реально нанесло урон в этом ране.
+      if ((this.weaponStats.get(id)?.dmg ?? 0) > 0) markCodex(`w_${id}`);
       if (this.weapons.isEvolved(id)) markCodex(`e_${id}`);
     }
     this.metaApplied = true;
