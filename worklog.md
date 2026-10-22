@@ -4296,3 +4296,10 @@ catalog» оказался не тестовым артефактом, а нас
 - `applyRunToMeta()` возвращает `seasonStepReward`, но `GameScene` не передавал его в `GameOverStats`, поэтому игрок получал скин пятой вехи тихо, без подтверждения результата.
 - Поле теперь переносится в payload Game Over; RU/EN интерфейс показывает локализованную строку «Сезонная косметика: … / Season cosmetic: …» с названием скина из словаря `skins.skin.*`. Описание «Красной долины» также исправлено: оно говорит о черепах/шаманах, а не о чёрном тире.
 - Добавлена Playwright-регрессия, проверяющая, что Game Over отображает «Vow (monk)» при выдаче `skin_hero_monk_red`. E2E не запускался по правилам README; свежий CI Fast остаётся обязательным.
+
+
+### Актуальный Fast CI и исправление синтаксиса приёмочного теста — 22.10.2026
+
+- Fast CI для SHA `aa157bb6396496f333407071d3c5f35a500e6dc1` завершился успешно: `npm ci`, `npm run check` (TypeScript + ESLint) и production `npm run build` — success.
+- В предыдущем запуске на SHA `c8d80fc4276e18ac46ba1dc8b268d042cb3c22eb` ESLint остановился на parsing error в новом `GameOver` regression test: вложенный тип `window.__tss` был закрыт не полностью. Тип исправлен; также удалены неиспользуемые импорты `removeKey`/`saveMetaState` из `MenuScene` и `saveMetaState` из `ShopScene`.
+- Полный Playwright suite по-прежнему не запускался согласно README: для PR в `dev` достаточно Fast CI, браузерный acceptance проводится в PR `dev → test` (и повторно `test → main`). Фаза Q, KPI §K.3 и Yandex Games SDK runtime acceptance остаются открытыми до этого gate.
