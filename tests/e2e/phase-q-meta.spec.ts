@@ -1881,6 +1881,7 @@ test('meta purchases and daily rewards roll back when storage rejects a write', 
         supported: boolean; duplicate: boolean; persisted: boolean; granted: { crowns: number };
       };
       takeConsumables: (ids: string[]) => boolean;
+      addGlory: (amount: number) => boolean;
     };
     const state = meta.rollMetaDay();
     const parts = new Intl.DateTimeFormat('en-GB', {
@@ -1909,6 +1910,8 @@ test('meta purchases and daily rewards roll back when storage rejects a write', 
 
     const node = meta.buyNode(meta.TREE_NODES[0]!.id);
     const afterNode = meta.loadMetaState();
+    const glorySaved = meta.addGlory(25);
+    const afterGlory = meta.loadMetaState();
     const consumablesSaved = meta.takeConsumables(['cs_horseshoe']);
     const afterConsumables = meta.loadMetaState();
     const bonus = meta.claimDailyBonus();
@@ -1954,6 +1957,7 @@ test('meta purchases and daily rewards roll back when storage rejects a write', 
 
     return {
       node: { ok: node.ok, reason: node.reason, glory: afterNode.glory, owned: afterNode.nodes.length > 0 },
+      glory: { ok: glorySaved, balance: afterGlory.glory },
       consumables: { ok: consumablesSaved, horseshoe: afterConsumables.consumables.cs_horseshoe },
       bonus: { ok: bonus.ok, streak: afterBonus.dailyBonus.streak, last: afterBonus.dailyBonus.last },
       conversion: {
@@ -1980,6 +1984,7 @@ test('meta purchases and daily rewards roll back when storage rejects a write', 
 
   expect(outcome).toEqual({
     node: { ok: false, reason: 'storage', glory: 5000, owned: false },
+    glory: { ok: false, balance: 5000 },
     consumables: { ok: false, horseshoe: 1 },
     bonus: { ok: false, streak: 4, last: '2000-01-01' },
     conversion: { ok: false, reason: 'storage', crowns: 250, count: 0 },
