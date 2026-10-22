@@ -2194,3 +2194,34 @@ test('run meta progress rolls back when a pass gold reward cannot reach the shop
     walletUnchanged: true,
   });
 });
+
+
+test('daily rewarded placement is not granted when its quota cannot be persisted', async ({ page }) => {
+  await page.addInitScript(() => localStorage.clear());
+  await page.goto('/?lang=en&ysdk=mock');
+  await expect(page.locator('#game canvas')).toBeVisible({ timeout: startupTimeout });
+  await expect(page.locator('#boot')).toHaveCount(0, { timeout: startupTimeout });
+
+  const outcome = await page.evaluate(async () => {
+    const ads = await import('/src/platform/ads.ts') as unknown as {
+      showPlacementRewarded: (placement: 'daily-chest') => Promise<{ rewarded: boolean; available: boolean }>;
+    };
+    const originalSetItem = Storage.prototype.setItem;
+    Storage.prototype.setItem = function (key: string, value: string): void {
+      if (key === 'tss-ads-day') throw new DOMException('quota storage disabled', 'QuotaExceededError');
+      originalSetItem.call(this, key, value);
+    };
+
+    try {
+      const result = await ads.showPlacementRewarded('daily-chest');
+      return { result, storedQuota: localStorage.getItem('tss-ads-day') };
+    } finally {
+      Storage.prototype.setItem = originalSetItem;
+    }
+  });
+
+  expect(outcome).toEqual({
+    result: { rewarded: false, available: false },
+    storedQuota: null,
+  });
+});
