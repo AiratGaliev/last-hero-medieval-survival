@@ -87,7 +87,7 @@ export function getDailyShopRotation(): DailyShopRotation {
  * Replace today's offers once after a rewarded ad succeeds.
  * The helper persists the result so reloads cannot reset the daily rotation.
  */
-export function refreshDailyShopRotation(): DailyShopRotation {
+export function refreshDailyShopRotation(): DailyShopRotation | null {
   const current = getDailyShopRotation();
   if (current.refreshed) return current;
 
@@ -96,6 +96,6 @@ export function refreshDailyShopRotation(): DailyShopRotation {
     ids: pickOffers(current.date, current.ids),
     refreshed: true,
   };
-  saveJson(STORAGE_KEY, rotation);
+  if (!saveJson(STORAGE_KEY, rotation)) return null;
   return rotation;
 }
