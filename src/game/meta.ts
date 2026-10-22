@@ -2251,13 +2251,22 @@ export function hasNoInterstitial(): boolean {
   return loadMetaState().purchasedSkus.includes('no_interstitial');
 }
 
-/** Активен ли расходник и его эффекты для рана. */
-export function takeConsumables(ids: ConsumableId[]): void {
+/** Списывает выбранные расходники атомарно до применения их эффектов в ране. */
+export function takeConsumables(ids: ConsumableId[]): boolean {
+  if (ids.length === 0) return true;
   const st = rollMetaDay();
+  const required = new Map<ConsumableId, number>();
   for (const id of ids) {
-    if (st.consumables[id] > 0) st.consumables[id] -= 1;
+    if (!CONSUMABLES.some((def) => def.id === id)) return false;
+    required.set(id, (required.get(id) ?? 0) + 1);
   }
-  saveMetaState(st);
+  for (const [id, count] of required) {
+    if (st.consumables[id] < count) return false;
+  }
+
+  const before = structuredCloneSafe(st);
+  for (const [id, count] of required) st.consumables[id] -= count;
+  return saveMetaStateOrRollback(st, before);
 }
 
 /** Скин куплен за кроны прямо в витрине (цена — из SKINS). */
