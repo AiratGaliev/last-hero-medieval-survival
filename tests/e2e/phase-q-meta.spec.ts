@@ -2306,3 +2306,134 @@ test('chronicle pass progresses for 30 days independently from 14-day world seas
     premiumAfterThirtyDays: false,
   });
 });
+
+
+test('gold rush season increases vein output and every ore expenditure', async ({ page }) => {
+  await page.addInitScript(() => {
+    localStorage.clear();
+    const nativeNow = Date.now.bind(Date);
+    const targetNow = 29 * 86_400_000 + 60_000; // сезон 2: «Золотая лихорадка»
+    const offset = targetNow - nativeNow();
+    Date.now = () => nativeNow() + offset;
+  });
+  await page.goto('/?lang=en&ysdk=mock');
+  await expect(page.locator('#game canvas')).toBeVisible({ timeout: startupTimeout });
+  await expect(page.locator('#boot')).toHaveCount(0, { timeout: startupTimeout });
+  await expect.poll(() => page.evaluate(() =>
+    ((window as Window & { __tss?: { scene: { isActive(key: string): boolean } } }).__tss?.scene.isActive('Menu')) ?? false,
+  ), { timeout: startupTimeout }).toBe(true);
+  await page.evaluate(() => {
+    const game = (window as Window & {
+      __tss?: { scene: { getScene(key: string): unknown } };
+    }).__tss;
+    if (!game) throw new Error('Phaser runtime is unavailable');
+    const menu = game.scene.getScene('Menu') as {
+      selectedHero?: string; selectedDiff?: string;
+      scene: { start(key: string, data: { hero: string; diff: string }): void };
+    };
+    menu.scene.start('Game', { hero: menu.selectedHero ?? 'warrior', diff: menu.selectedDiff ?? 'normal' });
+  });
+  await expect.poll(() => page.evaluate(() =>
+    ((window as Window & { __tss?: { scene: { isActive(key: string): boolean } } }).__tss?.scene.isActive('Game')) ?? false,
+  ), { timeout: startupTimeout }).toBe(true);
+
+  const result = await page.evaluate(async () => {
+    const game = (window as Window & { __tss?: { scene: { getScene(key: string): unknown } } }).__tss;
+    if (!game) throw new Error('Phaser runtime is unavailable');
+    const scene = game.scene.getScene('Game') as {
+      seasonMod: string | null;
+      economy: {
+        buildingCost(kind: string): { wood?: number; ore?: number; meat?: number };
+        hireCost(weapon: string): { wood?: number; ore?: number; meat?: number };
+      };
+    };
+    const data = await import('/src/game/data.ts') as {
+      BUILDING_PLANS: Record<string, { cost: { wood?: number; ore?: number; meat?: number } }>;
+    };
+    const constants = await import('/src/game/constants.ts') as {
+      HIRE_COST: Record<string, { wood?: number; ore?: number; meat?: number }>;
+    };
+    const building = scene.economy.buildingCost('barracks');
+    const hire = scene.economy.hireCost('lance');
+    return {
+      season: scene.seasonMod,
+      buildingOre: building.ore,
+      expectedBuildingOre: Math.round((data.BUILDING_PLANS.barracks.cost.ore ?? 0) * 1.25),
+      buildingWood: building.wood,
+      baseBuildingWood: data.BUILDING_PLANS.barracks.cost.wood,
+      hireOre: hire.ore,
+      expectedHireOre: Math.round((constants.HIRE_COST.lance.ore ?? 0) * 1.25),
+      hireWood: hire.wood,
+      baseHireWood: constants.HIRE_COST.lance.wood,
+    };
+  });
+
+  expect(result.season).toBe('gold_rush_world');
+  expect(result.buildingOre).toBe(result.expectedBuildingOre);
+  expect(result.buildingOre).toBe(19);
+  expect(result.buildingWood).toBe(result.baseBuildingWood);
+  expect(result.hireOre).toBe(result.expectedHireOre);
+  expect(result.hireOre).toBe(13);
+  expect(result.hireWood).toBe(result.baseHireWood);
+});
+
+test('ogre return season increases only phase-two castle attack cadence', async ({ page }) => {
+  await page.addInitScript(() => {
+    localStorage.clear();
+    const nativeNow = Date.now.bind(Date);
+    const targetNow = 43 * 86_400_000 + 60_000; // сезон 3: «Возвращение Огра»
+    const offset = targetNow - nativeNow();
+    Date.now = () => nativeNow() + offset;
+  });
+  await page.goto('/?lang=en&ysdk=mock');
+  await expect(page.locator('#game canvas')).toBeVisible({ timeout: startupTimeout });
+  await expect(page.locator('#boot')).toHaveCount(0, { timeout: startupTimeout });
+  await expect.poll(() => page.evaluate(() =>
+    ((window as Window & { __tss?: { scene: { isActive(key: string): boolean } } }).__tss?.scene.isActive('Menu')) ?? false,
+  ), { timeout: startupTimeout }).toBe(true);
+  await page.evaluate(() => {
+    const game = (window as Window & {
+      __tss?: { scene: { getScene(key: string): unknown } };
+    }).__tss;
+    if (!game) throw new Error('Phaser runtime is unavailable');
+    const menu = game.scene.getScene('Menu') as {
+      selectedHero?: string; selectedDiff?: string;
+      scene: { start(key: string, data: { hero: string; diff: string }): void };
+    };
+    menu.scene.start('Game', { hero: menu.selectedHero ?? 'warrior', diff: menu.selectedDiff ?? 'normal' });
+  });
+  await expect.poll(() => page.evaluate(() =>
+    ((window as Window & { __tss?: { scene: { isActive(key: string): boolean } } }).__tss?.scene.isActive('Game')) ?? false,
+  ), { timeout: startupTimeout }).toBe(true);
+
+  const result = await page.evaluate(() => {
+    const game = (window as Window & { __tss?: { scene: { getScene(key: string): unknown } } }).__tss;
+    if (!game) throw new Error('Phaser runtime is unavailable');
+    const scene = game.scene.getScene('Game') as {
+      seasonMod: string | null;
+      spawnBoss(): void;
+      bossPhaseCheck(): void;
+      boss: {
+        hp: number; maxHp: number; siege: boolean; aiState: string;
+        buildingAttackIntervalMs: number;
+      } | null;
+    };
+    scene.spawnBoss();
+    const boss = scene.boss;
+    if (!boss) throw new Error('Boss was not created');
+    const normalInterval = boss.buildingAttackIntervalMs;
+    boss.hp = boss.maxHp * 0.49;
+    scene.bossPhaseCheck();
+    return {
+      season: scene.seasonMod,
+      normalInterval,
+      phaseTwoInterval: boss.buildingAttackIntervalMs,
+      phaseTwo: boss.aiState === 'bossPhase2' && boss.siege,
+    };
+  });
+
+  expect(result.season).toBe('ogre_return');
+  expect(result.normalInterval).toBe(535);
+  expect(result.phaseTwo).toBe(true);
+  expect(result.phaseTwoInterval).toBe(400);
+});
