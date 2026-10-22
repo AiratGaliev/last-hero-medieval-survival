@@ -7,14 +7,14 @@ import type { Pawn } from './Pawn';
 // ============ Враг — существо из пака enemies/ (TZ §A) ============
 
 /** Тип снаряда, который враг выдаёт через контекст сцены */
-export type EnemyShotKind = 'bone' | 'hex' | 'harpoon';
+export type EnemyShotKind = 'bone' | 'hex' | 'harpoon' | 'bomb';
 
 export interface EnemyContext {
   playerX(): number;
   playerY(): number;
   /** Ранг «Ополчения» увеличивает радиус перехвата осады. */
   siegeInterceptRadius?(): number;
-  /** Гнолл, шаман или гарпун-акула завершают анимацию броска. */
+  /** Гнолл, шаман, гарпун-акула или рыба-бомба выпускают свой снаряд. */
   onEnemyShoot(x: number, y: number, proj: EnemyShotKind): void;
   /** Огр бьёт клубом в землю: ударная волна по радиусу */
   onBossSlam(x: number, y: number): void;
@@ -60,6 +60,10 @@ export class Enemy extends Phaser.Physics.Arcade.Sprite {
   private harpoonWindupActive = false;
   /** Независимый fallback броска: AI tick не должен быть единственным таймером. */
   private harpoonWindupTimer: Phaser.Time.TimerEvent | null = null;
+  /** Плевок бомбы: таймер страхует одноразовую анимацию от потерянного callback. */
+  private bombWindupActive = false;
+  private bombShotFired = false;
+  private bombWindupTimer: Phaser.Time.TimerEvent | null = null;
   private atkCd = 0;
   private summonCd = 8000; // мс до первого зова свиты
   private chargeDirX = 0;
@@ -251,6 +255,23 @@ export class Enemy extends Phaser.Physics.Arcade.Sprite {
     this.aiState = 'chase';
   }
 
+  /** Выпустить бомбу один раз по завершении анимации или независимого таймера. */
+  private fireBomb(): void {
+    if (!this.active || this.dead || !this.bombWindupActive || this.bombShotFired) return;
+    this.bombShotFired = true;
+    this.bombWindupActive = false;
+    this.bombWindupTimer?.remove(false);
+    this.bombWindupTimer = null;
+    if (this.animationCompleteHandler) {
+      this.off('animationcomplete', this.animationCompleteHandler);
+      this.animationCompleteHandler = null;
+    }
+    this.lastAnim = '';
+    this.ctx.onEnemyShoot(this.x, this.y, 'bomb');
+    this.shootCd = 2500;
+    this.aiState = 'chase';
+  }
+
   // ================= ВЫБОР ЦЕЛИ (TZ §A.5) =================
 
   /** Герой в 600 px → герой; иначе гарнизон в 900 px; иначе гражданский;
@@ -321,8 +342,9 @@ export class Enemy extends Phaser.Physics.Arcade.Sprite {
 
     const dx = b.x - this.x, dy = b.y - this.y;
     const dist = Math.max(1, Math.hypot(dx, dy));
-    const ranged = this.kind === 'gnoll' || this.kind === 'shaman';
-    const stopDist = ranged ? 300 : 110;
+    const bombFish = this.kind === 'bomb-fish';
+    const ranged = this.kind === 'gnoll' || this.kind === 'shaman' || bombFish;
+    const stopDist = bombFish ? 235 : ranged ? 300 : 110;
 
     if (dist > stopDist + 30) {
       const vx = (dx / dist) * this.speed, vy = (dy / dist) * this.speed;
@@ -415,11 +437,14 @@ export class Enemy extends Phaser.Physics.Arcade.Sprite {
         // (5 / 2.4 + 3 / 6 ≈ 2.58 HP/с с учётом DoT); босс фазы 2 — 535 мс.
         this.buildingAtkCd = this.buildingAttackIntervalMs;
         if (ranged) {
-          // Бросок по зданию: шаман — огненный шар (поджог), гнолл — кость
-          this.playOnce(`${this.kind}-shoot`, () => {
+          // Шаман швыряет огненный шар, гнолл — кость, рыба — настоящую бомбу.
+          const anim = bombFish ? `${this.kind}-atk` : `${this.kind}-shoot`;
+          this.playOnce(anim, () => {
             if (this.active && this.siege) {
+              const shot: EnemyShotKind = this.kind === 'shaman' ? 'hex'
+                : bombFish ? 'bomb' : 'bone';
               this.ctx.siegeShoot(
-                this.kind === 'shaman' ? 'hex' : 'bone',
+                shot,
                 this.x, this.y, b.x, b.y,
                 this.kind === 'shaman',
                 this.buildingTarget,
@@ -443,7 +468,7 @@ export class Enemy extends Phaser.Physics.Arcade.Sprite {
   /** Фактический интервал атак по зданию, также читается регрессионной проверкой. */
   get buildingAttackIntervalMs(): number {
     if (this.kind === 'boss') return this.ogreReturnAggression ? 400 : 535;
-    return this.kind === 'shaman' ? 2400 : 1500;
+    return this.kind === 'shaman' ? 2400 : this.kind === 'bomb-fish' ? 2800 : 1500;
   }
 
   /** Красный телеграф осадного рывка: FILL tint не зависит от случайного фидбека урона. */
@@ -792,28 +817,40 @@ export class Enemy extends Phaser.Physics.Arcade.Sprite {
       }
 
       case 'bomb-fish': {
-        // Рыба-бомба: катится к игроку, мигает и взрывается
-        this.stateTimer -= delta;
+        // Рыба держит дистанцию и плюётся бомбой; это не камикадзе.
+        this.shootCd -= delta;
         if (this.aiState === 'windup') {
-          // Телеграф: мигание + раздувание, затем взрыв
-          const blink = Math.floor(this.stateTimer / 90) % 2 === 0;
-          this.setTint(blink ? 0xff5540 : 0xffffff);
-          this.setTintMode(Phaser.TintModes.FILL);
-          const grow = 1 + (1 - Math.max(0, this.stateTimer) / 620) * 0.3;
-          this.setScale(this.def.scale * grow);
-          if (this.stateTimer <= 0) {
-            this.ctx.onBomberExplode(this.x, this.y, this, true);
-            return;
-          }
+          vx = 0;
+          vy = 0;
+          this.stateTimer = Math.max(0, this.stateTimer - delta);
+          if (this.stateTimer <= 0) this.fireBomb();
         } else {
-          vx = nx * this.speed; vy = ny * this.speed;
-          // Покачивание в полёне-разбеге
-          this.rotation = Math.sin(time / 120) * 0.12;
-          if (dist < 115) {
+          const preferred = 290;
+          if (dist > preferred + 45) {
+            vx = nx * this.speed;
+            vy = ny * this.speed;
+          } else if (dist < preferred - 60) {
+            vx = -nx * this.speed;
+            vy = -ny * this.speed;
+          } else {
+            // Небольшой стрейф не позволяет рыбе застыть на одной линии огня.
+            vx = -ny * this.speed * 0.35;
+            vy = nx * this.speed * 0.35;
+          }
+          this.rotation = Math.sin(time / 160) * 0.08;
+          if (this.shootCd <= 0 && dist < 540 && this.aiState === 'chase') {
+            this.setFlipX(this.faceDir(nx));
             this.aiState = 'windup';
-            this.stateTimer = 620;
-            this.playOnce(`${this.kind}-atk`);
-            audio.play('slam');
+            this.stateTimer = 700;
+            this.bombShotFired = false;
+            this.bombWindupActive = true;
+            this.bombWindupTimer?.remove(false);
+            this.bombWindupTimer = this.scene.time.delayedCall(700, () => {
+              this.bombWindupTimer = null;
+              this.fireBomb();
+            });
+            this.playOnce(`${this.kind}-atk`, () => this.fireBomb());
+            audio.play('shoot');
           }
         }
         break;
@@ -1012,6 +1049,13 @@ export class Enemy extends Phaser.Physics.Arcade.Sprite {
     this.harpoonWindupTimer?.remove(false);
     this.harpoonWindupTimer = null;
     this.harpoonWindupActive = false;
+    this.bombWindupTimer?.remove(false);
+    this.bombWindupTimer = null;
+    this.bombWindupActive = false;
+    if (this.animationCompleteHandler) {
+      this.off('animationcomplete', this.animationCompleteHandler);
+      this.animationCompleteHandler = null;
+    }
     this.shadow.destroy();
     this.hpBar?.destroy();
     this.auraRing?.destroy();
