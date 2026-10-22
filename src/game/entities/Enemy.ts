@@ -19,7 +19,6 @@ export interface EnemyContext {
   /** Огр бьёт клубом в землю: ударная волна по радиусу */
   onBossSlam(x: number, y: number): void;
   onBossSummon(x: number, y: number): void;
-  onBomberExplode(x: number, y: number, self: Enemy, selfDestruct: boolean): void;
   enemiesNear(x: number, y: number, radius: number): Phaser.Physics.Arcade.Sprite[];
   /** Враг ранит пешку — осада по лимиту профиля (§E.4), обычный бой — §A.5 */
   attackPawn(pawn: Pawn, dmg: number, siege: boolean): void;
@@ -850,7 +849,6 @@ export class Enemy extends Phaser.Physics.Arcade.Sprite {
               this.fireBomb();
             });
             this.playOnce(`${this.kind}-atk`, () => this.fireBomb());
-            audio.play('shoot');
           }
         }
         break;
