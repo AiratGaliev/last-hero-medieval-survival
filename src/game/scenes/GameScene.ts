@@ -2757,7 +2757,7 @@ private ordersUnlocked(): boolean {
 
     // Рыба-бомба, убитая оружием: взрыв бьёт врагов (цепная реакция!)
     if (e.def.kind === 'bomb-fish') {
-      this.fishBombExplode(x, y, false, src);
+      this.fishBombExplode(x, y, src);
     }
 
     this.effects.explosion(x, y, big ? 1.7 : e.def.scale * 1.15, big ? 2 : 1);
@@ -3145,8 +3145,8 @@ private bossDeathSequence(e: Enemy): boolean {
     }
   }
 
-  /** Взрыв рыбы-бомбы при смерти: сохраняет цепную реакцию, но не самоубийственную атаку. */
-  private fishBombExplode(x: number, y: number, selfDestruct: boolean, src?: WeaponId): void {
+  /** Взрыв рыбы-бомбы при смерти: сохраняет цепную реакцию между соседними врагами. */
+  private fishBombExplode(x: number, y: number, src?: WeaponId): void {
     const def = ENEMIES['bomb-fish'];
     const dmg = Math.round((def.explodeDmg ?? 24) * this.spawner.dmgMult);
     const R = def.explodeRadius ?? 150;
@@ -3155,10 +3155,6 @@ private bossDeathSequence(e: Enemy): boolean {
     audio.play('explosion');
     this.shakeCamera(170, 0.0045);
     this.hitstop(70);
-    // Урон игроку — только если бочка дошла сама
-    if (selfDestruct && Math.hypot(this.player.x - x, this.player.y - y) < R) {
-      this.hurtPlayer(dmg);
-    }
     // Урон толпе врагов (в т.ч. другие бочки → цепная реакция)
     for (const s of this.enemiesNear(x, y, R + 40)) {
       const e = s as Enemy;
@@ -4180,11 +4176,6 @@ private bossDeathSequence(e: Enemy): boolean {
           if (ok) summoned++;
         }
         if (summoned > 0) this.hud.announce(t('game.bossSummon'), '#ff8866');
-      },
-      onBomberExplode: (x, y, self, selfDestruct) => {
-        // Уничтожаем рыбу-бомбу ДО взрыва: взрыв не должен бить её саму (иначе рекурсия)
-        this.enemyGroup.remove(self, true, true);
-        this.fishBombExplode(x, y, selfDestruct);
       },
       enemiesNear: (x, y, r) => this.enemiesNear(x, y, r),
       // Враг ранит пешку (§A.5): обычный бой — напрямую, осада — по лимиту профиля
