@@ -877,7 +877,10 @@ export interface MetaState {
   matchesPlayed: number;
   /** Сохранённые A/B-варианты; синхронизируются с Player Data. */
   flags: Record<string, string>;
+  /** Количество убийств/использований; используется для порогов мастерства. */
   codex: Record<string, number>;
+  /** Факт встречи/использования записи без требования убить врага. */
+  codexSeen: Record<string, boolean>;
   quests: QuestDayState;
   weekly: { week: string; progress: number; stage: number; claimed: boolean };
   dailyBonus: { last: string; lastAt: number; streak: number };
@@ -989,6 +992,7 @@ const EMPTY: MetaState = {
   matchesPlayed: 0,
   flags: {},
   codex: {},
+  codexSeen: {},
   quests: { date: '', ids: [], progress: {}, done: [], rerolls: 0 },
   weekly: { week: '', progress: 0, stage: 0, claimed: false },
   dailyBonus: { last: '', lastAt: 0, streak: 0 },
@@ -1062,8 +1066,23 @@ function sanitize(raw: unknown): MetaState {
     })(),
     codex: (() => {
       const out: Record<string, number> = {};
-      if (o.codex && typeof o.codex === 'object') {
+      if (o.codex && typeof o.codex === 'object' && !Array.isArray(o.codex)) {
         for (const [k, v] of Object.entries(o.codex)) out[k] = int(v);
+      }
+      return out;
+    })(),
+    codexSeen: (() => {
+      const out: Record<string, boolean> = {};
+      if (o.codexSeen && typeof o.codexSeen === 'object' && !Array.isArray(o.codexSeen)) {
+        for (const [k, v] of Object.entries(o.codexSeen)) {
+          if (v === true) out[k] = true;
+        }
+      }
+      // Старый положительный счётчик означает, что запись уже была открыта.
+      if (o.codex && typeof o.codex === 'object' && !Array.isArray(o.codex)) {
+        for (const [k, v] of Object.entries(o.codex)) {
+          if (int(v) > 0) out[k] = true;
+        }
       }
       return out;
     })(),
@@ -1614,7 +1633,12 @@ export function applyRunToMeta(s: RunSummary): RunMetaResult {
 
   // --- Кодекс: счётчики встречи (§H.10)
   for (const [k, v] of Object.entries(s.killsByKind)) {
-    st.codex[k] = (st.codex[k] ?? 0) + v;
+    if (v <= 0) continue;
+    const previous = st.codex[k] ?? 0;
+    const alreadySeen = st.codexSeen[k] === true || previous > 0;
+    st.codex[k] = previous + v;
+    st.codexSeen[k] = true;
+    if (!alreadySeen) track('codex_entry', { entry: k });
   }
   const buildingKinds: Exclude<BuildingKind, 'castle'>[] = [
     'house', 'barracks', 'tower', 'archery', 'monastery',
@@ -1623,11 +1647,26 @@ export function applyRunToMeta(s: RunSummary): RunMetaResult {
     const count = Math.max(0, Math.floor(s.buildingKindsBuilt?.[buildingId] ?? 0));
     if (count <= 0) continue;
     const previous = st.codex[buildingId] ?? 0;
+    const alreadySeen = st.codexSeen[buildingId] === true || previous > 0;
     st.codex[buildingId] = previous + count;
-    if (previous === 0) track('codex_entry', { entry: buildingId });
+    st.codexSeen[buildingId] = true;
+    if (!alreadySeen) track('codex_entry', { entry: buildingId });
   }
-  if (s.bossKilled) st.codex['boss_ogre'] = (st.codex['boss_ogre'] ?? 0) + 1;
-  for (const c of s.cardsPicked) st.codex[`card_${c}`] = (st.codex[`card_${c}`] ?? 0) + 1;
+  if (s.bossKilled) {
+    const previous = st.codex['boss_ogre'] ?? 0;
+    const alreadySeen = st.codexSeen['boss_ogre'] === true || previous > 0;
+    st.codex['boss_ogre'] = previous + 1;
+    st.codexSeen['boss_ogre'] = true;
+    if (!alreadySeen) track('codex_entry', { entry: 'boss_ogre' });
+  }
+  for (const c of s.cardsPicked) {
+    const id = `card_${c}`;
+    const previous = st.codex[id] ?? 0;
+    const alreadySeen = st.codexSeen[id] === true || previous > 0;
+    st.codex[id] = previous + 1;
+    st.codexSeen[id] = true;
+    if (!alreadySeen) track('codex_entry', { entry: id });
+  }
 
   // --- Вехи полноты кодекса (§H.10): 50% золото, 75% титул, 100% скин
   // Оцениваем изменённый снимок текущего рана, а не сохранение предыдущего матча.
@@ -2242,17 +2281,34 @@ export function chainClaimed(chainId: string, tier: number): boolean {
   return rollMetaDay().chains.claimed.includes(`${chainId}:${tier}`);
 }
 
-/** Отметить запись кодекса (встречено/использовано). */
-export function markCodex(id: string, n = 1): void {
+/** Открывает запись по факту встречи/использования, не изменяя число убийств. */
+export function markCodexSeen(id: string): void {
   if (!id) return;
-  const st = rollMetaDay();
-  const was = st.codex[id] ?? 0;
-  st.codex[id] = was + n;
+  // Не вызываем rollMetaDay() для каждого спавна: GameScene уже инициализировал
+  // календарь рана, а путь встречи должен оставаться дешёвым в боевом цикле.
+  const st = loadMetaState();
+  if (st.codexSeen[id] === true || (st.codex[id] ?? 0) > 0) return;
+  st.codexSeen[id] = true;
   saveMetaState(st);
-  // §K.2: `codex_entry` — сигнал открытия записи. Без него нельзя понять,
-  // какие записи кодекса реально открываются игроками (§H.10 — перфекционистский
-  // двигатель возврата, его эффективность измеряется этим событием).
-  if (was === 0) track('codex_entry', { entry: id });
+  track('codex_entry', { entry: id });
+}
+
+/** Открыта ли запись кодекса; положительные legacy-счётчики остаются совместимыми. */
+export function codexEntrySeen(id: string): boolean {
+  const st = rollMetaDay();
+  return st.codexSeen[id] === true || (st.codex[id] ?? 0) > 0;
+}
+
+/** Отметить убийства или использование записи (с отдельным фактом открытия). */
+export function markCodex(id: string, n = 1): void {
+  if (!id || n <= 0) return;
+  const st = rollMetaDay();
+  const previous = st.codex[id] ?? 0;
+  const alreadySeen = st.codexSeen[id] === true || previous > 0;
+  st.codex[id] = previous + n;
+  st.codexSeen[id] = true;
+  saveMetaState(st);
+  if (!alreadySeen) track('codex_entry', { entry: id });
 }
 
 /** Вычисляет полноту кодекса для указанного снимка, в том числе ещё не сохранённого. */
@@ -2263,7 +2319,7 @@ function codexProgressForState(st: MetaState): { seen: number; total: number; ra
     for (const e of sec.entries) {
       total += 1;
       const count = st.codex[e.id] ?? 0;
-      if (count > 0) seen += 1;
+      if (st.codexSeen[e.id] === true || count > 0) seen += 1;
     }
   }
   return { seen, total, ratio: total > 0 ? seen / total : 0 };
