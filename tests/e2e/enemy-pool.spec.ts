@@ -11,6 +11,9 @@ type RuntimeEnemy = {
   active: boolean;
   x: number;
   y: number;
+  aiState?: string;
+  shootCd?: number;
+  preUpdate?: (time: number, delta: number) => void;
   anims: {
     currentAnim?: { key: string } | null;
     currentFrame?: { index: number } | null;
@@ -22,7 +25,7 @@ type RuntimeScene = {
   hints: { current: { id: string; ui: string } | null };
   time: { paused: boolean; now: number };
   physics: { world: { resume: () => void } };
-  player: { x: number; y: number };
+  player: { x: number; y: number; hp?: number; setPosition?: (x: number, y: number) => unknown };
   enemyGroup: {
     getChildren: () => RuntimeEnemy[];
     contains: (enemy: RuntimeEnemy) => boolean;
@@ -30,6 +33,16 @@ type RuntimeScene = {
   };
   spawner: { update: (seconds: number) => void; stopped: boolean };
   spawnEnemy: (kind: string, x: number, y: number) => boolean;
+  projectiles?: { enemyShots: { getChildren: () => Array<{
+    active: boolean; shotKind?: string; x: number; y: number;
+    texture: { key: string }; targetB?: { x: number; y: number } | null;
+  }> } };
+  economy?: { buildings: Array<{ kind: string; x: number; y: number; hp: number; maxHp: number; alive: boolean }> };
+  settlement?: {
+    siegeIdx: number;
+    damageBuilding: (building: unknown, dmg: number, siegeIdx: number, isBoss?: boolean) => void;
+    beginSiege: (profileIndex: number, woundCap: number, enemies: RuntimeEnemy[]) => void;
+  };
   onEnemyDeath: (enemy: RuntimeEnemy) => void;
   hintOverlayPaused: boolean;
   overlayOpen: boolean;
@@ -626,4 +639,159 @@ test('Red Valley increases the expected skull/shaman share by exactly 25% in its
   expect(shares.baseline).toBeCloseTo(0.38, 4);
   expect(shares.redValley).toBeCloseTo(0.475, 4);
   expect(shares.relativeIncrease).toBeCloseTo(1.25, 3);
+});
+
+test('bomb fish spits the bundled bomb projectile in normal combat instead of self-destructing', async ({ page }) => {
+  const pageErrors: string[] = [];
+  page.on('pageerror', (error) => pageErrors.push(error.message));
+  await openApp(page);
+  await startGameplay(page);
+
+  await page.evaluate(() => {
+    const game = (window as unknown as { __tss?: RuntimeGame }).__tss;
+    if (!game) throw new Error('Phaser game instance is unavailable');
+    const scene = game.scene.getScene('Game') as RuntimeScene & {
+      fishBombProjectileExplode: (x: number, y: number, dmg: number, radius: number) => void;
+      __bombImpactCount?: number;
+    };
+    scene.spawner.stopped = true;
+    for (const enemy of scene.enemyGroup.getChildren()) scene.enemyGroup.remove(enemy, true, true);
+    const bombScene = scene as RuntimeScene & {
+      player: RuntimeScene['player'] & { hp: number };
+    };
+    const originalImpact = scene.fishBombProjectileExplode.bind(scene);
+    scene.__bombImpactCount = 0;
+    scene.fishBombProjectileExplode = (x, y, dmg, radius) => {
+      scene.__bombImpactCount = (scene.__bombImpactCount ?? 0) + 1;
+      originalImpact(x, y, dmg, radius);
+    };
+    if (!scene.spawnEnemy('bomb-fish', scene.player.x + 360, scene.player.y)) throw new Error('Could not spawn bomb fish');
+    const fish = scene.enemyGroup.getChildren().find((e) => e.active && e.kind === 'bomb-fish') as RuntimeEnemy & {
+      shootCd: number; preUpdate: (time: number, delta: number) => void;
+    } | undefined;
+    if (!fish) throw new Error('Bomb fish disappeared after spawn');
+    fish.shootCd = 0;
+    fish.preUpdate(scene.time.now + 1_000, 16);
+    (window as unknown as { __bombFishProbe?: {
+      startHp: number; fish: RuntimeEnemy;
+      scene: RuntimeScene & { __bombImpactCount?: number; player: { hp?: number } };
+    } }).__bombFishProbe = { startHp: bombScene.player.hp, fish, scene };
+  });
+
+  await expect.poll(() => page.evaluate(() => {
+    const game = (window as unknown as { __tss?: RuntimeGame }).__tss;
+    const scene = game?.scene.getScene('Game');
+    return scene?.projectiles?.enemyShots.getChildren().some((shot) =>
+      shot.active && shot.shotKind === 'bomb' && shot.texture.key === 'proj-bomb') ?? false;
+  }), { timeout: 6_000, message: 'Bomb fish should create a projectile using bomb-spinning.png' }).toBe(true);
+
+  await expect.poll(() => page.evaluate(() => {
+    const probe = (window as unknown as { __bombFishProbe?: {
+      scene: RuntimeScene & { __bombImpactCount?: number };
+    } }).__bombFishProbe;
+    return probe?.scene.__bombImpactCount ?? 0;
+  }), { timeout: 5_000, message: 'The launched bomb should resolve its impact callback exactly once' }).toBe(1);
+
+  const report = await page.evaluate(() => {
+    const game = (window as unknown as { __tss?: RuntimeGame }).__tss;
+    const probe = (window as unknown as { __bombFishProbe?: {
+      startHp: number; fish: RuntimeEnemy;
+      scene: RuntimeScene & { player: { hp?: number }; __bombImpactCount?: number };
+    } }).__bombFishProbe;
+    if (!game || !probe) throw new Error('Missing bomb-fish runtime probe');
+    return {
+      hasProjectileTexture: game.textures.exists('proj-bomb'),
+      hasFuseTexture: game.textures.exists('proj-bomb-fuse'),
+      hasIdleTexture: game.textures.exists('proj-bomb-idle'),
+      hasSpinAnimation: game.anims.exists('proj-bomb-spin'),
+      hasFuseAnimation: game.anims.exists('proj-bomb-fuse-lit'),
+      fishStillAlive: probe.fish.active,
+      damagedHero: typeof probe.scene.player.hp === 'number' ? probe.scene.player.hp < probe.startHp : false,
+      impacts: probe.scene.__bombImpactCount ?? 0,
+    };
+  });
+  expect(report.hasProjectileTexture).toBe(true);
+  expect(report.hasFuseTexture).toBe(true);
+  expect(report.hasIdleTexture).toBe(true);
+  expect(report.hasSpinAnimation).toBe(true);
+  expect(report.hasFuseAnimation).toBe(true);
+  expect(report.fishStillAlive).toBe(true);
+  expect(report.damagedHero).toBe(true);
+  expect(report.impacts).toBe(1);
+  expect(pageErrors).toEqual([]);
+});
+
+test('bomb fish uses its bomb projectile against a settlement building during a siege', async ({ page }) => {
+  const pageErrors: string[] = [];
+  page.on('pageerror', (error) => pageErrors.push(error.message));
+  await openApp(page);
+  await startGameplay(page);
+
+  await page.evaluate(() => {
+    const game = (window as unknown as { __tss?: RuntimeGame }).__tss;
+    if (!game) throw new Error('Phaser game instance is unavailable');
+    const scene = game.scene.getScene('Game') as RuntimeScene & { __bombBuildingImpacts?: number };
+    const runtime = scene as RuntimeScene & {
+      economy: NonNullable<RuntimeScene['economy']>;
+      settlement: NonNullable<RuntimeScene['settlement']>;
+      player: RuntimeScene['player'] & { setPosition: (x: number, y: number) => unknown };
+    };
+    scene.spawner.stopped = true;
+    for (const enemy of scene.enemyGroup.getChildren()) scene.enemyGroup.remove(enemy, true, true);
+    const building = runtime.economy.buildings.find((item) => item.alive && item.kind === 'castle')
+      ?? runtime.economy.buildings.find((item) => item.alive);
+    if (!building) throw new Error('Could not find an alive settlement building');
+    runtime.player.setPosition(building.x + 700, building.y);
+    if (!scene.spawnEnemy('bomb-fish', building.x + 180, building.y)) throw new Error('Could not spawn siege bomb fish');
+    const fish = scene.enemyGroup.getChildren().find((e) => e.active && e.kind === 'bomb-fish') as RuntimeEnemy & {
+      siege: boolean; buildingTarget: unknown; preUpdate: (time: number, delta: number) => void;
+    } | undefined;
+    if (!fish) throw new Error('Siege bomb fish disappeared after spawn');
+    fish.siege = true;
+    fish.buildingTarget = building;
+    const buildingHpBefore = building.hp;
+    // Включаем настоящий settlement gate для осады, а не проверяем попадание
+    // с siegeIdx=-1, которое относилось бы к урону вне осады.
+    runtime.settlement.beginSiege(0, 3, [fish]);
+    const original = runtime.settlement.damageBuilding.bind(runtime.settlement);
+    runtime.settlement.damageBuilding = (target, dmg, siegeIdx, isBoss) => {
+      if (target === building) scene.__bombBuildingImpacts = (scene.__bombBuildingImpacts ?? 0) + 1;
+      original(target, dmg, siegeIdx, isBoss);
+    };
+    fish.preUpdate(scene.time.now + 1_000, 16);
+    (window as unknown as { __bombSiegeProbe?: {
+      scene: RuntimeScene & { __bombBuildingImpacts?: number };
+      buildingHpBefore: number;
+      building: typeof building;
+    } }).__bombSiegeProbe = { scene, buildingHpBefore, building };
+  });
+
+  await expect.poll(() => page.evaluate(() => {
+    const game = (window as unknown as { __tss?: RuntimeGame }).__tss;
+    return game?.scene.getScene('Game').projectiles?.enemyShots.getChildren().some((shot) =>
+      shot.active && shot.shotKind === 'bomb' && shot.targetB !== null && shot.targetB !== undefined) ?? false;
+  }), { timeout: 6_000, message: 'Siege fish should throw a bomb toward the building target' }).toBe(true);
+
+  await expect.poll(() => page.evaluate(() => {
+    const probe = (window as unknown as { __bombSiegeProbe?: {
+      scene: RuntimeScene & { __bombBuildingImpacts?: number };
+    } }).__bombSiegeProbe;
+    return probe?.scene.__bombBuildingImpacts ?? 0;
+  }), { timeout: 6_000, message: 'The siege bomb should invoke the building-damage path on impact' }).toBeGreaterThan(0);
+  const siegeDamage = await page.evaluate(() => {
+    const probe = (window as unknown as { __bombSiegeProbe?: {
+      buildingHpBefore: number;
+      building: { hp: number };
+      scene: RuntimeScene & { settlement?: { siegeIdx: number } };
+    } }).__bombSiegeProbe;
+    if (!probe) throw new Error('Missing siege bomb probe');
+    return {
+      hpBefore: probe.buildingHpBefore,
+      hpAfter: probe.building.hp,
+      activeSiegeIdx: probe.scene.settlement?.siegeIdx ?? -1,
+    };
+  });
+  expect(siegeDamage.activeSiegeIdx).toBe(0);
+  expect(siegeDamage.hpAfter).toBeLessThan(siegeDamage.hpBefore);
+  expect(pageErrors).toEqual([]);
 });
