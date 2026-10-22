@@ -1472,3 +1472,30 @@ test('first-house daily quest requires a build strictly before 2:00', async ({ p
     rewardAppliedOnce: true,
   });
 });
+
+test('daily meta, weekly progress and rewarded day limits share the Moscow calendar boundary', async ({ page }) => {
+  await page.addInitScript(() => localStorage.clear());
+  await page.goto('/?lang=en&ysdk=mock');
+  await expect(page.locator('#game canvas')).toBeVisible({ timeout: startupTimeout });
+  await expect(page.locator('#boot')).toHaveCount(0, { timeout: startupTimeout });
+
+  const calendar = await page.evaluate(async () => {
+    const moduleUrl = new URL('/src/platform/calendar.ts', window.location.origin).href;
+    const calendar = await import(/* @vite-ignore */ moduleUrl) as {
+      mskDayKey: (epochMs: number) => string;
+      mskWeekKey: (epochMs: number) => string;
+    };
+    return {
+      dayBeforeMidnight: calendar.mskDayKey(Date.UTC(2026, 9, 21, 20, 59, 59, 999)),
+      dayAtMidnight: calendar.mskDayKey(Date.UTC(2026, 9, 21, 21, 0, 0, 0)),
+      weekBeforeMonday: calendar.mskWeekKey(Date.UTC(2026, 9, 25, 20, 59, 59, 999)),
+      weekAtMonday: calendar.mskWeekKey(Date.UTC(2026, 9, 25, 21, 0, 0, 0)),
+    };
+  });
+  expect(calendar).toEqual({
+    dayBeforeMidnight: '2026-10-21',
+    dayAtMidnight: '2026-10-22',
+    weekBeforeMonday: '2026-10-19',
+    weekAtMonday: '2026-10-26',
+  });
+});
