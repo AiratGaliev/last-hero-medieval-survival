@@ -1103,7 +1103,10 @@ export class GameOverScene extends Phaser.Scene {
       resume: () => audio.unsilence(),
     });
     if (res.rewarded) {
-      depositGold(gold);
+      if (!depositGold(gold)) {
+        this.goldBtn?.setLabel(t('over.x2SaveFailed'));
+        return;
+      }
       this.goldDoubled = true;
       this.goldBtn?.setLabel(t('over.x2Done'));
       audio.play('ach');
@@ -1123,7 +1126,10 @@ export class GameOverScene extends Phaser.Scene {
       resume: () => audio.unsilence(),
     });
     if (res.rewarded) {
-      addGlory(gloryDoubleExtra(g));
+      if (!addGlory(gloryDoubleExtra(g))) {
+        this.gloryBtn?.setLabel(t('over.x2SaveFailed'));
+        return;
+      }
       this.gloryDoubled = true;
       this.gloryBtn?.setLabel(t('over.x2Done'));
       audio.play('ach');
