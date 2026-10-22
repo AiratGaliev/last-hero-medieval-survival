@@ -2230,3 +2230,79 @@ test('daily rewarded placement is not granted when its quota cannot be persisted
     storedQuota: null,
   });
 });
+
+
+test('chronicle pass progresses for 30 days independently from 14-day world seasons', async ({ page }) => {
+  await page.addInitScript(() => localStorage.clear());
+  await page.goto('/?lang=en&ysdk=mock');
+  await expect(page.locator('#game canvas')).toBeVisible({ timeout: startupTimeout });
+  await expect(page.locator('#boot')).toHaveCount(0, { timeout: startupTimeout });
+
+  const outcome = await page.evaluate(async () => {
+    const meta = await import('/src/game/meta.ts') as unknown as {
+      passSeasonIndexFor: (now?: number) => number;
+      seasonIndexFor: (now?: number) => number;
+      rollMetaDay: () => {
+        pass: { season: string; xp: number; premium: boolean; claimedFree: number; claimedPrem: number };
+      };
+      saveMetaState: (state: unknown) => boolean;
+    };
+    const originalNow = Date.now;
+    const dayMs = 86_400_000;
+    const basePassStart = Math.floor(originalNow() / (30 * dayMs)) * 30 * dayMs;
+    const nextThemeBoundary = (Math.floor(basePassStart / (14 * dayMs)) + 1) * 14 * dayMs;
+    const beforeThemeBoundary = nextThemeBoundary - 1_000;
+    const afterThemeBoundary = nextThemeBoundary + 1_000;
+
+    try {
+      Date.now = () => beforeThemeBoundary;
+      const state = meta.rollMetaDay();
+      state.pass = {
+        season: `s${meta.seasonIndexFor(beforeThemeBoundary)}`,
+        xp: 777,
+        premium: true,
+        claimedFree: 7,
+        claimedPrem: 7,
+      };
+      meta.saveMetaState(state);
+
+      const migrated = meta.rollMetaDay();
+      const afterTheme = (() => {
+        Date.now = () => afterThemeBoundary;
+        return meta.rollMetaDay();
+      })();
+      const atNextPassBoundary = (() => {
+        Date.now = () => basePassStart + 30 * dayMs + 1_000;
+        return meta.rollMetaDay();
+      })();
+
+      return {
+        themeChanged: meta.seasonIndexFor(beforeThemeBoundary) !== meta.seasonIndexFor(afterThemeBoundary),
+        migratedSeason: migrated.pass.season,
+        expectedPassSeason: `p${meta.passSeasonIndexFor(beforeThemeBoundary)}`,
+        migratedXp: migrated.pass.xp,
+        migratedPremium: migrated.pass.premium,
+        passSurvivedThemeChange: afterTheme.pass.xp === 777 && afterTheme.pass.premium,
+        newPassSeason: atNextPassBoundary.pass.season,
+        expectedNextPassSeason: `p${meta.passSeasonIndexFor(basePassStart + 30 * dayMs + 1_000)}`,
+        passXpAfterThirtyDays: atNextPassBoundary.pass.xp,
+        premiumAfterThirtyDays: atNextPassBoundary.pass.premium,
+      };
+    } finally {
+      Date.now = originalNow;
+    }
+  });
+
+  expect(outcome).toEqual({
+    themeChanged: true,
+    migratedSeason: outcome.expectedPassSeason,
+    expectedPassSeason: outcome.expectedPassSeason,
+    migratedXp: 777,
+    migratedPremium: true,
+    passSurvivedThemeChange: true,
+    newPassSeason: outcome.expectedNextPassSeason,
+    expectedNextPassSeason: outcome.expectedNextPassSeason,
+    passXpAfterThirtyDays: 0,
+    premiumAfterThirtyDays: false,
+  });
+});
