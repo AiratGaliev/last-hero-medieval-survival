@@ -914,6 +914,7 @@ export const ru = {
   // ---------- Скины и знамёна (§J.6.2) ----------
   'skins.title': 'СКИНЫ',
   'skins.apply': 'НАДЕТЬ',
+  'skins.applyFailed': 'Не удалось сохранить выбор скина.',
   'skins.applied': 'НАДЕТО',
   'skins.hero': 'Герой',
   'skins.building': 'Постройки',
