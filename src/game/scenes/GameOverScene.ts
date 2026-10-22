@@ -79,6 +79,8 @@ export interface GameOverStats {
     crownsEarned: number;
     /** False means the run's meta rewards were not committed durably. */
     persisted?: boolean;
+    /** False means a successful daily challenge did not persist its daily reward. */
+    challengeRewardSaved?: boolean;
     challenge: boolean;
     ukaz: string | null;
     endless: boolean;
@@ -386,8 +388,11 @@ export class GameOverScene extends Phaser.Scene {
     const m = s.meta;
     if (!m) return;
 
-    // Победа в вызове дня: награда раз в сутки, функция сама защищена
-    if (m.challenge && s.victory && !challengeVictoryToday()) markChallengeVictory();
+    // Победа в вызове дня: награда раз в UTC-день.
+    // Если сохранить награду не удалось, итоговый экран обязан сообщить об этом.
+    if (m.challenge && s.victory && !challengeVictoryToday()) {
+      s.meta.challengeRewardSaved = markChallengeVictory();
+    }
 
     // Авто-сабмит технических бордов. Имя — без зависимости от input:
     // гость берётся из 'tss-name', авторизованному подставит профиль
@@ -596,8 +601,8 @@ export class GameOverScene extends Phaser.Scene {
     const cx = width / 2;
     const fs = compact ? 10 : 12;
     const lines: Array<{ text: string; color: string }> = [];
-    if (m.persisted === false) {
-      lines.push({ text: t('meta.saveFailed'), color: '#b3261e' });
+    if (m.persisted === false || m.challengeRewardSaved === false) {
+      lines.push({ text: t('meta.runSaveFailed'), color: '#b3261e' });
     }
 
     // Начисление славы за матч; потолок и бонус идеальной победы (§H.16)
