@@ -13,7 +13,7 @@ test('premium pass purchased with crowns catches up and pass banner unlocks at l
 
   const initial = await page.evaluate(async () => {
     type PassState = { season: string; xp: number; premium: boolean; claimedFree: number; claimedPrem: number };
-    type TestState = { matchesPlayed: number; crowns: number; pass: PassState; banners: string[]; skins: { owned: string[] } };
+    type TestState = { matchesPlayed: number; crowns: number; pass: PassState; banners: string[]; skins: { owned: string[] }; passTitles: string[]; profileFrames: string[] };
     const meta = await import('/src/game/meta.ts') as unknown as {
       rollMetaDay: () => TestState;
       saveMetaState: (state: TestState) => boolean;
@@ -23,7 +23,7 @@ test('premium pass purchased with crowns catches up and pass banner unlocks at l
     const state = meta.rollMetaDay();
     state.matchesPlayed = 20;
     state.crowns = 290;
-    state.pass = { ...state.pass, xp: 2_000, premium: false };
+    state.pass = { ...state.pass, xp: 4_500, premium: false };
     state.banners = [];
     if (!meta.saveMetaState(state)) throw new Error('failed to prepare pass test state');
     const before = meta.ownedBanners();
@@ -35,16 +35,20 @@ test('premium pass purchased with crowns catches up and pass banner unlocks at l
       crowns: after.crowns,
       premium: after.pass.premium,
       retroSkinGranted: after.skins?.owned?.includes('skin_prem_10') ?? false,
-      atLevel20HasPassBanner: meta.ownedBanners().includes('banner_pass'),
+      passTitles: after.passTitles,
+      profileFrames: after.profileFrames,
+      beforeLevel50HasPassBanner: meta.ownedBanners().includes('banner_pass'),
     };
   });
 
   expect(initial.beforeHasPassBanner).toBe(false);
   expect(initial.purchase).toEqual({ ok: true });
-  expect(initial.crowns).toBe(200);
+  expect(initial.crowns).toBe(210);
   expect(initial.premium).toBe(true);
   expect(initial.retroSkinGranted).toBe(true);
-  expect(initial.atLevel20HasPassBanner).toBe(false);
+  expect(initial.passTitles).toEqual(['title_20', 'title_40']);
+  expect(initial.profileFrames).toEqual(['frame_chronicle']);
+  expect(initial.beforeLevel50HasPassBanner).toBe(false);
 
   const level50 = await page.evaluate(async () => {
     type TestState = { pass: { xp: number }; banners: string[] };
