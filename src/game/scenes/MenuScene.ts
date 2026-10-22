@@ -20,6 +20,7 @@ import { track } from '../../platform/analytics';
 import {
   BLESSINGS,
   bonusAvailable,
+  dailyBonusPreviewIndex,
   challengeForToday,
   challengeVictoryToday,
   CHALLENGE_MODS,
@@ -2073,7 +2074,7 @@ export class MenuScene extends Phaser.Scene {
     const top = cy - paperH / 2;
 
     const streak = loadMetaState().dailyBonus.streak;
-    const todayIdx = streak % 7;
+    const todayIdx = dailyBonusPreviewIndex();
     this.overlay?.add(this.add.text(cx, top + 36, t('bonus.title'), {
       fontFamily: FONT, fontSize: '24px', color: '#3b2410',
     }).setOrigin(0.5));
