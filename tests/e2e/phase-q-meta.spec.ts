@@ -2946,3 +2946,67 @@ test('red valley seasonal spawner wiring boosts the red tier only from minute 7 
   expect(result.activeWindow).toBeCloseTo(0.475, 4);
   expect(result.atUpperBoundary).toBeCloseTo(0.38, 4);
 });
+
+
+test('calendar rollover keeps the previous snapshot when meta storage rejects the new day', async ({ page }) => {
+  await page.addInitScript(() => localStorage.clear());
+  await page.goto('/?lang=en&ysdk=mock');
+  await expect(page.locator('#game canvas')).toBeVisible({ timeout: startupTimeout });
+  await expect(page.locator('#boot')).toHaveCount(0, { timeout: startupTimeout });
+
+  const outcome = await page.evaluate(async () => {
+    type CalendarState = {
+      quests: { date: string; ids: string[]; progress: Record<string, number>; done: string[]; rerolls: number };
+      weekly: { week: string; progress: number; stage: number; claimed: boolean };
+      season: { index: number; runs: number; claimed: number };
+      pass: { season: string; xp: number; premium: boolean; claimedFree: number; claimedPrem: number };
+      crownConvert: { date: string; count: number };
+    };
+    const meta = await import('/src/game/meta.ts') as unknown as {
+      rollMetaDay: () => CalendarState;
+      saveMetaState: (state: CalendarState) => boolean;
+      loadMetaState: () => CalendarState;
+    };
+    const state = meta.rollMetaDay();
+    state.quests = { date: '2000-01-01', ids: [], progress: {}, done: [], rerolls: 0 };
+    state.weekly = { week: '2000-01-01', progress: 12, stage: 2, claimed: false };
+    state.season = { index: -1, runs: 9, claimed: 2 };
+    state.pass = { season: 's0', xp: 777, premium: true, claimedFree: 7, claimedPrem: 7 };
+    state.crownConvert = { date: '2000-01-01', count: 1 };
+    meta.saveMetaState(state);
+    const originalSetItem = Storage.prototype.setItem;
+    Storage.prototype.setItem = function (key: string, value: string): void {
+      if (key === 'tss-meta2') throw new DOMException('storage disabled', 'QuotaExceededError');
+      originalSetItem.call(this, key, value);
+    };
+
+    try {
+      const rolled = meta.rollMetaDay();
+      const loaded = meta.loadMetaState();
+      const persisted = JSON.parse(localStorage.getItem('tss-meta2') ?? '{}') as CalendarState;
+      return {
+        rolledQuestDate: rolled.quests.date,
+        rolledWeek: rolled.weekly.week,
+        rolledSeason: rolled.season.index,
+        rolledPass: rolled.pass.season,
+        rolledXp: rolled.pass.xp,
+        loadedQuestDate: loaded.quests.date,
+        persistedQuestDate: persisted.quests?.date,
+        persistedPass: persisted.pass?.season,
+      };
+    } finally {
+      Storage.prototype.setItem = originalSetItem;
+    }
+  });
+
+  expect(outcome).toEqual({
+    rolledQuestDate: '2000-01-01',
+    rolledWeek: '2000-01-01',
+    rolledSeason: -1,
+    rolledPass: 's0',
+    rolledXp: 777,
+    loadedQuestDate: '2000-01-01',
+    persistedQuestDate: '2000-01-01',
+    persistedPass: 's0',
+  });
+});
