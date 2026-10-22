@@ -967,7 +967,7 @@ export const ru = {
   'store.firstBonus': 'Первая покупка ×2!',
   'store.sold': 'Куплено',
   'store.fail': 'Покупка не состоялась',
-  'meta.saveFailed': 'Прогресс не удалось сохранить. Проверьте доступ к хранилищу.',
+  'meta.runSaveFailed': 'Не удалось сохранить прогресс. Проверьте доступ к хранилищу.',
   'store.dailyOffers': 'ПРЕДЛОЖЕНИЯ ДНЯ',
   'store.refreshAd': 'ОБНОВИТЬ ЗА РОЛИК',
   'store.refreshUnavailable': 'РОЛИК НЕДОСТУПЕН',
