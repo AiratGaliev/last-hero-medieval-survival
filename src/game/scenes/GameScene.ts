@@ -280,6 +280,7 @@ export class GameScene extends Phaser.Scene {
   // ---- Сводка рана (RunSummary §K.2) ----
   private killsByKind: Record<string, number> = {};
   private buildingsBuilt = 0;
+  private buildingKindsBuilt: Partial<Record<Exclude<BuildingKind, 'castle'>, number>> = {};
   private builtBarracks = 0;
   private builtMonastery = 0;
   private builtArchery = 0;
@@ -521,7 +522,9 @@ export class GameScene extends Phaser.Scene {
     this.metaApplied = false;
     this.wave = 0;
     this.killsByKind = {};
-    this.buildingsBuilt = 0; this.builtBarracks = 0; this.builtMonastery = 0; this.builtArchery = 0;
+    this.buildingsBuilt = 0;
+    this.buildingKindsBuilt = {};
+    this.builtBarracks = 0; this.builtMonastery = 0; this.builtArchery = 0;
     this.firstHouseMin = 0;
     this.hires = 0;
     this.successions = 0;
@@ -1349,6 +1352,9 @@ export class GameScene extends Phaser.Scene {
     this.economy.on('built', ({ kind, first, firstPawn }) => {
       // Сводка рана (§K.2): постройки, время первого дома (§H.17)
       this.buildingsBuilt++;
+      if (kind !== 'castle') {
+        this.buildingKindsBuilt[kind] = (this.buildingKindsBuilt[kind] ?? 0) + 1;
+      }
       if (kind === 'barracks') this.builtBarracks++;
       else if (kind === 'monastery') this.builtMonastery++;
       else if (kind === 'archery') this.builtArchery++;
@@ -3899,6 +3905,7 @@ private bossDeathSequence(e: Enemy): boolean {
       score,
       difficulty: this.diffDef.id,
       buildingsBuilt: this.buildingsBuilt,
+      buildingKindsBuilt: { ...this.buildingKindsBuilt },
       occupiedBaseBuildSpots: this.economy.occupiedBaseBuildSpots(),
       pawnsAlive: this.economy.pawns.length,
       siegesDefended: this.settlement.facts.siegesDefended,
