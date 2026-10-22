@@ -420,6 +420,7 @@ export const ru = {
   'hire.staff': 'Монах',
   'hire.limit': 'Лимит исчерпан',
   'hire.started': 'Наём: {v}',
+  'hire.barracksRequired': 'Сначала постройте первые казармы',
 
   // ---------- Осады (TZ §E.4) ----------
   'siege.warn': '⚠ ОСАДА ИДЁТ НА ПОСЕЛЕНИЕ',
