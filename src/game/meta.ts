@@ -1402,8 +1402,28 @@ setShopSavedListener(() => {
 
 
 /** Гарантирует актуальность дневных/недельных/сезонных секций. */
+function migrateLegacyBuildingCodex(st: MetaState): boolean {
+  let changed = false;
+  // Мигрируем только однозначные legacy-ключи. b_house содержал все постройки,
+  // поэтому по нему нельзя достоверно восстановить факт постройки именно дома.
+  for (const [legacyId, buildingId] of [
+    ['b_barracks', 'barracks'],
+    ['b_monastery', 'monastery'],
+    ['b_archery', 'archery'],
+  ] as const) {
+    if ((st.codex[legacyId] ?? 0) > 0 && (st.codex[buildingId] ?? 0) === 0) {
+      st.codex[buildingId] = 1;
+      track('codex_entry', { entry: buildingId });
+      changed = true;
+    }
+  }
+  return changed;
+}
+
+/** Гарантирует актуальность дневных/недельных/сезонных секций и миграцию кодекса. */
 export function rollMetaDay(): MetaState {
   const st = loadMetaState();
+  if (migrateLegacyBuildingCodex(st)) saveMetaState(st);
   const today = todayKey();
   if (st.quests.date !== today) {
     st.quests = { date: today, ids: rotateQuests(today), progress: {}, done: [], rerolls: 0 };
@@ -1595,19 +1615,6 @@ export function applyRunToMeta(s: RunSummary): RunMetaResult {
   // --- Кодекс: счётчики встречи (§H.10)
   for (const [k, v] of Object.entries(s.killsByKind)) {
     st.codex[k] = (st.codex[k] ?? 0) + v;
-  }
-  // Старые сохранения использовали b_* ключи. Три из них однозначно означают
-  // встречу соответствующего здания; b_house не переносим, потому что раньше
-  // в него ошибочно суммировались вообще все постройки.
-  for (const [legacyId, buildingId] of [
-    ['b_barracks', 'barracks'],
-    ['b_monastery', 'monastery'],
-    ['b_archery', 'archery'],
-  ] as const) {
-    if ((st.codex[legacyId] ?? 0) > 0 && (st.codex[buildingId] ?? 0) === 0) {
-      st.codex[buildingId] = 1;
-      track('codex_entry', { entry: buildingId });
-    }
   }
   const buildingKinds: Exclude<BuildingKind, 'castle'>[] = [
     'house', 'barracks', 'tower', 'archery', 'monastery',

@@ -1595,7 +1595,7 @@ test('codex records each completed building under the exact entry ID', async ({ 
       challengeMods: [], blessing: null, consumables: [],
     };
 
-    const before = meta.codexProgress();
+    const before = meta.codexProgress(); // чтение кодекса также запускает legacy-миграцию
     meta.applyRunToMeta(base);
     const after = meta.codexProgress();
 
@@ -1608,6 +1608,8 @@ test('codex records each completed building under the exact entry ID', async ({ 
         monastery: meta.codexCount('monastery'),
         invalidLegacyHouse: meta.codexCount('b_house'),
       },
+      seenBefore: before.seen,
+      seenAfter: after.seen,
       seenDelta: after.seen - before.seen,
       total: after.total,
     };
@@ -1621,6 +1623,8 @@ test('codex records each completed building under the exact entry ID', async ({ 
     monastery: 2,
     invalidLegacyHouse: 99,
   });
-  expect(outcome.seenDelta).toBe(5);
+  expect(outcome.seenBefore).toBe(3); // мигрированные legacy-записи
+  expect(outcome.seenAfter).toBe(5);  // + дом и башня, впервые учтённые по типу
+  expect(outcome.seenDelta).toBe(2);
   expect(outcome.total).toBeGreaterThanOrEqual(5);
 });
