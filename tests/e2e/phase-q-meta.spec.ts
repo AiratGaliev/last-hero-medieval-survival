@@ -2602,3 +2602,87 @@ test('refund daily rewarded quota when the related meta reward cannot be persist
   expect(outcome.consumablesAfter).toBe(2);
   expect(outcome.consumableAvailable).toBe(true);
 });
+
+
+test('seasonal cosmetic is granted once, only at the fifth progress milestone', async ({ page }) => {
+  await page.addInitScript(() => localStorage.clear());
+  await page.goto('/?lang=en&ysdk=mock');
+  await expect(page.locator('#game canvas')).toBeVisible({ timeout: startupTimeout });
+  await expect(page.locator('#boot')).toHaveCount(0, { timeout: startupTimeout });
+
+  const outcome = await page.evaluate(async () => {
+    type RunSummary = {
+      victory: boolean; ideal: boolean; endless: boolean; weeklyChallenge: boolean;
+      wave: number; time: number; kills: number; level: number; gold: number; score: number;
+      difficulty: string; buildingsBuilt: number; pawnsAlive: number;
+      siegesDefended: number; siegesTotal: number; monasteryHealed: number; healHp: number;
+      hires: number; successions: number; veterans: number; firstHouseMin: number;
+      barracks: number; monastery: number; archery: number; bestCombo: number;
+      bossKilled: boolean; killsByKind: Record<string, number>; cardsPicked: string[];
+      contract: string | null; ukaz: string | null; challengeMods: string[];
+      blessing: string | null; consumables: string[];
+    };
+    type RuntimeMetaState = {
+      season: { index: number; runs: number; claimed: number };
+      skins: { owned: string[] };
+    };
+    const meta = await import('/src/game/meta.ts') as unknown as {
+      rollMetaDay: () => RuntimeMetaState;
+      saveMetaState: (state: RuntimeMetaState) => boolean;
+      loadMetaState: () => RuntimeMetaState;
+      applyRunToMeta: (summary: RunSummary) => {
+        persisted: boolean; seasonStepReward?: string; newMatchesPlayed: number;
+      };
+      seasonDef: () => { skinReward: string };
+    };
+    const run: RunSummary = {
+      victory: false, ideal: false, endless: false, weeklyChallenge: false,
+      wave: 0, time: 25, kills: 0, level: 1, gold: 0, score: 0, difficulty: 'normal',
+      buildingsBuilt: 0, pawnsAlive: 0, siegesDefended: 0, siegesTotal: 0,
+      monasteryHealed: 0, healHp: 0, hires: 0, successions: 0, veterans: 0, firstHouseMin: 0,
+      barracks: 0, monastery: 0, archery: 0, bestCombo: 0,
+      bossKilled: false, killsByKind: {}, cardsPicked: [], contract: null, ukaz: null,
+      challengeMods: [], blessing: null, consumables: [],
+    };
+
+    const firstState = meta.rollMetaDay();
+    firstState.season.runs = 2; // следующий ранг — третий ран, не финальная косметика
+    firstState.season.claimed = 0;
+    firstState.skins.owned = [];
+    meta.saveMetaState(firstState);
+    const firstRun = meta.applyRunToMeta(run);
+    const afterFirst = meta.loadMetaState();
+
+    const finalState = meta.rollMetaDay();
+    finalState.season.runs = 20;
+    finalState.season.claimed = 4;
+    finalState.skins.owned = [];
+    meta.saveMetaState(finalState);
+    const finalRun = meta.applyRunToMeta(run);
+    const afterFinal = meta.loadMetaState();
+
+    return {
+      firstPersisted: firstRun.persisted,
+      firstClaimed: afterFirst.season.claimed,
+      firstHasSkin: afterFirst.skins.owned.includes(meta.seasonDef().skinReward),
+      firstReward: firstRun.seasonStepReward ?? null,
+      finalPersisted: finalRun.persisted,
+      finalClaimed: afterFinal.season.claimed,
+      finalHasSkin: afterFinal.skins.owned.includes(meta.seasonDef().skinReward),
+      finalReward: finalRun.seasonStepReward ?? null,
+      expectedSkin: meta.seasonDef().skinReward,
+    };
+  });
+
+  expect(outcome).toEqual({
+    firstPersisted: true,
+    firstClaimed: 1,
+    firstHasSkin: false,
+    firstReward: null,
+    finalPersisted: true,
+    finalClaimed: 5,
+    finalHasSkin: true,
+    finalReward: outcome.expectedSkin,
+    expectedSkin: outcome.expectedSkin,
+  });
+});
