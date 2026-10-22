@@ -1414,6 +1414,41 @@ export function saveMetaState(st: MetaState): boolean {
   return saved;
 }
 
+/**
+ * Меняет баланс жетонов благословения атомарно для локального сохранения.
+ * Если localStorage недоступен, пробует немедленно зафиксировать снимок в Player Data.
+ * При отказе обоих хранилищ восстанавливает кэш, чтобы нельзя было получить эффект бесплатно.
+ */
+async function changeBlessingTokens(delta: 1 | -1): Promise<boolean> {
+  const st = rollMetaDay();
+  if (delta < 0 && st.blessingTokens <= 0) return false;
+
+  const before = structuredCloneSafe(st);
+  st.blessingTokens = Math.max(0, st.blessingTokens + delta);
+  if (saveMetaState(st)) return true;
+
+  if (metaCloudHydrated && await flushMetaStateToPlayerData()) return true;
+
+  // saveMetaState назначает cached до записи; откатываем это изменение при отказе.
+  cached = before;
+  if (metaCloudHydrated) {
+    // Если был запущен неуспешный облачный flush, повторная запись отправит исходный снимок.
+    metaCloudDirty = true;
+    scheduleMetaCloudSave();
+  }
+  return false;
+}
+
+/** Списать жетон и подтвердить сохранение до применения благословения к следующему рану. */
+export function spendBlessingToken(): Promise<boolean> {
+  return changeBlessingTokens(-1);
+}
+
+/** Начислить жетон после подтверждённого rewarded callback и подтверждения сохранения. */
+export function grantBlessingToken(): Promise<boolean> {
+  return changeBlessingTokens(1);
+}
+
 /** Изменения постоянного кошелька/апгрейдов должны попасть в тот же облачный снимок. */
 setShopSavedListener(() => {
   if (metaCloudHydrated) saveMetaState(loadMetaState());
