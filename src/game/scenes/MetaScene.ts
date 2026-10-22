@@ -10,6 +10,7 @@ import { placementAvailable, showPlacementRewarded, showStickyBanner } from '../
 import { purchaseSku } from '../../platform/payments';
 import {
   bonusAvailable,
+  dailyBonusPreviewIndex,
   buyNode,
   claimChainReward,
   chainClaimed,
@@ -1085,14 +1086,14 @@ export class MetaScene extends Phaser.Scene {
       fontFamily: FONT, fontSize: '22px', color: '#3b2410',
     }).setOrigin(0.5));
     container.add(this.add.text(cx, top + 62, [
-      t('bonus.day', { v: (st.dailyBonus.streak % 7) + 1 }),
+      t('bonus.day', { v: dailyBonusPreviewIndex() + 1 }),
       t('bonus.streak', { v: st.dailyBonus.streak }),
     ].join('   '), {
       fontFamily: FONT, fontSize: '12px', color: '#8a5b12',
     }).setOrigin(0.5));
 
-    // Кружки недели: подсвечен текущий день стрика (streak % 7)
-    const todayIdx = st.dailyBonus.streak % 7;
+    // Кружки недели подсвечивают награду, которая фактически выдастся с учётом отката стрика.
+    const todayIdx = dailyBonusPreviewIndex();
     const circleY = top + 128;
     const span = w - 110;
     const step = span / 6;
