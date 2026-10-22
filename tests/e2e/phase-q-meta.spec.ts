@@ -1333,3 +1333,62 @@ test('veteran chain counts pawns that reached 3 stars even if they die before th
     bronzeUnlocked: true,
   });
 });
+
+test('daily quest reroll rejects completed tasks and invalid slots without consuming rerolls', async ({ page }) => {
+  await page.addInitScript(() => localStorage.clear());
+  await page.goto('/?lang=en&ysdk=mock');
+  await expect(page.locator('#game canvas')).toBeVisible({ timeout: startupTimeout });
+  await expect(page.locator('#boot')).toHaveCount(0, { timeout: startupTimeout });
+
+  const outcome = await page.evaluate(async () => {
+    type QuestState = {
+      date: string;
+      ids: string[];
+      progress: Record<string, number>;
+      done: string[];
+      rerolls: number;
+    };
+    type TestMetaState = { quests: QuestState };
+    const meta = await import('/src/game/meta.ts') as unknown as {
+      rollMetaDay: () => TestMetaState;
+      saveMetaState: (state: TestMetaState) => boolean;
+      loadMetaState: () => TestMetaState;
+      rerollQuestSlot: (slot: number) => { ok: boolean; reason?: string };
+    };
+    const state = meta.rollMetaDay();
+    state.quests.ids = ['q_new_house', 'q_shield_wall', 'q_mercy'];
+    state.quests.progress = { q_new_house: 3, q_shield_wall: 1 };
+    state.quests.done = ['q_new_house'];
+    state.quests.rerolls = 0;
+    meta.saveMetaState(state);
+
+    const completed = meta.rerollQuestSlot(0);
+    const afterCompleted = meta.loadMetaState();
+    const fractional = meta.rerollQuestSlot(1.5);
+    const afterFractional = meta.loadMetaState();
+    const valid = meta.rerollQuestSlot(1);
+    const afterValid = meta.loadMetaState();
+
+    return {
+      completedReason: completed.reason,
+      completedSlotStable: afterCompleted.quests.ids[0] === 'q_new_house',
+      rerollsAfterCompleted: afterCompleted.quests.rerolls,
+      fractionalReason: fractional.reason,
+      rerollsAfterFractional: afterFractional.quests.rerolls,
+      validRerollApplied: valid.ok && afterValid.quests.ids[1] !== 'q_shield_wall',
+      rerollsAfterValid: afterValid.quests.rerolls,
+      completedRewardHistoryRetained: afterValid.quests.done.includes('q_new_house'),
+    };
+  });
+
+  expect(outcome).toEqual({
+    completedReason: 'completed',
+    completedSlotStable: true,
+    rerollsAfterCompleted: 0,
+    fractionalReason: 'bad-slot',
+    rerollsAfterFractional: 0,
+    validRerollApplied: true,
+    rerollsAfterValid: 1,
+    completedRewardHistoryRetained: true,
+  });
+});
