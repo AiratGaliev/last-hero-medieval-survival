@@ -1152,7 +1152,7 @@ export class MetaScene extends Phaser.Scene {
     }
     this.closeBonusOverlay();
     this.renderTab();
-    if (!res.ok) this.flashNote(t('store.fail'));
+    if (res.reason === 'storage') this.flashNote(t('store.fail'));
   }
 
   private closeBonusOverlay(): void {
