@@ -945,6 +945,7 @@ export const en: Record<TranslationKey, string> = {
   'store.sold': 'Owned',
   'store.fail': 'Purchase failed',
   'meta.runSaveFailed': 'Progress could not be saved. Check storage access.',
+  'meta.consumableSaveFailed': 'Consumables were not activated because the spend could not be saved.',
   'store.dailyOffers': 'DAILY OFFERS',
   'store.refreshAd': 'REFRESH FOR AD',
   'store.refreshUnavailable': 'AD UNAVAILABLE',
