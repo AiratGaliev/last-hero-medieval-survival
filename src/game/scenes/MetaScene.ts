@@ -491,6 +491,8 @@ export class MetaScene extends Phaser.Scene {
         track('tree_node_bought', { id: node.id });
         audio.play('levelup');
         this.renderTab();
+      } else if (res.reason === 'storage') {
+        this.flashNote(t('store.fail'));
       }
     }, 'blue', 10, { disabled: !afford, hitW: 184, hitH: 48, stopPropagation: true });
     box.add([btn.img, btn.txt, btn.hit]);
@@ -571,6 +573,9 @@ export class MetaScene extends Phaser.Scene {
       this.flashNote(t('quest.rerollLimit'));
     } else if (out.reason === 'completed' || out.reason === 'bad-slot') {
       this.flashNote(t('quest.done'));
+      this.renderTab();
+    } else if (out.reason === 'storage') {
+      this.flashNote(t('store.fail'));
       this.renderTab();
     }
   }
@@ -789,6 +794,8 @@ export class MetaScene extends Phaser.Scene {
                   if (res.ok) {
                     audio.play('levelup');
                     this.renderTab();
+                  } else if (ready && res.reason === 'storage') {
+                    this.flashNote(t('store.fail'));
                   }
                 }, 'blue', 8, { disabled: !ready, hitW: 74, hitH: 44, stopPropagation: true });
               box.add([btn.img, btn.txt, btn.hit]);
@@ -975,6 +982,8 @@ export class MetaScene extends Phaser.Scene {
             if (res) {
               audio.play('levelup');
               this.renderTab();
+            } else if (canClaim) {
+              this.flashNote(t('store.fail'));
             }
           }, 'red', 10, { disabled: !canClaim, hitW: 158, hitH: 44, stopPropagation: true });
           box.add([btn.img, btn.txt, btn.hit]);
@@ -1143,6 +1152,7 @@ export class MetaScene extends Phaser.Scene {
     }
     this.closeBonusOverlay();
     this.renderTab();
+    if (!res.ok) this.flashNote(t('store.fail'));
   }
 
   private closeBonusOverlay(): void {
