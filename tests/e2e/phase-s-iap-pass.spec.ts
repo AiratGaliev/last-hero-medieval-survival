@@ -209,3 +209,40 @@ test('legacy banner stored in the skin collection migrates to permanent ownershi
 
   expect(result).toEqual({ migrated: true, keptAsSkin: false });
 });
+test('legacy claimed crown payout does not become a banner after weekly rotation migration', async ({ page }) => {
+  await openGame(page);
+
+  await page.evaluate(() => {
+    const raw = localStorage.getItem('tss-meta2');
+    if (!raw) throw new Error('missing metadata state for legacy weekly migration test');
+    const state = JSON.parse(raw) as {
+      weekly: { week: string; progress: number; stage: number; claimed: boolean; rewardKind?: string };
+      banners: string[];
+      skins: { owned: string[] };
+    };
+    // 2 ноября 2026 было неделей с наградой в кронах по прежнему hash-алгоритму.
+    state.weekly = { week: '2026-11-02', progress: 20, stage: 5, claimed: true };
+    state.banners = state.banners.filter((id) => id !== 'banner_weekly');
+    state.skins.owned = state.skins.owned.filter((id) => id !== 'banner_weekly');
+    localStorage.setItem('tss-meta2', JSON.stringify(state));
+  });
+  await page.addInitScript(() => { Date.now = () => Date.parse('2026-11-02T12:00:00.000Z'); });
+  await page.reload();
+  await expect(page.locator('#game canvas')).toBeVisible({ timeout: startupTimeout });
+
+  const result = await page.evaluate(async () => {
+    const meta = await import('/src/game/meta.ts') as unknown as {
+      loadMetaState: () => { weekly: { week: string; claimed: boolean; rewardKind: 'crowns' | 'banner' }; };
+      weeklyFinalReward: (week: string) => 'crowns' | 'banner';
+      ownedBanners: () => string[];
+    };
+    const state = meta.loadMetaState();
+    return {
+      legacyRewardKind: state.weekly.rewardKind,
+      scheduledReward: meta.weeklyFinalReward(state.weekly.week),
+      ownsBanner: meta.ownedBanners().includes('banner_weekly'),
+    };
+  });
+
+  expect(result).toEqual({ legacyRewardKind: 'crowns', scheduledReward: 'banner', ownsBanner: false });
+});
