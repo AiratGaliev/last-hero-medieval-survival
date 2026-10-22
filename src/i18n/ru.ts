@@ -968,6 +968,7 @@ export const ru = {
   'store.sold': 'Куплено',
   'store.fail': 'Покупка не состоялась',
   'meta.runSaveFailed': 'Не удалось сохранить прогресс. Проверьте доступ к хранилищу.',
+  'meta.consumableSaveFailed': 'Расходники не активированы: не удалось сохранить списание.',
   'store.dailyOffers': 'ПРЕДЛОЖЕНИЯ ДНЯ',
   'store.refreshAd': 'ОБНОВИТЬ ЗА РОЛИК',
   'store.refreshUnavailable': 'РОЛИК НЕДОСТУПЕН',
