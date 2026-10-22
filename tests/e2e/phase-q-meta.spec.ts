@@ -2425,7 +2425,7 @@ test('ogre return season increases only phase-two castle attack cadence', async 
     ((window as Window & { __tss?: { scene: { isActive(key: string): boolean } } }).__tss?.scene.isActive('Game')) ?? false,
   ), { timeout: startupTimeout }).toBe(true);
 
-  const result = await page.evaluate(() => {
+  const result = await page.evaluate(async () => {
     const game = (window as Window & { __tss?: { scene: { getScene(key: string): unknown } } }).__tss;
     if (!game) throw new Error('Phaser runtime is unavailable');
     const scene = game.scene.getScene('Game') as {
