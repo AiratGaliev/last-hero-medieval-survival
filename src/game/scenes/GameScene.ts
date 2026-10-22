@@ -287,6 +287,8 @@ export class GameScene extends Phaser.Scene {
   private firstHouseMin = 0;
   private hires = 0;
   private successions = 0;
+  /** Количество пешек, впервые достигших 3★ за текущий ран. */
+  private veteransEarnedThisRun = 0;
   private bossKilled = false;
   private cardsPicked: string[] = [];
   /** Контракт «Пацифист-герой» (§H.9): золото мимо сводки → в кошелёк лавки. */
@@ -523,6 +525,7 @@ export class GameScene extends Phaser.Scene {
     this.firstHouseMin = 0;
     this.hires = 0;
     this.successions = 0;
+    this.veteransEarnedThisRun = 0;
     this.bossKilled = false;
     this.cardsPicked = [];
     this.pacifistGold = 0;
@@ -729,6 +732,8 @@ export class GameScene extends Phaser.Scene {
       onFeed: (text, color) => this.hud?.feed(text, color),
       onDefeat: (cause) => this.onSettlementDefeat(cause),
       onVeteran: (pawn) => {
+        // Считаем получение 3★, а не только выживших к концу рана пешек (§H.11).
+        this.veteransEarnedThisRun++;
         // Микро-награды ветеранства: +100 очков, +25 XP (§E.8, §H.6)
         this.score += 100;
         this.addXp(25);
@@ -3902,7 +3907,7 @@ private bossDeathSequence(e: Enemy): boolean {
       healHp: this.economy.healHpTotal,
       hires: this.hires,
       successions: this.successions,
-      veterans: this.economy.pawns.filter((p) => p.veteranStars >= 3).length,
+      veterans: this.veteransEarnedThisRun,
       firstHouseMin: this.firstHouseMin,
       barracks: this.builtBarracks,
       monastery: this.builtMonastery,
@@ -3973,7 +3978,7 @@ private bossDeathSequence(e: Enemy): boolean {
       case 'barracks': return this.builtBarracks;
       case 'monastery': return this.builtMonastery;
       case 'archery': return this.builtArchery;
-      case 'veterans': return this.economy.pawns.filter((p) => p.veteranStars >= 3).length;
+      case 'veterans': return this.veteransEarnedThisRun;
       case 'gold': return this.gold;
       case 'score': return this.currentScore();
       case 'time': return Math.floor(this.elapsed);
