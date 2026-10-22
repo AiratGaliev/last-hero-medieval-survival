@@ -1957,3 +1957,107 @@ test('meta purchases and daily rewards roll back when storage rejects a write', 
     },
   });
 });
+
+
+test('daily challenge reward resets on UTC rollover while the Moscow day is unchanged', async ({ page }) => {
+  await page.addInitScript(() => localStorage.clear());
+  await page.goto('/?lang=en&ysdk=mock');
+  await expect(page.locator('#game canvas')).toBeVisible({ timeout: startupTimeout });
+  await expect(page.locator('#boot')).toHaveCount(0, { timeout: startupTimeout });
+
+  const outcome = await page.evaluate(async () => {
+    type TestMetaState = {
+      matchesPlayed: number;
+      crowns: number;
+      challengeWinDate: string;
+    };
+    const meta = await import('/src/game/meta.ts') as unknown as {
+      rollMetaDay: () => TestMetaState;
+      saveMetaState: (state: TestMetaState) => boolean;
+      loadMetaState: () => TestMetaState;
+      challengeForToday: () => { seed: string };
+      markChallengeVictory: () => boolean;
+      challengeVictoryToday: () => boolean;
+    };
+    const calendar = await import('/src/platform/calendar.ts') as {
+      mskDayKey: (epochMs: number) => string;
+    };
+    const originalNow = Date.now;
+
+    try {
+      Date.now = () => Date.UTC(2026, 9, 21, 23, 59, 59, 999);
+      const initial = meta.rollMetaDay();
+      initial.matchesPlayed = 3;
+      initial.crowns = 0;
+      initial.challengeWinDate = '';
+      meta.saveMetaState(initial);
+
+      const seedBefore = meta.challengeForToday().seed;
+      const moscowBefore = calendar.mskDayKey(Date.now());
+      const firstClaim = meta.markChallengeVictory();
+
+      Date.now = () => Date.UTC(2026, 9, 22, 0, 0, 0, 0);
+      const seedAfter = meta.challengeForToday().seed;
+      const moscowAfter = calendar.mskDayKey(Date.now());
+      const secondClaim = meta.markChallengeVictory();
+      const duplicateClaim = meta.markChallengeVictory();
+      const state = meta.loadMetaState();
+
+      return {
+        seedBefore, seedAfter, moscowBefore, moscowAfter,
+        firstClaim, secondClaim, duplicateClaim,
+        crowns: state.crowns,
+        challengeWinDate: state.challengeWinDate,
+        claimedForCurrentSeed: meta.challengeVictoryToday(),
+      };
+    } finally {
+      Date.now = originalNow;
+    }
+  });
+
+  expect(outcome).toEqual({
+    seedBefore: '2026-10-21',
+    seedAfter: '2026-10-22',
+    moscowBefore: '2026-10-22',
+    moscowAfter: '2026-10-22',
+    firstClaim: true,
+    secondClaim: true,
+    duplicateClaim: false,
+    crowns: 6,
+    challengeWinDate: '2026-10-22',
+    claimedForCurrentSeed: true,
+  });
+});
+
+test('achievement chain rejects fractional reward tiers without granting crowns', async ({ page }) => {
+  await page.addInitScript(() => localStorage.clear());
+  await page.goto('/?lang=en&ysdk=mock');
+  await expect(page.locator('#game canvas')).toBeVisible({ timeout: startupTimeout });
+  await expect(page.locator('#boot')).toHaveCount(0, { timeout: startupTimeout });
+
+  const outcome = await page.evaluate(() => {
+    type TestMetaState = {
+      matchesPlayed: number;
+      crowns: number;
+      chains: { counters: Record<string, number>; claimed: string[] };
+    };
+    const meta = window.__phaseQMetaTestApi as unknown as {
+      rollMetaDay: () => TestMetaState;
+      saveMetaState: (state: TestMetaState) => boolean;
+      loadMetaState: () => TestMetaState;
+      claimChainReward: (chainId: string, tier: number) => { ok: boolean };
+    };
+    const state = meta.rollMetaDay();
+    state.matchesPlayed = 3;
+    state.crowns = 11;
+    state.chains.counters = { idealWins: 15 };
+    state.chains.claimed = [];
+    meta.saveMetaState(state);
+
+    const result = meta.claimChainReward('ch_keeper', 1.5);
+    const after = meta.loadMetaState();
+    return { result, crowns: after.crowns, claimed: after.chains.claimed };
+  });
+
+  expect(outcome).toEqual({ result: { ok: false }, crowns: 11, claimed: [] });
+});
