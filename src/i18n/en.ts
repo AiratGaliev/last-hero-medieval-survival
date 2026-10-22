@@ -856,9 +856,9 @@ export const en: Record<TranslationKey, string> = {
   'season.1.name': 'Long siege',
   'season.1.desc': 'Sieges every 4:30 instead of 6:00',
   'season.2.name': 'Gold fever',
-  'season.2.desc': 'Vein ore +50%, hire ore cost ×1.25',
+  'season.2.desc': 'Vein ore +50%, all ore costs ×1.25',
   'season.3.name': 'Ogre returns',
-  'season.3.desc': 'Boss arrives at 12:00 instead of 15:00',
+  'season.3.desc': 'Boss arrives at 12:00 and attacks faster in phase two',
 
   'weekly.title': 'CHRONICLE OF THE WEEK',
   'weekly.stage': 'Stage {v} of 5',
