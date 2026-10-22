@@ -2757,3 +2757,34 @@ test('game over announces the seasonal cosmetic unlocked on milestone five', asy
     return labels;
   })).toContain('Season cosmetic: Vow (monk)');
 });
+
+
+test('blessing domain picker returns three unique deterministic options', async ({ page }) => {
+  await page.goto('/?lang=en&ysdk=mock');
+  await expect(page.locator('#game canvas')).toBeVisible({ timeout: startupTimeout });
+  await expect(page.locator('#boot')).toHaveCount(0, { timeout: startupTimeout });
+
+  const outcome = await page.evaluate(async () => {
+    const blessing = await import('/src/game/systems/Blessing.ts') as {
+      BLESSINGS: readonly { id: string }[];
+      rollBlessings: (seed: string) => string[];
+    };
+    const first = blessing.rollBlessings('phase-q-r4-regression');
+    const second = blessing.rollBlessings('phase-q-r4-regression');
+    const otherSeed = blessing.rollBlessings('phase-q-r4-other');
+    return {
+      first,
+      second,
+      otherSeed,
+      poolSize: blessing.BLESSINGS.length,
+      known: first.every((id) => blessing.BLESSINGS.some((item) => item.id === id)),
+    };
+  });
+
+  expect(outcome.first).toHaveLength(3);
+  expect(new Set(outcome.first).size).toBe(3);
+  expect(outcome.second).toEqual(outcome.first);
+  expect(outcome.first.every((id) => typeof id === 'string')).toBe(true);
+  expect(outcome.poolSize).toBe(8);
+  expect(outcome.known).toBe(true);
+});
