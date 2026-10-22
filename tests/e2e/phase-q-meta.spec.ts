@@ -2041,7 +2041,7 @@ test('achievement chain rejects fractional reward tiers without granting crowns'
       crowns: number;
       chains: { counters: Record<string, number>; claimed: string[] };
     };
-    const meta = window.__phaseQMetaTestApi as unknown as {
+    const meta = await import('/src/game/meta.ts') as unknown as {
       rollMetaDay: () => TestMetaState;
       saveMetaState: (state: TestMetaState) => boolean;
       loadMetaState: () => TestMetaState;
