@@ -1490,28 +1490,30 @@ function migrateLegacyBuildingCodex(st: MetaState): boolean {
 
 /** Гарантирует актуальность дневных/недельных/сезонных секций и миграцию кодекса. */
 export function rollMetaDay(): MetaState {
-  const st = loadMetaState();
-  if (migrateLegacyBuildingCodex(st)) saveMetaState(st);
+  const before = loadMetaState();
+  const st = structuredCloneSafe(before);
+  let changed = migrateLegacyBuildingCodex(st);
+
   // Календарные секции получают один снимок серверного времени: смена даты
   // между последовательными вызовами не должна смешивать два разных дня/сезона.
   const now = serverNow();
   const today = todayKey(now);
   if (st.quests.date !== today) {
     st.quests = { date: today, ids: rotateQuests(today), progress: {}, done: [], rerolls: 0 };
-    saveMetaState(st);
+    changed = true;
   }
   const week = weekKey(now);
   if (st.weekly.week !== week) {
     // Недельная цепочка: пропуск этапа не обнуляет прогресс (§H.17) —
     // старая неделя уходит, начинается новая с нулевого прогресса.
     st.weekly = { week, progress: 0, stage: 0, claimed: false };
-    saveMetaState(st);
+    changed = true;
   }
   const sIdx = seasonIndexFor(now);
   if (st.season.index !== sIdx) {
     // Сезон НЕ обнуляет дерево и славу (§H.18) — только мини-прогресс.
     st.season = { index: sIdx, runs: 0, claimed: 0 };
-    saveMetaState(st);
+    changed = true;
   }
   // Пропуск использует собственный 30-дневный цикл, независимый от смены
   // тематического сезона мира раз в 14 дней. Legacy-ключ s<N> создавался по
@@ -1527,21 +1529,23 @@ export function rollMetaDay(): MetaState {
       if (Number.isSafeInteger(legacyIndex) && legacyIndex >= 0
         && legacyAge >= 0 && legacyAge < PASS_SEASON_DAYS * DAY_MS) {
         st.pass.season = pSeason;
-        saveMetaState(st);
       } else {
         st.pass = { season: pSeason, xp: 0, premium: false, claimedFree: 0, claimedPrem: 0 };
-        saveMetaState(st);
       }
     } else {
       st.pass = { season: pSeason, xp: 0, premium: false, claimedFree: 0, claimedPrem: 0 };
-      saveMetaState(st);
     }
+    changed = true;
   }
   if (st.crownConvert.date !== today) {
     st.crownConvert = { date: today, count: 0 };
-    saveMetaState(st);
+    changed = true;
   }
-  return st;
+
+  // Не отдаём callers новый день/неделю/сезон, пока атомарный снимок не сохранён.
+  // При отказе записи следующий вызов повторит reconciliation от прежнего состояния.
+  if (changed && !saveMetaStateOrRollback(st, before)) return before;
+  return changed ? st : before;
 }
 
 /** Дни между датами 'YYYY-MM-DD' (для стрика бонуса). */
@@ -2321,12 +2325,12 @@ export function setActiveSkin(
     if (def && !st.skins.owned.includes(id)) return false;
     if (isBanner && !ownedBanners().includes(id)) return false;
   }
+  const before = structuredCloneSafe(st);
   if (kind === 'hero') st.skins.hero = id;
   else if (kind === 'building') st.skins.building = id;
   else if (kind === 'trail') st.skins.trail = id;
   else st.skins.banner = id;
-  saveMetaState(st);
-  return true;
+  return saveMetaStateOrRollback(st, before);
 }
 
 /** Активный скин героя (tint или null). */
@@ -2464,8 +2468,9 @@ export function markCodexSeen(id: string): void {
   // календарь рана, а путь встречи должен оставаться дешёвым в боевом цикле.
   const st = loadMetaState();
   if (st.codexSeen[id] === true || (st.codex[id] ?? 0) > 0) return;
+  const before = structuredCloneSafe(st);
   st.codexSeen[id] = true;
-  saveMetaState(st);
+  if (!saveMetaStateOrRollback(st, before)) return;
   track('codex_entry', { entry: id });
 }
 
@@ -2481,9 +2486,10 @@ export function markCodex(id: string, n = 1): void {
   const st = rollMetaDay();
   const previous = st.codex[id] ?? 0;
   const alreadySeen = st.codexSeen[id] === true || previous > 0;
+  const before = structuredCloneSafe(st);
   st.codex[id] = previous + n;
   st.codexSeen[id] = true;
-  saveMetaState(st);
+  if (!saveMetaStateOrRollback(st, before)) return;
   if (!alreadySeen) track('codex_entry', { entry: id });
 }
 
