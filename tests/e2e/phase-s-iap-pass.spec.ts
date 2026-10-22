@@ -69,14 +69,22 @@ test('premium pass purchased with crowns catches up and pass banner unlocks at l
   const afterReload = await page.evaluate(async () => {
     const meta = await import('/src/game/meta.ts') as unknown as {
       ownedBanners: () => string[];
-      rollMetaDay: () => { banners: string[] };
+      rollMetaDay: () => { banners: string[]; passTitles: string[]; profileFrames: string[] };
     };
+    const state = meta.rollMetaDay();
     return {
       owned: meta.ownedBanners().includes('banner_pass'),
-      persisted: meta.rollMetaDay().banners.includes('banner_pass'),
+      persisted: state.banners.includes('banner_pass'),
+      passTitles: state.passTitles,
+      profileFrames: state.profileFrames,
     };
   });
-  expect(afterReload).toEqual({ owned: true, persisted: true });
+  expect(afterReload).toEqual({
+    owned: true,
+    persisted: true,
+    passTitles: ['title_20', 'title_40'],
+    profileFrames: ['frame_chronicle'],
+  });
 });
 
 test('premium pass crown purchase rolls back when metadata persistence fails', async ({ page }) => {
