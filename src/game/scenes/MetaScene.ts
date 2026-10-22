@@ -6,7 +6,7 @@ import { makeButton, makePanel, makeRibbon, resizePanel, fitTextWidth, type Butt
 import { t, num, clock, type TranslationKey, type TranslateParams } from '../../i18n';
 import { FTUE_MATCH_GATE } from '../data';
 import { track } from '../../platform/analytics';
-import { placementAvailable, showPlacementRewarded, showStickyBanner } from '../../platform/ads';
+import { placementAvailable, showPlacementRewarded, showStickyBanner, refundPlacement } from '../../platform/ads';
 import { purchaseSku } from '../../platform/payments';
 import {
   bonusAvailable,
@@ -567,6 +567,7 @@ export class MetaScene extends Phaser.Scene {
     const res = await showPlacementRewarded('quest-reroll');
     if (!res.rewarded) return;
     const out = rerollQuestSlot(slot);
+    if (!out.ok) refundPlacement('quest-reroll');
     if (out.ok) {
       track('quest_reroll', { slot });
       this.renderTab();
@@ -1142,10 +1143,15 @@ export class MetaScene extends Phaser.Scene {
 
   private async claimBonusWithAd(): Promise<void> {
     const res = await showPlacementRewarded('bonus-x2');
-    if (res.rewarded) this.finishBonusClaim(true);
+    if (!res.rewarded) return;
+    if (!this.bonusOverlay) {
+      refundPlacement('bonus-x2');
+      return;
+    }
+    if (!this.finishBonusClaim(true)) refundPlacement('bonus-x2');
   }
 
-  private finishBonusClaim(doubled: boolean): void {
+  private finishBonusClaim(doubled: boolean): boolean {
     const res = claimDailyBonus(doubled);
     if (res.ok) {
       track('daily_claim', { day: res.day, doubled });
@@ -1154,6 +1160,7 @@ export class MetaScene extends Phaser.Scene {
     this.closeBonusOverlay();
     this.renderTab();
     if (res.reason === 'storage') this.flashNote(t('store.fail'));
+    return res.ok;
   }
 
   private closeBonusOverlay(): void {
