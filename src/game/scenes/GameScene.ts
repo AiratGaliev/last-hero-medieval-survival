@@ -3906,8 +3906,9 @@ private bossDeathSequence(e: Enemy): boolean {
     }
     this.metaApplied = true;
     // Контракт «Пацифист-герой» (§H.9): золото героя уходит в кошелёк лавки
-    // (depositGold из '../shop'), минуя сводку матча — без задвоения
-    if (this.pacifistGold > 0) depositGold(Math.floor(this.pacifistGold));
+    // (depositGold из '../shop'), минуя сводку матча — без задвоения.
+    // Сохраняем результат записи, чтобы экран итогов не скрывал потерю награды.
+    const walletRewardSaved = this.pacifistGold <= 0 || depositGold(Math.floor(this.pacifistGold));
     const wave = this.mods.endless ? this.spawner.wave : 0;
     const summary: RunSummary = {
       victory,
@@ -3958,6 +3959,7 @@ private bossDeathSequence(e: Enemy): boolean {
       endlessWave: wave,
       crownsEarned: res.crownsEarned,
       persisted: res.persisted,
+      walletRewardSaved,
       challenge: !!this.mods.challenge,
       ukaz: this.mods.ukaz,
       endless: this.mods.endless,
