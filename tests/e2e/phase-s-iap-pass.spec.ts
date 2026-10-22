@@ -14,7 +14,7 @@ test('premium pass purchased with crowns catches up and pass banner unlocks at l
 
   const initial = await page.evaluate(async () => {
     type PassState = { season: string; xp: number; premium: boolean; claimedFree: number; claimedPrem: number };
-    type TestState = { matchesPlayed: number; crowns: number; pass: PassState; banners: string[] };
+    type TestState = { matchesPlayed: number; crowns: number; pass: PassState; banners: string[]; skins: { owned: string[] } };
     const meta = await import('/src/game/meta.ts') as unknown as {
       rollMetaDay: () => TestState;
       saveMetaState: (state: TestState) => boolean;
