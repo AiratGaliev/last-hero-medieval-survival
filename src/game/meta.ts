@@ -2035,6 +2035,23 @@ export function applyBonus(
   return walletGold;
 }
 
+/**
+ * Индекс предстоящей награды для меню и мета-оверлея. Использует ту же
+ * 26-часовую политику отката, что и claimDailyBonus(), чтобы preview совпадал
+ * с реально выдаваемой наградой после долгого перерыва.
+ */
+export function dailyBonusPreviewIndex(): number {
+  const st = rollMetaDay();
+  const lastAt = st.dailyBonus.lastAt;
+  const elapsed = lastAt > 0 ? serverNow() - lastAt : Number.POSITIVE_INFINITY;
+  const missedWindow = lastAt > 0
+    && elapsed > BONUS_RESET_HOURS * 60 * 60 * 1000;
+  const effectiveStreak = missedWindow
+    ? Math.max(0, st.dailyBonus.streak - 1)
+    : st.dailyBonus.streak;
+  return effectiveStreak % 7;
+}
+
 /** Требование R11: удвоение дара дня — только пока день не забран. */
 export function bonusAvailable(): boolean {
   const st = rollMetaDay();
