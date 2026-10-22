@@ -271,6 +271,8 @@ export class GameScene extends Phaser.Scene {
   private contractId: string | null = null;
   private challengeMods = new Set<string>();
   private consumableSet = new Set<string>();
+  /** Не удалось надёжно списать расходники до запуска их эффектов. */
+  private consumablesCommitFailed = false;
   /** Узел m8 «Клятва долины»: стартовый мечник получает +20 HP. */
   private oathM8 = false;
   /** applyRunToMeta вызывается ровно один раз за ран (§K.2). */
@@ -509,7 +511,13 @@ export class GameScene extends Phaser.Scene {
 
     // ---- Конфиг уже погашен до выбора seed выше ----
     if (this.mods.endless) track('endless_start', {});
-    takeConsumables(this.mods.consumables);
+    const consumablesCommitted = takeConsumables(this.mods.consumables);
+    this.consumablesCommitFailed = !consumablesCommitted;
+    if (!consumablesCommitted) {
+      // Нельзя применять выбранные расходники, пока их списание не сохранено.
+      // Возвращаемся к обычному рану и сохраняем предметы в инвентаре.
+      this.mods.consumables = [];
+    }
     const meta = loadMetaState();
     this.fx = nodeEffects(meta.nodes);
     // «Дозорные» (узел d3, §H.16): +2 сек к анонсу осады — Spawner читает реестр
@@ -1337,6 +1345,9 @@ export class GameScene extends Phaser.Scene {
     });
     this.hud.setIcon(startId, WEAPONS[startId].icon, 1, false);
     this.ach = new AchTracker((a) => this.hud.achievementToast(a));
+    if (this.consumablesCommitFailed) {
+      this.hud.announce(t('meta.consumableSaveFailed'), '#b3261e');
+    }
     this.setupDpsDebug();
 
     // ---- Подписки HUD на экономику (обновление по событию, §B.8) ----
