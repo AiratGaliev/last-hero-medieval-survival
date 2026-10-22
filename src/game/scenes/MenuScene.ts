@@ -1644,7 +1644,10 @@ export class MenuScene extends Phaser.Scene {
       return;
     }
     const reward = claimDailyChest();
-    if (!reward) return;
+    if (!reward) {
+      this.showToast(t('store.fail'));
+      return;
+    }
     const label = reward.kind === 'gold'
       ? t('bonus.kind.gold', { v: reward.amount })
       : reward.kind === 'blessing'
@@ -2133,13 +2136,15 @@ export class MenuScene extends Phaser.Scene {
 
   private claimBonus(doubled: boolean): void {
     const res = claimDailyBonus(doubled);
+    this.closeOverlay();
+    this.refreshBonusChip();
     if (res.ok) {
       track('daily_claim', { day: res.day, doubled });
       audio.play('levelup');
+      this.showToast(t('bonus.claimed'));
+    } else {
+      this.showToast(t('store.fail'));
     }
-    this.closeOverlay();
-    this.refreshBonusChip();
-    this.showToast(t('bonus.claimed'));
   }
 
   private async claimBonusWithAd(): Promise<void> {
