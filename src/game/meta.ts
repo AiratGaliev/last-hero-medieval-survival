@@ -651,6 +651,9 @@ export const PASS = {
   XP: { run: 25, quest: 50, challenge: 75, contract: 25, endlessWave: 5, chain: 25 },
 } as const;
 
+const PASS_TITLE_IDS = new Set(['title_20', 'title_40']);
+const PROFILE_FRAME_IDS = new Set(['frame_chronicle']);
+
 export type PassRewardKind = 'gold' | 'crowns' | 'token' | 'blessing' | 'skin' | 'title' | 'frame' | 'banner';
 
 export interface PassReward { kind: PassRewardKind; amount: number; id?: string }
@@ -669,6 +672,7 @@ export function passReward(level: number, premium: boolean): PassReward | null {
   if (level === 50) return { kind: 'banner', amount: 1, id: 'banner_pass' };
   if (level === 10 || level === 25 || level === 45) return { kind: 'skin', amount: 1, id: `skin_prem_${level}` };
   if (level === 20 || level === 40) return { kind: 'title', amount: 1, id: `title_${level}` };
+  if (level === 35) return { kind: 'frame', amount: 1, id: 'frame_chronicle' };
   if (level % 10 === 0) return { kind: 'crowns', amount: 30 };
   if (level % 5 === 0) return { kind: 'blessing', amount: 1 };
   return { kind: 'crowns', amount: 5 };
@@ -868,6 +872,9 @@ export interface MetaState {
   crownConvert: { date: string; count: number };
   /** Постоянно разблокированные знамёна (не должны теряться при смене недели/сезона). */
   banners: string[];
+  /** Постоянные награды титулов и рамок премиум-пропуска. */
+  passTitles: string[];
+  profileFrames: string[];
   skins: { owned: string[]; hero: string; building: string; trail: string; banner: string };
   consumables: Record<ConsumableId, number>;
   speedupTokens: number;
@@ -981,6 +988,8 @@ const EMPTY: MetaState = {
   crowns: 0,
   crownConvert: { date: '', count: 0 },
   banners: [],
+  passTitles: [],
+  profileFrames: [],
   skins: { owned: [], hero: '', building: '', trail: '', banner: '' },
   consumables: { cs_horseshoe: 0, cs_horn: 0, cs_forester: 0 },
   speedupTokens: 0,
@@ -1112,6 +1121,8 @@ function sanitize(raw: unknown): MetaState {
     crowns: int(o.crowns),
     crownConvert: { date: typeof cc.date === 'string' ? cc.date.slice(0, 10) : '', count: int(cc.count) },
     banners: [...new Set([...strArr(o.banners, knownBanners), ...legacyBanners])],
+    passTitles: strArr(o.passTitles, PASS_TITLE_IDS),
+    profileFrames: strArr(o.profileFrames, PROFILE_FRAME_IDS),
     skins: {
       owned: strArr(sk.owned, knownSkins),
       hero: typeof sk.hero === 'string' ? sk.hero : '',
@@ -1915,7 +1926,12 @@ function grantPassReward(st: MetaState, r: PassReward): number {
     case 'token': st.speedupTokens += r.amount; return 0;
     case 'blessing': st.blessingTokens += r.amount; return 0;
     case 'skin': if (r.id) grantSkin(st, r.id); return 0;
-    case 'title': case 'frame': return 0; // косметика-статус, хранение не требуется
+    case 'title':
+      if (r.id && PASS_TITLE_IDS.has(r.id) && !st.passTitles.includes(r.id)) st.passTitles.push(r.id);
+      return 0;
+    case 'frame':
+      if (r.id && PROFILE_FRAME_IDS.has(r.id) && !st.profileFrames.includes(r.id)) st.profileFrames.push(r.id);
+      return 0;
     case 'banner':
       if (r.id && BANNERS.some((banner) => banner.id === r.id) && !st.banners.includes(r.id)) {
         st.banners.push(r.id);
