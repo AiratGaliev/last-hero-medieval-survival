@@ -833,6 +833,7 @@ test('daily challenge date deterministically seeds the map, economy and wave dir
         generateChoices: () => Array<{ kind: string; id?: string; title: string }>;
         dailySpawnerRng: { sow: (seeds: string[]) => unknown };
         dailyProgressionRng: { frac: () => number } | null;
+        player: { hp: number; maxHp: number };
         spawner: {
           stopped: boolean;
           o: { random?: () => number };
@@ -860,6 +861,8 @@ test('daily challenge date deterministically seeds the map, economy and wave dir
       if (perturbGameplayRng) {
         for (let i = 0; i < 32; i++) scene.gameplayRandom();
       }
+      // Фиксируем HP: набор добивающих карточек не должен зависеть от случайных стартовых кадров.
+      scene.player.hp = scene.player.maxHp;
       // Доступные карточки должны зависеть от даты и состояния рана, но не от числа боевых бросков.
       const choices = scene.generateChoices().map(({ kind, id, title }) => ({
         kind,
