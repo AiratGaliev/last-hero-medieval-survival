@@ -430,7 +430,7 @@ export class Projectiles {
     p.animationSwitchTimer?.remove(false);
     p.play('proj-bomb-idle', true);
     p.animationSwitchTimer = this.scene.time.delayedCall(180, () => {
-      p.animationSwitchTimer = null;
+      p.animationSwitchTimer = undefined;
       if (p.active && p.shotKind === 'bomb') p.play('proj-bomb-spin', true);
     });
   }
@@ -502,7 +502,7 @@ export class Projectiles {
     shot.fire = false;
     shot.detonateOnPlayer = false;
     shot.animationSwitchTimer?.remove(false);
-    shot.animationSwitchTimer = null;
+    shot.animationSwitchTimer = undefined;
     for (const flame of shot.trailSprites ?? []) {
       flame.setActive(false).setVisible(false);
     }
