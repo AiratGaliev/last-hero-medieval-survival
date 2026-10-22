@@ -7,9 +7,10 @@ import { t, num, type TranslationKey } from '../../i18n';
 import { track } from '../../platform/analytics';
 import { fetchCatalog, purchaseSku, showcaseVisible, SKUS, type CatalogProduct } from '../../platform/payments';
 import { isMockMode, isOnYandex } from '../../platform/sdk';
-import { placementAvailable, showPlacementRewarded, showStickyBanner } from '../../platform/ads';
+import { placementAvailable, showPlacementRewarded, showStickyBanner, refundPlacement } from '../../platform/ads';
 import {
   rollMetaDay,
+  grantConsumableFromAd,
   seasonPassUnlocked,
   saveMetaState,
   hasIapEntitlement,
@@ -1285,11 +1286,16 @@ export class ShopScene extends Phaser.Scene {
     this.busy = true;
     try {
       const res = await showPlacementRewarded('consumable');
-      if (!this.scene.isActive()) return;
+      if (!this.scene.isActive()) {
+        if (res.rewarded) refundPlacement('consumable');
+        return;
+      }
       if (res.rewarded) {
-        const st = rollMetaDay();
-        st.consumables.cs_horseshoe += 1;
-        saveMetaState(st);
+        if (!grantConsumableFromAd('cs_horseshoe')) {
+          refundPlacement('consumable');
+          this.toast(t('store.fail'));
+          return;
+        }
         audio.play('levelup');
         this.renderTab();
       }
