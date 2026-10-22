@@ -1,4 +1,4 @@
-import { expect, test } from '@playwright/test';
+import { expect, test, type Page } from '@playwright/test';
 
 const startupTimeout = 60_000;
 
@@ -744,4 +744,241 @@ test('orders tab starts a weekly challenge with the selected king order', async 
     return { weeklyChallenge: scene?.mods.weeklyChallenge, ukaz: scene?.mods.ukaz };
   });
   expect(run).toEqual({ weeklyChallenge: true, ukaz: 'ukaz_horde' });
+});
+
+
+test('daily challenge date deterministically seeds the map, economy and wave director', async ({ page, browser }) => {
+  await page.goto('/?lang=en&ysdk=mock');
+  await expect(page.locator('#game canvas')).toBeVisible({ timeout: startupTimeout });
+  await expect(page.locator('#boot')).toHaveCount(0, { timeout: startupTimeout });
+  const appOrigin = await page.evaluate(() => window.location.origin);
+
+  const capture = async (target: Page, date: string, perturbGameplayRng = false): Promise<{
+    seed: number;
+    challengeSeed: string | null;
+    map: Array<{ kind: string; resource: string; x: number; y: number }>;
+    spawnPositions: Array<{ x: number; y: number }>;
+    economyRandom: number[];
+    waveRandom: number[];
+    waveRandomAfterGeometry: number[];
+    weaponTargetRandom: number[];
+    progressionSeeded: boolean;
+    pawnRandom: number[];
+    pawnRandomInt: number[];
+    choices: Array<{ kind: string; id: string | null; title: string }>;
+  }> => {
+    if (target !== page) await target.goto(new URL('/?lang=en&ysdk=mock', appOrigin).toString());
+    await expect(target.locator('#game canvas')).toBeVisible({ timeout: startupTimeout });
+    await expect(target.locator('#boot')).toHaveCount(0, { timeout: startupTimeout });
+    await expect.poll(() => target.evaluate(() => {
+      const runtime = (window as Window & {
+        __tss?: { scene: { isActive: (key: string) => boolean } };
+      }).__tss;
+      return runtime?.scene.isActive('Menu') ?? false;
+    }), { timeout: startupTimeout }).toBe(true);
+
+    await target.evaluate(async (challengeDate) => {
+      const meta = await import('/src/game/meta.ts') as {
+        saveRunConfig: (config: {
+          contract: null;
+          ukaz: null;
+          challenge: { mods: ['cm_gold_rush', 'cm_winter']; rerolled: false };
+          challengeSeed: string;
+          blessing: null;
+          consumables: [];
+          endless: false;
+          weeklyChallenge: false;
+        }) => void;
+      };
+      const runtime = (window as Window & {
+        __tss?: { scene: { getScene: (key: string) => unknown } };
+      }).__tss;
+      if (!runtime) throw new Error('Phaser runtime is unavailable');
+      const menu = runtime.scene.getScene('Menu') as {
+        selectedHero?: string;
+        selectedDiff?: string;
+        scene: { start: (key: string, data: { hero: string; diff: string }) => void };
+      };
+      meta.saveRunConfig({
+        contract: null,
+        ukaz: null,
+        challenge: { mods: ['cm_gold_rush', 'cm_winter'], rerolled: false },
+        challengeSeed: challengeDate,
+        blessing: null,
+        consumables: [],
+        endless: false,
+        weeklyChallenge: false,
+      });
+      menu.scene.start('Game', {
+        hero: menu.selectedHero ?? 'warrior',
+        diff: menu.selectedDiff ?? 'normal',
+      });
+    }, date);
+
+    await expect.poll(() => target.evaluate(() => {
+      const runtime = (window as Window & {
+        __tss?: { scene: { isActive: (key: string) => boolean } };
+      }).__tss;
+      return runtime?.scene.isActive('Game') ?? false;
+    }), { timeout: startupTimeout }).toBe(true);
+
+    return target.evaluate(({ challengeDate, perturbGameplayRng }) => {
+      const runtime = (window as Window & {
+        __tss?: { scene: { getScene: (key: string) => unknown } };
+      }).__tss;
+      if (!runtime) throw new Error('Phaser runtime is unavailable');
+      const scene = runtime.scene.getScene('Game') as {
+        runSeed: number;
+        mods: { challengeSeed?: string | null; challenge: { mods: string[] } | null };
+        gameplayRandom: () => number;
+        generateChoices: () => Array<{ kind: string; id?: string; title: string }>;
+        dailySpawnerRng: { sow: (seeds: string[]) => unknown };
+        dailySpawnPositionRng: { sow: (seeds: string[]) => unknown };
+        dailyProgressionRng: { frac: () => number } | null;
+        player: { hp: number; maxHp: number };
+        spawner: {
+          stopped: boolean;
+          o: { random?: () => number };
+          ctx: { randomSpawnX: () => number; randomSpawnY: () => number };
+        };
+        economy: {
+          nodes: Array<{ kind: string; res: string; x: number; y: number }>;
+          opts: { random?: () => number };
+        };
+        registry: { get: (key: string) => unknown };
+        weapons: { ctx: { randomInt?: (min: number, max: number) => number } };
+      };
+      // Сбрасываем поток спавнера, чтобы время загрузки контекстов не влияло на сравнение.
+      scene.spawner.stopped = true;
+      scene.dailySpawnerRng.sow([`daily-spawner:${challengeDate}`]);
+      scene.dailySpawnPositionRng.sow([`daily-spawn-position:${challengeDate}`]);
+      // Эти потоки не должны изменяться после случайных боевых событий.
+      const weaponTargetRandom = Array.from({ length: 8 }, () =>
+        scene.weapons.ctx.randomInt?.(0, 100) ?? -1);
+      const pawnAi = scene.registry.get('tss-pawnai-ctx') as {
+        random?: () => number;
+        randomInt?: (min: number, max: number) => number;
+      };
+      const pawnRandom = Array.from({ length: 8 }, () => pawnAi.random?.() ?? -1);
+      const pawnRandomInt = Array.from({ length: 8 }, () => pawnAi.randomInt?.(0, 100) ?? -1);
+      if (perturbGameplayRng) {
+        for (let i = 0; i < 32; i++) scene.gameplayRandom();
+      }
+      // Фиксируем HP: набор добивающих карточек не должен зависеть от случайных стартовых кадров.
+      scene.player.hp = scene.player.maxHp;
+      // Доступные карточки должны зависеть от даты и состояния рана, но не от числа боевых бросков.
+      const choices = scene.generateChoices().map(({ kind, id, title }) => ({
+        kind,
+        id: id ?? null,
+        title,
+      }));
+      const progressionSeeded = scene.dailyProgressionRng !== null;
+      // Снимаем базовую последовательность типов волн до дополнительных бросков.
+      const waveRandom = Array.from({ length: 8 }, () => scene.spawner.o.random?.() ?? -1);
+      if (perturbGameplayRng) {
+        // Имитируем разное число решений спавнера: эти броски не должны менять координаты.
+        for (let i = 0; i < 32; i++) scene.spawner.o.random?.();
+      }
+      const spawnPositions = Array.from({ length: 6 }, () => ({
+        x: Math.round(scene.spawner.ctx.randomSpawnX() * 100) / 100,
+        y: Math.round(scene.spawner.ctx.randomSpawnY() * 100) / 100,
+      }));
+      // Перезапускаем поток состава: эта часть проверяет влияние именно геометрии.
+      scene.dailySpawnerRng.sow([`daily-spawner:${challengeDate}`]);
+      if (perturbGameplayRng) {
+        // Очередь отложенного спавна могла запросить ещё координаты, но состав волн не должен сдвинуться.
+        for (let i = 0; i < 16; i++) {
+          scene.spawner.ctx.randomSpawnX();
+          scene.spawner.ctx.randomSpawnY();
+        }
+      }
+      const waveRandomAfterGeometry = Array.from({ length: 8 }, () => scene.spawner.o.random?.() ?? -1);
+      return {
+        seed: scene.runSeed,
+        challengeSeed: scene.mods.challengeSeed ?? null,
+        spawnPositions,
+        map: scene.economy.nodes.map((node) => ({
+          kind: node.kind,
+          resource: node.res,
+          x: Math.round(node.x * 100) / 100,
+          y: Math.round(node.y * 100) / 100,
+        })),
+        economyRandom: Array.from({ length: 8 }, () => scene.economy.opts.random?.() ?? -1),
+        waveRandom,
+        waveRandomAfterGeometry,
+        weaponTargetRandom,
+        progressionSeeded,
+        pawnRandom,
+        pawnRandomInt,
+        choices,
+      };
+    }, { challengeDate: date, perturbGameplayRng });
+  };
+
+  const date = '2026-10-22';
+  const first = await capture(page, date, true);
+  const repeatContext = await browser.newContext();
+  try {
+    const repeatPage = await repeatContext.newPage();
+    const repeat = await capture(repeatPage, date);
+    expect(repeat.seed).toBe(first.seed);
+    expect(repeat.challengeSeed).toBe(date);
+    expect(first.challengeSeed).toBe(date);
+    expect(repeat.map).toEqual(first.map);
+    expect(repeat.spawnPositions).toEqual(first.spawnPositions);
+    expect(repeat.economyRandom).toEqual(first.economyRandom);
+    expect(first.waveRandom.every((value) => value >= 0)).toBe(true);
+    expect(repeat.waveRandom).toEqual(first.waveRandom);
+    expect(first.waveRandomAfterGeometry.every((value) => value >= 0)).toBe(true);
+    expect(repeat.waveRandomAfterGeometry).toEqual(first.waveRandomAfterGeometry);
+    expect(first.weaponTargetRandom.every((value) => value >= 0)).toBe(true);
+    expect(repeat.weaponTargetRandom).toEqual(first.weaponTargetRandom);
+    expect(first.progressionSeeded).toBe(true);
+    expect(repeat.progressionSeeded).toBe(true);
+    expect(first.pawnRandom.every((value) => value >= 0)).toBe(true);
+    expect(first.pawnRandomInt.every((value) => value >= 0)).toBe(true);
+    expect(repeat.pawnRandom).toEqual(first.pawnRandom);
+    expect(repeat.pawnRandomInt).toEqual(first.pawnRandomInt);
+    expect(repeat.choices).toEqual(first.choices);
+
+    const seeds = await page.evaluate(async (challengeDate) => {
+      const meta = await import('/src/game/meta.ts') as {
+        dailyChallengeSeedNumber: (value: string) => number;
+      };
+      return {
+        current: meta.dailyChallengeSeedNumber(challengeDate),
+        next: meta.dailyChallengeSeedNumber('2026-10-23'),
+      };
+    }, date);
+    expect(first.seed).toBe(seeds.current);
+    expect(seeds.next).not.toBe(seeds.current);
+  } finally {
+    await repeatContext.close();
+  }
+});
+
+
+test('daily challenge config rejects impossible calendar dates', async ({ page }) => {
+  await page.goto('/?lang=en&ysdk=mock');
+  await expect(page.locator('#game canvas')).toBeVisible({ timeout: startupTimeout });
+  await expect(page.locator('#boot')).toHaveCount(0, { timeout: startupTimeout });
+
+  const seed = await page.evaluate(async () => {
+    type Config = {
+      contract: null; ukaz: null; challenge: null; blessing: null;
+      consumables: []; endless: false; weeklyChallenge: false; challengeSeed: string;
+    };
+    const meta = await import('/src/game/meta.ts') as unknown as {
+      saveRunConfig: (config: Config) => void;
+      consumeRunConfig: () => { challengeSeed?: string | null };
+    };
+    meta.saveRunConfig({
+      contract: null, ukaz: null, challenge: null, blessing: null,
+      consumables: [], endless: false, weeklyChallenge: false,
+      challengeSeed: '2026-02-31',
+    });
+    return meta.consumeRunConfig().challengeSeed;
+  });
+
+  expect(seed).toBeNull();
 });

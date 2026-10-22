@@ -404,6 +404,11 @@ export const CHALLENGE_MODS: ChallengeModDef[] = [
   { id: 'cm_fog', nameKey: 'challenge.fog.name', descKey: 'challenge.fog.desc' },
 ];
 
+/** Числовой seed карты и волн ежедневного вызова — стабилен для серверной даты. */
+export function dailyChallengeSeedNumber(date: string): number {
+  return hashStr(`daily-run:${date}`) >>> 0;
+}
+
 export function challengeModsForDate(date: string, rerollSalt = ''): ChallengeModId[] {
   const rng = mulberry32(hashStr(`challenge:${date}:${rerollSalt}`));
   const pool = [...CHALLENGE_MODS.map((m) => m.id)];
@@ -738,6 +743,12 @@ export const BANNERS: BannerDef[] = [
 // Конфиг рана (передаётся в GameScene через 'tss-run')
 // ============================================================
 
+function isValidChallengeSeedDate(value: unknown): value is string {
+  if (typeof value !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
+  const timestamp = Date.parse(`${value}T00:00:00.000Z`);
+  return Number.isFinite(timestamp) && new Date(timestamp).toISOString().slice(0, 10) === value;
+}
+
 export interface RunModifiers {
   contract: ContractId | null;
   ukaz: OrderId | null;
@@ -747,6 +758,8 @@ export interface RunModifiers {
   endless: boolean;
   /** Испытание недели — тот же указ, но с локальной мини-таблицей. */
   weeklyChallenge: boolean;
+  /** Серверная дата YYYY-MM-DD для детерминированного вызова дня. */
+  challengeSeed?: string | null;
 }
 
 export const RUN_KEY = 'tss-run';
@@ -766,6 +779,7 @@ export function consumeRunConfig(): RunModifiers {
     consumables: [],
     endless: false,
     weeklyChallenge: false,
+    challengeSeed: null,
   };
   if (raw) {
     cfg.contract = typeof raw.contract === 'string' ? raw.contract : null;
@@ -780,6 +794,7 @@ export function consumeRunConfig(): RunModifiers {
     }
     cfg.endless = raw.endless === true;
     cfg.weeklyChallenge = raw.weeklyChallenge === true;
+    cfg.challengeSeed = isValidChallengeSeedDate(raw.challengeSeed) ? raw.challengeSeed : null;
   }
   return cfg;
 }

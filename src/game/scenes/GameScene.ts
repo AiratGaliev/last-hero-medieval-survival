@@ -42,7 +42,7 @@ import { placementAvailable, resetPlacementLimits, hideStickyBanner } from '../.
 import { track, beginRun, flushRunTelemetry, detectDeviceClass } from '../../platform/analytics';
 import { analyticsIdentity } from '../../platform/player';
 import {
-  consumeRunConfig, loadMetaState, rollMetaDay, nodeEffects, seasonDef,
+  consumeRunConfig, dailyChallengeSeedNumber, loadMetaState, rollMetaDay, nodeEffects, seasonDef,
   takeConsumables, applyRunToMeta, contractDef, contractScoreForRun, QUEST_POOL, markCodex,
   heroSkinTint, buildingSkinTint, trailSkinTint, activeBanner, matchesPlayed,
   type RunModifiers, type NodeEffects, type SeasonModifier, type RunSummary,
@@ -136,6 +136,15 @@ export class GameScene extends Phaser.Scene {
    */
   private rngState = 0;
   private runSeed = 0;
+  /** Независимые потоки RNG не дают боевым событиям менять карту/будущие волны вызова. */
+  private dailyGameplayRng: Phaser.Math.RandomDataGenerator | null = null;
+  private dailyEconomyRng: Phaser.Math.RandomDataGenerator | null = null;
+  private dailySpawnerRng: Phaser.Math.RandomDataGenerator | null = null;
+  /** Геометрия появлений не должна менять состав будущих волн. */
+  private dailySpawnPositionRng: Phaser.Math.RandomDataGenerator | null = null;
+  private dailyPawnRng: Phaser.Math.RandomDataGenerator | null = null;
+  /** Отдельный поток предложений левел-апа; боевые RNG-вызовы его не сдвигают. */
+  private dailyProgressionRng: Phaser.Math.RandomDataGenerator | null = null;
   /** [0, 1) из rng рана. */
   private runRng(): number {
     this.rngState = (this.rngState + 0x6d2b79f5) | 0;
@@ -143,6 +152,53 @@ export class GameScene extends Phaser.Scene {
     t = Math.imul(t ^ (t >>> 15), t | 1);
     t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
     return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  }
+
+  /** RNG боя отделён от генерации мира, стартовой экономики и волны врагов. */
+  private gameplayRandom(): number {
+    return this.dailyGameplayRng?.frac() ?? Math.random();
+  }
+
+  /** Отдельный поток координат появления врагов; он не сдвигает состав волн. */
+  private spawnerRandom(): number {
+    return this.dailySpawnPositionRng?.frac() ?? Math.random();
+  }
+
+  private gameplayInt(min: number, max: number): number {
+    if (!this.isSeededDailyChallenge) return Phaser.Math.Between(min, max);
+    return min + Math.floor(this.gameplayRandom() * (max - min + 1));
+  }
+
+  /** Варианты левел-апа тоже должны пользоваться seeded RNG внутри вызова дня. */
+  private shuffleGameplay<T>(items: T[]): T[] {
+    if (!this.isSeededDailyChallenge) return Phaser.Utils.Array.Shuffle(items);
+    for (let i = items.length - 1; i > 0; i--) {
+      const j = Math.floor(this.gameplayRandom() * (i + 1));
+      [items[i], items[j]] = [items[j], items[i]];
+    }
+    return items;
+  }
+
+  private progressionRandom(): number {
+    return this.dailyProgressionRng?.frac() ?? Math.random();
+  }
+
+  private progressionInt(min: number, max: number): number {
+    if (!this.isSeededDailyChallenge) return Phaser.Math.Between(min, max);
+    return min + Math.floor(this.progressionRandom() * (max - min + 1));
+  }
+
+  private shuffleProgression<T>(items: T[]): T[] {
+    if (!this.isSeededDailyChallenge) return Phaser.Utils.Array.Shuffle(items);
+    for (let i = items.length - 1; i > 0; i--) {
+      const j = Math.floor(this.progressionRandom() * (i + 1));
+      [items[i], items[j]] = [items[j], items[i]];
+    }
+    return items;
+  }
+
+  private get isSeededDailyChallenge(): boolean {
+    return !!this.mods.challenge && !!this.mods.challengeSeed;
   }
   private level = 1;
   private xp = 0;
@@ -294,6 +350,7 @@ export class GameScene extends Phaser.Scene {
       hero: this.heroDef.id,
       difficulty: this.diffDef.id,
       seed: this.runSeed,
+      challenge_seed: this.mods.challengeSeed ?? null,
       contract: this.contractId,
       ukaz: this.mods.ukaz ?? null,
       blessing: this.mods.blessing ?? null,
@@ -419,8 +476,27 @@ export class GameScene extends Phaser.Scene {
     this.comboTimer = 0;
     this.bestCombo = 0;
     this.xpMagnetUntil = 0;
-    // Числовой seed RNG совпадает с передаваемым в событии run_start.
-    this.runSeed = (Date.now() ^ Math.floor(Math.random() * 0x1_0000_0000)) >>> 0;
+    // Сначала погашаем конфиг: ежедневный вызов обязан использовать seed серверной даты.
+    this.mods = consumeRunConfig();
+    if (this.mods.challenge && !this.mods.challengeSeed) {
+      this.mods.challengeSeed = rollMetaDay().quests.date;
+    }
+    const challengeDate = this.isSeededDailyChallenge ? this.mods.challengeSeed! : null;
+    this.dailyGameplayRng = challengeDate
+      ? new Phaser.Math.RandomDataGenerator([`daily-gameplay:${challengeDate}`]) : null;
+    this.dailyEconomyRng = challengeDate
+      ? new Phaser.Math.RandomDataGenerator([`daily-economy:${challengeDate}`]) : null;
+    this.dailySpawnerRng = challengeDate
+      ? new Phaser.Math.RandomDataGenerator([`daily-spawner:${challengeDate}`]) : null;
+    this.dailySpawnPositionRng = challengeDate
+      ? new Phaser.Math.RandomDataGenerator([`daily-spawn-position:${challengeDate}`]) : null;
+    this.dailyPawnRng = challengeDate
+      ? new Phaser.Math.RandomDataGenerator([`daily-pawn-ai:${challengeDate}`]) : null;
+    this.dailyProgressionRng = challengeDate
+      ? new Phaser.Math.RandomDataGenerator([`daily-progression:${challengeDate}`]) : null;
+    this.runSeed = challengeDate
+      ? dailyChallengeSeedNumber(challengeDate)
+      : (Date.now() ^ Math.floor(Math.random() * 0x1_0000_0000)) >>> 0;
     this.rngState = this.runSeed | 0;
     this.registry.set('tss-freeze', 0);
     this.lastMove = { x: 1, y: 0 };
@@ -428,8 +504,7 @@ export class GameScene extends Phaser.Scene {
     this.trailEmitter?.destroy();
     this.trailEmitter = null;
 
-    // ---- Конфиг рана (фазы Q/S): читается и гасится один раз (§H.7–H.18, §J) ----
-    this.mods = consumeRunConfig();
+    // ---- Конфиг уже погашен до выбора seed выше ----
     if (this.mods.endless) track('endless_start', {});
     takeConsumables(this.mods.consumables);
     const meta = loadMetaState();
@@ -551,7 +626,9 @@ export class GameScene extends Phaser.Scene {
     this.physics.world.setBounds(m, m, S - m * 2, S - m * 2);
 
     // Детерминированный декор
-    const rng = new Phaser.Math.RandomDataGenerator(['tiny-sword-survivors']);
+    const rng = new Phaser.Math.RandomDataGenerator([
+      this.isSeededDailyChallenge ? `daily-map:${this.mods.challengeSeed}` : 'tiny-sword-survivors',
+    ]);
     const cx = S / 2, cy = S / 2;
     const placed: { x: number; y: number; r: number }[] = [];
     const canPlace = (x: number, y: number, r: number): boolean => {
@@ -598,6 +675,7 @@ export class GameScene extends Phaser.Scene {
     this.economy = new Economy(this, {
       castleX: this.castleX,
       castleY: this.castleY,
+      random: this.isSeededDailyChallenge ? () => this.dailyEconomyRng!.frac() : undefined,
       onBuildComplete: (kind, x, y) => this.onBuildComplete(kind, x, y),
       onRepairComplete: () => {},
       onBurnDamage: (b, amount) => this.settlement.damageBuilding(b, amount, b.lastSiegeIdx, false),
@@ -743,7 +821,9 @@ export class GameScene extends Phaser.Scene {
     for (let i = 0; i < 8; i++) {
       const [x, y] = randPos();
       if (canPlace(x, y, 120)) {
-        const k = Phaser.Math.RND.pick(['house1', 'house2', 'house3']);
+        const k = this.isSeededDailyChallenge
+          ? rng.pick(['house1', 'house2', 'house3'])
+          : Phaser.Math.RND.pick(['house1', 'house2', 'house3']);
         this.add.image(x, y, k).setScale(0.75).setDepth(DEPTH.ENTITY_BASE + y);
         place(x, y, 120);
       }
@@ -1103,6 +1183,11 @@ export class GameScene extends Phaser.Scene {
       hero: () => this.player
         ? { hp: this.player.hp, maxHp: this.player.maxHp, x: this.player.x, y: this.player.y }
         : null,
+      // Случайность патрулей/простых маршрутов пешек отделена от боевых бросков.
+      random: this.isSeededDailyChallenge ? () => this.dailyPawnRng!.frac() : undefined,
+      randomInt: this.isSeededDailyChallenge
+        ? (min: number, max: number) => min + Math.floor(this.dailyPawnRng!.frac() * (max - min + 1))
+        : undefined,
     });
     // Выбор цели врагом §A.5: гарнизон приоритетнее гражданских.
     // Гражданские в ядре поселения — вне досягаемости: у разбега нет
@@ -1149,7 +1234,7 @@ export class GameScene extends Phaser.Scene {
         // Игрок узнаёт о ней по объявлению, звуку и указателю за краем.
         const cam = this.cameras.main;
         const r = Math.hypot(cam.width, cam.height) / (2 * cam.zoom) + 140;
-        const a = Math.random() * Math.PI * 2;
+        const a = this.spawnerRandom() * Math.PI * 2;
         const x = this.player.x + Math.cos(a) * r;
         const y = this.player.y + Math.sin(a) * r;
         if (this.spawnEnemy(kind, x, y)) {
@@ -1175,7 +1260,7 @@ export class GameScene extends Phaser.Scene {
       randomSpawnX: () => {
         const cam = this.cameras.main;
         const r = Math.hypot(cam.width, cam.height) / (2 * cam.zoom) + 80;
-        const a = Math.random() * Math.PI * 2;
+        const a = this.spawnerRandom() * Math.PI * 2;
         return Phaser.Math.Clamp(
           this.player.x + Math.cos(a) * r,
           WORLD.GRASS_MARGIN + 60,
@@ -1185,7 +1270,7 @@ export class GameScene extends Phaser.Scene {
       randomSpawnY: () => {
         const cam = this.cameras.main;
         const r = Math.hypot(cam.width, cam.height) / (2 * cam.zoom) + 80;
-        const a = Math.random() * Math.PI * 2;
+        const a = this.spawnerRandom() * Math.PI * 2;
         return Phaser.Math.Clamp(
           this.player.y + Math.sin(a) * r,
           WORLD.GRASS_MARGIN + 60,
@@ -1207,6 +1292,8 @@ export class GameScene extends Phaser.Scene {
         this.mods.ukaz,
         this.challengeMods.has('cm_horde'),
       ),
+      random: this.isSeededDailyChallenge ? () => this.dailySpawnerRng!.frac() : undefined,
+      spawnRandom: this.isSeededDailyChallenge ? () => this.dailySpawnPositionRng!.frac() : undefined,
       season: this.seasonMod,
       contractQuiet: this.contractId === 'c_quiet',
       bloodMoon: this.challengeMods.has('cm_blood_moon'),
@@ -1217,7 +1304,7 @@ export class GameScene extends Phaser.Scene {
       ftueSoftStart: this.ftueSoftStart,
       // Вызов дня использует повторяемый пул по дате — обычные и бесконечные
       // матчи не меняют свой состав врагов.
-      dailyPool: this.mods.challenge ? pickDailyPool(rollMetaDay().quests.date) : undefined,
+      dailyPool: this.mods.challenge ? pickDailyPool(this.mods.challengeSeed ?? rollMetaDay().quests.date) : undefined,
       alarmLevel: () => this.economy.card('alarm'),
     });
 
@@ -1230,6 +1317,7 @@ export class GameScene extends Phaser.Scene {
       moveDir: () => this.lastMove,
       mightMult: () => this.mightMult,
       cdMult: () => this.cdMult,
+      randomInt: this.isSeededDailyChallenge ? (min, max) => this.gameplayInt(min, max) : undefined,
     };
     this.weapons = new WeaponSystem(this, weaponCtx);
     this.weapons.add(this.heroDef.startWeapon);
@@ -1359,8 +1447,8 @@ export class GameScene extends Phaser.Scene {
         if (this.pickups.chestPos()) {
           for (let i = 0; i < 3; i++) {
             this.pickups.spawnGoldGem(
-              pawn.x + Phaser.Math.Between(-30, 30),
-              pawn.y + Phaser.Math.Between(-20, 20), 12,
+              pawn.x + this.gameplayInt(-30, 30),
+              pawn.y + this.gameplayInt(-20, 20), 12,
             );
           }
         } else {
@@ -2131,7 +2219,7 @@ private ordersUnlocked(): boolean {
   private damageEnemy(e: Enemy, dmg: number, kx = 0, ky = 0, force = 0, src?: WeaponId): void {
     if (!e.active || e.dead) return;
     let final = dmg * this.mightMult;
-    const crit = Math.random() < this.critChance;
+    const crit = this.gameplayRandom() < this.critChance;
     if (crit) final *= 2;
     final = Math.max(1, Math.round(final));
     this.effects.damage(e.x, e.y - 40 * e.def.scale, final, crit);
@@ -2164,8 +2252,8 @@ private ordersUnlocked(): boolean {
     // (мини-бомбы сами кластеры не порождают — без рекурсии)
     if (allowCluster && src === 'bomb' && this.weapons.isEvolved('bomb')) {
       for (let i = 0; i < 4; i++) {
-        const a = (i / 4) * Math.PI * 2 + Math.random() * 0.7;
-        const dist = 90 + Math.random() * 70;
+        const a = (i / 4) * Math.PI * 2 + this.gameplayRandom() * 0.7;
+        const dist = 90 + this.gameplayRandom() * 70;
         const tx = Phaser.Math.Clamp(x + Math.cos(a) * dist, WORLD.GRASS_MARGIN + 20, WORLD.SIZE - WORLD.GRASS_MARGIN - 20);
         const ty = Phaser.Math.Clamp(y + Math.sin(a) * dist, WORLD.GRASS_MARGIN + 20, WORLD.SIZE - WORLD.GRASS_MARGIN - 20);
         this.projectiles.throwBomb(x, y, tx, ty, Math.round(dmg * 0.45), 90, true);
@@ -2219,7 +2307,7 @@ private ordersUnlocked(): boolean {
     const enemies: Enemy[] = [];
     // Обычные осады подходят с одной стороны; «Клещи» делят отряд
     // на два противоположных фланга (TZ §E.4.3).
-    const baseA = Math.random() * Math.PI * 2;
+    const baseA = this.gameplayRandom() * Math.PI * 2;
     const unitCount = profile.squad.reduce((total, part) => total + part.n, 0);
     const spawnAngles = calculateSiegeSpawnAngles(profile.formation ?? 'single', unitCount, baseA);
     let unitIdx = 0;
@@ -2227,7 +2315,7 @@ private ordersUnlocked(): boolean {
       for (let i = 0; i < part.n; i++) {
         const a = spawnAngles[unitIdx] ?? baseA;
         unitIdx++;
-        const r = 760 + Math.random() * 220;
+        const r = 760 + this.gameplayRandom() * 220;
         const x = Phaser.Math.Clamp(this.castleX + Math.cos(a) * r, WORLD.GRASS_MARGIN + 60, WORLD.SIZE - WORLD.GRASS_MARGIN - 60);
         const y = Phaser.Math.Clamp(this.castleY + Math.sin(a) * r, WORLD.GRASS_MARGIN + 60, WORLD.SIZE - WORLD.GRASS_MARGIN - 60);
         const e = this.spawnSiegeUnit(part.kind, x, y, part.firer === true);
@@ -2661,8 +2749,8 @@ private ordersUnlocked(): boolean {
       const per = Math.floor(e.xpValue / n);
       let rest = e.xpValue - per * n;
       for (let i = 0; i < n; i++) {
-        const ox = big ? Phaser.Math.Between(-40, 40) : 0;
-        const oy = big ? Phaser.Math.Between(-40, 40) : 0;
+        const ox = big ? this.gameplayInt(-40, 40) : 0;
+        const oy = big ? this.gameplayInt(-40, 40) : 0;
         const amount = per + (rest > 0 ? 1 : 0);
         rest -= amount - per;
         if (amount > 0) this.pickups.spawnGem(x + ox, y + oy, e.def.gem, amount);
@@ -2676,7 +2764,7 @@ private ordersUnlocked(): boolean {
       this.ach?.event({ type: 'elites', value: this.elitesSlain });
     }
     // Золотые кристаллы: теперь дают золото
-    if (Math.random() < 0.03) this.pickups.spawnGoldGem(x, y, Phaser.Math.Between(3, 8));
+    if (this.gameplayRandom() < 0.03) this.pickups.spawnGoldGem(x, y, this.gameplayInt(3, 8));
     if (e.def.isBoss) {
       // Награда за весь матч: BOSS_GOLD кристаллами по кругу (TZ §A.4).
       // Очки (SCORE.BOSS) начисляет victory(), здесь — золото в лавку
@@ -2687,7 +2775,7 @@ private ordersUnlocked(): boolean {
         this.pickups.spawnGoldGem(x + Math.cos(a) * 70, y + Math.sin(a) * 70, per);
       }
       for (let i = 0; i < 4; i++) {
-        this.pickups.spawnMeat(x + Phaser.Math.Between(-80, 80), y + Phaser.Math.Between(-80, 80));
+        this.pickups.spawnMeat(x + this.gameplayInt(-80, 80), y + this.gameplayInt(-80, 80));
       }
     }
 
@@ -3023,8 +3111,8 @@ private bossDeathSequence(e: Enemy): boolean {
   }
 
   private spawnChest(): void {
-    const a = Math.random() * Math.PI * 2;
-    const r = Phaser.Math.Between(320, 520);
+    const a = this.gameplayRandom() * Math.PI * 2;
+    const r = this.gameplayInt(320, 520);
     const m = WORLD.GRASS_MARGIN + 120;
     const x = Phaser.Math.Clamp(this.player.x + Math.cos(a) * r, m, WORLD.SIZE - m);
     const y = Phaser.Math.Clamp(this.player.y + Math.sin(a) * r, m, WORLD.SIZE - m);
@@ -3055,8 +3143,8 @@ private bossDeathSequence(e: Enemy): boolean {
     const minute = this.elapsed / 60;
     const tier = minute > 8 ? 'gem-green' : 'gem-blue';
     for (let i = 0; i < 14; i++) {
-      const a = Math.random() * Math.PI * 2;
-      const d = Phaser.Math.Between(20, 110);
+      const a = this.gameplayRandom() * Math.PI * 2;
+      const d = this.gameplayInt(20, 110);
       this.pickups.spawnGem(x + Math.cos(a) * d, y + Math.sin(a) * d, tier, 1);
     }
     if (minute >= 3) {
@@ -3085,7 +3173,7 @@ private bossDeathSequence(e: Enemy): boolean {
   private enemyCtxStore: EnemyContext | null = null;
 
   private spawnBoss(hpMult = 1): void {
-    const a = Math.random() * Math.PI * 2;
+    const a = this.gameplayRandom() * Math.PI * 2;
     const cam = this.cameras.main;
     const r = Math.hypot(cam.width, cam.height) / (2 * cam.zoom) + 160;
     const x = Phaser.Math.Clamp(this.player.x + Math.cos(a) * r, 400, WORLD.SIZE - 400);
@@ -3256,7 +3344,7 @@ private bossDeathSequence(e: Enemy): boolean {
         });
       }
     }
-    Phaser.Utils.Array.Shuffle(pool);
+    this.shuffleProgression(pool);
     // Эволюции — в начало выдачи (не больше 3 карточек всего)
     const picked = [...evolutions.slice(0, 3), ...pool.slice(0, Math.max(0, 3 - evolutions.length))];
 
@@ -3290,9 +3378,9 @@ private bossDeathSequence(e: Enemy): boolean {
           desc: t(`settle.${def.id}.desc` as Parameters<typeof t>[0]),
         });
       }
-      Phaser.Utils.Array.Shuffle(cards);
+      this.shuffleProgression(cards);
       // Одна карта поселения на выдачу — не вытесняет боевую прокачку
-      if (cards[0]) picked.splice(Phaser.Math.Between(0, Math.min(2, picked.length - 1)), 0, cards[0]);
+      if (cards[0]) picked.splice(this.progressionInt(0, Math.min(2, picked.length - 1)), 0, cards[0]);
       if (picked.length > 3) picked.length = 3;
     }
 
@@ -4006,7 +4094,7 @@ private bossDeathSequence(e: Enemy): boolean {
         // босса при полной толпе не вызывал ничего, и игрок его не замечал.
         let summoned = 0;
         for (let i = 0; i < 6; i++) {
-          const a = (i / 6) * Math.PI * 2 + Math.random();
+          const a = (i / 6) * Math.PI * 2 + this.gameplayRandom();
           const gx = x + Math.cos(a) * 170;
           const gy = y + Math.sin(a) * 170;
           let ok = this.spawnEnemy('goblin', gx, gy);
