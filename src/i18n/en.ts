@@ -837,6 +837,8 @@ export const en: Record<TranslationKey, string> = {
   'pass.premium': 'Premium track',
   'pass.premiumOn': 'ACTIVE',
   'pass.premiumOff': 'Inactive',
+  'pass.buyCrowns': 'UNLOCK FOR {v} CROWNS',
+  'pass.crownsPoor': 'Not enough crowns to unlock the premium track.',
   'pass.claim': 'CLAIM',
   'pass.claimed': 'Claimed',
   'pass.nextLevel': '{v} XP to the reward',

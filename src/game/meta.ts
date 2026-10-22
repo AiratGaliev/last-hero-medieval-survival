@@ -642,6 +642,8 @@ export const CHAIN_REWARDS = { bronze: 150, silver: 300, gold: 25 } as const;
 // Пропуск «Хроника» (§J.6.3): 50 уровней, два трека
 // ============================================================
 
+export const PASS_CROWNS_PRICE = 290;
+
 export const PASS = {
   LEVELS: 50,
   XP_PER_LEVEL: 100,
@@ -864,6 +866,8 @@ export interface MetaState {
   pass: { season: string; xp: number; premium: boolean; claimedFree: number; claimedPrem: number };
   crowns: number;
   crownConvert: { date: string; count: number };
+  /** Постоянно разблокированные знамёна (не должны теряться при смене недели/сезона). */
+  banners: string[];
   skins: { owned: string[]; hero: string; building: string; trail: string; banner: string };
   consumables: Record<ConsumableId, number>;
   speedupTokens: number;
@@ -976,6 +980,7 @@ const EMPTY: MetaState = {
   pass: { season: '', xp: 0, premium: false, claimedFree: 0, claimedPrem: 0 },
   crowns: 0,
   crownConvert: { date: '', count: 0 },
+  banners: [],
   skins: { owned: [], hero: '', building: '', trail: '', banner: '' },
   consumables: { cs_horseshoe: 0, cs_horn: 0, cs_forester: 0 },
   speedupTokens: 0,
@@ -1103,6 +1108,7 @@ function sanitize(raw: unknown): MetaState {
     },
     crowns: int(o.crowns),
     crownConvert: { date: typeof cc.date === 'string' ? cc.date.slice(0, 10) : '', count: int(cc.count) },
+    banners: strArr(o.banners, knownBanners),
     skins: {
       owned: strArr(sk.owned, knownSkins),
       hero: typeof sk.hero === 'string' ? sk.hero : '',
@@ -1907,8 +1913,25 @@ function grantPassReward(st: MetaState, r: PassReward): number {
     case 'blessing': st.blessingTokens += r.amount; return 0;
     case 'skin': if (r.id) grantSkin(st, r.id); return 0;
     case 'title': case 'frame': return 0; // косметика-статус, хранение не требуется
-    case 'banner': return 0;
+    case 'banner':
+      if (r.id && BANNERS.some((banner) => banner.id === r.id) && !st.banners.includes(r.id)) {
+        st.banners.push(r.id);
+      }
+      return 0;
   }
+}
+
+/** Активирует премиум и выдаёт уже достигнутые уровни ровно один раз. */
+function activatePremiumPass(st: MetaState): number {
+  if (st.pass.premium) return 0;
+  st.pass.premium = true;
+  const level = Math.min(PASS.LEVELS, Math.floor(st.pass.xp / PASS.XP_PER_LEVEL));
+  let walletGold = 0;
+  for (let lv = 1; lv <= level; lv++) {
+    const reward = passReward(lv, true);
+    if (reward) walletGold += grantPassReward(st, reward);
+  }
+  return walletGold;
 }
 
 /** Золото в кошелёк лавки (единственный сток пропуска/цепочек/бонуса). */
@@ -1944,8 +1967,13 @@ export function claimWeeklyFinal(): { kind: 'crowns' | 'banner'; amount: number;
   const kind = weeklyFinalReward(st.weekly.week);
   let amount = 0;
   let id: string | undefined;
-  if (kind === 'crowns') { amount = 150; st.crowns += amount; }
-  else { id = 'banner_weekly'; grantSkin(st, id); }
+  if (kind === 'crowns') {
+    amount = 150;
+    st.crowns += amount;
+  } else {
+    id = 'banner_weekly';
+    if (!st.banners.includes(id)) st.banners.push(id);
+  }
   if (!saveMetaStateOrRollback(st, before)) return null;
   return { kind, amount, id };
 }
@@ -2139,6 +2167,25 @@ export function convertCrownsToGold(): { ok: boolean; reason?: 'limit' | 'poor' 
   return { ok: true };
 }
 
+/** Покупка премиум-трека за кроны; прошлые уровни выдаются в той же транзакции. */
+export function buyPassWithCrowns(): {
+  ok: boolean;
+  reason?: 'locked' | 'owned' | 'poor' | 'storage';
+} {
+  const st = rollMetaDay();
+  if (st.matchesPlayed < FTUE_MATCH_GATE.seasonPass) return { ok: false, reason: 'locked' };
+  if (st.pass.premium) return { ok: false, reason: 'owned' };
+  if (st.crowns < PASS_CROWNS_PRICE) return { ok: false, reason: 'poor' };
+
+  const before = structuredCloneSafe(st);
+  st.crowns -= PASS_CROWNS_PRICE;
+  const walletGold = activatePremiumPass(st);
+  if (!saveMetaStateWithWalletCredit(st, before, walletGold)) {
+    return { ok: false, reason: 'storage' };
+  }
+  return { ok: true };
+}
+
 /** Кроны капают бесплатно (§J.7) — учитываются вне инапов, витрина честна. */
 
 const PAID_SKIN_SKUS = [
@@ -2197,13 +2244,8 @@ function applySkuGrant(st: MetaState, sku: string): {
   } else if (sku === 'no_interstitial') {
     // Entitlement is represented by purchasedSkus and restored from getPurchases().
   } else if (sku === 'pass_chronicle') {
-    // Покупка задним числом: выдаёт все уже набранные премиум-уровни (§J.6.3)
-    st.pass.premium = true;
-    const lvl = Math.min(PASS.LEVELS, Math.floor(st.pass.xp / PASS.XP_PER_LEVEL));
-    for (let i = 1; i <= lvl; i++) {
-      const pr = passReward(i, true);
-      if (pr) walletGold += grantPassReward(st, pr);
-    }
+    // Единая логика догоняющих наград используется и для SKU, и для покупки за кроны.
+    walletGold += activatePremiumPass(st);
   } else if (sku.startsWith('skin_')) {
     skin = sku;
     grantSkin(st, sku);
@@ -2519,16 +2561,28 @@ export function codexCount(id: string): number {
 /** Знамёна, доступные игроку по состоянию прогресса (§J.6.2). */
 export function ownedBanners(): string[] {
   const st = rollMetaDay();
-  const out: string[] = [];
+  const out = new Set<string>(st.banners);
   const { ratio } = codexProgress();
-  if (ratio >= 0.5) out.push('banner_codex_50');
-  if (ratio >= 0.75) out.push('banner_codex_75');
-  if (ratio >= 1) out.push('banner_codex_100');
-  if (st.weekly.claimed) out.push('banner_weekly');
-  if (st.pass.premium) out.push('banner_pass');
-  if (st.purchasedSkus.includes('starter_castellan')) out.push('banner_store_1');
-  if (SKINS.some((s) => s.kind === 'building' && st.skins.owned.includes(s.id))) out.push('banner_store_2');
-  return out;
+  if (ratio >= 0.5) out.add('banner_codex_50');
+  if (ratio >= 0.75) out.add('banner_codex_75');
+  if (ratio >= 1) {
+    out.add('banner_codex_100');
+    out.add('banner_codex_all');
+  }
+  // Миграция прежней модели: закрепляем полученные знамёна до сброса календаря.
+  if (st.weekly.claimed) out.add('banner_weekly');
+  if (st.pass.premium && st.pass.xp >= PASS.LEVELS * PASS.XP_PER_LEVEL) out.add('banner_pass');
+  if (st.purchasedSkus.includes('starter_castellan')) out.add('banner_store_1');
+  if (SKINS.some((s) => s.kind === 'building' && st.skins.owned.includes(s.id))) out.add('banner_store_2');
+
+  const owned = [...out].filter((id) => BANNERS.some((banner) => banner.id === id));
+  const missing = owned.filter((id) => !st.banners.includes(id));
+  if (missing.length > 0) {
+    const before = structuredCloneSafe(st);
+    st.banners.push(...missing);
+    saveMetaStateOrRollback(st, before);
+  }
+  return owned;
 }
 
 /** Реролл задания дня за рекламу (R10, лимит 3/день). */
