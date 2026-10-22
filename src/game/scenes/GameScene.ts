@@ -3881,12 +3881,13 @@ private bossDeathSequence(e: Enemy): boolean {
    * может вызваться повторно). Кодекс-отметки оружия/эволюций — ДО вызова.
    */
   private applyRunMeta(victory: boolean, score: number, ideal: boolean): NonNullable<import('./GameOverScene').GameOverStats['meta']> | undefined {
-    // Кодекс (§H.10): использованное оружие (dmg > 0) и эволюции
+    // Повторное завершение Game Over не должно повторно учитывать кодекс.
+    if (this.metaApplied) return undefined;
+    // Кодекс (§H.10): использованное оружие (dmg > 0) и эволюции — один раз за ран.
     for (const id of this.weapons.ownedIds()) {
       if ((WEAPONS[id].levels[0]?.dmg ?? 0) > 0) markCodex(`w_${id}`);
       if (this.weapons.isEvolved(id)) markCodex(`e_${id}`);
     }
-    if (this.metaApplied) return undefined;
     this.metaApplied = true;
     // Контракт «Пацифист-герой» (§H.9): золото героя уходит в кошелёк лавки
     // (depositGold из '../shop'), минуя сводку матча — без задвоения
