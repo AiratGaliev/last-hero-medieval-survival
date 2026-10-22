@@ -982,3 +982,135 @@ test('daily challenge config rejects impossible calendar dates', async ({ page }
 
   expect(seed).toBeNull();
 });
+
+test('endless wave milestone rewards are granted once when a new record passes each threshold', async ({ page }) => {
+  await page.goto('/?lang=en&ysdk=mock');
+  await expect(page.locator('#game canvas')).toBeVisible({ timeout: startupTimeout });
+  await expect(page.locator('#boot')).toHaveCount(0, { timeout: startupTimeout });
+
+  const outcome = await page.evaluate(async () => {
+    type RunSummary = {
+      victory: boolean; ideal: boolean; endless: boolean; weeklyChallenge: boolean;
+      wave: number; time: number; kills: number; level: number; gold: number; score: number;
+      difficulty: string; buildingsBuilt: number; pawnsAlive: number;
+      siegesDefended: number; siegesTotal: number; monasteryHealed: number; healHp: number;
+      hires: number; successions: number; veterans: number; firstHouseMin: number;
+      barracks: number; monastery: number; archery: number; bestCombo: number;
+      bossKilled: boolean; killsByKind: Record<string, number>; cardsPicked: string[];
+      contract: string | null; ukaz: string | null; challengeMods: string[];
+      blessing: string | null; consumables: string[];
+    };
+    type TestMetaState = {
+      endlessBestWave: number;
+      crowns: number;
+      quests: { date: string; ids: string[]; progress: Record<string, number>; done: string[]; rerolls: number };
+      weekly: { week: string; progress: number; stage: number; claimed: boolean };
+      chains: { counters: Record<string, number>; claimed: string[] };
+    };
+    const meta = await import('/src/game/meta.ts') as unknown as {
+      rollMetaDay: () => TestMetaState;
+      saveMetaState: (state: TestMetaState) => boolean;
+      loadMetaState: () => TestMetaState;
+      applyRunToMeta: (summary: RunSummary) => { endlessWaveCrowns: number };
+    };
+    const state = meta.rollMetaDay();
+    state.endlessBestWave = 9;
+    state.crowns = 7;
+    state.quests.ids = [];
+    state.quests.progress = {};
+    state.quests.done = [];
+    state.chains.counters = {};
+    state.chains.claimed = [];
+    meta.saveMetaState(state);
+
+    const base: RunSummary = {
+      victory: false, ideal: false, endless: true, weeklyChallenge: false,
+      wave: 0, time: 120, kills: 0, level: 1, gold: 0, score: 0, difficulty: 'normal',
+      buildingsBuilt: 0, pawnsAlive: 0, siegesDefended: 0, siegesTotal: 0,
+      monasteryHealed: 0, healHp: 0, hires: 0, successions: 0, veterans: 0,
+      firstHouseMin: 0, barracks: 0, monastery: 0, archery: 0, bestCombo: 0,
+      bossKilled: false, killsByKind: {}, cardsPicked: [], contract: null, ukaz: null,
+      challengeMods: [], blessing: null, consumables: [],
+    };
+
+    const first = meta.applyRunToMeta({ ...base, wave: 10 });
+    const afterFirst = meta.loadMetaState();
+    const second = meta.applyRunToMeta({ ...base, wave: 20 });
+    const afterSecond = meta.loadMetaState();
+    const third = meta.applyRunToMeta({ ...base, wave: 30 });
+    const afterThird = meta.loadMetaState();
+    const repeat = meta.applyRunToMeta({ ...base, wave: 30 });
+    const afterRepeat = meta.loadMetaState();
+
+    return {
+      awards: [first.endlessWaveCrowns, second.endlessWaveCrowns, third.endlessWaveCrowns, repeat.endlessWaveCrowns],
+      balances: [afterFirst.crowns, afterSecond.crowns, afterThird.crowns, afterRepeat.crowns],
+      bestWave: afterRepeat.endlessBestWave,
+    };
+  });
+
+  expect(outcome.awards).toEqual([5, 10, 20, 0]);
+  expect(outcome.balances).toEqual([12, 22, 42, 42]);
+  expect(outcome.bestWave).toBe(30);
+});
+
+test('weekly chronicle counts a completed run once when it unlocks an achievement-chain tier', async ({ page }) => {
+  await page.goto('/?lang=en&ysdk=mock');
+  await expect(page.locator('#game canvas')).toBeVisible({ timeout: startupTimeout });
+  await expect(page.locator('#boot')).toHaveCount(0, { timeout: startupTimeout });
+
+  const outcome = await page.evaluate(async () => {
+    type RunSummary = {
+      victory: boolean; ideal: boolean; endless: boolean; weeklyChallenge: boolean;
+      wave: number; time: number; kills: number; level: number; gold: number; score: number;
+      difficulty: string; buildingsBuilt: number; pawnsAlive: number;
+      siegesDefended: number; siegesTotal: number; monasteryHealed: number; healHp: number;
+      hires: number; successions: number; veterans: number; firstHouseMin: number;
+      barracks: number; monastery: number; archery: number; bestCombo: number;
+      bossKilled: boolean; killsByKind: Record<string, number>; cardsPicked: string[];
+      contract: string | null; ukaz: string | null; challengeMods: string[];
+      blessing: string | null; consumables: string[];
+    };
+    type TestMetaState = {
+      quests: { date: string; ids: string[]; progress: Record<string, number>; done: string[]; rerolls: number };
+      weekly: { week: string; progress: number; stage: number; claimed: boolean };
+      chains: { counters: Record<string, number>; claimed: string[] };
+    };
+    const meta = await import('/src/game/meta.ts') as unknown as {
+      rollMetaDay: () => TestMetaState;
+      saveMetaState: (state: TestMetaState) => boolean;
+      loadMetaState: () => TestMetaState;
+      applyRunToMeta: (summary: RunSummary) => { chainUnlocked: Array<{ id: string; tier: number }> };
+    };
+    const state = meta.rollMetaDay();
+    state.quests.ids = [];
+    state.quests.progress = {};
+    state.quests.done = [];
+    state.weekly.progress = 0;
+    state.weekly.stage = 0;
+    state.weekly.claimed = false;
+    state.chains.counters = {};
+    state.chains.claimed = [];
+    meta.saveMetaState(state);
+
+    const result = meta.applyRunToMeta({
+      victory: false, ideal: false, endless: false, weeklyChallenge: false,
+      wave: 0, time: 120, kills: 0, level: 1, gold: 0, score: 0, difficulty: 'normal',
+      buildingsBuilt: 0, pawnsAlive: 0, siegesDefended: 1, siegesTotal: 1,
+      monasteryHealed: 0, healHp: 0, hires: 0, successions: 0, veterans: 0,
+      firstHouseMin: 0, barracks: 0, monastery: 0, archery: 0, bestCombo: 0,
+      bossKilled: false, killsByKind: {}, cardsPicked: [], contract: null, ukaz: null,
+      challengeMods: [], blessing: null, consumables: [],
+    });
+    const saved = meta.loadMetaState();
+    return {
+      progress: saved.weekly.progress,
+      stage: saved.weekly.stage,
+      unlocked: result.chainUnlocked.some((item) => item.id === 'ch_siege' && item.tier === 0),
+    };
+  });
+
+  expect(outcome.unlocked).toBe(true);
+  expect(outcome.progress).toBe(1);
+  expect(outcome.stage).toBe(0);
+});
