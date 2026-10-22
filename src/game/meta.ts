@@ -1549,7 +1549,7 @@ export function applyRunToMeta(s: RunSummary): RunMetaResult {
       case 'hires': return s.hires;
       case 'successionBoss': return s.successions > 0 && s.bossKilled ? 1 : 0;
       case 'kills': return s.kills;
-      case 'firstHouseMin': return s.firstHouseMin > 0 ? Math.floor(s.firstHouseMin) : 99;
+      case 'firstHouseMin': return s.firstHouseMin > 0 ? s.firstHouseMin : 99;
       case 'barracks': return s.barracks;
       case 'monastery': return s.monastery;
       case 'archery': return s.archery;
@@ -1566,11 +1566,15 @@ export function applyRunToMeta(s: RunSummary): RunMetaResult {
     const def = QUEST_POOL.find((q) => q.id === id);
     if (!def || st.quests.done.includes(id)) continue;
     const rv = runValue(def.metric);
-    // firstHouseMin — «чем меньше, тем лучше»: цель «построить дом до N мин»
-    const achieved = def.metric === 'firstHouseMin' ? rv <= def.goal : rv >= def.goal;
+    // Для условия по времени нужен реальный результат постройки, а не sentinel «дом не построен».
+    if (def.metric === 'firstHouseMin' && (rv <= 0 || rv >= 99)) continue;
+    // «До 2:00» — строго раньше дедлайна; округление целых минут давало ложный успех на 2:59.
+    const achieved = def.metric === 'firstHouseMin'
+      ? rv < def.goal
+      : rv >= def.goal;
     const prev = st.quests.progress[id] ?? 0;
     const next = def.metric === 'firstHouseMin'
-      ? (prev > 0 ? Math.min(prev, rv) : rv)
+      ? (prev > 0 && prev < 99 ? Math.min(prev, rv) : rv)
       : Math.max(prev, rv);
     st.quests.progress[id] = next;
     // §K.2 требует `quest_progress` — без него воронка заданий (§K.3)
