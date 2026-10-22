@@ -141,6 +141,8 @@ export class GameScene extends Phaser.Scene {
   private dailyEconomyRng: Phaser.Math.RandomDataGenerator | null = null;
   private dailySpawnerRng: Phaser.Math.RandomDataGenerator | null = null;
   private dailyPawnRng: Phaser.Math.RandomDataGenerator | null = null;
+  /** Отдельный поток предложений левел-апа; боевые RNG-вызовы его не сдвигают. */
+  private dailyProgressionRng: Phaser.Math.RandomDataGenerator | null = null;
   /** [0, 1) из rng рана. */
   private runRng(): number {
     this.rngState = (this.rngState + 0x6d2b79f5) | 0;
@@ -170,6 +172,24 @@ export class GameScene extends Phaser.Scene {
     if (!this.isSeededDailyChallenge) return Phaser.Utils.Array.Shuffle(items);
     for (let i = items.length - 1; i > 0; i--) {
       const j = Math.floor(this.gameplayRandom() * (i + 1));
+      [items[i], items[j]] = [items[j], items[i]];
+    }
+    return items;
+  }
+
+  private progressionRandom(): number {
+    return this.dailyProgressionRng?.frac() ?? Math.random();
+  }
+
+  private progressionInt(min: number, max: number): number {
+    if (!this.isSeededDailyChallenge) return Phaser.Math.Between(min, max);
+    return min + Math.floor(this.progressionRandom() * (max - min + 1));
+  }
+
+  private shuffleProgression<T>(items: T[]): T[] {
+    if (!this.isSeededDailyChallenge) return Phaser.Utils.Array.Shuffle(items);
+    for (let i = items.length - 1; i > 0; i--) {
+      const j = Math.floor(this.progressionRandom() * (i + 1));
       [items[i], items[j]] = [items[j], items[i]];
     }
     return items;
@@ -468,6 +488,8 @@ export class GameScene extends Phaser.Scene {
       ? new Phaser.Math.RandomDataGenerator([`daily-spawner:${challengeDate}`]) : null;
     this.dailyPawnRng = challengeDate
       ? new Phaser.Math.RandomDataGenerator([`daily-pawn-ai:${challengeDate}`]) : null;
+    this.dailyProgressionRng = challengeDate
+      ? new Phaser.Math.RandomDataGenerator([`daily-progression:${challengeDate}`]) : null;
     this.runSeed = challengeDate
       ? dailyChallengeSeedNumber(challengeDate)
       : (Date.now() ^ Math.floor(Math.random() * 0x1_0000_0000)) >>> 0;
@@ -3317,7 +3339,7 @@ private bossDeathSequence(e: Enemy): boolean {
         });
       }
     }
-    this.shuffleGameplay(pool);
+    this.shuffleProgression(pool);
     // Эволюции — в начало выдачи (не больше 3 карточек всего)
     const picked = [...evolutions.slice(0, 3), ...pool.slice(0, Math.max(0, 3 - evolutions.length))];
 
@@ -3351,9 +3373,9 @@ private bossDeathSequence(e: Enemy): boolean {
           desc: t(`settle.${def.id}.desc` as Parameters<typeof t>[0]),
         });
       }
-      this.shuffleGameplay(cards);
+      this.shuffleProgression(cards);
       // Одна карта поселения на выдачу — не вытесняет боевую прокачку
-      if (cards[0]) picked.splice(this.gameplayInt(0, Math.min(2, picked.length - 1)), 0, cards[0]);
+      if (cards[0]) picked.splice(this.progressionInt(0, Math.min(2, picked.length - 1)), 0, cards[0]);
       if (picked.length > 3) picked.length = 3;
     }
 

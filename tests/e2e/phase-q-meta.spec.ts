@@ -761,6 +761,7 @@ test('daily challenge date deterministically seeds the map, economy and wave dir
     economyRandom: number[];
     waveRandom: number[];
     weaponTargetRandom: number[];
+    progressionSeeded: boolean;
     pawnRandom: number[];
     pawnRandomInt: number[];
     choices: Array<{ kind: string; id: string | null; title: string }>;
@@ -831,6 +832,7 @@ test('daily challenge date deterministically seeds the map, economy and wave dir
         gameplayRandom: () => number;
         generateChoices: () => Array<{ kind: string; id?: string; title: string }>;
         dailySpawnerRng: { sow: (seeds: string[]) => unknown };
+        dailyProgressionRng: { frac: () => number } | null;
         spawner: {
           stopped: boolean;
           o: { random?: () => number };
@@ -846,12 +848,7 @@ test('daily challenge date deterministically seeds the map, economy and wave dir
       // Сбрасываем поток спавнера, чтобы время загрузки контекстов не влияло на сравнение.
       scene.spawner.stopped = true;
       scene.dailySpawnerRng.sow([`daily-spawner:${challengeDate}`]);
-      // Карточки — часть игрового результата, поэтому сравниваем их до perturbation.
-      const choices = scene.generateChoices().map(({ kind, id, title }) => ({
-        kind,
-        id: id ?? null,
-        title,
-      }));
+      // Эти потоки не должны изменяться после случайных боевых событий.
       const weaponTargetRandom = Array.from({ length: 8 }, () =>
         scene.weapons.ctx.randomInt?.(0, 100) ?? -1);
       const pawnAi = scene.registry.get('tss-pawnai-ctx') as {
@@ -863,6 +860,13 @@ test('daily challenge date deterministically seeds the map, economy and wave dir
       if (perturbGameplayRng) {
         for (let i = 0; i < 32; i++) scene.gameplayRandom();
       }
+      // Доступные карточки должны зависеть от даты и состояния рана, но не от числа боевых бросков.
+      const choices = scene.generateChoices().map(({ kind, id, title }) => ({
+        kind,
+        id: id ?? null,
+        title,
+      }));
+      const progressionSeeded = scene.dailyProgressionRng !== null;
       const spawnPositions = Array.from({ length: 6 }, () => ({
         x: Math.round(scene.spawner.ctx.randomSpawnX() * 100) / 100,
         y: Math.round(scene.spawner.ctx.randomSpawnY() * 100) / 100,
@@ -880,6 +884,7 @@ test('daily challenge date deterministically seeds the map, economy and wave dir
         economyRandom: Array.from({ length: 8 }, () => scene.economy.opts.random?.() ?? -1),
         waveRandom: Array.from({ length: 8 }, () => scene.spawner.o.random?.() ?? -1),
         weaponTargetRandom,
+        progressionSeeded,
         pawnRandom,
         pawnRandomInt,
         choices,
@@ -902,6 +907,8 @@ test('daily challenge date deterministically seeds the map, economy and wave dir
     expect(repeat.waveRandom).toEqual(first.waveRandom);
     expect(first.weaponTargetRandom.every((value) => value >= 0)).toBe(true);
     expect(repeat.weaponTargetRandom).toEqual(first.weaponTargetRandom);
+    expect(first.progressionSeeded).toBe(true);
+    expect(repeat.progressionSeeded).toBe(true);
     expect(first.pawnRandom.every((value) => value >= 0)).toBe(true);
     expect(first.pawnRandomInt.every((value) => value >= 0)).toBe(true);
     expect(repeat.pawnRandom).toEqual(first.pawnRandom);
