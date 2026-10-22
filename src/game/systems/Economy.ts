@@ -67,6 +67,7 @@ interface Tune {
   pawnSpeed: number;
   workSpeed: number;
   buildCost: number;
+  oreCost: number;
   houseCost: number;
   buildTime: number;
   hireCost: number;
@@ -114,6 +115,8 @@ export interface EconomyOpts {
   workSpeedMult?: number;
   /** «Скидки казны» / «Чёрный рынок»: цены построек. */
   buildCostMult?: number;
+  /** Сезон «Золотая лихорадка»: все расходы руды ×1.25 (§H.18). */
+  oreCostMult?: number;
   /** «Суровая зима»: дом ×0.8 (A2). */
   houseCostMult?: number;
   /** «Каменный век»: время стройки ×1.3 (A2). */
@@ -211,6 +214,7 @@ export class Economy extends Phaser.Events.EventEmitter {
       pawnSpeed: opts.pawnSpeedMult ?? 1,
       workSpeed: opts.workSpeedMult ?? 1,
       buildCost: opts.buildCostMult ?? 1,
+      oreCost: opts.oreCostMult ?? 1,
       houseCost: opts.houseCostMult ?? 1,
       buildTime: opts.buildTimeMult ?? 1,
       hireCost: opts.hireCostMult ?? 1,
@@ -653,7 +657,7 @@ export class Economy extends Phaser.Events.EventEmitter {
     const m = this.tune.buildCost * (kind === 'house' ? this.tune.houseCost : 1);
     const out: ResourceCost = {};
     if (plan.cost.wood) out.wood = Math.round(plan.cost.wood * m);
-    if (plan.cost.ore) out.ore = Math.round(plan.cost.ore * m);
+    if (plan.cost.ore) out.ore = Math.round(plan.cost.ore * m * this.tune.oreCost);
     if (plan.cost.meat) out.meat = Math.round(plan.cost.meat * m);
     return out;
   }
@@ -737,7 +741,7 @@ export class Economy extends Phaser.Events.EventEmitter {
     const wood = Math.round((rebuild ? REPAIR.REBUILD_WOOD : REPAIR.WOOD) * this.tune.repairCost);
     const cost: ResourceCost = { wood };
     if (rebuild && building.kind === 'barracks') {
-      cost.ore = Math.round(REPAIR.REBUILD_BARRACKS_ORE * this.tune.repairCost);
+      cost.ore = Math.round(REPAIR.REBUILD_BARRACKS_ORE * this.tune.repairCost * this.tune.oreCost);
     }
     if (!this.spend(cost)) return false;
     building.underConstruction = true;
@@ -782,7 +786,7 @@ export class Economy extends Phaser.Events.EventEmitter {
     const base = HIRE_COST[weapon];
     const out: ResourceCost = {};
     if (base.wood) out.wood = Math.round(base.wood * m);
-    if (base.ore) out.ore = Math.round(base.ore * m);
+    if (base.ore) out.ore = Math.round(base.ore * m * this.tune.oreCost);
     if (base.meat) out.meat = Math.round(base.meat * m);
     return out;
   }
