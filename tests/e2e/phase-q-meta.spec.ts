@@ -208,10 +208,11 @@ test('meta progress restores newer Player Data state and flushes subsequent muta
 });
 
 
-test('daily bonus cannot be claimed twice across a UTC date boundary', async ({ page }) => {
+test('daily bonus cannot be claimed twice across a Moscow date boundary', async ({ page }) => {
   await page.addInitScript(() => {
-    const now = Date.now();
-    const yesterday = new Date(now - 86_400_000).toISOString().slice(0, 10);
+    const now = Date.UTC(2026, 9, 21, 21, 30, 0); // 00:30 МСК 22 октября
+    Date.now = () => now;
+    const yesterday = '2026-10-21';
     localStorage.clear();
     localStorage.setItem('tss-meta2', JSON.stringify({
       v: 2,
@@ -251,7 +252,7 @@ test('daily bonus cannot be claimed twice across a UTC date boundary', async ({ 
 });
 
 
-test('daily quest and weekly keys use UTC rather than the browser timezone', async ({ browser }) => {
+test('daily quest and weekly keys use Moscow time, independent of the browser timezone', async ({ browser }) => {
   const context = await browser.newContext({
     baseURL: 'http://127.0.0.1:3000',
     timezoneId: 'Pacific/Kiritimati',
@@ -260,8 +261,8 @@ test('daily quest and weekly keys use UTC rather than the browser timezone', asy
 
   try {
     await page.addInitScript(() => {
-      // 23:30 UTC воскресенья уже является понедельником в часовом поясе теста.
-      Date.now = () => Date.UTC(2026, 9, 18, 23, 30, 0);
+      // 20:30 UTC — 23:30 воскресенья в Москве, но уже понедельник в Kiritimati.
+      Date.now = () => Date.UTC(2026, 9, 18, 20, 30, 0);
     });
     await page.goto('/?lang=en&ysdk=mock');
     await expect(page.locator('#game canvas')).toBeVisible({ timeout: startupTimeout });
@@ -274,16 +275,22 @@ test('daily quest and weekly keys use UTC rather than the browser timezone', asy
         currentWeekKey: () => string;
       };
       const state = meta.rollMetaDay();
+      const now = new Date(Date.now());
+      const browserDate = [
+        now.getFullYear(),
+        String(now.getMonth() + 1).padStart(2, '0'),
+        String(now.getDate()).padStart(2, '0'),
+      ].join('-');
       return {
-        localDate: new Date(Date.now()).toISOString().slice(0, 10),
-        localDay: new Date(Date.now()).getDate(),
+        utcDate: now.toISOString().slice(0, 10),
+        browserDate,
         questDate: state.quests.date,
         week: meta.currentWeekKey(),
       };
     });
 
-    expect(keys.localDate).toBe('2026-10-18');
-    expect(keys.localDay).toBe(19);
+    expect(keys.utcDate).toBe('2026-10-18');
+    expect(keys.browserDate).toBe('2026-10-19');
     expect(keys.questDate).toBe('2026-10-18');
     expect(keys.week).toBe('2026-10-12');
   } finally {
@@ -347,7 +354,14 @@ test('contract score applies the registered multiplier without replacing the bas
 
 test('main menu exposes daily quest completion ratio', async ({ page }) => {
   await page.addInitScript(() => {
-    const today = new Date().toISOString().slice(0, 10);
+    const dateParts = new Intl.DateTimeFormat('en-US', {
+      timeZone: 'Europe/Moscow', year: 'numeric', month: '2-digit', day: '2-digit',
+    }).formatToParts(new Date());
+    const today = [
+      dateParts.find((part) => part.type === 'year')?.value,
+      dateParts.find((part) => part.type === 'month')?.value,
+      dateParts.find((part) => part.type === 'day')?.value,
+    ].join('-');
     localStorage.clear();
     localStorage.setItem('tss-meta2', JSON.stringify({
       v: 2,
