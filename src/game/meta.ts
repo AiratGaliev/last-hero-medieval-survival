@@ -2388,14 +2388,11 @@ export function speedupTokenBalance(): number {
 export function spendSpeedupToken(): boolean {
   const st = rollMetaDay();
   if (st.speedupTokens <= 0) return false;
+  const before = structuredCloneSafe(st);
   st.speedupTokens -= 1;
-  // saveMetaState кэширует объект до записи. При отказе storage возвращаем
-  // токен в тот же объект и запрещаем эффект, иначе ускорение стало бы бесплатным.
-  if (!saveMetaState(st)) {
-    st.speedupTokens += 1;
-    return false;
-  }
-  return true;
+  // Списание подтверждается только после сохранения. Helper восстанавливает
+  // локальный кэш и повторно ставит исходный снимок в облачную очередь при отказе.
+  return saveMetaStateOrRollback(st, before);
 }
 
 export function matchesPlayed(): number {
