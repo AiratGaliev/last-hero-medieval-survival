@@ -3130,7 +3130,7 @@ private bossDeathSequence(e: Enemy): boolean {
     fuse.once('animationcomplete', () => fuse.destroy());
   }
 
-  /** Взрыв выплюнутой бомбы в обычном бою: урон герою и цепная реакция по толпе. */
+  /** Взрыв выплюнутой бомбы наносит урон герою в радиусе; вражеские убийства не засчитываются игроку. */
   private fishBombProjectileExplode(x: number, y: number, dmg: number, radius: number): void {
     this.playBombFuseEffect(x, y);
     this.effects.explosion(x, y, 1.05, 2);
@@ -3138,11 +3138,6 @@ private bossDeathSequence(e: Enemy): boolean {
     this.shakeCamera(140, 0.0035);
     this.hitstop(45);
     if (Math.hypot(this.player.x - x, this.player.y - y) <= radius) this.hurtPlayer(dmg);
-    for (const sprite of this.enemiesNear(x, y, radius + 40)) {
-      const enemy = sprite as Enemy;
-      if (!enemy.active || enemy.def.isBoss) continue;
-      this.damageEnemy(enemy, dmg * 0.65, enemy.x - x, enemy.y - y, 180);
-    }
   }
 
   /** Взрыв рыбы-бомбы при смерти: сохраняет цепную реакцию между соседними врагами. */
