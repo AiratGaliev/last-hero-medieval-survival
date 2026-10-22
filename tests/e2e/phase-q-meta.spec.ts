@@ -3072,3 +3072,45 @@ test('weekly final reward is blocked if the new week cannot be persisted', async
   expect(outcome.claimed).toBe(false);
   expect(outcome.crowns).toBe(17);
 });
+
+
+test('starter offer uses server-time window and rejects future first-win timestamps', async ({ page }) => {
+  await page.goto('/?lang=en&ysdk=mock');
+  await expect(page.locator('#game canvas')).toBeVisible({ timeout: startupTimeout });
+  await expect(page.locator('#boot')).toHaveCount(0, { timeout: startupTimeout });
+
+  const result = await page.evaluate(async () => {
+    const shopModule = await import('/src/game/scenes/ShopScene.ts') as unknown as {
+      ShopScene: {
+        prototype: {
+          starterCastellanAvailable: (state: {
+            firstWinAt: number;
+            purchasedSkus: string[];
+          }) => boolean;
+        };
+      };
+    };
+    const check = shopModule.ShopScene.prototype.starterCastellanAvailable;
+    const originalNow = Date.now;
+    const now = 1_800_000_000_000;
+    const windowMs = 48 * 60 * 60 * 1000;
+    try {
+      Date.now = () => now;
+      return {
+        insideWindow: check.call({}, { firstWinAt: now - windowMs + 1, purchasedSkus: [] }),
+        exactlyExpired: check.call({}, { firstWinAt: now - windowMs, purchasedSkus: [] }),
+        futureTimestamp: check.call({}, { firstWinAt: now + 60_000, purchasedSkus: [] }),
+        alreadyPurchased: check.call({}, { firstWinAt: now - 1_000, purchasedSkus: ['starter_castellan'] }),
+      };
+    } finally {
+      Date.now = originalNow;
+    }
+  });
+
+  expect(result).toEqual({
+    insideWindow: true,
+    exactlyExpired: false,
+    futureTimestamp: false,
+    alreadyPurchased: false,
+  });
+});
