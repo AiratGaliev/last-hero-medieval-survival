@@ -3,7 +3,6 @@ import { expect, test, type Page } from '@playwright/test';
 const startupTimeout = 60_000;
 
 async function openGame(page: Page): Promise<void> {
-  await page.addInitScript(() => localStorage.clear());
   await page.goto('/?lang=en&ysdk=mock');
   await expect(page.locator('#game canvas')).toBeVisible({ timeout: startupTimeout });
   await expect(page.locator('#boot')).toHaveCount(0, { timeout: startupTimeout });
