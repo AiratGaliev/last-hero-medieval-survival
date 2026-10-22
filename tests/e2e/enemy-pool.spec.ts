@@ -38,7 +38,11 @@ type RuntimeScene = {
     texture: { key: string }; targetB?: { x: number; y: number } | null;
   }> } };
   economy?: { buildings: Array<{ kind: string; x: number; y: number; hp: number; maxHp: number; alive: boolean }> };
-  settlement?: { siegeIdx: number; damageBuilding: (building: unknown, dmg: number, siegeIdx: number, isBoss?: boolean) => void };
+  settlement?: {
+    siegeIdx: number;
+    damageBuilding: (building: unknown, dmg: number, siegeIdx: number, isBoss?: boolean) => void;
+    beginSiege: (profileIndex: number, woundCap: number, enemies: RuntimeEnemy[]) => void;
+  };
   onEnemyDeath: (enemy: RuntimeEnemy) => void;
   hintOverlayPaused: boolean;
   overlayOpen: boolean;
@@ -745,6 +749,10 @@ test('bomb fish uses its bomb projectile against a settlement building during a 
     if (!fish) throw new Error('Siege bomb fish disappeared after spawn');
     fish.siege = true;
     fish.buildingTarget = building;
+    const buildingHpBefore = building.hp;
+    // Включаем настоящий settlement gate для осады, а не проверяем попадание
+    // с siegeIdx=-1, которое относилось бы к урону вне осады.
+    runtime.settlement.beginSiege(0, 3, [fish]);
     const original = runtime.settlement.damageBuilding.bind(runtime.settlement);
     runtime.settlement.damageBuilding = (target, dmg, siegeIdx, isBoss) => {
       if (target === building) scene.__bombBuildingImpacts = (scene.__bombBuildingImpacts ?? 0) + 1;
@@ -753,7 +761,9 @@ test('bomb fish uses its bomb projectile against a settlement building during a 
     fish.preUpdate(scene.time.now + 1_000, 16);
     (window as unknown as { __bombSiegeProbe?: {
       scene: RuntimeScene & { __bombBuildingImpacts?: number };
-    } }).__bombSiegeProbe = { scene };
+      buildingHpBefore: number;
+      building: typeof building;
+    } }).__bombSiegeProbe = { scene, buildingHpBefore, building };
   });
 
   await expect.poll(() => page.evaluate(() => {
@@ -768,5 +778,20 @@ test('bomb fish uses its bomb projectile against a settlement building during a 
     } }).__bombSiegeProbe;
     return probe?.scene.__bombBuildingImpacts ?? 0;
   }), { timeout: 6_000, message: 'The siege bomb should invoke the building-damage path on impact' }).toBeGreaterThan(0);
+  const siegeDamage = await page.evaluate(() => {
+    const probe = (window as unknown as { __bombSiegeProbe?: {
+      buildingHpBefore: number;
+      building: { hp: number };
+      scene: RuntimeScene & { settlement?: { siegeIdx: number } };
+    } }).__bombSiegeProbe;
+    if (!probe) throw new Error('Missing siege bomb probe');
+    return {
+      hpBefore: probe.buildingHpBefore,
+      hpAfter: probe.building.hp,
+      activeSiegeIdx: probe.scene.settlement?.siegeIdx ?? -1,
+    };
+  });
+  expect(siegeDamage.activeSiegeIdx).toBe(0);
+  expect(siegeDamage.hpAfter).toBeLessThan(siegeDamage.hpBefore);
   expect(pageErrors).toEqual([]);
 });
