@@ -1864,6 +1864,9 @@ test('meta purchases and daily rewards roll back when storage rejects a write', 
       crowns: number;
       crownConvert: { date: string; count: number };
       dailyBonus: { last: string; lastAt: number; streak: number };
+      pass: { xp: number; premium: boolean };
+      purchasedSkus: string[];
+      processedIapTokens: string[];
     };
     const meta = await import('/src/game/meta.ts') as unknown as {
       rollMetaDay: () => TestMetaState;
@@ -1873,6 +1876,9 @@ test('meta purchases and daily rewards roll back when storage rejects a write', 
       buyNode: (id: string) => { ok: boolean; reason?: string };
       claimDailyBonus: () => { ok: boolean; reason?: string; streak: number; day: number };
       convertCrownsToGold: () => { ok: boolean; reason?: string };
+      grantSkuForPurchase: (sku: string, token: string) => {
+        supported: boolean; duplicate: boolean; persisted: boolean; granted: { crowns: number };
+      };
     };
     const state = meta.rollMetaDay();
     const parts = new Intl.DateTimeFormat('en-GB', {
@@ -1925,6 +1931,22 @@ test('meta purchases and daily rewards roll back when storage rejects a write', 
     const walletAfter = shop.loadShop().balance;
     Storage.prototype.setItem = originalSetItem;
 
+    const passState = meta.loadMetaState();
+    passState.pass.xp = 2500;
+    passState.pass.premium = false;
+    passState.purchasedSkus = [];
+    passState.processedIapTokens = [];
+    meta.saveMetaState(passState);
+    const passWalletBefore = shop.loadShop().balance;
+    Storage.prototype.setItem = function (key: string, value: string): void {
+      if (key === 'tss-shop') throw new DOMException('wallet storage disabled', 'QuotaExceededError');
+      originalSetItem.call(this, key, value);
+    };
+    const passPurchase = meta.grantSkuForPurchase('pass_chronicle', 'phase-q-pass-wallet-failure');
+    const afterPassPurchase = meta.loadMetaState();
+    const passWalletAfter = shop.loadShop().balance;
+    Storage.prototype.setItem = originalSetItem;
+
     return {
       node: { ok: node.ok, reason: node.reason, glory: afterNode.glory, owned: afterNode.nodes.length > 0 },
       bonus: { ok: bonus.ok, streak: afterBonus.dailyBonus.streak, last: afterBonus.dailyBonus.last },
@@ -1941,6 +1963,12 @@ test('meta purchases and daily rewards roll back when storage rejects a write', 
         last: afterWalletBonus.dailyBonus.last,
         balanceUnchanged: walletAfter === walletBefore,
       },
+      passPurchase: {
+        persisted: passPurchase.persisted,
+        premium: afterPassPurchase.pass.premium,
+        tokenRecorded: afterPassPurchase.processedIapTokens.includes('phase-q-pass-wallet-failure'),
+        balanceUnchanged: passWalletAfter === passWalletBefore,
+      },
     };
   });
 
@@ -1953,6 +1981,12 @@ test('meta purchases and daily rewards roll back when storage rejects a write', 
       reason: 'storage',
       streak: 0,
       last: '2000-01-01',
+      balanceUnchanged: true,
+    },
+    passPurchase: {
+      persisted: false,
+      premium: false,
+      tokenRecorded: false,
       balanceUnchanged: true,
     },
   });
