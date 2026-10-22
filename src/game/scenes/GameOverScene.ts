@@ -77,6 +77,8 @@ export interface GameOverStats {
     chainUnlocks: { nameKey: string; tier: number }[];
     endlessWave: number;
     crownsEarned: number;
+    /** False means the run's meta rewards were not committed durably. */
+    persisted?: boolean;
     challenge: boolean;
     ukaz: string | null;
     endless: boolean;
@@ -594,6 +596,9 @@ export class GameOverScene extends Phaser.Scene {
     const cx = width / 2;
     const fs = compact ? 10 : 12;
     const lines: Array<{ text: string; color: string }> = [];
+    if (m.persisted === false) {
+      lines.push({ text: t('meta.saveFailed'), color: '#b3261e' });
+    }
 
     // Начисление славы за матч; потолок и бонус идеальной победы (§H.16)
     if (m.glory) {
