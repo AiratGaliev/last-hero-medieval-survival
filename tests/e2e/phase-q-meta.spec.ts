@@ -1006,6 +1006,7 @@ test('endless wave milestone rewards are granted once when a new record passes e
       quests: { date: string; ids: string[]; progress: Record<string, number>; done: string[]; rerolls: number };
       weekly: { week: string; progress: number; stage: number; claimed: boolean };
       chains: { counters: Record<string, number>; claimed: string[] };
+      pass: { season: string; xp: number; premium: boolean; claimedFree: number; claimedPrem: number };
     };
     const meta = await import('/src/game/meta.ts') as unknown as {
       rollMetaDay: () => TestMetaState;
@@ -1021,6 +1022,9 @@ test('endless wave milestone rewards are granted once when a new record passes e
     state.quests.done = [];
     state.chains.counters = {};
     state.chains.claimed = [];
+    // Prevent unrelated season-pass level rewards from changing the crown balance under test.
+    state.pass.xp = 5_000;
+    state.pass.premium = false;
     meta.saveMetaState(state);
 
     const base: RunSummary = {
