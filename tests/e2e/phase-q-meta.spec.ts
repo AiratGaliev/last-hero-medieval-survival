@@ -2430,14 +2430,32 @@ test('ogre return season increases only phase-two castle attack cadence', async 
     if (!game) throw new Error('Phaser runtime is unavailable');
     const scene = game.scene.getScene('Game') as {
       seasonMod: string | null;
-      spawnBoss(): void;
       bossPhaseCheck(): void;
+      spawner: {
+        elapsed: number; eventIdx: number; siegeIdx: number; stopped: boolean;
+        update(dtSec: number): void;
+      };
       boss: {
         hp: number; maxHp: number; siege: boolean; aiState: string;
         buildingAttackIntervalMs: number;
       } | null;
     };
-    scene.spawnBoss();
+    const data = await import('/src/game/data.ts') as {
+      WAVE_EVENTS: Array<{ type: string; t: number }>;
+    };
+    const bossEventIndex = data.WAVE_EVENTS.findIndex(event => event.type === 'boss');
+    if (bossEventIndex < 0) throw new Error('Scheduled boss event is missing');
+    const spawner = scene.spawner;
+    // Пропускаем прежние события и осады; проверяем именно сезонный перенос
+    // штатного события босса 900 → 720 секунд без 15-минутного ожидания.
+    spawner.elapsed = 719;
+    spawner.eventIdx = bossEventIndex;
+    spawner.siegeIdx = 5;
+    spawner.stopped = false;
+    spawner.update(0.5);
+    const bossBeforeSeasonalTime = scene.boss !== null;
+    spawner.update(0.5);
+    const bossSpawnedAtSeasonalTime = scene.boss !== null;
     const boss = scene.boss;
     if (!boss) throw new Error('Boss was not created');
     const normalInterval = boss.buildingAttackIntervalMs;
@@ -2445,6 +2463,8 @@ test('ogre return season increases only phase-two castle attack cadence', async 
     scene.bossPhaseCheck();
     return {
       season: scene.seasonMod,
+      bossBeforeSeasonalTime,
+      bossSpawnedAtSeasonalTime,
       normalInterval,
       phaseTwoInterval: boss.buildingAttackIntervalMs,
       phaseTwo: boss.aiState === 'bossPhase2' && boss.siege,
@@ -2452,6 +2472,8 @@ test('ogre return season increases only phase-two castle attack cadence', async 
   });
 
   expect(result.season).toBe('ogre_return');
+  expect(result.bossBeforeSeasonalTime).toBe(false);
+  expect(result.bossSpawnedAtSeasonalTime).toBe(true);
   expect(result.normalInterval).toBe(535);
   expect(result.phaseTwo).toBe(true);
   expect(result.phaseTwoInterval).toBe(400);
