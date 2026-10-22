@@ -493,9 +493,33 @@ export const SEASON_STEPS = [3, 6, 10, 15, 21];
 // ============================================================
 
 export const WEEKLY_STAGES = [4, 8, 12, 16, 20];
-/** Награда финала чередуется по неделям: 150 крон ↔ знамя. */
-export function weeklyFinalReward(week: string): 'crowns' | 'banner' {
+/** Базовая неделя новой ротации; её награда совпадает с прежней схемой. */
+const WEEKLY_REWARD_ANCHOR = '2026-10-19';
+type WeeklyRewardKind = 'crowns' | 'banner';
+
+/** Только для миграции сохранений, созданных до фиксированного чередования. */
+function legacyWeeklyFinalReward(week: string): WeeklyRewardKind {
   return hashStr(`week-final:${week}`) % 2 === 0 ? 'crowns' : 'banner';
+}
+
+/** Награда недельного финала: 150 крон и знамя чередуются строго через неделю. */
+export function weeklyFinalReward(week: string): WeeklyRewardKind {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(week)) return legacyWeeklyFinalReward(week);
+  const weekMs = Date.parse(`${week}T00:00:00.000Z`);
+  if (!Number.isFinite(weekMs)) return legacyWeeklyFinalReward(week);
+  const date = new Date(weekMs);
+  if (date.toISOString().slice(0, 10) !== week || date.getUTCDay() !== 1) {
+    return legacyWeeklyFinalReward(week);
+  }
+
+  const anchorMs = Date.parse(`${WEEKLY_REWARD_ANCHOR}T00:00:00.000Z`);
+  const offsetMs = weekMs - anchorMs;
+  const weekMsCount = 7 * DAY_MS;
+  if (offsetMs % weekMsCount !== 0) return legacyWeeklyFinalReward(week);
+  const weekOffset = offsetMs / weekMsCount;
+  const anchorReward = legacyWeeklyFinalReward(WEEKLY_REWARD_ANCHOR);
+  if (weekOffset % 2 === 0) return anchorReward;
+  return anchorReward === 'crowns' ? 'banner' : 'crowns';
 }
 
 // ============================================================
@@ -642,12 +666,17 @@ export const CHAIN_REWARDS = { bronze: 150, silver: 300, gold: 25 } as const;
 // Пропуск «Хроника» (§J.6.3): 50 уровней, два трека
 // ============================================================
 
+export const PASS_CROWNS_PRICE = 290;
+
 export const PASS = {
   LEVELS: 50,
   XP_PER_LEVEL: 100,
   /** XP: раны +25, ежедневки +50, вызов +75, контракты +25, волны бесконечного +5, цепочки +25. */
   XP: { run: 25, quest: 50, challenge: 75, contract: 25, endlessWave: 5, chain: 25 },
 } as const;
+
+const PASS_TITLE_IDS = new Set(['title_20', 'title_40']);
+const PROFILE_FRAME_IDS = new Set(['frame_chronicle']);
 
 export type PassRewardKind = 'gold' | 'crowns' | 'token' | 'blessing' | 'skin' | 'title' | 'frame' | 'banner';
 
@@ -667,6 +696,7 @@ export function passReward(level: number, premium: boolean): PassReward | null {
   if (level === 50) return { kind: 'banner', amount: 1, id: 'banner_pass' };
   if (level === 10 || level === 25 || level === 45) return { kind: 'skin', amount: 1, id: `skin_prem_${level}` };
   if (level === 20 || level === 40) return { kind: 'title', amount: 1, id: `title_${level}` };
+  if (level === 35) return { kind: 'frame', amount: 1, id: 'frame_chronicle' };
   if (level % 10 === 0) return { kind: 'crowns', amount: 30 };
   if (level % 5 === 0) return { kind: 'blessing', amount: 1 };
   return { kind: 'crowns', amount: 5 };
@@ -857,13 +887,18 @@ export interface MetaState {
   /** Факт встречи/использования записи без требования убить врага. */
   codexSeen: Record<string, boolean>;
   quests: QuestDayState;
-  weekly: { week: string; progress: number; stage: number; claimed: boolean };
+  weekly: { week: string; progress: number; stage: number; claimed: boolean; rewardKind: WeeklyRewardKind };
   dailyBonus: { last: string; lastAt: number; streak: number };
   contractsDone: number;
   chains: { counters: Record<string, number>; claimed: string[] };
   pass: { season: string; xp: number; premium: boolean; claimedFree: number; claimedPrem: number };
   crowns: number;
   crownConvert: { date: string; count: number };
+  /** Постоянно разблокированные знамёна (не должны теряться при смене недели/сезона). */
+  banners: string[];
+  /** Постоянные награды титулов и рамок премиум-пропуска. */
+  passTitles: string[];
+  profileFrames: string[];
   skins: { owned: string[]; hero: string; building: string; trail: string; banner: string };
   consumables: Record<ConsumableId, number>;
   speedupTokens: number;
@@ -969,13 +1004,16 @@ const EMPTY: MetaState = {
   codex: {},
   codexSeen: {},
   quests: { date: '', ids: [], progress: {}, done: [], rerolls: 0 },
-  weekly: { week: '', progress: 0, stage: 0, claimed: false },
+  weekly: { week: '', progress: 0, stage: 0, claimed: false, rewardKind: 'banner' },
   dailyBonus: { last: '', lastAt: 0, streak: 0 },
   contractsDone: 0,
   chains: { counters: {}, claimed: [] },
   pass: { season: '', xp: 0, premium: false, claimedFree: 0, claimedPrem: 0 },
   crowns: 0,
   crownConvert: { date: '', count: 0 },
+  banners: [],
+  passTitles: [],
+  profileFrames: [],
   skins: { owned: [], hero: '', building: '', trail: '', banner: '' },
   consumables: { cs_horseshoe: 0, cs_horn: 0, cs_forester: 0 },
   speedupTokens: 0,
@@ -1009,9 +1047,17 @@ function sanitize(raw: unknown): MetaState {
   const p = (o.pass ?? {}) as Partial<MetaState['pass']>;
   const cc = (o.crownConvert ?? {}) as Partial<MetaState['crownConvert']>;
   const sk = (o.skins ?? {}) as Partial<MetaState['skins']>;
+  // До отдельного списка знамён weekly banner временно попадал в skins.owned.
+  // Переносим известные ID в новый список до фильтрации старого списка скинов.
+  const legacyBanners = strArr(sk.owned, knownBanners);
   const se = (o.season ?? {}) as Partial<MetaState['season']>;
   const wc = (o.weeklyChallenge ?? {}) as Partial<MetaState['weeklyChallenge']>;
   const cons = (o.consumables ?? {}) as Partial<Record<ConsumableId, number>>;
+  const weeklyWeek = typeof w.week === 'string' ? w.week.slice(0, 10) : '';
+  const weeklyClaimed = w.claimed === true;
+  const weeklyRewardKind: WeeklyRewardKind = w.rewardKind === 'crowns' || w.rewardKind === 'banner'
+    ? w.rewardKind
+    : weeklyClaimed ? legacyWeeklyFinalReward(weeklyWeek) : weeklyFinalReward(weeklyWeek);
 
   const consumables: Record<ConsumableId, number> = { cs_horseshoe: 0, cs_horn: 0, cs_forester: 0 };
   for (const c of CONSUMABLES) consumables[c.id] = int(cons[c.id]);
@@ -1075,10 +1121,11 @@ function sanitize(raw: unknown): MetaState {
       rerolls: int(q.rerolls),
     },
     weekly: {
-      week: typeof w.week === 'string' ? w.week.slice(0, 10) : '',
+      week: weeklyWeek,
       progress: int(w.progress),
       stage: int(w.stage),
-      claimed: w.claimed === true,
+      claimed: weeklyClaimed,
+      rewardKind: weeklyRewardKind,
     },
     // Старые сохранения не содержали времени получения: lastAt=0 означает
     // один безопасный переход без штрафа, после чего точный timestamp сохраняется.
@@ -1103,6 +1150,9 @@ function sanitize(raw: unknown): MetaState {
     },
     crowns: int(o.crowns),
     crownConvert: { date: typeof cc.date === 'string' ? cc.date.slice(0, 10) : '', count: int(cc.count) },
+    banners: [...new Set([...strArr(o.banners, knownBanners), ...legacyBanners])],
+    passTitles: strArr(o.passTitles, PASS_TITLE_IDS),
+    profileFrames: strArr(o.profileFrames, PROFILE_FRAME_IDS),
     skins: {
       owned: strArr(sk.owned, knownSkins),
       hero: typeof sk.hero === 'string' ? sk.hero : '',
@@ -1506,7 +1556,7 @@ export function rollMetaDay(): MetaState {
   if (st.weekly.week !== week) {
     // Недельная цепочка: пропуск этапа не обнуляет прогресс (§H.17) —
     // старая неделя уходит, начинается новая с нулевого прогресса.
-    st.weekly = { week, progress: 0, stage: 0, claimed: false };
+    st.weekly = { week, progress: 0, stage: 0, claimed: false, rewardKind: weeklyFinalReward(week) };
     changed = true;
   }
   const sIdx = seasonIndexFor(now);
@@ -1906,9 +1956,31 @@ function grantPassReward(st: MetaState, r: PassReward): number {
     case 'token': st.speedupTokens += r.amount; return 0;
     case 'blessing': st.blessingTokens += r.amount; return 0;
     case 'skin': if (r.id) grantSkin(st, r.id); return 0;
-    case 'title': case 'frame': return 0; // косметика-статус, хранение не требуется
-    case 'banner': return 0;
+    case 'title':
+      if (r.id && PASS_TITLE_IDS.has(r.id) && !st.passTitles.includes(r.id)) st.passTitles.push(r.id);
+      return 0;
+    case 'frame':
+      if (r.id && PROFILE_FRAME_IDS.has(r.id) && !st.profileFrames.includes(r.id)) st.profileFrames.push(r.id);
+      return 0;
+    case 'banner':
+      if (r.id && BANNERS.some((banner) => banner.id === r.id) && !st.banners.includes(r.id)) {
+        st.banners.push(r.id);
+      }
+      return 0;
   }
+}
+
+/** Активирует премиум и выдаёт уже достигнутые уровни ровно один раз. */
+function activatePremiumPass(st: MetaState): number {
+  if (st.pass.premium) return 0;
+  st.pass.premium = true;
+  const level = Math.min(PASS.LEVELS, Math.floor(st.pass.xp / PASS.XP_PER_LEVEL));
+  let walletGold = 0;
+  for (let lv = 1; lv <= level; lv++) {
+    const reward = passReward(lv, true);
+    if (reward) walletGold += grantPassReward(st, reward);
+  }
+  return walletGold;
 }
 
 /** Золото в кошелёк лавки (единственный сток пропуска/цепочек/бонуса). */
@@ -1941,11 +2013,16 @@ export function claimWeeklyFinal(): { kind: 'crowns' | 'banner'; amount: number;
   if (st.weekly.claimed || st.weekly.stage < WEEKLY_STAGES.length) return null;
   const before = structuredCloneSafe(st);
   st.weekly.claimed = true;
-  const kind = weeklyFinalReward(st.weekly.week);
+  const kind = st.weekly.rewardKind;
   let amount = 0;
   let id: string | undefined;
-  if (kind === 'crowns') { amount = 150; st.crowns += amount; }
-  else { id = 'banner_weekly'; grantSkin(st, id); }
+  if (kind === 'crowns') {
+    amount = 150;
+    st.crowns += amount;
+  } else {
+    id = 'banner_weekly';
+    if (!st.banners.includes(id)) st.banners.push(id);
+  }
   if (!saveMetaStateOrRollback(st, before)) return null;
   return { kind, amount, id };
 }
@@ -2139,6 +2216,25 @@ export function convertCrownsToGold(): { ok: boolean; reason?: 'limit' | 'poor' 
   return { ok: true };
 }
 
+/** Покупка премиум-трека за кроны; прошлые уровни выдаются в той же транзакции. */
+export function buyPassWithCrowns(): {
+  ok: boolean;
+  reason?: 'locked' | 'owned' | 'poor' | 'storage';
+} {
+  const st = rollMetaDay();
+  if (st.matchesPlayed < FTUE_MATCH_GATE.seasonPass) return { ok: false, reason: 'locked' };
+  if (st.pass.premium) return { ok: false, reason: 'owned' };
+  if (st.crowns < PASS_CROWNS_PRICE) return { ok: false, reason: 'poor' };
+
+  const before = structuredCloneSafe(st);
+  st.crowns -= PASS_CROWNS_PRICE;
+  const walletGold = activatePremiumPass(st);
+  if (!saveMetaStateWithWalletCredit(st, before, walletGold)) {
+    return { ok: false, reason: 'storage' };
+  }
+  return { ok: true };
+}
+
 /** Кроны капают бесплатно (§J.7) — учитываются вне инапов, витрина честна. */
 
 const PAID_SKIN_SKUS = [
@@ -2197,13 +2293,8 @@ function applySkuGrant(st: MetaState, sku: string): {
   } else if (sku === 'no_interstitial') {
     // Entitlement is represented by purchasedSkus and restored from getPurchases().
   } else if (sku === 'pass_chronicle') {
-    // Покупка задним числом: выдаёт все уже набранные премиум-уровни (§J.6.3)
-    st.pass.premium = true;
-    const lvl = Math.min(PASS.LEVELS, Math.floor(st.pass.xp / PASS.XP_PER_LEVEL));
-    for (let i = 1; i <= lvl; i++) {
-      const pr = passReward(i, true);
-      if (pr) walletGold += grantPassReward(st, pr);
-    }
+    // Единая логика догоняющих наград используется и для SKU, и для покупки за кроны.
+    walletGold += activatePremiumPass(st);
   } else if (sku.startsWith('skin_')) {
     skin = sku;
     grantSkin(st, sku);
@@ -2519,16 +2610,28 @@ export function codexCount(id: string): number {
 /** Знамёна, доступные игроку по состоянию прогресса (§J.6.2). */
 export function ownedBanners(): string[] {
   const st = rollMetaDay();
-  const out: string[] = [];
+  const out = new Set<string>(st.banners);
   const { ratio } = codexProgress();
-  if (ratio >= 0.5) out.push('banner_codex_50');
-  if (ratio >= 0.75) out.push('banner_codex_75');
-  if (ratio >= 1) out.push('banner_codex_100');
-  if (st.weekly.claimed) out.push('banner_weekly');
-  if (st.pass.premium) out.push('banner_pass');
-  if (st.purchasedSkus.includes('starter_castellan')) out.push('banner_store_1');
-  if (SKINS.some((s) => s.kind === 'building' && st.skins.owned.includes(s.id))) out.push('banner_store_2');
-  return out;
+  if (ratio >= 0.5) out.add('banner_codex_50');
+  if (ratio >= 0.75) out.add('banner_codex_75');
+  if (ratio >= 1) {
+    out.add('banner_codex_100');
+    out.add('banner_codex_all');
+  }
+  // Флаг claimed есть и у недели с наградой в кронах: переносим только реально заработанное знамя.
+  if (st.weekly.claimed && st.weekly.rewardKind === 'banner') out.add('banner_weekly');
+  if (st.pass.premium && st.pass.xp >= PASS.LEVELS * PASS.XP_PER_LEVEL) out.add('banner_pass');
+  if (st.purchasedSkus.includes('starter_castellan')) out.add('banner_store_1');
+  if (SKINS.some((s) => s.kind === 'building' && st.skins.owned.includes(s.id))) out.add('banner_store_2');
+
+  const owned = [...out].filter((id) => BANNERS.some((banner) => banner.id === id));
+  const missing = owned.filter((id) => !st.banners.includes(id));
+  if (missing.length > 0) {
+    const before = structuredCloneSafe(st);
+    st.banners.push(...missing);
+    saveMetaStateOrRollback(st, before);
+  }
+  return owned;
 }
 
 /** Реролл задания дня за рекламу (R10, лимит 3/день). */

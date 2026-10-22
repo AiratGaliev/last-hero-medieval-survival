@@ -853,6 +853,8 @@ export const ru = {
   'pass.premium': 'Премиум-трек',
   'pass.premiumOn': 'АКТИВЕН',
   'pass.premiumOff': 'Не активен',
+  'pass.buyCrowns': 'ОТКРЫТЬ ЗА {v} КРОН',
+  'pass.crownsPoor': 'Не хватает крон для премиум-трека.',
   'pass.claim': 'ЗАБРАТЬ',
   'pass.claimed': 'Забрано',
   'pass.nextLevel': 'До награды: {v} опыта',
