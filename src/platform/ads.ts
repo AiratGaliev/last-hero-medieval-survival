@@ -301,6 +301,34 @@ export async function showPlacementRewarded(
   return res;
 }
 
+/**
+ * Возвращает лимит, если rewarded-показ завершился, но награду не удалось
+ * надёжно сохранить. Нельзя оставлять игрока без награды и одновременно
+ * списывать лимит за неё; при отказе записи дневного счётчика возвращаем false.
+ */
+export function refundPlacement(placement: AdPlacement): boolean {
+  if (PLACEMENT_LIMITS[placement].period === 'day') {
+    const day = loadDay();
+    const used = day.used[placement] ?? 0;
+    if (used <= 0) return true;
+    if (used === 1) delete day.used[placement];
+    else day.used[placement] = used - 1;
+    if (!saveDay(day)) {
+      lastError = 'daily_rewarded_refund_persistence_failed';
+      track('ad_error', { kind: 'rewarded', placement, message: lastError });
+      console.warn('[ads] не удалось вернуть дневной лимит rewarded:', placement);
+      return false;
+    }
+    return true;
+  }
+
+  const used = usedPlacements.get(placement) ?? 0;
+  if (used <= 0) return true;
+  if (used === 1) usedPlacements.delete(placement);
+  else usedPlacements.set(placement, used - 1);
+  return true;
+}
+
 /** Сброс лимитов за ран (в начале матча). Дневные лимиты не трогаем. */
 export function resetPlacementLimits(): void {
   usedPlacements.clear();
