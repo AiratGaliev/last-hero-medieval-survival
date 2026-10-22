@@ -8,6 +8,7 @@
 // не вызывать показ на каждом втором проигрыше.
 
 import { getSdk, isOnYandex, isMockMode, serverNow, type YandexSdk } from './sdk';
+import { mskDayKey } from './calendar';
 import { loadJson, saveJson } from '../game/storage';
 import { hasNoInterstitial, matchesPlayed } from '../game/meta';
 import { track } from './analytics';
@@ -225,8 +226,8 @@ const LS_AD_DAY = 'tss-ads-day';
 interface AdDayState { date: string; used: Record<string, number> }
 
 function todayKey(): string {
-  // Daily rewarded limits must roll over at the same UTC boundary as daily offers.
-  return new Date(serverNow()).toISOString().slice(0, 10);
+  // Лимиты rewarded-плейсментов сбрасываются вместе с ежедневками — в 00:00 МСК.
+  return mskDayKey(serverNow());
 }
 
 function loadDay(): AdDayState {

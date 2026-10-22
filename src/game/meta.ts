@@ -22,6 +22,7 @@ import {
   depositGold, loadShop, restoreShopState, setShopSavedListener, type ShopState,
 } from './shop';
 import { serverNow } from '../platform/sdk';
+import { mskDayKey, mskWeekKey } from '../platform/calendar';
 import { track } from '../platform/analytics';
 import {
   persistExperimentFlagsToPlayerData,
@@ -841,7 +842,7 @@ export const DAILY_BONUS: DailyBonusDef[] = [
 
 /** Пропуск дня откатывает стрик на ОДИН шаг, а не в ноль (§H.7, гейт Q). */
 export const BONUS_RESET_HOURS = 26;
-/** Минимальный интервал между дарами: защищает от двойного забора на границе UTC-дней. */
+/** Минимальный интервал между дарами: дополнительно защищает от двойного забора у границы дня МСК. */
 export const BONUS_MIN_INTERVAL_HOURS = 24;
 
 // ============================================================
@@ -907,16 +908,11 @@ export interface MetaState {
 const LS_META2 = 'tss-meta2';
 
 function todayKey(now = serverNow()): string {
-  // Для всех игроков граница ежедневок едина: используем UTC-день серверной эпохи,
-  // а не часовой пояс конкретного браузера.
-  return new Date(now).toISOString().slice(0, 10);
+  return mskDayKey(now);
 }
 
 function weekKey(now = serverNow()): string {
-  const d = new Date(now);
-  const day = (d.getUTCDay() + 6) % 7; // понедельник = 0, UTC
-  d.setUTCDate(d.getUTCDate() - day);
-  return todayKey(d.getTime());
+  return mskWeekKey(now);
 }
 
 /** Неделя лайфстайл-хранения: смена понедельника — новая цепочка. */
