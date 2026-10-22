@@ -140,6 +140,8 @@ export class GameScene extends Phaser.Scene {
   private dailyGameplayRng: Phaser.Math.RandomDataGenerator | null = null;
   private dailyEconomyRng: Phaser.Math.RandomDataGenerator | null = null;
   private dailySpawnerRng: Phaser.Math.RandomDataGenerator | null = null;
+  /** Геометрия появлений не должна менять состав будущих волн. */
+  private dailySpawnPositionRng: Phaser.Math.RandomDataGenerator | null = null;
   private dailyPawnRng: Phaser.Math.RandomDataGenerator | null = null;
   /** Отдельный поток предложений левел-апа; боевые RNG-вызовы его не сдвигают. */
   private dailyProgressionRng: Phaser.Math.RandomDataGenerator | null = null;
@@ -157,9 +159,9 @@ export class GameScene extends Phaser.Scene {
     return this.dailyGameplayRng?.frac() ?? Math.random();
   }
 
-  /** Отдельный поток для состава и геометрии появления врагов; боевые броски его не сдвигают. */
+  /** Отдельный поток координат появления врагов; он не сдвигает состав волн. */
   private spawnerRandom(): number {
-    return this.dailySpawnerRng?.frac() ?? Math.random();
+    return this.dailySpawnPositionRng?.frac() ?? Math.random();
   }
 
   private gameplayInt(min: number, max: number): number {
@@ -486,6 +488,8 @@ export class GameScene extends Phaser.Scene {
       ? new Phaser.Math.RandomDataGenerator([`daily-economy:${challengeDate}`]) : null;
     this.dailySpawnerRng = challengeDate
       ? new Phaser.Math.RandomDataGenerator([`daily-spawner:${challengeDate}`]) : null;
+    this.dailySpawnPositionRng = challengeDate
+      ? new Phaser.Math.RandomDataGenerator([`daily-spawn-position:${challengeDate}`]) : null;
     this.dailyPawnRng = challengeDate
       ? new Phaser.Math.RandomDataGenerator([`daily-pawn-ai:${challengeDate}`]) : null;
     this.dailyProgressionRng = challengeDate
@@ -1289,6 +1293,7 @@ export class GameScene extends Phaser.Scene {
         this.challengeMods.has('cm_horde'),
       ),
       random: this.isSeededDailyChallenge ? () => this.dailySpawnerRng!.frac() : undefined,
+      spawnRandom: this.isSeededDailyChallenge ? () => this.dailySpawnPositionRng!.frac() : undefined,
       season: this.seasonMod,
       contractQuiet: this.contractId === 'c_quiet',
       bloodMoon: this.challengeMods.has('cm_blood_moon'),

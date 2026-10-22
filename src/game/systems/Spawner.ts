@@ -76,8 +76,10 @@ export interface SpawnerOpts {
   ftueSoftStart?: boolean;
   /** Поднабор врагов из ежедневного вызова; undefined сохраняет обычный рандом. */
   dailyPool?: readonly EnemyKind[];
-  /** Seed-генератор ежедневного вызова; вне режима поведение остаётся случайным. */
+  /** Seed-генератор состава волн; вне режима поведение остаётся случайным. */
   random?: () => number;
+  /** Независимый seed-генератор координат спавна и расстановки отрядов. */
+  spawnRandom?: () => number;
   /** Ранг карты «Набат»: 8/11 сек предупреждения на рангах I/II. */
   alarmLevel?: () => number;
 }
@@ -101,6 +103,10 @@ export class Spawner {
 
   private random(): number {
     return this.o.random?.() ?? Math.random();
+  }
+
+  private spawnRandom(): number {
+    return this.o.spawnRandom?.() ?? this.random();
   }
 
   constructor(scene: Phaser.Scene, ctx: SpawnerCtx, difficulty: DifficultyId = 'normal', opts: SpawnerOpts = {}) {
@@ -323,7 +329,7 @@ export class Spawner {
     const cy = this.ctx.playerY();
     const m = WORLD.GRASS_MARGIN + 60;
     for (let i = 0; i < count; i++) {
-      const a = (i / count) * Math.PI * 2 + this.random() * 0.2;
+      const a = (i / count) * Math.PI * 2 + this.spawnRandom() * 0.2;
       let x = cx + Math.cos(a) * r;
       let y = cy + Math.sin(a) * r;
       x = Phaser.Math.Clamp(x, m, WORLD.SIZE - m);
@@ -334,8 +340,8 @@ export class Spawner {
 
   /** Спавн за экраном в случайном направлении */
   spawnAtEdge(kind: EnemyKind): void {
-    const r = this.ctx.spawnRadius() * (0.85 + this.random() * 0.3);
-    const a = this.random() * Math.PI * 2;
+    const r = this.ctx.spawnRadius() * (0.85 + this.spawnRandom() * 0.3);
+    const a = this.spawnRandom() * Math.PI * 2;
     const cx = this.ctx.playerX();
     const cy = this.ctx.playerY();
     const m = WORLD.GRASS_MARGIN + 50;

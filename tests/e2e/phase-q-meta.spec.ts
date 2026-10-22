@@ -760,6 +760,7 @@ test('daily challenge date deterministically seeds the map, economy and wave dir
     spawnPositions: Array<{ x: number; y: number }>;
     economyRandom: number[];
     waveRandom: number[];
+    waveRandomAfterGeometry: number[];
     weaponTargetRandom: number[];
     progressionSeeded: boolean;
     pawnRandom: number[];
@@ -832,6 +833,7 @@ test('daily challenge date deterministically seeds the map, economy and wave dir
         gameplayRandom: () => number;
         generateChoices: () => Array<{ kind: string; id?: string; title: string }>;
         dailySpawnerRng: { sow: (seeds: string[]) => unknown };
+        dailySpawnPositionRng: { sow: (seeds: string[]) => unknown };
         dailyProgressionRng: { frac: () => number } | null;
         player: { hp: number; maxHp: number };
         spawner: {
@@ -849,6 +851,7 @@ test('daily challenge date deterministically seeds the map, economy and wave dir
       // Сбрасываем поток спавнера, чтобы время загрузки контекстов не влияло на сравнение.
       scene.spawner.stopped = true;
       scene.dailySpawnerRng.sow([`daily-spawner:${challengeDate}`]);
+      scene.dailySpawnPositionRng.sow([`daily-spawn-position:${challengeDate}`]);
       // Эти потоки не должны изменяться после случайных боевых событий.
       const weaponTargetRandom = Array.from({ length: 8 }, () =>
         scene.weapons.ctx.randomInt?.(0, 100) ?? -1);
@@ -870,10 +873,24 @@ test('daily challenge date deterministically seeds the map, economy and wave dir
         title,
       }));
       const progressionSeeded = scene.dailyProgressionRng !== null;
+      // Снимаем базовую последовательность типов волн до дополнительных бросков.
+      const waveRandom = Array.from({ length: 8 }, () => scene.spawner.o.random?.() ?? -1);
+      if (perturbGameplayRng) {
+        // Имитируем разное число решений спавнера: эти броски не должны менять координаты.
+        for (let i = 0; i < 32; i++) scene.spawner.o.random?.();
+      }
       const spawnPositions = Array.from({ length: 6 }, () => ({
         x: Math.round(scene.spawner.ctx.randomSpawnX() * 100) / 100,
         y: Math.round(scene.spawner.ctx.randomSpawnY() * 100) / 100,
       }));
+      if (perturbGameplayRng) {
+        // Очередь отложенного спавна могла запросить ещё координаты, но состав волн не должен сдвинуться.
+        for (let i = 0; i < 16; i++) {
+          scene.spawner.ctx.randomSpawnX();
+          scene.spawner.ctx.randomSpawnY();
+        }
+      }
+      const waveRandomAfterGeometry = Array.from({ length: 8 }, () => scene.spawner.o.random?.() ?? -1);
       return {
         seed: scene.runSeed,
         challengeSeed: scene.mods.challengeSeed ?? null,
@@ -885,7 +902,8 @@ test('daily challenge date deterministically seeds the map, economy and wave dir
           y: Math.round(node.y * 100) / 100,
         })),
         economyRandom: Array.from({ length: 8 }, () => scene.economy.opts.random?.() ?? -1),
-        waveRandom: Array.from({ length: 8 }, () => scene.spawner.o.random?.() ?? -1),
+        waveRandom,
+        waveRandomAfterGeometry,
         weaponTargetRandom,
         progressionSeeded,
         pawnRandom,
@@ -907,7 +925,10 @@ test('daily challenge date deterministically seeds the map, economy and wave dir
     expect(repeat.map).toEqual(first.map);
     expect(repeat.spawnPositions).toEqual(first.spawnPositions);
     expect(repeat.economyRandom).toEqual(first.economyRandom);
+    expect(first.waveRandom.every((value) => value >= 0)).toBe(true);
     expect(repeat.waveRandom).toEqual(first.waveRandom);
+    expect(first.waveRandomAfterGeometry.every((value) => value >= 0)).toBe(true);
+    expect(repeat.waveRandomAfterGeometry).toEqual(first.waveRandomAfterGeometry);
     expect(first.weaponTargetRandom.every((value) => value >= 0)).toBe(true);
     expect(repeat.weaponTargetRandom).toEqual(first.weaponTargetRandom);
     expect(first.progressionSeeded).toBe(true);
