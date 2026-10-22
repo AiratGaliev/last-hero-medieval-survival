@@ -79,6 +79,8 @@ export interface GameOverStats {
     crownsEarned: number;
     /** False means the run's meta rewards were not committed durably. */
     persisted?: boolean;
+    /** False means a run's separate gold wallet credit was not persisted. */
+    walletRewardSaved?: boolean;
     /** False means a successful daily challenge did not persist its daily reward. */
     challengeRewardSaved?: boolean;
     challenge: boolean;
@@ -601,7 +603,7 @@ export class GameOverScene extends Phaser.Scene {
     const cx = width / 2;
     const fs = compact ? 10 : 12;
     const lines: Array<{ text: string; color: string }> = [];
-    if (m.persisted === false || m.challengeRewardSaved === false) {
+    if (m.persisted === false || m.walletRewardSaved === false || m.challengeRewardSaved === false) {
       lines.push({ text: t('meta.runSaveFailed'), color: '#b3261e' });
     }
 
