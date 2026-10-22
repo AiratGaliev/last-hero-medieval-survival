@@ -2456,3 +2456,71 @@ test('ogre return season increases only phase-two castle attack cadence', async 
   expect(result.phaseTwo).toBe(true);
   expect(result.phaseTwoInterval).toBe(400);
 });
+
+
+test('guard recruiting from an archery range until a barracks has been built', async ({ page }) => {
+  await page.addInitScript(() => {
+    localStorage.clear();
+    localStorage.setItem('tss-meta2', JSON.stringify({ v: 2, matchesPlayed: 99 }));
+  });
+  await page.goto('/?lang=en&ysdk=mock');
+  await expect(page.locator('#game canvas')).toBeVisible({ timeout: startupTimeout });
+  await expect(page.locator('#boot')).toHaveCount(0, { timeout: startupTimeout });
+  await expect.poll(() => page.evaluate(() =>
+    ((window as Window & { __tss?: { scene: { isActive(key: string): boolean } } }).__tss?.scene.isActive('Menu')) ?? false,
+  ), { timeout: startupTimeout }).toBe(true);
+  await page.evaluate(() => {
+    const game = (window as Window & {
+      __tss?: { scene: { getScene(key: string): unknown } };
+    }).__tss;
+    if (!game) throw new Error('Phaser runtime is unavailable');
+    const menu = game.scene.getScene('Menu') as {
+      selectedHero?: string; selectedDiff?: string;
+      scene: { start(key: string, data: { hero: string; diff: string }): void };
+    };
+    menu.scene.start('Game', { hero: menu.selectedHero ?? 'warrior', diff: menu.selectedDiff ?? 'normal' });
+  });
+  await expect.poll(() => page.evaluate(() =>
+    ((window as Window & { __tss?: { scene: { isActive(key: string): boolean } } }).__tss?.scene.isActive('Game')) ?? false,
+  ), { timeout: startupTimeout }).toBe(true);
+
+  const outcome = await page.evaluate(async () => {
+    const game = (window as Window & { __tss?: { scene: { getScene(key: string): unknown } } }).__tss;
+    if (!game) throw new Error('Phaser runtime is unavailable');
+    const scene = game.scene.getScene('Game') as {
+      builtBarracks: number;
+      openHireMenu(building: unknown, x: number, y: number): void;
+      orderMenu: { isOpen: boolean; close(): void };
+    };
+    const meta = await import('/src/game/meta.ts') as { matchesPlayed: () => number };
+    const archery = { kind: 'archery', x: 200, y: 200, alive: true, underConstruction: false };
+    scene.builtBarracks = 0;
+    scene.openHireMenu(archery, 640, 360);
+    const archeryBeforeBarracks = scene.orderMenu.isOpen;
+
+    scene.builtBarracks = 1;
+    scene.openHireMenu(archery, 640, 360);
+    const archeryAfterBarracks = scene.orderMenu.isOpen;
+    scene.orderMenu.close();
+
+    scene.builtBarracks = 0;
+    const monastery = { kind: 'monastery', x: 200, y: 200, alive: true, underConstruction: false };
+    scene.openHireMenu(monastery, 640, 360);
+    const monasteryWithoutBarracks = scene.orderMenu.isOpen;
+    scene.orderMenu.close();
+
+    return {
+      matchesPlayed: meta.matchesPlayed(),
+      archeryBeforeBarracks,
+      archeryAfterBarracks,
+      monasteryWithoutBarracks,
+    };
+  });
+
+  expect(outcome).toEqual({
+    matchesPlayed: 99,
+    archeryBeforeBarracks: false,
+    archeryAfterBarracks: true,
+    monasteryWithoutBarracks: true,
+  });
+});
