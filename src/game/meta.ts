@@ -2368,7 +2368,7 @@ export function claimChainReward(
 ): { ok: boolean; reward?: 'bronze' | 'silver' | 'gold'; reason?: 'storage' } {
   const st = rollMetaDay();
   const chain = CHAINS.find((c) => c.id === chainId);
-  if (!chain || tier < 0 || tier > 2) return { ok: false };
+  if (!chain || !Number.isInteger(tier) || tier < 0 || tier > 2) return { ok: false };
   const key = `${chainId}:${tier}`;
   if (st.chains.claimed.includes(key)) return { ok: false };
   const val = chainTierValue(chain, tier, st.chains.counters);
@@ -2480,15 +2480,19 @@ export function rerollQuestSlot(slot: number): { ok: boolean; reason?: 'limit' |
 
 /** Вызов дня: была ли уже победа сегодня (для 3 крон §J.7). */
 export function challengeVictoryToday(): boolean {
-  return rollMetaDay().challengeWinDate === todayKey();
+  // Сид и одноразовая награда относятся к одному UTC-дню (§H.8), а не к дневным
+  // заданиям, которые ротируются по Москве.
+  const challengeDay = challengeForToday().seed;
+  return rollMetaDay().challengeWinDate === challengeDay;
 }
 
 /** Победа в вызове дня: +3 кроны и +75 XP пропуска (§H.8, §J.7). */
 export function markChallengeVictory(): boolean {
+  const challengeDay = challengeForToday().seed;
   const st = rollMetaDay();
-  if (st.challengeWinDate === todayKey()) return false;
+  if (st.challengeWinDate === challengeDay) return false;
   const before = structuredCloneSafe(st);
-  st.challengeWinDate = todayKey();
+  st.challengeWinDate = challengeDay;
   st.crowns += CHALLENGE_CROWNS;
   addPassXp(st, null, PASS.XP.challenge);
   return saveMetaStateOrRollback(st, before);
