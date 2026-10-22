@@ -1867,6 +1867,7 @@ test('meta purchases and daily rewards roll back when storage rejects a write', 
       pass: { xp: number; premium: boolean };
       purchasedSkus: string[];
       processedIapTokens: string[];
+      consumables: Record<string, number>;
     };
     const meta = await import('/src/game/meta.ts') as unknown as {
       rollMetaDay: () => TestMetaState;
@@ -1879,6 +1880,7 @@ test('meta purchases and daily rewards roll back when storage rejects a write', 
       grantSkuForPurchase: (sku: string, token: string) => {
         supported: boolean; duplicate: boolean; persisted: boolean; granted: { crowns: number };
       };
+      takeConsumables: (ids: string[]) => boolean;
     };
     const state = meta.rollMetaDay();
     const parts = new Intl.DateTimeFormat('en-GB', {
@@ -1888,6 +1890,7 @@ test('meta purchases and daily rewards roll back when storage rejects a write', 
     const today = `${part('year')}-${part('month')}-${part('day')}`;
     state.matchesPlayed = 3;
     state.glory = 5000;
+    state.consumables.cs_horseshoe = 1;
     state.nodes = [];
     state.crowns = 250;
     state.crownConvert = { date: today, count: 0 };
@@ -1906,6 +1909,8 @@ test('meta purchases and daily rewards roll back when storage rejects a write', 
 
     const node = meta.buyNode(meta.TREE_NODES[0]!.id);
     const afterNode = meta.loadMetaState();
+    const consumablesSaved = meta.takeConsumables(['cs_horseshoe']);
+    const afterConsumables = meta.loadMetaState();
     const bonus = meta.claimDailyBonus();
     const afterBonus = meta.loadMetaState();
     const conversion = meta.convertCrownsToGold();
@@ -1949,6 +1954,7 @@ test('meta purchases and daily rewards roll back when storage rejects a write', 
 
     return {
       node: { ok: node.ok, reason: node.reason, glory: afterNode.glory, owned: afterNode.nodes.length > 0 },
+      consumables: { ok: consumablesSaved, horseshoe: afterConsumables.consumables.cs_horseshoe },
       bonus: { ok: bonus.ok, streak: afterBonus.dailyBonus.streak, last: afterBonus.dailyBonus.last },
       conversion: {
         ok: conversion.ok,
@@ -1974,6 +1980,7 @@ test('meta purchases and daily rewards roll back when storage rejects a write', 
 
   expect(outcome).toEqual({
     node: { ok: false, reason: 'storage', glory: 5000, owned: false },
+    consumables: { ok: false, horseshoe: 1 },
     bonus: { ok: false, streak: 4, last: '2000-01-01' },
     conversion: { ok: false, reason: 'storage', crowns: 250, count: 0 },
     walletBonus: {
