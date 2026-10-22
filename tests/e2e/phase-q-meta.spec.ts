@@ -20,7 +20,9 @@ test('daily streak loses only one step after a long absence', async ({ page }) =
     const moduleUrl = new URL('/src/game/meta.ts', window.location.origin).href;
     const meta = await import(/* @vite-ignore */ moduleUrl) as {
       claimDailyBonus: () => { ok: boolean; day: number; streak: number };
+      dailyBonusPreviewIndex: () => number;
     };
+    const previewIndex = meta.dailyBonusPreviewIndex();
     const result = meta.claimDailyBonus();
     const raw = localStorage.getItem('tss-meta2');
     const stored = raw
@@ -29,14 +31,17 @@ test('daily streak loses only one step after a long absence', async ({ page }) =
 
     return {
       result,
+      previewIndex,
       storedStreak: stored?.dailyBonus?.streak,
       storedLast: stored?.dailyBonus?.last,
     };
   });
 
   expect(outcome.result.ok).toBe(true);
-  // После пропуска нескольких дней снимается одна ступень: 5 -> 4, затем
-  // за сегодняшний вход начисляется следующий шаг цикла (стрик остаётся 5).
+  // Preview должен совпасть с фактической выдачей после отката стрика: 5 -> 4.
+  expect(outcome.previewIndex).toBe(outcome.result.day);
+  expect(outcome.previewIndex).toBe(4);
+  // За сегодняшний вход начисляется следующий шаг цикла, стрик остаётся 5.
   expect(outcome.result.streak).toBe(5);
   expect(outcome.storedStreak).toBe(5);
   expect(outcome.storedLast).not.toBe('2000-01-01');
