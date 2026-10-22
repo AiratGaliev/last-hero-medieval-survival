@@ -1194,9 +1194,9 @@ test('architect chain checks per-run construction, 10/10 base occupancy and life
     );
     const silverClaim = meta.claimChainReward('ch_architect', 1).ok;
 
-    for (let i = 0; i < 7; i++) run(10, true);
+    for (let i = 0; i < 7; i++) run(10, 10);
     const goldBlockedAt94 = meta.claimChainReward('ch_architect', 2).ok;
-    const goldUnlock = run(6, false);
+    const goldUnlock = run(6, 0);
     const goldUnlockedAt100Total = goldUnlock.chainUnlocked.some(
       (item) => item.id === 'ch_architect' && item.tier === 2,
     );
