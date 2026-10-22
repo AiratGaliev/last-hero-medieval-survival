@@ -2708,3 +2708,52 @@ test('seasonal cosmetic is granted once, only at the fifth progress milestone', 
     expectedSkin: outcome.expectedSkin,
   });
 });
+
+
+test('game over announces the seasonal cosmetic unlocked on milestone five', async ({ page }) => {
+  await page.goto('/?lang=en&ysdk=mock');
+  await expect(page.locator('#game canvas')).toBeVisible({ timeout: startupTimeout });
+  await expect(page.locator('#boot')).toHaveCount(0, { timeout: startupTimeout });
+
+  await page.evaluate(() => {
+    const game = (window as unknown as {
+      __tss?: { scene: { launch: (key: string, payload?: unknown) => void } };
+    }).__tss;
+    game?.scene.launch('GameOver', {
+      stats: {
+        victory: false, time: 120, kills: 30, level: 3, gold: 50, score: 1000,
+        meta: {
+          glory: null,
+          questsDone: 0,
+          questsTotal: 0,
+          questsCompletedNow: [],
+          passLevels: 0,
+          passRewards: [],
+          chainUnlocks: [],
+          seasonStepReward: 'skin_hero_monk_red',
+          endlessWave: 0,
+          crownsEarned: 0,
+          challenge: false,
+          ukaz: null,
+          endless: false,
+        },
+      },
+    });
+  });
+
+  await expect.poll(async () => page.evaluate(() => {
+    const game = (window as unknown as {
+      __tss?: { scene: { getScene: (key: string) => { children: { list: unknown[] } } };
+    }).__tss;
+    const scene = game?.scene.getScene('GameOver');
+    const labels: string[] = [];
+    const visit = (object: unknown): void => {
+      if (!object || typeof object !== 'object') return;
+      const item = object as { text?: unknown; list?: unknown[] };
+      if (typeof item.text === 'string') labels.push(item.text);
+      if (Array.isArray(item.list)) item.list.forEach(visit);
+    };
+    scene?.children.list.forEach(visit);
+    return labels;
+  })).toContain('Season cosmetic: Vow (monk)');
+});
