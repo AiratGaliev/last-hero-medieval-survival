@@ -3130,7 +3130,7 @@ private bossDeathSequence(e: Enemy): boolean {
     fuse.once('animationcomplete', () => fuse.destroy());
   }
 
-  /** Взрыв выплюнутой бомбы наносит урон герою в радиусе; вражеские убийства не засчитываются игроку. */
+  /** Взрыв выплюнутой бомбы: урон герою и пешкам в радиусе без выдачи убийств игроку. */
   private fishBombProjectileExplode(x: number, y: number, dmg: number, radius: number): void {
     this.playBombFuseEffect(x, y);
     this.effects.explosion(x, y, 1.05, 2);
@@ -3138,6 +3138,12 @@ private bossDeathSequence(e: Enemy): boolean {
     this.shakeCamera(140, 0.0035);
     this.hitstop(45);
     if (Math.hypot(this.player.x - x, this.player.y - y) <= radius) this.hurtPlayer(dmg);
+    // Вражеский взрыв ранит поселение через общий боевой контекст, а не через
+    // damageEnemy(): иначе убийства от NPC ошибочно поднимали бы комбо героя.
+    for (const pawn of this.economy.pawns) {
+      if (!pawn.active || pawn.dead || Math.hypot(pawn.x - x, pawn.y - y) > radius) continue;
+      this.enemyCtxStore?.attackPawn(pawn, dmg, false);
+    }
   }
 
   /** Взрыв рыбы-бомбы при смерти: сохраняет цепную реакцию между соседними врагами. */
@@ -4129,9 +4135,10 @@ private bossDeathSequence(e: Enemy): boolean {
       playerX: () => this.player.x,
       playerY: () => this.player.y,
       siegeInterceptRadius: () => SIEGE.INTERCEPT_R + 40 * this.economy.card('militia'),
-      onEnemyShoot: (x, y, proj) => {
-        // Бросок выполняется по текущей позиции героя; бомбу можно уклонением вывести из радиуса.
-        const tx = this.player.x, ty = this.player.y;
+      onEnemyShoot: (x, y, proj, targetPawn) => {
+        // Большинство снарядов направлены на героя; рыба учитывает выбранную AI-цель-пешку.
+        const tx = proj === 'bomb' && targetPawn?.active && !targetPawn.dead ? targetPawn.x : this.player.x;
+        const ty = proj === 'bomb' && targetPawn?.active && !targetPawn.dead ? targetPawn.y : this.player.y;
         if (proj === 'bomb') {
           const fish = ENEMIES['bomb-fish'];
           const dmg = Math.round((fish.shotDmg ?? 14) * this.spawner.dmgMult);
