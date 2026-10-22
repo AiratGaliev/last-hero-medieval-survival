@@ -3954,7 +3954,7 @@ private bossDeathSequence(e: Enemy): boolean {
       const def = QUEST_POOL.find((q) => q.id === id);
       if (!def) continue;
       const rv = this.questRunValue(def.metric);
-      const achieved = def.metric === 'firstHouseMin' ? rv <= def.goal : rv >= def.goal;
+      const achieved = def.metric === 'firstHouseMin' ? rv > 0 && rv < def.goal : rv >= def.goal;
       if (achieved) {
         this.questToastDone.add(id);
         this.hud.announce(t('quest.completeToast', { v: def.reward }), '#ffd76e');
@@ -3973,8 +3973,8 @@ private bossDeathSequence(e: Enemy): boolean {
       case 'hires': return this.hires;
       case 'successionBoss': return this.successions > 0 && this.bossKilled ? 1 : 0;
       case 'kills': return this.kills;
-      // «Достигнута, если построил дом до 2:00» — та же формула, что в meta
-      case 'firstHouseMin': return this.firstHouseMin > 0 ? Math.floor(this.firstHouseMin) : 99;
+      // Храним точное время: округление до минут засчитывало 2:59 как выполнение «до 2:00».
+      case 'firstHouseMin': return this.firstHouseMin > 0 ? this.firstHouseMin : 99;
       case 'barracks': return this.builtBarracks;
       case 'monastery': return this.builtMonastery;
       case 'archery': return this.builtArchery;

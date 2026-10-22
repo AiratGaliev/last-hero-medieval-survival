@@ -1392,3 +1392,82 @@ test('daily quest reroll rejects completed tasks and invalid slots without consu
     completedRewardHistoryRetained: true,
   });
 });
+
+test('first-house daily quest requires a build strictly before 2:00', async ({ page }) => {
+  await page.addInitScript(() => localStorage.clear());
+  await page.goto('/?lang=en&ysdk=mock');
+  await expect(page.locator('#game canvas')).toBeVisible({ timeout: startupTimeout });
+  await expect(page.locator('#boot')).toHaveCount(0, { timeout: startupTimeout });
+
+  const outcome = await page.evaluate(async () => {
+    type RunSummary = {
+      victory: boolean; ideal: boolean; endless: boolean; weeklyChallenge: boolean;
+      wave: number; time: number; kills: number; level: number; gold: number; score: number;
+      difficulty: string; buildingsBuilt: number; pawnsAlive: number;
+      siegesDefended: number; siegesTotal: number; monasteryHealed: number; healHp: number;
+      hires: number; successions: number; veterans: number; firstHouseMin: number;
+      barracks: number; monastery: number; archery: number; bestCombo: number;
+      bossKilled: boolean; killsByKind: Record<string, number>; cardsPicked: string[];
+      contract: string | null; ukaz: string | null; challengeMods: string[];
+      blessing: string | null; consumables: string[];
+    };
+    type TestMetaState = {
+      glory: number;
+      quests: { date: string; ids: string[]; progress: Record<string, number>; done: string[]; rerolls: number };
+      pass: { season: string; xp: number; premium: boolean; claimedFree: number; claimedPrem: number };
+    };
+    const meta = await import('/src/game/meta.ts') as unknown as {
+      rollMetaDay: () => TestMetaState;
+      saveMetaState: (state: TestMetaState) => boolean;
+      loadMetaState: () => TestMetaState;
+      applyRunToMeta: (summary: RunSummary) => unknown;
+    };
+    const state = meta.rollMetaDay();
+    state.quests.ids = ['q_first_house'];
+    state.quests.progress = {};
+    state.quests.done = [];
+    state.quests.rerolls = 0;
+    state.pass.xp = 5_000;
+    state.pass.premium = false;
+    meta.saveMetaState(state);
+
+    const base: RunSummary = {
+      victory: false, ideal: false, endless: false, weeklyChallenge: false,
+      wave: 0, time: 120, kills: 0, level: 1, gold: 0, score: 0, difficulty: 'normal',
+      buildingsBuilt: 0, pawnsAlive: 0, siegesDefended: 0, siegesTotal: 0,
+      monasteryHealed: 0, healHp: 0, hires: 0, successions: 0, veterans: 0,
+      firstHouseMin: 0, barracks: 0, monastery: 0, archery: 0, bestCombo: 0,
+      bossKilled: false, killsByKind: {}, cardsPicked: [], contract: null, ukaz: null,
+      challengeMods: [], blessing: null, consumables: [],
+    };
+    const run = (firstHouseMin: number) =>
+      meta.applyRunToMeta({ ...base, firstHouseMin });
+
+    run(2.99);
+    const after259 = meta.loadMetaState();
+    run(2.0);
+    const after200 = meta.loadMetaState();
+    run(1.99);
+    const after159 = meta.loadMetaState();
+
+    return {
+      doneAt259: after259.quests.done.includes('q_first_house'),
+      progressAt259: after259.quests.progress.q_first_house,
+      doneAt200: after200.quests.done.includes('q_first_house'),
+      progressAt200: after200.quests.progress.q_first_house,
+      doneAt159: after159.quests.done.includes('q_first_house'),
+      progressAt159: after159.quests.progress.q_first_house,
+      rewardAppliedOnce: after159.glory === state.glory + 35,
+    };
+  });
+
+  expect(outcome).toEqual({
+    doneAt259: false,
+    progressAt259: 2.99,
+    doneAt200: false,
+    progressAt200: 2.0,
+    doneAt159: true,
+    progressAt159: 1.99,
+    rewardAppliedOnce: true,
+  });
+});

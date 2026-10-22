@@ -3,7 +3,7 @@ import { Cursor } from '../systems/Cursor';
 import { FONT } from '../constants';
 import { audio } from '../systems/Audio';
 import { makeButton, makePanel, makeRibbon, resizePanel, fitTextWidth, type Button } from '../systems/Ui';
-import { t, num, type TranslationKey, type TranslateParams } from '../../i18n';
+import { t, num, clock, type TranslationKey, type TranslateParams } from '../../i18n';
 import { FTUE_MATCH_GATE } from '../data';
 import { track } from '../../platform/analytics';
 import { placementAvailable, showPlacementRewarded, showStickyBanner } from '../../platform/ads';
@@ -518,8 +518,14 @@ export class MetaScene extends Phaser.Scene {
       }).setOrigin(0, 0.5));
 
       const prog = st.quests.progress[q.id] ?? 0;
+      const progressA = q.metric === 'firstHouseMin'
+        ? (prog > 0 && prog < 99 ? clock(Math.floor(prog * 60)) : '—:—')
+        : num(Math.min(prog, q.goal));
+      const progressB = q.metric === 'firstHouseMin'
+        ? `<${clock(q.goal * 60)}`
+        : num(q.goal);
       box.add(this.add.text(x0 + 16, cy + 1, t('quest.progress', {
-        a: num(Math.min(prog, q.goal)), b: num(q.goal),
+        a: progressA, b: progressB,
       }), {
         fontFamily: FONT, fontSize: '12px', color: '#57431f',
       }).setOrigin(0, 0.5));
