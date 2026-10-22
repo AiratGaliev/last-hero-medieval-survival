@@ -415,6 +415,7 @@ export const en: Record<TranslationKey, string> = {
   'hire.staff': 'Monk',
   'hire.limit': 'Limit reached',
   'hire.started': 'Hiring: {v}',
+  'hire.barracksRequired': 'Build your first barracks before hiring guards',
 
   // ---------- Sieges (TZ §E.4) ----------
   'siege.warn': '⚠ SIEGE INCOMING ON THE SETTLEMENT',
