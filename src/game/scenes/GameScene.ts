@@ -3946,6 +3946,7 @@ private bossDeathSequence(e: Enemy): boolean {
       chainUnlocks: res.chainUnlocked.map((c) => ({ nameKey: c.nameKey, tier: c.tier })),
       endlessWave: wave,
       crownsEarned: res.crownsEarned,
+      persisted: res.persisted,
       challenge: !!this.mods.challenge,
       ukaz: this.mods.ukaz,
       endless: this.mods.endless,
