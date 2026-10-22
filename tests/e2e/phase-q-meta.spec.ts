@@ -1167,7 +1167,7 @@ test('architect chain checks per-run construction, 10/10 base occupancy and life
     const base: RunSummary = {
       victory: false, ideal: false, endless: false, weeklyChallenge: false,
       wave: 0, time: 120, kills: 0, level: 1, gold: 0, score: 0, difficulty: 'normal',
-      buildingsBuilt: 0, occupiedBaseBuildSpots: 0, pawnsAlive: 0;
+      buildingsBuilt: 0, occupiedBaseBuildSpots: 0, pawnsAlive: 0,
       siegesDefended: 0, siegesTotal: 0, monasteryHealed: 0, healHp: 0,
       hires: 0, successions: 0, veterans: 0, firstHouseMin: 0,
       barracks: 0, monastery: 0, archery: 0, bestCombo: 0,
