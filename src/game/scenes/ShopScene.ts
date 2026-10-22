@@ -835,6 +835,8 @@ export class ShopScene extends Phaser.Scene {
           audio.play('levelup');
           track('skin_equipped', { id: def.id });
           this.renderTab();
+        } else {
+          this.toast(t('skins.applyFailed'));
         }
       }, 'blue', 11, { hitW: 94, hitH: 42, stopPropagation: true });
       row.add([btn.img, btn.txt, btn.hit]);
@@ -893,6 +895,8 @@ export class ShopScene extends Phaser.Scene {
           audio.play('levelup');
           track('skin_equipped', { id: def.id });
           this.renderTab();
+        } else {
+          this.toast(t('skins.applyFailed'));
         }
       }, 'blue', 11, { hitW: 94, hitH: 42, stopPropagation: true });
       row.add([btn.img, btn.txt, btn.hit]);
@@ -916,9 +920,12 @@ export class ShopScene extends Phaser.Scene {
     row.add(this.label(-w / 2 + 16, 0, t('skins.none'), 12, '#8a5b12', 0));
     if (st.skins.banner !== '') {
       const btn = makeButton(this, w / 2 - 54, 0, 88, 34, t('skins.none'), () => {
-        setActiveSkin('banner', '');
-        audio.play('click');
-        this.renderTab();
+        if (setActiveSkin('banner', '')) {
+          audio.play('click');
+          this.renderTab();
+        } else {
+          this.toast(t('skins.applyFailed'));
+        }
       }, 'red', 11, { hitW: 94, hitH: 42, stopPropagation: true });
       row.add([btn.img, btn.txt, btn.hit]);
       this.contentButtons.push(btn);
@@ -947,9 +954,12 @@ export class ShopScene extends Phaser.Scene {
     const res = buySkinWithCrowns(def.id);
     if (res.ok) {
       // Купил — сразу надел: витрина не оставляет шаг «а теперь найди НАДЕТЬ»
-      setActiveSkin(def.kind, def.id);
-      audio.play('levelup');
-      track('skin_equipped', { id: def.id });
+      if (setActiveSkin(def.kind, def.id)) {
+        audio.play('levelup');
+        track('skin_equipped', { id: def.id });
+      } else {
+        this.toast(t('skins.applyFailed'));
+      }
       this.renderTab();
     } else {
       this.toast(t('store.fail'));
