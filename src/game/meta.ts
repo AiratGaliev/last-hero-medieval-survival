@@ -484,6 +484,9 @@ export const CONSUMABLE_MAX = 2;
 // ============================================================
 
 export const SEASON_DAYS = 14;
+/** Пропуск имеет собственный 30-дневный цикл (§J.6.3), не совпадающий с 14-дневной темой мира. */
+export const PASS_SEASON_DAYS = 30;
+const DAY_MS = 86_400_000;
 export type SeasonModifier = 'red_valley' | 'long_siege' | 'gold_rush_world' | 'ogre_return';
 
 export interface SeasonDef {
@@ -503,7 +506,12 @@ export const SEASONS: SeasonDef[] = [
 ];
 
 export function seasonIndexFor(now = serverNow()): number {
-  return Math.floor(now / (SEASON_DAYS * 86400_000));
+  return Math.floor(now / (SEASON_DAYS * DAY_MS));
+}
+
+/** Индекс самостоятельного 30-дневного сезона пропуска (§J.6.3). */
+export function passSeasonIndexFor(now = serverNow()): number {
+  return Math.floor(now / (PASS_SEASON_DAYS * DAY_MS));
 }
 
 export function seasonDef(index = seasonIndexFor()): SeasonDef {
@@ -1517,30 +1525,49 @@ function migrateLegacyBuildingCodex(st: MetaState): boolean {
 export function rollMetaDay(): MetaState {
   const st = loadMetaState();
   if (migrateLegacyBuildingCodex(st)) saveMetaState(st);
-  const today = todayKey();
+  // Календарные секции получают один снимок серверного времени: смена даты
+  // между последовательными вызовами не должна смешивать два разных дня/сезона.
+  const now = serverNow();
+  const today = todayKey(now);
   if (st.quests.date !== today) {
     st.quests = { date: today, ids: rotateQuests(today), progress: {}, done: [], rerolls: 0 };
     saveMetaState(st);
   }
-  const week = weekKey();
+  const week = weekKey(now);
   if (st.weekly.week !== week) {
     // Недельная цепочка: пропуск этапа не обнуляет прогресс (§H.17) —
     // старая неделя уходит, начинается новая с нулевого прогресса.
     st.weekly = { week, progress: 0, stage: 0, claimed: false };
     saveMetaState(st);
   }
-  const sIdx = seasonIndexFor();
+  const sIdx = seasonIndexFor(now);
   if (st.season.index !== sIdx) {
     // Сезон НЕ обнуляет дерево и славу (§H.18) — только мини-прогресс.
     st.season = { index: sIdx, runs: 0, claimed: 0 };
     saveMetaState(st);
   }
-  // Пропуск живёт один сезон (30 дней §J.6.3): смена сезона сбрасывает XP.
-  // Премиум не переносится — покупка следующего сезона выдаёт догон заново.
-  const pSeason = `s${seasonIndexFor()}`;
+  // Пропуск использует собственный 30-дневный цикл, независимый от смены
+  // тематического сезона мира раз в 14 дней. Legacy-ключ s<N> создавался по
+  // старому 14-дневному календарю: мигрируем его один раз, сохраняя текущий XP
+  // и premium. После миграции пойдёт обычная смена 30-дневных ключей p<N>.
+  const pSeason = `p${passSeasonIndexFor(now)}`;
   if (st.pass.season !== pSeason) {
-    st.pass = { season: pSeason, xp: 0, premium: false, claimedFree: 0, claimedPrem: 0 };
-    saveMetaState(st);
+    if (/^s\\d+$/.test(st.pass.season)) {
+      const legacyIndex = Number(st.pass.season.slice(1));
+      const legacyStart = legacyIndex * SEASON_DAYS * DAY_MS;
+      const legacyAge = now - legacyStart;
+      if (Number.isSafeInteger(legacyIndex) && legacyIndex >= 0
+        && legacyAge >= 0 && legacyAge < PASS_SEASON_DAYS * DAY_MS) {
+        st.pass.season = pSeason;
+        saveMetaState(st);
+      } else {
+        st.pass = { season: pSeason, xp: 0, premium: false, claimedFree: 0, claimedPrem: 0 };
+        saveMetaState(st);
+      }
+    } else {
+      st.pass = { season: pSeason, xp: 0, premium: false, claimedFree: 0, claimedPrem: 0 };
+      saveMetaState(st);
+    }
   }
   if (st.crownConvert.date !== today) {
     st.crownConvert = { date: today, count: 0 };
