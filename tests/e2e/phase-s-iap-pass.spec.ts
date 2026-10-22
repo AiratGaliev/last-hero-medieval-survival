@@ -156,4 +156,36 @@ test('weekly crown reward does not unlock the permanent weekly banner', async ({
 
   expect(result).toEqual({ reward: 'crowns', ownsBanner: false, persisted: false });
 });
+test('legacy banner stored in the skin collection migrates to permanent ownership', async ({ page }) => {
+  await openGame(page);
 
+  await page.evaluate(() => {
+    const raw = localStorage.getItem('tss-meta2');
+    if (!raw) throw new Error('missing metadata state for migration test');
+    const state = JSON.parse(raw) as {
+      weekly: { claimed: boolean };
+      banners: string[];
+      skins: { owned: string[] };
+    };
+    state.weekly.claimed = false;
+    state.banners = [];
+    state.skins.owned = [...state.skins.owned, 'banner_weekly'];
+    localStorage.setItem('tss-meta2', JSON.stringify(state));
+  });
+
+  await page.reload();
+  await expect(page.locator('#game canvas')).toBeVisible({ timeout: startupTimeout });
+
+  const result = await page.evaluate(async () => {
+    const meta = await import('/src/game/meta.ts') as unknown as {
+      loadMetaState: () => { banners: string[]; skins: { owned: string[] } };
+    };
+    const state = meta.loadMetaState();
+    return {
+      migrated: state.banners.includes('banner_weekly'),
+      keptAsSkin: state.skins.owned.includes('banner_weekly'),
+    };
+  });
+
+  expect(result).toEqual({ migrated: true, keptAsSkin: false });
+});
