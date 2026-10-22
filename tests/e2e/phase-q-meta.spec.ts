@@ -2343,8 +2343,10 @@ test('gold rush season increases vein output and every ore expenditure', async (
     const scene = game.scene.getScene('Game') as {
       seasonMod: string | null;
       economy: {
+        resources: { wood: number; ore: number; meat: number };
         buildingCost(kind: string): { wood?: number; ore?: number; meat?: number };
         hireCost(weapon: string): { wood?: number; ore?: number; meat?: number };
+        repair(building: unknown, pawn: null): boolean;
       };
     };
     const data = await import('/src/game/data.ts') as {
@@ -2352,9 +2354,20 @@ test('gold rush season increases vein output and every ore expenditure', async (
     };
     const constants = await import('/src/game/constants.ts') as {
       HIRE_COST: Record<string, { wood?: number; ore?: number; meat?: number }>;
+      REPAIR: { REBUILD_BARRACKS_ORE: number };
     };
     const building = scene.economy.buildingCost('barracks');
     const hire = scene.economy.hireCost('lance');
+    scene.economy.resources.wood = 10_000;
+    scene.economy.resources.ore = 10_000;
+    scene.economy.resources.meat = 10_000;
+    const repairTarget = {
+      kind: 'barracks', hp: 0, maxHp: 250, alive: true, underConstruction: false,
+      plan: { noRepair: false }, scaleX: 1, setScale: () => {},
+    };
+    const repairOreBefore = scene.economy.resources.ore;
+    const repairAccepted = scene.economy.repair(repairTarget, null);
+    const repairOreSpent = repairOreBefore - scene.economy.resources.ore;
     return {
       season: scene.seasonMod,
       buildingOre: building.ore,
@@ -2365,6 +2378,9 @@ test('gold rush season increases vein output and every ore expenditure', async (
       expectedHireOre: Math.round((constants.HIRE_COST.lance.ore ?? 0) * 1.25),
       hireWood: hire.wood,
       baseHireWood: constants.HIRE_COST.lance.wood,
+      repairAccepted,
+      repairOreSpent,
+      expectedRepairOreSpent: Math.round(constants.REPAIR.REBUILD_BARRACKS_ORE * 1.25),
     };
   });
 
@@ -2375,6 +2391,9 @@ test('gold rush season increases vein output and every ore expenditure', async (
   expect(result.hireOre).toBe(result.expectedHireOre);
   expect(result.hireOre).toBe(13);
   expect(result.hireWood).toBe(result.baseHireWood);
+  expect(result.repairAccepted).toBe(true);
+  expect(result.repairOreSpent).toBe(result.expectedRepairOreSpent);
+  expect(result.repairOreSpent).toBe(19);
 });
 
 test('ogre return season increases only phase-two castle attack cadence', async ({ page }) => {
