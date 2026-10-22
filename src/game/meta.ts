@@ -881,6 +881,7 @@ export interface MetaState {
   codex: Record<string, number>;
   /** Факт встречи/использования записи без требования убить врага. */
   codexSeen: Record<string, boolean>;
+  quests: QuestDayState;
   weekly: { week: string; progress: number; stage: number; claimed: boolean };
   dailyBonus: { last: string; lastAt: number; streak: number };
   contractsDone: number;
