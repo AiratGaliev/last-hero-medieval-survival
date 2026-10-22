@@ -1909,6 +1909,7 @@ export const CODEX_AFTER_MATCHES = FTUE_MATCH_GATE.codex;
 
 export interface BonusClaimResult {
   ok: boolean;
+  reason?: 'locked' | 'already-claimed' | 'storage';
   day: number;
   def: DailyBonusDef | null;
   doubled: boolean;
@@ -1926,11 +1927,11 @@ export function claimDailyBonus(useAd = false): BonusClaimResult {
   const lastAt = st.dailyBonus.lastAt;
   const elapsed = lastAt > 0 ? now - lastAt : Number.POSITIVE_INFINITY;
   if (st.matchesPlayed < DAILY_BONUS_AFTER_MATCHES) {
-    return { ok: false, day: st.dailyBonus.streak % 7, def: null, doubled: false, streak: st.dailyBonus.streak };
+    return { ok: false, reason: 'locked', day: st.dailyBonus.streak % 7, def: null, doubled: false, streak: st.dailyBonus.streak };
   }
   if (st.dailyBonus.last === today
     || (lastAt > 0 && elapsed < BONUS_MIN_INTERVAL_HOURS * 60 * 60 * 1000)) {
-    return { ok: false, day: st.dailyBonus.streak % 7, def: null, doubled: false, streak: st.dailyBonus.streak };
+    return { ok: false, reason: 'already-claimed', day: st.dailyBonus.streak % 7, def: null, doubled: false, streak: st.dailyBonus.streak };
   }
   // 26-часовое окно рассчитывается по серверному времени, а не по датам браузера.
   // Превышение окна снимает ровно одну ступень (§H.7); длинный перерыв не обнуляет стрик.
@@ -1946,7 +1947,7 @@ export function claimDailyBonus(useAd = false): BonusClaimResult {
   const doubled = useAd === true;
   const walletGold = applyBonus(st, def, doubled, true);
   if (!saveMetaStateOrRollback(st, before)) {
-    return { ok: false, day: prev % 7, def: null, doubled: false, streak: prev };
+    return { ok: false, reason: 'storage', day: prev % 7, def: null, doubled: false, streak: prev };
   }
   if (walletGold > 0) depositGoldWallet(walletGold);
   return { ok: true, day: dayIdx, def, doubled, streak };
