@@ -1763,6 +1763,12 @@ private ordersUnlocked(): boolean {
 
   /** Меню найма гарнизона на здании (§B.9.1): казармы/тир/обитель. */
   private openHireMenu(b: Building, wx: number, wy: number): void {
+    // По §I.3 найм гарнизона открывается после первой казармы, а не после
+    // номера матча. Монах в обители — отдельная ветка раскрытия (§I.5).
+    if (b.kind !== 'monastery' && this.builtBarracks <= 0) {
+      this.hud?.feed(t('hire.barracksRequired'), '#ffd76e');
+      return;
+    }
     const weapons: Array<import('../data').PawnWeapon> =
       b.kind === 'barracks' ? ['sword', 'lance'] : b.kind === 'archery' ? ['bow'] : ['staff'];
     const entries = weapons.map((w) => ({
