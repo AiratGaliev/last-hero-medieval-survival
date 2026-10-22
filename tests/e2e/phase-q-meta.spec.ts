@@ -2859,3 +2859,73 @@ test('long siege season starts the first siege at 270 seconds', async ({ page })
   expect(result.afterBoundary).toBe(1);
   expect(result.elapsed).toBeGreaterThanOrEqual(270);
 });
+
+
+test('red valley seasonal spawner wiring boosts the red tier only from minute 7 up to minute 12', async ({ page }) => {
+  await page.addInitScript(() => {
+    localStorage.clear();
+    const nativeNow = Date.now.bind(Date);
+    const targetNow = 2 * 86_400_000 + 60_000; // сезон 0: «Красная долина»
+    const offset = targetNow - nativeNow();
+    Date.now = () => nativeNow() + offset;
+  });
+  await page.goto('/?lang=en&ysdk=mock');
+  await expect(page.locator('#game canvas')).toBeVisible({ timeout: startupTimeout });
+  await expect(page.locator('#boot')).toHaveCount(0, { timeout: startupTimeout });
+  await expect.poll(() => page.evaluate(() =>
+    ((window as Window & { __tss?: { scene: { isActive(key: string): boolean } } }).__tss?.scene.isActive('Menu')) ?? false,
+  ), { timeout: startupTimeout }).toBe(true);
+  await page.evaluate(() => {
+    const game = (window as Window & {
+      __tss?: { scene: { getScene(key: string): unknown } };
+    }).__tss;
+    if (!game) throw new Error('Phaser runtime is unavailable');
+    const menu = game.scene.getScene('Menu') as {
+      selectedHero?: string; selectedDiff?: string;
+      scene: { start(key: string, data: { hero: string; diff: string }): void };
+    };
+    menu.scene.start('Game', { hero: menu.selectedHero ?? 'warrior', diff: menu.selectedDiff ?? 'normal' });
+  });
+  await expect.poll(() => page.evaluate(() =>
+    ((window as Window & { __tss?: { scene: { isActive(key: string): boolean } } }).__tss?.scene.isActive('Game')) ?? false,
+  ), { timeout: startupTimeout }).toBe(true);
+
+  const result = await page.evaluate(() => {
+    const game = (window as Window & { __tss?: { scene: { getScene(key: string): unknown } } }).__tss;
+    if (!game) throw new Error('Phaser runtime is unavailable');
+    const scene = game.scene.getScene('Game') as {
+      seasonMod: string | null;
+      spawner: {
+        elapsed: number;
+        o: { redValley?: boolean; random?: () => number };
+        pickKind(): string;
+      };
+    };
+    const spawner = scene.spawner;
+    const samples = 100_000;
+    const measure = (minute: number): number => {
+      spawner.elapsed = minute * 60;
+      let index = 0;
+      spawner.o.random = () => index++ / samples;
+      let redCount = 0;
+      for (let i = 0; i < samples; i++) {
+        const kind = spawner.pickKind();
+        if (kind === 'skull' || kind === 'shaman') redCount++;
+      }
+      return redCount / samples;
+    };
+    return {
+      season: scene.seasonMod,
+      optionEnabled: spawner.o.redValley,
+      beforeWindow: measure(6.99),
+      activeWindow: measure(7.5),
+      atUpperBoundary: measure(12),
+    };
+  });
+
+  expect(result.season).toBe('red_valley');
+  expect(result.optionEnabled).toBe(true);
+  expect(result.beforeWindow).toBeCloseTo(0.38, 4);
+  expect(result.activeWindow).toBeCloseTo(0.475, 4);
+  expect(result.atUpperBoundary).toBeCloseTo(0.38, 4);
+});
