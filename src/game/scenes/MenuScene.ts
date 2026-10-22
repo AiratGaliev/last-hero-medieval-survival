@@ -2039,7 +2039,9 @@ export class MenuScene extends Phaser.Scene {
       const reroll = makeButton(this, cx - 100, btnY, 180, 44, t('challenge.reroll'), () => {
         void (async () => {
           const res = await showPlacementRewarded('challenge-reroll');
-          if (res.rewarded && this.overlay) this.showChallengeOverlay(`ad${Date.now()}`);
+          if (!res.rewarded) return;
+          if (this.overlay) this.showChallengeOverlay(`ad${Date.now()}`);
+          else refundPlacement('challenge-reroll');
         })();
       }, 'red', 10);
       this.addExtra(reroll.img); this.addExtra(reroll.txt); this.addExtra(reroll.hit);
