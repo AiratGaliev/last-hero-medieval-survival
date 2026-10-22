@@ -1430,6 +1430,30 @@ function saveMetaStateOrRollback(st: MetaState, before: MetaState): boolean {
 }
 
 /**
+ * Сохраняет награду вместе с изменением отдельного кошелька лавки.
+ * Если запись кошелька не удалась, откатывает и мета-снимок, чтобы выдача
+ * оставалась согласованной и награду можно было безопасно забрать повторно.
+ */
+function saveMetaStateWithWalletCredit(
+  st: MetaState,
+  before: MetaState,
+  walletGold: number,
+): boolean {
+  if (!saveMetaStateOrRollback(st, before)) return false;
+  if (walletGold <= 0 || depositGoldWallet(walletGold)) return true;
+
+  // Кошелёк не принял награду: отменяем отмеченный в MetaState забор.
+  if (!saveMetaState(before)) {
+    cached = before;
+    if (metaCloudHydrated) {
+      metaCloudDirty = true;
+      scheduleMetaCloudSave();
+    }
+  }
+  return false;
+}
+
+/**
  * Меняет баланс жетонов благословения атомарно для локального сохранения.
  * Если localStorage недоступен, пробует немедленно зафиксировать снимок в Player Data.
  * При отказе обоих хранилищ восстанавливает кэш, чтобы нельзя было получить эффект бесплатно.
@@ -1946,10 +1970,9 @@ export function claimDailyBonus(useAd = false): BonusClaimResult {
   const def = DAILY_BONUS[dayIdx];
   const doubled = useAd === true;
   const walletGold = applyBonus(st, def, doubled, true);
-  if (!saveMetaStateOrRollback(st, before)) {
+  if (!saveMetaStateWithWalletCredit(st, before, walletGold)) {
     return { ok: false, reason: 'storage', day: prev % 7, def: null, doubled: false, streak: prev };
   }
-  if (walletGold > 0) depositGoldWallet(walletGold);
   return { ok: true, day: dayIdx, def, doubled, streak };
 }
 
@@ -2037,8 +2060,7 @@ export function claimDailyChest(): DailyChestReward | null {
     reward = { kind: 'speedup', amount: 1 };
     st.speedupTokens += 1;
   }
-  if (!saveMetaStateOrRollback(st, before)) return null;
-  if (walletGold > 0) depositGoldWallet(walletGold);
+  if (!saveMetaStateWithWalletCredit(st, before, walletGold)) return null;
   return reward;
 }
 
@@ -2066,8 +2088,7 @@ export function convertCrownsToGold(): { ok: boolean; reason?: 'limit' | 'poor' 
   if (st.crowns < CROWNS_TO_GOLD.crowns) return { ok: false, reason: 'poor' };
   st.crowns -= CROWNS_TO_GOLD.crowns;
   st.crownConvert.count += 1;
-  if (!saveMetaStateOrRollback(st, before)) return { ok: false, reason: 'storage' };
-  depositGoldWallet(CROWNS_TO_GOLD.gold);
+  if (!saveMetaStateWithWalletCredit(st, before, CROWNS_TO_GOLD.gold)) return { ok: false, reason: 'storage' };
   return { ok: true };
 }
 
@@ -2358,8 +2379,7 @@ export function claimChainReward(
   if (tier === 0) walletGold = CHAIN_REWARDS.bronze;
   else if (tier === 1) { walletGold = CHAIN_REWARDS.silver; st.blessingTokens += 1; }
   else { st.crowns += CHAIN_REWARDS.gold; }
-  if (!saveMetaStateOrRollback(st, before)) return { ok: false, reason: 'storage' };
-  if (walletGold > 0) depositGoldWallet(walletGold);
+  if (!saveMetaStateWithWalletCredit(st, before, walletGold)) return { ok: false, reason: 'storage' };
   return { ok: true, reward: tier === 0 ? 'bronze' : tier === 1 ? 'silver' : 'gold' };
 }
 
