@@ -30,6 +30,7 @@ import {
   writePlayerDataValue,
 } from '../platform/player';
 import { FTUE_MATCH_GATE, type BuildingKind } from './data';
+import type { BlessingId } from './systems/Blessing';
 
 // ============================================================
 // Справочник дерева «Хроника Долины» (§H.16): 30 узлов, 3 ветви
@@ -415,40 +416,6 @@ export function challengeModsForDate(date: string, rerollSalt = ''): ChallengeMo
   const pool = [...CHALLENGE_MODS.map((m) => m.id)];
   const picked: ChallengeModId[] = [];
   for (let i = 0; i < 2 && pool.length > 0; i++) {
-    picked.push(pool.splice(Math.floor(rng() * pool.length), 1)[0]);
-  }
-  return picked;
-}
-
-// ============================================================
-// Благословения (Приложение A2, точка R4): 1 из 3 на ран
-// ============================================================
-
-export type BlessingId = 'bl_pawn_speed' | 'bl_castle_hp' | 'bl_first_siege'
-  | 'bl_vein' | 'bl_heal_wood' | 'bl_wood_start' | 'bl_combo' | 'bl_speedup_token';
-
-export interface BlessingDef {
-  id: BlessingId;
-  nameKey: string;
-  descKey: string;
-}
-
-export const BLESSINGS: BlessingDef[] = [
-  { id: 'bl_pawn_speed', nameKey: 'blessing.pawn_speed.name', descKey: 'blessing.pawn_speed.desc' },
-  { id: 'bl_castle_hp', nameKey: 'blessing.castle_hp.name', descKey: 'blessing.castle_hp.desc' },
-  { id: 'bl_first_siege', nameKey: 'blessing.first_siege.name', descKey: 'blessing.first_siege.desc' },
-  { id: 'bl_vein', nameKey: 'blessing.vein.name', descKey: 'blessing.vein.desc' },
-  { id: 'bl_heal_wood', nameKey: 'blessing.heal_wood.name', descKey: 'blessing.heal_wood.desc' },
-  { id: 'bl_wood_start', nameKey: 'blessing.wood_start.name', descKey: 'blessing.wood_start.desc' },
-  { id: 'bl_combo', nameKey: 'blessing.combo.name', descKey: 'blessing.combo.desc' },
-  { id: 'bl_speedup_token', nameKey: 'blessing.speedup_token.name', descKey: 'blessing.speedup_token.desc' },
-];
-
-export function rollBlessings(seed: string): BlessingId[] {
-  const rng = mulberry32(hashStr(`bless:${seed}`));
-  const pool = BLESSINGS.map((b) => b.id);
-  const picked: BlessingId[] = [];
-  for (let i = 0; i < 3 && pool.length > 0; i++) {
     picked.push(pool.splice(Math.floor(rng() * pool.length), 1)[0]);
   }
   return picked;
