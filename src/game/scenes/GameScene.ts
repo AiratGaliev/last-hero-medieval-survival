@@ -3894,7 +3894,7 @@ private bossDeathSequence(e: Enemy): boolean {
       score,
       difficulty: this.diffDef.id,
       buildingsBuilt: this.buildingsBuilt,
-      allBuildSpotsOccupied: this.economy.allBaseBuildSpotsOccupied(),
+      occupiedBaseBuildSpots: this.economy.occupiedBaseBuildSpots(),
       pawnsAlive: this.economy.pawns.length,
       siegesDefended: this.settlement.facts.siegesDefended,
       siegesTotal: this.settlement.facts.siegesTotal,

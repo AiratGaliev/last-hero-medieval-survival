@@ -1119,7 +1119,7 @@ test('weekly chronicle counts a completed run once when it unlocks an achievemen
   expect(outcome.stage).toBe(0);
 });
 
-test('architect chain checks per-run construction, full base occupancy and lifetime total separately', async ({ page }) => {
+test('architect chain checks per-run construction, 10/10 base occupancy and lifetime total separately', async ({ page }) => {
   await page.goto('/?lang=en&ysdk=mock');
   await expect(page.locator('#game canvas')).toBeVisible({ timeout: startupTimeout });
   await expect(page.locator('#boot')).toHaveCount(0, { timeout: startupTimeout });
@@ -1128,7 +1128,7 @@ test('architect chain checks per-run construction, full base occupancy and lifet
     type RunSummary = {
       victory: boolean; ideal: boolean; endless: boolean; weeklyChallenge: boolean;
       wave: number; time: number; kills: number; level: number; gold: number; score: number;
-      difficulty: string; buildingsBuilt: number; allBuildSpotsOccupied?: boolean; pawnsAlive: number;
+      difficulty: string; buildingsBuilt: number; occupiedBaseBuildSpots?: number; pawnsAlive: number;
       siegesDefended: number; siegesTotal: number; monasteryHealed: number; healHp: number;
       hires: number; successions: number; veterans: number; firstHouseMin: number;
       barracks: number; monastery: number; archery: number; bestCombo: number;
@@ -1167,15 +1167,15 @@ test('architect chain checks per-run construction, full base occupancy and lifet
     const base: RunSummary = {
       victory: false, ideal: false, endless: false, weeklyChallenge: false,
       wave: 0, time: 120, kills: 0, level: 1, gold: 0, score: 0, difficulty: 'normal',
-      buildingsBuilt: 0, allBuildSpotsOccupied: false, pawnsAlive: 0,
+      buildingsBuilt: 0, occupiedBaseBuildSpots: 0, pawnsAlive: 0;
       siegesDefended: 0, siegesTotal: 0, monasteryHealed: 0, healHp: 0,
       hires: 0, successions: 0, veterans: 0, firstHouseMin: 0,
       barracks: 0, monastery: 0, archery: 0, bestCombo: 0,
       bossKilled: false, killsByKind: {}, cardsPicked: [], contract: null, ukaz: null,
       challengeMods: [], blessing: null, consumables: [],
     };
-    const run = (buildingsBuilt: number, allBuildSpotsOccupied = false) =>
-      meta.applyRunToMeta({ ...base, buildingsBuilt, allBuildSpotsOccupied });
+    const run = (buildingsBuilt: number, occupiedBaseBuildSpots = 0) =>
+      meta.applyRunToMeta({ ...base, buildingsBuilt, occupiedBaseBuildSpots });
 
     run(4);
     run(3);
@@ -1188,7 +1188,7 @@ test('architect chain checks per-run construction, full base occupancy and lifet
     const bronzeClaim = meta.claimChainReward('ch_architect', 0).ok;
     const silverBlockedBeforeAllPlots = meta.claimChainReward('ch_architect', 1).ok;
 
-    const silverUnlock = run(10, true);
+    const silverUnlock = run(10, 10);
     const silverUnlockedWhenAllPlotsOccupied = silverUnlock.chainUnlocked.some(
       (item) => item.id === 'ch_architect' && item.tier === 1,
     );

@@ -618,10 +618,9 @@ export class Economy extends Phaser.Events.EventEmitter {
     return out;
   }
 
-  /** Все базовые пятна кольца деревни заняты; бонусные пятна в условие не входят. */
-  allBaseBuildSpotsOccupied(): boolean {
-    return this.baseSpots.length > 0
-      && this.baseSpots.every((s) => this.usedSpots.has(`${s.x}:${s.y}`));
+  /** Сколько из десяти базовых пятен занято; бонусные пятна не входят в показатель. */
+  occupiedBaseBuildSpots(): number {
+    return this.baseSpots.filter((s) => this.usedSpots.has(`${s.x}:${s.y}`)).length;
   }
 
   /**

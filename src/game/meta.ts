@@ -644,7 +644,7 @@ export const CHAINS: ChainDef[] = [
     id: 'ch_architect',
     nameKey: 'chain.architect',
     metric: 'buildings',
-    tiers: [7, 1, 100],
+    tiers: [7, 10, 100],
     tierMetrics: ['buildingsBestRun', 'buildingsAllSpots', 'buildings'],
   },
 ];
@@ -1467,8 +1467,8 @@ export interface RunSummary {
   score: number;
   difficulty: string;
   buildingsBuilt: number;
-  /** Истинно, если к концу рана заняты все 10 базовых пятен поселения. */
-  allBuildSpotsOccupied?: boolean;
+  /** Число занятых базовых пятен (из 10) в конце рана. */
+  occupiedBaseBuildSpots?: number;
   pawnsAlive: number;
   siegesDefended: number;
   siegesTotal: number;
@@ -1630,7 +1630,10 @@ export function applyRunToMeta(s: RunSummary): RunMetaResult {
   }
   c.buildings = (c.buildings ?? 0) + s.buildingsBuilt;
   c.buildingsBestRun = Math.max(c.buildingsBestRun ?? 0, s.buildingsBuilt);
-  c.buildingsAllSpots = Math.max(c.buildingsAllSpots ?? 0, s.allBuildSpotsOccupied === true ? 1 : 0);
+  c.buildingsAllSpots = Math.max(
+    c.buildingsAllSpots ?? 0,
+    Math.min(10, Math.max(0, Math.floor(s.occupiedBaseBuildSpots ?? 0))),
+  );
   if (s.endless) c.endlessWave = Math.max(c.endlessWave ?? 0, s.wave);
 
   for (const chain of CHAINS) {
