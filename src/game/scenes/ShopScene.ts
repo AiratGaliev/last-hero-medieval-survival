@@ -6,7 +6,7 @@ import { makeButton, makePanel, makeRibbon, resizePanel, fitTextWidth, type Butt
 import { t, num, type TranslationKey } from '../../i18n';
 import { track } from '../../platform/analytics';
 import { fetchCatalog, purchaseSku, showcaseVisible, SKUS, type CatalogProduct } from '../../platform/payments';
-import { isMockMode, isOnYandex } from '../../platform/sdk';
+import { isMockMode, isOnYandex, serverNow } from '../../platform/sdk';
 import { placementAvailable, showPlacementRewarded, showStickyBanner, refundPlacement } from '../../platform/ads';
 import {
   rollMetaDay,
