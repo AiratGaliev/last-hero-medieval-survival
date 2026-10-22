@@ -141,12 +141,14 @@ test('weekly crown reward does not unlock the permanent weekly banner', async ({
       ownedBanners: () => string[];
     };
 
-    // 2 ноября 2026 года — неделя с наградой в кронах; часы восстанавливаем даже при ошибке.
+    // 26 октября 2026 года — неделя с наградой в кронах; часы восстанавливаем даже при ошибке.
     const originalNow = Date.now;
-    Date.now = () => Date.parse('2026-11-02T12:00:00.000Z');
+    Date.now = () => Date.parse('2026-10-26T12:00:00.000Z');
     try {
       const state = meta.rollMetaDay();
       const reward = meta.weeklyFinalReward(state.weekly.week);
+      const rewardSequence = ['2026-10-19', '2026-10-26', '2026-11-02']
+        .map((week) => meta.weeklyFinalReward(week));
       if (reward !== 'crowns') throw new Error('test week must award crowns');
 
       state.weekly.progress = 20;
@@ -158,6 +160,7 @@ test('weekly crown reward does not unlock the permanent weekly banner', async ({
       const owned = meta.ownedBanners();
       return {
         reward,
+        rewardSequence,
         ownsBanner: owned.includes('banner_weekly'),
         persisted: meta.rollMetaDay().banners.includes('banner_weekly'),
       };
@@ -166,7 +169,12 @@ test('weekly crown reward does not unlock the permanent weekly banner', async ({
     }
   });
 
-  expect(result).toEqual({ reward: 'crowns', ownsBanner: false, persisted: false });
+  expect(result).toEqual({
+    reward: 'crowns',
+    rewardSequence: ['banner', 'crowns', 'banner'],
+    ownsBanner: false,
+    persisted: false,
+  });
 });
 test('legacy banner stored in the skin collection migrates to permanent ownership', async ({ page }) => {
   await openGame(page);
