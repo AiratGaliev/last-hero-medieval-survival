@@ -760,6 +760,7 @@ test('daily challenge date deterministically seeds the map, economy and wave dir
     spawnPositions: Array<{ x: number; y: number }>;
     economyRandom: number[];
     waveRandom: number[];
+    choices: Array<{ kind: string; id: string | null; title: string }>;
   }> => {
     if (target !== page) await target.goto(new URL('/?lang=en&ysdk=mock', appOrigin).toString());
     await expect(target.locator('#game canvas')).toBeVisible({ timeout: startupTimeout });
@@ -825,6 +826,7 @@ test('daily challenge date deterministically seeds the map, economy and wave dir
         runSeed: number;
         mods: { challengeSeed?: string | null; challenge: { mods: string[] } | null };
         gameplayRandom: () => number;
+        generateChoices: () => Array<{ kind: string; id?: string; title: string }>;
         dailySpawnerRng: { sow: (seeds: string[]) => unknown };
         spawner: {
           stopped: boolean;
@@ -839,6 +841,12 @@ test('daily challenge date deterministically seeds the map, economy and wave dir
       // Сбрасываем поток спавнера, чтобы время загрузки контекстов не влияло на сравнение.
       scene.spawner.stopped = true;
       scene.dailySpawnerRng.sow([`daily-spawner:${challengeDate}`]);
+      // Карточки — часть игрового результата, поэтому сравниваем их до perturbation.
+      const choices = scene.generateChoices().map(({ kind, id, title }) => ({
+        kind,
+        id: id ?? null,
+        title,
+      }));
       if (perturbGameplayRng) {
         for (let i = 0; i < 32; i++) scene.gameplayRandom();
       }
@@ -858,6 +866,7 @@ test('daily challenge date deterministically seeds the map, economy and wave dir
         })),
         economyRandom: Array.from({ length: 8 }, () => scene.economy.opts.random?.() ?? -1),
         waveRandom: Array.from({ length: 8 }, () => scene.spawner.o.random?.() ?? -1),
+        choices,
       };
     }, { challengeDate: date, perturbGameplayRng });
   };
@@ -875,6 +884,7 @@ test('daily challenge date deterministically seeds the map, economy and wave dir
     expect(repeat.spawnPositions).toEqual(first.spawnPositions);
     expect(repeat.economyRandom).toEqual(first.economyRandom);
     expect(repeat.waveRandom).toEqual(first.waveRandom);
+    expect(repeat.choices).toEqual(first.choices);
 
     const seeds = await page.evaluate(async (challengeDate) => {
       const meta = await import('/src/game/meta.ts') as {
