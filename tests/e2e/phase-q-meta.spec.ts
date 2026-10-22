@@ -1430,6 +1430,7 @@ test('first-house daily quest requires a build strictly before 2:00', async ({ p
     state.pass.xp = 5_000;
     state.pass.premium = false;
     meta.saveMetaState(state);
+    const initialGlory = state.glory;
 
     const base: RunSummary = {
       victory: false, ideal: false, endless: false, weeklyChallenge: false,
@@ -1457,7 +1458,7 @@ test('first-house daily quest requires a build strictly before 2:00', async ({ p
       progressAt200: after200.quests.progress.q_first_house,
       doneAt159: after159.quests.done.includes('q_first_house'),
       progressAt159: after159.quests.progress.q_first_house,
-      rewardAppliedOnce: after159.glory === state.glory + 35,
+      rewardAppliedOnce: after159.glory === initialGlory + 35,
     };
   });
 
