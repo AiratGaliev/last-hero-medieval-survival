@@ -1292,6 +1292,7 @@ test('veteran chain counts pawns that reached 3 stars even if they die before th
       weapons: { ownedIds(): string[]; isEvolved(id: string): boolean };
     };
     type TestMetaState = {
+      codex: Record<string, number>;
       chains: { counters: Record<string, number>; claimed: string[] };
     };
     const runtime = (window as unknown as {
@@ -1303,13 +1304,17 @@ test('veteran chain counts pawns that reached 3 stars even if they die before th
       rollMetaDay: () => TestMetaState;
       saveMetaState: (state: TestMetaState) => boolean;
       loadMetaState: () => TestMetaState;
+      codexCount: (id: string) => number;
     };
 
     const state = meta.rollMetaDay();
+    state.codex = {};
     state.chains.counters = {};
     state.chains.claimed = [];
     meta.saveMetaState(state);
 
+    scene.weapons.ownedIds = () => ['sword'];
+    scene.weapons.isEvolved = () => false;
     const target = scene.economy.pawns.find((pawn) => (
       pawn.active && !pawn.dead && pawn.state !== 'wounded' && pawn.state !== 'bleeding'
     ));
@@ -1334,12 +1339,18 @@ test('veteran chain counts pawns that reached 3 stars even if they die before th
     scene.economy.pawns.splice(scene.economy.pawns.indexOf(target), 1);
     scene.metaApplied = false;
     const runResult = scene.applyRunMeta(false, 0, false);
+    const codexCountAfterFirstApply = meta.codexCount('w_sword');
+    const repeatedResult = scene.applyRunMeta(false, 0, false);
+    const codexCountAfterRepeatedApply = meta.codexCount('w_sword');
     const saved = meta.loadMetaState();
 
     return {
       earnedDuringRun,
       survivingVeterans: scene.economy.pawns.filter((pawn) => pawn.veteranStars >= 3).length,
       lifetimeVeterans: saved.chains.counters.veterans ?? 0,
+      codexCountAfterFirstApply,
+      codexCountAfterRepeatedApply,
+      repeatedApplySkipped: repeatedResult === undefined,
       bronzeUnlocked: runResult?.chainUnlocks.some((item) => (
         item.nameKey === 'chain.veteran' && item.tier === 0
       )) ?? false,
@@ -1350,6 +1361,9 @@ test('veteran chain counts pawns that reached 3 stars even if they die before th
     earnedDuringRun: 1,
     survivingVeterans: 0,
     lifetimeVeterans: 1,
+    codexCountAfterFirstApply: 1,
+    codexCountAfterRepeatedApply: 1,
+    repeatedApplySkipped: true,
     bronzeUnlocked: true,
   });
 });
