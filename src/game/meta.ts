@@ -1934,7 +1934,10 @@ function bumpWeekly(st: MetaState, n: number): void {
  * Забрать финал недельной цепочки (§H.17): 150 крон или знамя (чередование).
  */
 export function claimWeeklyFinal(): { kind: 'crowns' | 'banner'; amount: number; id?: string } | null {
-  const st = loadMetaState();
+  const st = rollMetaDay();
+  // Если reconciliation новой недели не удалось сохранить, rollMetaDay()
+  // возвращает прежний снимок. Он не имеет права выдавать финал устаревшей недели.
+  if (st.weekly.week !== weekKey()) return null;
   if (st.weekly.claimed || st.weekly.stage < WEEKLY_STAGES.length) return null;
   const before = structuredCloneSafe(st);
   st.weekly.claimed = true;
