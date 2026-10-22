@@ -5,6 +5,7 @@ import { FONT } from '../constants';
 import { HEROES, WEAPONS, PASSIVES, DIFFICULTIES, EVOLUTIONS, FTUE_MATCH_GATE, type HeroId, type DifficultyId } from '../data';
 import { audio } from '../systems/Audio';
 import { makePanel, makeButton, makeChip, makeRibbon, fitTextWidth } from '../systems/Ui';
+import { BLESSINGS, rollBlessings } from '../systems/Blessing';
 import { shrinkToHeight, FONT_FLOOR, FS } from '../systems/Text';
 import { loadShop } from '../shop';
 import { ACHIEVEMENTS, loadUnlocked, loadMeta } from '../achievements';
@@ -18,7 +19,6 @@ import { isOnYandex } from '../../platform/sdk';
 import { placementAvailable, showPlacementRewarded, showStickyBanner, rewardedAvailable, refundPlacement } from '../../platform/ads';
 import { track } from '../../platform/analytics';
 import {
-  BLESSINGS,
   bonusAvailable,
   dailyBonusPreviewIndex,
   challengeForToday,
@@ -43,7 +43,6 @@ import {
   matchesPlayed,
   ORDERS,
   ordersUnlocked,
-  rollBlessings,
   rollMetaDay,
   saveRunConfig,
   type ConsumableId,
