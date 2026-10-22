@@ -1827,6 +1827,10 @@ export function applyRunToMeta(s: RunSummary): RunMetaResult {
   st.season.runs += 1;
   while (st.season.claimed < SEASON_STEPS.length && st.season.runs >= SEASON_STEPS[st.season.claimed]) {
     st.season.claimed += 1;
+  }
+  // Косметика выдаётся только за пятый шаг (§H.18 / SeasonDef.skinReward).
+  // Промежуточные вехи двигают прогресс, но не пытаются повторно выдать тот же скин.
+  if (st.season.claimed === SEASON_STEPS.length && !st.skins.owned.includes(seasonDef().skinReward)) {
     const sd = seasonDef();
     grantSkin(st, sd.skinReward);
     res.seasonStepReward = sd.skinReward;
