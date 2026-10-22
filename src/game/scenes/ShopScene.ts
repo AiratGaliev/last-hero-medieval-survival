@@ -1185,7 +1185,9 @@ export class ShopScene extends Phaser.Scene {
    *  Окно starter_castellan: 48ч после первой победы и не куплен (§J.6.2). */
   private starterCastellanAvailable(st: MetaState): boolean {
     if (st.purchasedSkus.includes('starter_castellan')) return false;
-    return st.firstWinAt > 0 && Date.now() - st.firstWinAt < 48 * 3600 * 1000;
+    const now = serverNow();
+    const elapsed = now - st.firstWinAt;
+    return st.firstWinAt > 0 && elapsed >= 0 && elapsed < 48 * 3600 * 1000;
   }
 
   /** Строка полки SKU: имя + цена-примечание (note) в кнопке / «Куплено». */
