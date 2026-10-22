@@ -1607,7 +1607,6 @@ export function applyRunToMeta(s: RunSummary): RunMetaResult {
   }
   c.buildings = (c.buildings ?? 0) + s.buildingsBuilt;
   if (s.endless) c.endlessWave = Math.max(c.endlessWave ?? 0, s.wave);
-  st.endlessBestWave = Math.max(st.endlessBestWave, s.endless ? s.wave : 0);
 
   for (const chain of CHAINS) {
     const val = st.chains.counters[chain.metric] ?? 0;
@@ -1617,7 +1616,6 @@ export function applyRunToMeta(s: RunSummary): RunMetaResult {
         st.chains.claimed.push(`${key}:seen`);
         res.chainUnlocked.push({ id: chain.id, tier, nameKey: chain.nameKey });
         addPassXp(st, res, PASS.XP.chain);
-        bumpWeekly(st, 1);
       }
     }
   }
@@ -1649,8 +1647,10 @@ export function applyRunToMeta(s: RunSummary): RunMetaResult {
   // --- Пропуск: XP за ран (§J.6.3)
   addPassXp(st, res, PASS.XP.run);
 
-  // --- Недельная цепочка: раны двигают прогресс (§H.17)
+  // --- Недельная цепочка: каждый завершённый ран двигает прогресс (§H.17).
+  // Порог награды пересчитываем после прироста, чтобы Game Over получил актуальный флаг.
   bumpWeekly(st, 1);
+  res.weeklyClaimReady = st.weekly.stage >= WEEKLY_STAGES.length && !st.weekly.claimed;
 
   // --- Испытание недели (§H.18): пишем результат только специального рана, не любого матча с указом.
   if (s.weeklyChallenge && s.ukaz) {
