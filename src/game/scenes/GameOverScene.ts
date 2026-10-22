@@ -75,6 +75,8 @@ export interface GameOverStats {
     passLevels: number;
     passRewards: { kind: string; amount: number }[];
     chainUnlocks: { nameKey: string; tier: number }[];
+    /** Скин сезона, выданный после достижения пятой вехи. */
+    seasonStepReward?: string | null;
     endlessWave: number;
     crownsEarned: number;
     /** False means the run's meta rewards were not committed durably. */
@@ -643,6 +645,10 @@ export class GameOverScene extends Phaser.Scene {
       passParts.push(t('over.chainsUp', { v: num(m.chainUnlocks.length) }));
     }
     if (passParts.length > 0) lines.push({ text: passParts.join('   '), color: '#3b2410' });
+    if (m.seasonStepReward) {
+      const skinKey = `skins.skin.${m.seasonStepReward.replace(/^skin_/, '')}` as TranslationKey;
+      lines.push({ text: t('over.seasonReward', { v: t(skinKey) }), color: '#9a6a08' });
+    }
 
     // Победа в вызове дня (§H.8) и волны бесконечного режима (§H.7)
     if (m.challenge && s.victory) lines.push({ text: t('over.challengeWin'), color: '#9a6a08' });
