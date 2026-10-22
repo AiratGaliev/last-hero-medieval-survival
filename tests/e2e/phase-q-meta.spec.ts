@@ -1221,3 +1221,115 @@ test('architect chain checks per-run construction, 10/10 base occupancy and life
     goldClaim: true,
   });
 });
+
+test('veteran chain counts pawns that reached 3 stars even if they die before the run ends', async ({ page }) => {
+  await page.addInitScript(() => localStorage.clear());
+  await page.goto('/?lang=en&ysdk=mock');
+  await expect(page.locator('#game canvas')).toBeVisible({ timeout: startupTimeout });
+  await expect(page.locator('#boot')).toHaveCount(0, { timeout: startupTimeout });
+
+  await page.evaluate(() => {
+    const runtime = (window as unknown as {
+      __tss?: { scene: { getScene(key: string): unknown } };
+    }).__tss;
+    if (!runtime) throw new Error('Phaser runtime is unavailable');
+    const menu = runtime.scene.getScene('Menu') as {
+      selectedHero?: string;
+      selectedDiff?: string;
+      scene: { start(key: string, data: { hero: string; diff: string }): void };
+    };
+    menu.scene.start('Game', {
+      hero: menu.selectedHero ?? 'warrior',
+      diff: menu.selectedDiff ?? 'normal',
+    });
+  });
+  await expect.poll(() => page.evaluate(() => (
+    (window as unknown as { __tss?: { scene: { isActive(key: string): boolean } } }).__tss
+      ?.scene.isActive('Game') ?? false
+  )), { timeout: startupTimeout }).toBe(true);
+
+  const outcome = await page.evaluate(async () => {
+    type VeteranPawn = {
+      dead: boolean;
+      active: boolean;
+      state: string;
+      veteranStars: number;
+      siegesSurvived: number;
+    };
+    type RunMetaResult = {
+      chainUnlocks: Array<{ nameKey: string; tier: number }>;
+    };
+    type GameRuntime = {
+      economy: { pawns: VeteranPawn[] };
+      settlement: { endSiege(outcome: 'defended' | 'partial' | 'ignored'): void };
+      effects: { popup: (...args: unknown[]) => void };
+      hints: { show: (...args: unknown[]) => void };
+      addXp(value: number): void;
+      onSiegeScore(outcome: string, index: number): void;
+      applyRunMeta(victory: boolean, score: number, ideal: boolean): RunMetaResult | undefined;
+      veteransEarnedThisRun: number;
+      metaApplied: boolean;
+      weapons: { ownedIds(): string[]; isEvolved(id: string): boolean };
+    };
+    type TestMetaState = {
+      chains: { counters: Record<string, number>; claimed: string[] };
+    };
+    const runtime = (window as unknown as {
+      __tss?: { scene: { getScene(key: string): unknown } };
+    }).__tss;
+    if (!runtime) throw new Error('Phaser runtime is unavailable');
+    const scene = runtime.scene.getScene('Game') as GameRuntime;
+    const meta = await import('/src/game/meta.ts') as unknown as {
+      rollMetaDay: () => TestMetaState;
+      saveMetaState: (state: TestMetaState) => boolean;
+      loadMetaState: () => TestMetaState;
+    };
+
+    const state = meta.rollMetaDay();
+    state.chains.counters = {};
+    state.chains.claimed = [];
+    meta.saveMetaState(state);
+
+    const target = scene.economy.pawns.find((pawn) => (
+      pawn.active && !pawn.dead && pawn.state !== 'wounded' && pawn.state !== 'bleeding'
+    ));
+    if (!target) throw new Error('No eligible pawn available for veteran test');
+    for (const pawn of scene.economy.pawns) {
+      pawn.siegesSurvived = 0;
+      pawn.veteranStars = 0;
+    }
+    target.siegesSurvived = 2;
+    target.veteranStars = 2;
+
+    // Изолируем механику ветерана от наград за осаду и переходов уровня в тестовой сцене.
+    scene.addXp = () => undefined;
+    scene.onSiegeScore = () => undefined;
+    scene.effects.popup = () => undefined;
+    scene.hints.show = () => undefined;
+    scene.settlement.endSiege('partial');
+
+    const earnedDuringRun = scene.veteransEarnedThisRun;
+    target.dead = true;
+    target.active = false;
+    scene.economy.pawns.splice(scene.economy.pawns.indexOf(target), 1);
+    scene.metaApplied = false;
+    const runResult = scene.applyRunMeta(false, 0, false);
+    const saved = meta.loadMetaState();
+
+    return {
+      earnedDuringRun,
+      survivingVeterans: scene.economy.pawns.filter((pawn) => pawn.veteranStars >= 3).length,
+      lifetimeVeterans: saved.chains.counters.veterans ?? 0,
+      bronzeUnlocked: runResult?.chainUnlocks.some((item) => (
+        item.nameKey === 'chain.veteran' && item.tier === 0
+      )) ?? false,
+    };
+  });
+
+  expect(outcome).toEqual({
+    earnedDuringRun: 1,
+    survivingVeterans: 0,
+    lifetimeVeterans: 1,
+    bronzeUnlocked: true,
+  });
+});
