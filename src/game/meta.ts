@@ -504,7 +504,7 @@ function legacyWeeklyFinalReward(week: string): WeeklyRewardKind {
 
 /** Награда недельного финала: 150 крон и знамя чередуются строго через неделю. */
 export function weeklyFinalReward(week: string): WeeklyRewardKind {
-  if (!/^\\d{4}-\\d{2}-\\d{2}$/.test(week)) return legacyWeeklyFinalReward(week);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(week)) return legacyWeeklyFinalReward(week);
   const weekMs = Date.parse(`${week}T00:00:00.000Z`);
   if (!Number.isFinite(weekMs)) return legacyWeeklyFinalReward(week);
   const date = new Date(weekMs);
