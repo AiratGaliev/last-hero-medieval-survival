@@ -883,6 +883,8 @@ test('daily challenge date deterministically seeds the map, economy and wave dir
         x: Math.round(scene.spawner.ctx.randomSpawnX() * 100) / 100,
         y: Math.round(scene.spawner.ctx.randomSpawnY() * 100) / 100,
       }));
+      // Перезапускаем поток состава: эта часть проверяет влияние именно геометрии.
+      scene.dailySpawnerRng.sow([`daily-spawner:${challengeDate}`]);
       if (perturbGameplayRng) {
         // Очередь отложенного спавна могла запросить ещё координаты, но состав волн не должен сдвинуться.
         for (let i = 0; i < 16; i++) {
