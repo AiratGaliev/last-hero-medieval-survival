@@ -15,7 +15,7 @@ export interface EnemyContext {
   /** Ранг «Ополчения» увеличивает радиус перехвата осады. */
   siegeInterceptRadius?(): number;
   /** Гнолл, шаман, гарпун-акула или рыба-бомба выпускают свой снаряд. */
-  onEnemyShoot(x: number, y: number, proj: EnemyShotKind): void;
+  onEnemyShoot(x: number, y: number, proj: EnemyShotKind, targetPawn?: Pawn | null): void;
   /** Огр бьёт клубом в землю: ударная волна по радиусу */
   onBossSlam(x: number, y: number): void;
   onBossSummon(x: number, y: number): void;
@@ -266,7 +266,10 @@ export class Enemy extends Phaser.Physics.Arcade.Sprite {
       this.animationCompleteHandler = null;
     }
     this.lastAnim = '';
-    this.ctx.onEnemyShoot(this.x, this.y, 'bomb');
+    const pawnTarget = this.targetPawn && this.targetPawn.active && !this.targetPawn.dead
+      ? this.targetPawn
+      : null;
+    this.ctx.onEnemyShoot(this.x, this.y, 'bomb', pawnTarget);
     this.shootCd = 2500;
     this.aiState = 'chase';
   }
