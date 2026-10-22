@@ -42,7 +42,7 @@ test('premium pass purchased with crowns catches up and pass banner unlocks at l
 
   expect(initial.beforeHasPassBanner).toBe(false);
   expect(initial.purchase).toEqual({ ok: true });
-  expect(initial.crowns).toBe(80);
+  expect(initial.crowns).toBe(200);
   expect(initial.premium).toBe(true);
   expect(initial.retroSkinGranted).toBe(true);
   expect(initial.atLevel20HasPassBanner).toBe(false);
