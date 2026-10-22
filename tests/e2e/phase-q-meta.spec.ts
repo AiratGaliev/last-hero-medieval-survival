@@ -1856,7 +1856,7 @@ test('meta purchases and daily rewards roll back when storage rejects a write', 
   await expect(page.locator('#game canvas')).toBeVisible({ timeout: startupTimeout });
   await expect(page.locator('#boot')).toHaveCount(0, { timeout: startupTimeout });
 
-  const outcome = await page.evaluate(() => {
+  const outcome = await page.evaluate(async () => {
     type TestMetaState = {
       matchesPlayed: number;
       glory: number;
@@ -1865,7 +1865,15 @@ test('meta purchases and daily rewards roll back when storage rejects a write', 
       crownConvert: { date: string; count: number };
       dailyBonus: { last: string; lastAt: number; streak: number };
     };
-    const meta = requireMetaApi();
+    const meta = await import('/src/game/meta.ts') as unknown as {
+      rollMetaDay: () => TestMetaState;
+      saveMetaState: (state: TestMetaState) => boolean;
+      loadMetaState: () => TestMetaState;
+      TREE_NODES: Array<{ id: string; cost: number }>;
+      buyNode: (id: string) => { ok: boolean; reason?: string };
+      claimDailyBonus: () => { ok: boolean; streak: number; day: number };
+      convertCrownsToGold: () => { ok: boolean; reason?: string };
+    };
     const state = meta.rollMetaDay();
     const parts = new Intl.DateTimeFormat('en-GB', {
       timeZone: 'Europe/Moscow', day: '2-digit', month: '2-digit', year: 'numeric',
@@ -1908,21 +1916,6 @@ test('meta purchases and daily rewards roll back when storage rejects a write', 
         count: finalState.crownConvert.count,
       },
     };
-
-    function requireMetaApi() {
-      // The page has loaded the game module graph, so Vite can resolve this import dynamically.
-      return {
-        ...window.__phaseQMetaTestApi,
-      } as unknown as {
-        rollMetaDay: () => TestMetaState;
-        saveMetaState: (state: TestMetaState) => boolean;
-        loadMetaState: () => TestMetaState;
-        TREE_NODES: Array<{ id: string; cost: number }>;
-        buyNode: (id: string) => { ok: boolean; reason?: string };
-        claimDailyBonus: () => { ok: boolean; streak: number };
-        convertCrownsToGold: () => { ok: boolean; reason?: string };
-      };
-    }
   });
 
   expect(outcome).toEqual({
