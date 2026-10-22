@@ -2524,3 +2524,81 @@ test('guard recruiting from an archery range until a barracks has been built', a
     monasteryWithoutBarracks: true,
   });
 });
+
+
+test('refund daily rewarded quota when the related meta reward cannot be persisted', async ({ page }) => {
+  await page.addInitScript(() => localStorage.clear());
+  await page.goto('/?lang=en&ysdk=mock');
+  await expect(page.locator('#game canvas')).toBeVisible({ timeout: startupTimeout });
+  await expect(page.locator('#boot')).toHaveCount(0, { timeout: startupTimeout });
+
+  const outcome = await page.evaluate(async () => {
+    type TestMetaState = {
+      matchesPlayed: number;
+      consumables: Record<string, number>;
+      dailyChest: { date: string; count: number };
+    };
+    const meta = await import('/src/game/meta.ts') as unknown as {
+      rollMetaDay: () => TestMetaState;
+      saveMetaState: (state: TestMetaState) => boolean;
+      loadMetaState: () => TestMetaState;
+      claimDailyChest: () => unknown;
+      grantConsumableFromAd: (id: string) => boolean;
+    };
+    const ads = await import('/src/platform/ads.ts') as unknown as {
+      showPlacementRewarded: (placement: 'daily-chest' | 'consumable') =>
+        Promise<{ rewarded: boolean; available: boolean }>;
+      refundPlacement: (placement: 'daily-chest' | 'consumable') => boolean;
+      placementAvailable: (placement: 'daily-chest' | 'consumable') => boolean;
+    };
+
+    const state = meta.rollMetaDay();
+    state.matchesPlayed = 5;
+    state.consumables.cs_horseshoe = 2;
+    meta.saveMetaState(state);
+
+    const chestAd = await ads.showPlacementRewarded('daily-chest');
+    const originalSetItem = Storage.prototype.setItem;
+    Storage.prototype.setItem = function (key: string, value: string): void {
+      if (key === 'tss-meta2') throw new DOMException('meta storage disabled', 'QuotaExceededError');
+      originalSetItem.call(this, key, value);
+    };
+
+    try {
+      const chestReward = chestAd.rewarded ? meta.claimDailyChest() : 'ad-not-rewarded';
+      const chestRefund = chestAd.rewarded && chestReward === null
+        ? ads.refundPlacement('daily-chest')
+        : false;
+      const chestAvailable = ads.placementAvailable('daily-chest');
+
+      const consumableAd = await ads.showPlacementRewarded('consumable');
+      const consumableSaved = consumableAd.rewarded
+        ? meta.grantConsumableFromAd('cs_horseshoe')
+        : false;
+      const consumableRefund = consumableAd.rewarded && !consumableSaved
+        ? ads.refundPlacement('consumable')
+        : false;
+      const consumablesAfter = meta.loadMetaState().consumables.cs_horseshoe;
+
+      return {
+        chestAd, chestReward: chestReward === null ? null : chestReward,
+        chestRefund, chestAvailable,
+        consumableAd, consumableSaved, consumableRefund,
+        consumablesAfter,
+        consumableAvailable: ads.placementAvailable('consumable'),
+      };
+    } finally {
+      Storage.prototype.setItem = originalSetItem;
+    }
+  });
+
+  expect(outcome.chestAd.rewarded).toBe(true);
+  expect(outcome.chestReward).toBeNull();
+  expect(outcome.chestRefund).toBe(true);
+  expect(outcome.chestAvailable).toBe(true);
+  expect(outcome.consumableAd.rewarded).toBe(true);
+  expect(outcome.consumableSaved).toBe(false);
+  expect(outcome.consumableRefund).toBe(true);
+  expect(outcome.consumablesAfter).toBe(2);
+  expect(outcome.consumableAvailable).toBe(true);
+});
