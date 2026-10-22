@@ -1871,7 +1871,7 @@ test('meta purchases and daily rewards roll back when storage rejects a write', 
       loadMetaState: () => TestMetaState;
       TREE_NODES: Array<{ id: string; cost: number }>;
       buyNode: (id: string) => { ok: boolean; reason?: string };
-      claimDailyBonus: () => { ok: boolean; streak: number; day: number };
+      claimDailyBonus: () => { ok: boolean; reason?: string; streak: number; day: number };
       convertCrownsToGold: () => { ok: boolean; reason?: string };
     };
     const state = meta.rollMetaDay();
@@ -1906,6 +1906,25 @@ test('meta purchases and daily rewards roll back when storage rejects a write', 
     const finalState = meta.loadMetaState();
     Storage.prototype.setItem = originalSetItem;
 
+    // Метаснимок записывается, но начисление отдельного кошелька может завершиться ошибкой.
+    // Ежедневная награда золота должна откатить и сам факт забора.
+    const walletState = meta.loadMetaState();
+    walletState.matchesPlayed = 3;
+    walletState.dailyBonus = { last: '2000-01-01', lastAt: 0, streak: 0 };
+    meta.saveMetaState(walletState);
+    const shop = await import('/src/game/shop.ts') as unknown as {
+      loadShop: () => { balance: number };
+    };
+    const walletBefore = shop.loadShop().balance;
+    Storage.prototype.setItem = function (key: string, value: string): void {
+      if (key === 'tss-shop') throw new DOMException('wallet storage disabled', 'QuotaExceededError');
+      originalSetItem.call(this, key, value);
+    };
+    const walletBonus = meta.claimDailyBonus();
+    const afterWalletBonus = meta.loadMetaState();
+    const walletAfter = shop.loadShop().balance;
+    Storage.prototype.setItem = originalSetItem;
+
     return {
       node: { ok: node.ok, reason: node.reason, glory: afterNode.glory, owned: afterNode.nodes.length > 0 },
       bonus: { ok: bonus.ok, streak: afterBonus.dailyBonus.streak, last: afterBonus.dailyBonus.last },
@@ -1915,6 +1934,13 @@ test('meta purchases and daily rewards roll back when storage rejects a write', 
         crowns: finalState.crowns,
         count: finalState.crownConvert.count,
       },
+      walletBonus: {
+        ok: walletBonus.ok,
+        reason: walletBonus.reason,
+        streak: afterWalletBonus.dailyBonus.streak,
+        last: afterWalletBonus.dailyBonus.last,
+        balanceUnchanged: walletAfter === walletBefore,
+      },
     };
   });
 
@@ -1922,5 +1948,12 @@ test('meta purchases and daily rewards roll back when storage rejects a write', 
     node: { ok: false, reason: 'storage', glory: 5000, owned: false },
     bonus: { ok: false, streak: 4, last: '2000-01-01' },
     conversion: { ok: false, reason: 'storage', crowns: 250, count: 0 },
+    walletBonus: {
+      ok: false,
+      reason: 'storage',
+      streak: 0,
+      last: '2000-01-01',
+      balanceUnchanged: true,
+    },
   });
 });
