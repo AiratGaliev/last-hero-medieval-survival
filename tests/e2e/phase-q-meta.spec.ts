@@ -1848,3 +1848,86 @@ test('blessing token changes roll back when storage rejects a write', async ({ p
     tokensAfterFailedGrant: 0,
   });
 });
+
+
+test('meta purchases and daily rewards roll back when storage rejects a write', async ({ page }) => {
+  await page.addInitScript(() => localStorage.clear());
+  await page.goto('/?lang=en&ysdk=mock');
+  await expect(page.locator('#game canvas')).toBeVisible({ timeout: startupTimeout });
+  await expect(page.locator('#boot')).toHaveCount(0, { timeout: startupTimeout });
+
+  const outcome = await page.evaluate(() => {
+    type TestMetaState = {
+      matchesPlayed: number;
+      glory: number;
+      nodes: string[];
+      crowns: number;
+      crownConvert: { date: string; count: number };
+      dailyBonus: { last: string; lastAt: number; streak: number };
+    };
+    const meta = requireMetaApi();
+    const state = meta.rollMetaDay();
+    const parts = new Intl.DateTimeFormat('en-GB', {
+      timeZone: 'Europe/Moscow', day: '2-digit', month: '2-digit', year: 'numeric',
+    }).formatToParts(new Date());
+    const part = (type: string): string => parts.find((item) => item.type === type)?.value ?? '';
+    const today = `${part('year')}-${part('month')}-${part('day')}`;
+    state.matchesPlayed = 3;
+    state.glory = 5000;
+    state.nodes = [];
+    state.crowns = 250;
+    state.crownConvert = { date: today, count: 0 };
+    state.dailyBonus = {
+      last: '2000-01-01',
+      lastAt: Date.parse('2000-01-01T12:00:00.000Z'),
+      streak: 4,
+    };
+    meta.saveMetaState(state);
+
+    const originalSetItem = Storage.prototype.setItem;
+    Storage.prototype.setItem = function (key: string, value: string): void {
+      if (key === 'tss-meta2') throw new DOMException('storage disabled', 'QuotaExceededError');
+      originalSetItem.call(this, key, value);
+    };
+
+    const node = meta.buyNode(meta.TREE_NODES[0]!.id);
+    const afterNode = meta.loadMetaState();
+    const bonus = meta.claimDailyBonus();
+    const afterBonus = meta.loadMetaState();
+    const conversion = meta.convertCrownsToGold();
+    const finalState = meta.loadMetaState();
+    Storage.prototype.setItem = originalSetItem;
+
+    return {
+      node: { ok: node.ok, reason: node.reason, glory: afterNode.glory, owned: afterNode.nodes.length > 0 },
+      bonus: { ok: bonus.ok, streak: afterBonus.dailyBonus.streak, last: afterBonus.dailyBonus.last },
+      conversion: {
+        ok: conversion.ok,
+        reason: conversion.reason,
+        crowns: finalState.crowns,
+        count: finalState.crownConvert.count,
+      },
+    };
+
+    function requireMetaApi() {
+      // The page has loaded the game module graph, so Vite can resolve this import dynamically.
+      return {
+        ...window.__phaseQMetaTestApi,
+      } as unknown as {
+        rollMetaDay: () => TestMetaState;
+        saveMetaState: (state: TestMetaState) => boolean;
+        loadMetaState: () => TestMetaState;
+        TREE_NODES: Array<{ id: string; cost: number }>;
+        buyNode: (id: string) => { ok: boolean; reason?: string };
+        claimDailyBonus: () => { ok: boolean; streak: number };
+        convertCrownsToGold: () => { ok: boolean; reason?: string };
+      };
+    }
+  });
+
+  expect(outcome).toEqual({
+    node: { ok: false, reason: 'storage', glory: 5000, owned: false },
+    bonus: { ok: false, streak: 4, last: '2000-01-01' },
+    conversion: { ok: false, reason: 'storage', crowns: 250, count: 0 },
+  });
+});
