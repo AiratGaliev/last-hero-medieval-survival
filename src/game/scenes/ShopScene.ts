@@ -784,10 +784,15 @@ export class ShopScene extends Phaser.Scene {
     try {
       const result = await showPlacementRewarded('shop-refresh');
       if (result.rewarded) {
-        refreshDailyShopRotation();
+        const rotation = refreshDailyShopRotation();
+        if (!rotation) {
+          refundPlacement('shop-refresh');
+          this.toast(t('store.fail'));
+          return;
+        }
         audio.play('levelup');
         this.pageIdx = 0;
-        track('shop_refreshed', { date: getDailyShopRotation().date });
+        track('shop_refreshed', { date: rotation.date });
       } else if (!result.available) {
         this.toast(t('store.refreshUnavailable'));
       }
