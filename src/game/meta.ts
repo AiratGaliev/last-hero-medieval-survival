@@ -1415,6 +1415,21 @@ export function saveMetaState(st: MetaState): boolean {
 }
 
 /**
+ * Сохраняет мета-транзакцию fail-closed: если локальная запись не удалась,
+ * возвращает кэш к исходному снимку и не подтверждает покупку/награду.
+ * При включённой синхронизации отложенная запись увидит уже восстановленный снимок.
+ */
+function saveMetaStateOrRollback(st: MetaState, before: MetaState): boolean {
+  if (saveMetaState(st)) return true;
+  cached = before;
+  if (metaCloudHydrated) {
+    metaCloudDirty = true;
+    scheduleMetaCloudSave();
+  }
+  return false;
+}
+
+/**
  * Меняет баланс жетонов благословения атомарно для локального сохранения.
  * Если localStorage недоступен, пробует немедленно зафиксировать снимок в Player Data.
  * При отказе обоих хранилищ восстанавливает кэш, чтобы нельзя было получить эффект бесплатно.
@@ -1870,13 +1885,14 @@ function bumpWeekly(st: MetaState, n: number): void {
 export function claimWeeklyFinal(): { kind: 'crowns' | 'banner'; amount: number; id?: string } | null {
   const st = loadMetaState();
   if (st.weekly.claimed || st.weekly.stage < WEEKLY_STAGES.length) return null;
+  const before = structuredCloneSafe(st);
   st.weekly.claimed = true;
   const kind = weeklyFinalReward(st.weekly.week);
   let amount = 0;
   let id: string | undefined;
   if (kind === 'crowns') { amount = 150; st.crowns += amount; }
   else { id = 'banner_weekly'; grantSkin(st, id); }
-  saveMetaState(st);
+  if (!saveMetaStateOrRollback(st, before)) return null;
   return { kind, amount, id };
 }
 
@@ -1922,31 +1938,53 @@ export function claimDailyBonus(useAd = false): BonusClaimResult {
   const missedWindow = lastAt > 0
     && elapsed > BONUS_RESET_HOURS * 60 * 60 * 1000;
   const effective = missedWindow ? Math.max(0, prev - 1) : prev;
+  const before = structuredCloneSafe(st);
   const streak = effective + 1;
   st.dailyBonus = { last: today, lastAt: now, streak };
   const dayIdx = (streak - 1) % 7;
   const def = DAILY_BONUS[dayIdx];
   const doubled = useAd === true;
-  applyBonus(st, def, doubled);
-  saveMetaState(st);
+  const walletGold = applyBonus(st, def, doubled, true);
+  if (!saveMetaStateOrRollback(st, before)) {
+    return { ok: false, day: prev % 7, def: null, doubled: false, streak: prev };
+  }
+  if (walletGold > 0) depositGoldWallet(walletGold);
   return { ok: true, day: dayIdx, def, doubled, streak };
 }
 
-export function applyBonus(st: MetaState, def: DailyBonusDef, doubled: boolean): void {
+/**
+ * Применяет дар к черновику состояния. При deferWalletGold золото возвращается
+ * вызывающему коду и зачисляется в отдельный кошелёк только после commit мета-снимка.
+ */
+export function applyBonus(
+  st: MetaState,
+  def: DailyBonusDef,
+  doubled: boolean,
+  deferWalletGold = false,
+): number {
   const k = doubled ? 2 : 1;
+  let walletGold = 0;
   switch (def.kind) {
-    case 'gold': depositGoldWallet(def.amount * k); break;
+    case 'gold': {
+      const amount = def.amount * k;
+      if (deferWalletGold) walletGold = amount;
+      else depositGoldWallet(amount);
+      break;
+    }
     case 'blessing': st.blessingTokens += def.amount * k; break;
     case 'crowns': st.crowns += def.amount * k; break;
     case 'chest': {
       // Сундук (§H.7): случайное из золота/ресурсов рана — золото и жетон
       const roll = hashStr(`chest:${todayKey()}:${st.matchesPlayed}`) % 3;
-      if (roll === 0) depositGoldWallet(120 * k);
-      else if (roll === 1) st.speedupTokens += 1 * k;
+      if (roll === 0) {
+        if (deferWalletGold) walletGold = 120 * k;
+        else depositGoldWallet(120 * k);
+      } else if (roll === 1) st.speedupTokens += 1 * k;
       else st.blessingTokens += 1 * k;
       break;
     }
   }
+  return walletGold;
 }
 
 /** Требование R11: удвоение дара дня — только пока день не забран. */
@@ -1982,13 +2020,15 @@ export function dailyChestLeft(): number {
 export function claimDailyChest(): DailyChestReward | null {
   if (dailyChestLeft() <= 0) return null;
   const st = rollMetaDay();
+  const before = structuredCloneSafe(st);
   if (st.dailyChest.date !== todayKey()) st.dailyChest = { date: todayKey(), count: 0 };
   st.dailyChest.count++;
   const roll = hashStr(`daily-chest:${todayKey()}:${st.dailyChest.count}`) % 100;
   let reward: DailyChestReward;
+  let walletGold = 0;
   if (roll < 60) {
     reward = { kind: 'gold', amount: 200 };
-    depositGoldWallet(reward.amount);
+    walletGold = reward.amount;
   } else if (roll < 85) {
     reward = { kind: 'blessing', amount: 1 };
     st.blessingTokens += 1;
@@ -1996,7 +2036,8 @@ export function claimDailyChest(): DailyChestReward | null {
     reward = { kind: 'speedup', amount: 1 };
     st.speedupTokens += 1;
   }
-  saveMetaState(st);
+  if (!saveMetaStateOrRollback(st, before)) return null;
+  if (walletGold > 0) depositGoldWallet(walletGold);
   return reward;
 }
 
@@ -2015,15 +2056,16 @@ export function challengeForToday(rerollSalt = ''): { mods: ChallengeModId[]; se
 // ============================================================
 
 /** Конвертация крон в золото лавки: 100 крон = 600 золота, 3/день. */
-export function convertCrownsToGold(): { ok: boolean; reason?: 'limit' | 'poor' } {
+export function convertCrownsToGold(): { ok: boolean; reason?: 'limit' | 'poor' | 'storage' } {
   const st = rollMetaDay();
+  const before = structuredCloneSafe(st);
   const today = todayKey();
   if (st.crownConvert.date !== today) { st.crownConvert = { date: today, count: 0 }; }
   if (st.crownConvert.count >= CROWNS_TO_GOLD.perDay) return { ok: false, reason: 'limit' };
   if (st.crowns < CROWNS_TO_GOLD.crowns) return { ok: false, reason: 'poor' };
   st.crowns -= CROWNS_TO_GOLD.crowns;
   st.crownConvert.count += 1;
-  saveMetaState(st);
+  if (!saveMetaStateOrRollback(st, before)) return { ok: false, reason: 'storage' };
   depositGoldWallet(CROWNS_TO_GOLD.gold);
   return { ok: true };
 }
@@ -2164,15 +2206,16 @@ export function takeConsumables(ids: ConsumableId[]): void {
 }
 
 /** Скин куплен за кроны прямо в витрине (цена — из SKINS). */
-export function buySkinWithCrowns(id: string): { ok: boolean; reason?: 'unknown' | 'owned' | 'poor' } {
+export function buySkinWithCrowns(id: string): { ok: boolean; reason?: 'unknown' | 'owned' | 'poor' | 'storage' } {
   const st = rollMetaDay();
   const def = SKINS.find((s) => s.id === id);
   if (!def) return { ok: false, reason: 'unknown' };
   if (st.skins.owned.includes(id)) return { ok: false, reason: 'owned' };
   if (st.crowns < def.price) return { ok: false, reason: 'poor' };
+  const before = structuredCloneSafe(st);
   st.crowns -= def.price;
   grantSkin(st, id);
-  saveMetaState(st);
+  if (!saveMetaStateOrRollback(st, before)) return { ok: false, reason: 'storage' };
   return { ok: true };
 }
 
@@ -2283,20 +2326,24 @@ export function seasonPassUnlocked(): boolean {
   return rollMetaDay().matchesPlayed >= FTUE_MATCH_GATE.seasonPass;
 }
 
-export function buyNode(id: NodeId): { ok: boolean; reason?: 'locked' | 'poor' | 'owned' | 'unknown' } {
+export function buyNode(id: NodeId): { ok: boolean; reason?: 'locked' | 'poor' | 'owned' | 'unknown' | 'storage' } {
   const st = rollMetaDay();
   if (!treeUnlocked()) return { ok: false, reason: 'locked' };
   const def = TREE_NODES.find((n) => n.id === id);
   if (!def) return { ok: false, reason: 'unknown' };
   if (st.nodes.includes(id)) return { ok: false, reason: 'owned' };
   if (st.glory < def.cost) return { ok: false, reason: 'poor' };
+  const before = structuredCloneSafe(st);
   st.glory -= def.cost;
   st.nodes.push(id);
-  saveMetaState(st);
+  if (!saveMetaStateOrRollback(st, before)) return { ok: false, reason: 'storage' };
   return { ok: true };
 }
 
-export function claimChainReward(chainId: string, tier: number): { ok: boolean; reward?: 'bronze' | 'silver' | 'gold' } {
+export function claimChainReward(
+  chainId: string,
+  tier: number,
+): { ok: boolean; reward?: 'bronze' | 'silver' | 'gold'; reason?: 'storage' } {
   const st = rollMetaDay();
   const chain = CHAINS.find((c) => c.id === chainId);
   if (!chain || tier < 0 || tier > 2) return { ok: false };
@@ -2304,11 +2351,14 @@ export function claimChainReward(chainId: string, tier: number): { ok: boolean; 
   if (st.chains.claimed.includes(key)) return { ok: false };
   const val = chainTierValue(chain, tier, st.chains.counters);
   if (val < chain.tiers[tier]) return { ok: false };
+  const before = structuredCloneSafe(st);
+  let walletGold = 0;
   st.chains.claimed.push(key);
-  if (tier === 0) depositGoldWallet(CHAIN_REWARDS.bronze);
-  else if (tier === 1) { depositGoldWallet(CHAIN_REWARDS.silver); st.blessingTokens += 1; }
+  if (tier === 0) walletGold = CHAIN_REWARDS.bronze;
+  else if (tier === 1) { walletGold = CHAIN_REWARDS.silver; st.blessingTokens += 1; }
   else { st.crowns += CHAIN_REWARDS.gold; }
-  saveMetaState(st);
+  if (!saveMetaStateOrRollback(st, before)) return { ok: false, reason: 'storage' };
+  if (walletGold > 0) depositGoldWallet(walletGold);
   return { ok: true, reward: tier === 0 ? 'bronze' : tier === 1 ? 'silver' : 'gold' };
 }
 
@@ -2385,7 +2435,7 @@ export function ownedBanners(): string[] {
 }
 
 /** Реролл задания дня за рекламу (R10, лимит 3/день). */
-export function rerollQuestSlot(slot: number): { ok: boolean; reason?: 'limit' | 'bad-slot' | 'completed' } {
+export function rerollQuestSlot(slot: number): { ok: boolean; reason?: 'limit' | 'bad-slot' | 'completed' | 'storage' } {
   const st = rollMetaDay();
   if (st.quests.rerolls >= 3) return { ok: false, reason: 'limit' };
   if (!Number.isInteger(slot) || slot < 0 || slot >= st.quests.ids.length) {
@@ -2396,13 +2446,14 @@ export function rerollQuestSlot(slot: number): { ok: boolean; reason?: 'limit' |
   const current = new Set(st.quests.ids);
   const pool = QUEST_POOL.map((q) => q.id).filter((id) => !current.has(id));
   if (pool.length === 0) return { ok: false, reason: 'bad-slot' };
+  const before = structuredCloneSafe(st);
   const nextRerollCount = st.quests.rerolls + 1;
   const rng = mulberry32(hashStr(`reroll:${st.quests.date}:${nextRerollCount}:${slot}`));
   const next = pool[Math.floor(rng() * pool.length)];
   delete st.quests.progress[oldId];
   st.quests.rerolls = nextRerollCount;
   st.quests.ids[slot] = next;
-  saveMetaState(st);
+  if (!saveMetaStateOrRollback(st, before)) return { ok: false, reason: 'storage' };
   return { ok: true };
 }
 
@@ -2412,11 +2463,12 @@ export function challengeVictoryToday(): boolean {
 }
 
 /** Победа в вызове дня: +3 кроны и +75 XP пропуска (§H.8, §J.7). */
-export function markChallengeVictory(): void {
+export function markChallengeVictory(): boolean {
   const st = rollMetaDay();
-  if (st.challengeWinDate === todayKey()) return;
+  if (st.challengeWinDate === todayKey()) return false;
+  const before = structuredCloneSafe(st);
   st.challengeWinDate = todayKey();
   st.crowns += CHALLENGE_CROWNS;
   addPassXp(st, null, PASS.XP.challenge);
-  saveMetaState(st);
+  return saveMetaStateOrRollback(st, before);
 }
