@@ -2743,7 +2743,7 @@ test('game over announces the seasonal cosmetic unlocked on milestone five', asy
 
   await expect.poll(async () => page.evaluate(() => {
     const game = (window as unknown as {
-      __tss?: { scene: { getScene: (key: string) => { children: { list: unknown[] } } };
+      __tss?: { scene: { getScene: (key: string) => { children: { list: unknown[] } } } };
     }).__tss;
     const scene = game?.scene.getScene('GameOver');
     const labels: string[] = [];
