@@ -31,6 +31,8 @@ interface EnemyShot extends Phaser.Physics.Arcade.Sprite {
   trailSprites?: Phaser.GameObjects.Sprite[];
   /** Детонировать при столкновении с героем (только полевая бомба, не осадный бросок). */
   detonateOnPlayer?: boolean;
+  /** Таймер перехода от стартовой анимации бомбы к вращению в полёте. */
+  animationSwitchTimer?: Phaser.Time.TimerEvent;
 }
 
 interface Bomb {
@@ -45,7 +47,7 @@ interface Bomb {
   mini?: boolean;
 }
 
-/** Параметры снарядов существ: кость, магический шар и гарпун. */
+/** Параметры снарядов существ: кость, магический шар, гарпун и бомба рыбы. */
 const ENEMY_SHOTS: Record<EnemyShotKind, { tex: string; anim?: string; speed: number; life: number; body: number; scale: number }> = {
   bone:    { tex: 'proj-bone', anim: 'proj-bone-spin', speed: 340, life: 2200, body: 26, scale: 1 },
   hex:     { tex: 'proj-hex',  anim: 'proj-hex-orb',  speed: 300, life: 2600, body: 30, scale: 1 },
@@ -65,7 +67,7 @@ export class Projectiles {
   arrows: Phaser.Physics.Arcade.Group;
   spears: Phaser.Physics.Arcade.Group;
   knives: Phaser.Physics.Arcade.Group;
-  /** Снаряды врагов: вращающаяся кость и магический шар (спрайты с анимацией) */
+  /** Снаряды врагов: кость, магический шар, гарпун и бомба (спрайты с анимацией). */
   enemyShots: Phaser.Physics.Arcade.Group;
   /** Стрелы NPC-лучника (гарнизон) — не путать с enemyShots (§M) */
   friendlyArrows: Phaser.Physics.Arcade.Group;
@@ -200,6 +202,7 @@ export class Projectiles {
     p.onArrive = (shot) => onImpact(shot.x, shot.y);
     p.detonateOnPlayer = true;
     p.setPosition(x, y);
+    this.playBombLaunch(p);
     const angle = Math.atan2(ty - y, tx - x);
     p.setVelocity(Math.cos(angle) * cfg.speed, Math.sin(angle) * cfg.speed);
     p.setRotation(angle);
@@ -242,6 +245,7 @@ export class Projectiles {
     } else {
       p.setScale(cfg.scale);
       body.setSize(cfg.body, cfg.body, true);
+      if (kind === 'bomb') this.playBombLaunch(p);
     }
     audio.play('shoot');
   }
@@ -421,6 +425,16 @@ export class Projectiles {
     return p;
   }
 
+  /** Короткий стартовый кадр idle сменяется вращением, пока бомба летит к цели. */
+  private playBombLaunch(p: EnemyShot): void {
+    p.animationSwitchTimer?.remove(false);
+    p.play('proj-bomb-idle', true);
+    p.animationSwitchTimer = this.scene.time.delayedCall(180, () => {
+      p.animationSwitchTimer = null;
+      if (p.active && p.shotKind === 'bomb') p.play('proj-bomb-spin', true);
+    });
+  }
+
   /** Получить огненную стрелу из отдельного ограниченного пула. */
   private acquireFireArrow(): EnemyShot | null {
     let p = this.fireArrowPool.find((shot) => !shot.active);
@@ -487,6 +501,8 @@ export class Projectiles {
     shot.onArrive = undefined;
     shot.fire = false;
     shot.detonateOnPlayer = false;
+    shot.animationSwitchTimer?.remove(false);
+    shot.animationSwitchTimer = null;
     for (const flame of shot.trailSprites ?? []) {
       flame.setActive(false).setVisible(false);
     }
