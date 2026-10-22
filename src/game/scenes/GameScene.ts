@@ -3308,7 +3308,7 @@ private bossDeathSequence(e: Enemy): boolean {
         });
       }
     }
-    Phaser.Utils.Array.Shuffle(pool);
+    this.shuffleGameplay(pool);
     // Эволюции — в начало выдачи (не больше 3 карточек всего)
     const picked = [...evolutions.slice(0, 3), ...pool.slice(0, Math.max(0, 3 - evolutions.length))];
 
