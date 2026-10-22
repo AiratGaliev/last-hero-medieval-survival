@@ -1234,8 +1234,8 @@ export class GameScene extends Phaser.Scene {
       spawn: (kind, x, y) => this.spawnEnemy(kind, x, y),
       spawnElite: (kind) => {
         // Кодекс (§H.10): элита засчитана фактом встречи
-        if (kind === 'bear') markCodex('boss_bear');
-        else if (kind === 'minotaur') markCodex('boss_minotaur');
+        if (kind === 'bear') markCodexSeen('boss_bear');
+        else if (kind === 'minotaur') markCodexSeen('boss_minotaur');
         // За пределами видимой области: радиус берём от камеры, а не
         // фиксированный. На широком экране 700 px попадали в кадр —
         // элита возникала перед глазами без предупреждения.
