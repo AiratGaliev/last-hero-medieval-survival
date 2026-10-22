@@ -623,6 +623,7 @@ export function pickRegularKind(
   minute: number,
   rng: () => number,
   allowedPool?: readonly EnemyKind[],
+  redTierShareMultiplier = 1,
 ): EnemyKind {
   let source = SPAWN_WEIGHTS[0].weights;
   for (const row of SPAWN_WEIGHTS) {
@@ -640,6 +641,32 @@ export function pickRegularKind(
     }
     if (Object.keys(filtered).length > 0) weights = filtered;
   }
+  // Корректируем долю целевой группы математически, а не повторным броском.
+  // При базовой доле p и целевой p' = p * multiplier множитель веса равен
+  // p' * (1 - p) / (p * (1 - p')). Это сохраняет сумму вероятностей и даёт
+  // ровно +25% относительной доли в среднем даже после фильтрации dailyPool.
+  if (Number.isFinite(redTierShareMultiplier) && redTierShareMultiplier > 0
+    && redTierShareMultiplier !== 1) {
+    let totalWeight = 0;
+    let redWeight = 0;
+    for (const [kind, value] of Object.entries(weights)) {
+      const weight = value ?? 0;
+      totalWeight += weight;
+      if (kind === 'skull' || kind === 'shaman') redWeight += weight;
+    }
+    const baseShare = totalWeight > 0 ? redWeight / totalWeight : 0;
+    const targetShare = Math.min(1 - Number.EPSILON, baseShare * redTierShareMultiplier);
+    if (baseShare > 0 && baseShare < 1 && targetShare > 0 && targetShare < 1) {
+      const weightMultiplier = targetShare * (1 - baseShare) / (baseShare * (1 - targetShare));
+      const adjusted: Partial<Record<EnemyKind, number>> = { ...weights };
+      for (const kind of ['skull', 'shaman'] as const) {
+        const weight = adjusted[kind];
+        if (weight !== undefined) adjusted[kind] = weight * weightMultiplier;
+      }
+      weights = adjusted;
+    }
+  }
+
   let total = 0;
   for (const k in weights) total += weights[k] ?? 0;
   let r = rng() * total;
