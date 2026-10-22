@@ -113,3 +113,47 @@ test('premium pass crown purchase rolls back when metadata persistence fails', a
     premium: false,
   });
 });
+
+test('weekly crown reward does not unlock the permanent weekly banner', async ({ page }) => {
+  await openGame(page);
+
+  const result = await page.evaluate(async () => {
+    type WeekState = {
+      weekly: { week: string; progress: number; stage: number; claimed: boolean };
+      banners: string[];
+    };
+    const meta = await import('/src/game/meta.ts') as unknown as {
+      rollMetaDay: () => WeekState;
+      saveMetaState: (state: WeekState) => boolean;
+      weeklyFinalReward: (week: string) => 'crowns' | 'banner';
+      ownedBanners: () => string[];
+    };
+
+    // 2 ноября 2026 года — неделя с наградой в кронах; часы восстанавливаем даже при ошибке.
+    const originalNow = Date.now;
+    Date.now = () => Date.parse('2026-11-02T12:00:00.000Z');
+    try {
+      const state = meta.rollMetaDay();
+      const reward = meta.weeklyFinalReward(state.weekly.week);
+      if (reward !== 'crowns') throw new Error('test week must award crowns');
+
+      state.weekly.progress = 20;
+      state.weekly.stage = 5;
+      state.weekly.claimed = true;
+      state.banners = state.banners.filter((id) => id !== 'banner_weekly');
+      if (!meta.saveMetaState(state)) throw new Error('failed to prepare weekly reward state');
+
+      const owned = meta.ownedBanners();
+      return {
+        reward,
+        ownsBanner: owned.includes('banner_weekly'),
+        persisted: meta.rollMetaDay().banners.includes('banner_weekly'),
+      };
+    } finally {
+      Date.now = originalNow;
+    }
+  });
+
+  expect(result).toEqual({ reward: 'crowns', ownsBanner: false, persisted: false });
+});
+
