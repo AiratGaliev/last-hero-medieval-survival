@@ -1929,9 +1929,10 @@ export function claimDailyChest(): DailyChestReward | null {
 // Вызов дня (§H.8)
 // ============================================================
 
+/** В §H.8 соревнование использует UTC-день; это отличается от московской ротации заданий §H.17. */
 export function challengeForToday(rerollSalt = ''): { mods: ChallengeModId[]; seed: string } {
-  const st = rollMetaDay();
-  return { mods: challengeModsForDate(st.quests.date, rerollSalt), seed: st.quests.date };
+  const seed = new Date(serverNow()).toISOString().slice(0, 10);
+  return { mods: challengeModsForDate(seed, rerollSalt), seed };
 }
 
 // ============================================================

@@ -252,7 +252,7 @@ test('daily bonus cannot be claimed twice across a Moscow date boundary', async 
 });
 
 
-test('daily quest and weekly keys use Moscow time, independent of the browser timezone', async ({ browser }) => {
+test('daily meta uses Moscow time while the deterministic challenge seed stays on UTC date', async ({ browser }) => {
   const context = await browser.newContext({
     baseURL: 'http://127.0.0.1:3000',
     timezoneId: 'Pacific/Kiritimati',
@@ -261,8 +261,8 @@ test('daily quest and weekly keys use Moscow time, independent of the browser ti
 
   try {
     await page.addInitScript(() => {
-      // 20:30 UTC — 23:30 воскресенья в Москве, но уже понедельник в Kiritimati.
-      Date.now = () => Date.UTC(2026, 9, 18, 20, 30, 0);
+      // 21:30 UTC — 00:30 понедельника в Москве; в UTC ещё воскресенье.
+      Date.now = () => Date.UTC(2026, 9, 18, 21, 30, 0);
     });
     await page.goto('/?lang=en&ysdk=mock');
     await expect(page.locator('#game canvas')).toBeVisible({ timeout: startupTimeout });
@@ -273,8 +273,10 @@ test('daily quest and weekly keys use Moscow time, independent of the browser ti
       const meta = await import(/* @vite-ignore */ moduleUrl) as {
         rollMetaDay: () => { quests: { date: string } };
         currentWeekKey: () => string;
+        challengeForToday: () => { mods: string[]; seed: string };
       };
       const state = meta.rollMetaDay();
+      const challenge = meta.challengeForToday();
       const now = new Date(Date.now());
       const browserDate = [
         now.getFullYear(),
@@ -286,13 +288,17 @@ test('daily quest and weekly keys use Moscow time, independent of the browser ti
         browserDate,
         questDate: state.quests.date,
         week: meta.currentWeekKey(),
+        challengeSeed: challenge.seed,
+        challengeMods: challenge.mods,
       };
     });
 
     expect(keys.utcDate).toBe('2026-10-18');
     expect(keys.browserDate).toBe('2026-10-19');
-    expect(keys.questDate).toBe('2026-10-18');
-    expect(keys.week).toBe('2026-10-12');
+    expect(keys.questDate).toBe('2026-10-19');
+    expect(keys.week).toBe('2026-10-19');
+    expect(keys.challengeSeed).toBe('2026-10-18');
+    expect(keys.challengeMods).toHaveLength(2);
   } finally {
     await context.close();
   }
