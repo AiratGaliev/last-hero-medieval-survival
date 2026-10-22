@@ -761,6 +761,8 @@ test('daily challenge date deterministically seeds the map, economy and wave dir
     economyRandom: number[];
     waveRandom: number[];
     weaponTargetRandom: number[];
+    pawnRandom: number[];
+    pawnRandomInt: number[];
     choices: Array<{ kind: string; id: string | null; title: string }>;
   }> => {
     if (target !== page) await target.goto(new URL('/?lang=en&ysdk=mock', appOrigin).toString());
@@ -838,6 +840,7 @@ test('daily challenge date deterministically seeds the map, economy and wave dir
           nodes: Array<{ kind: string; res: string; x: number; y: number }>;
           opts: { random?: () => number };
         };
+        registry: { get: (key: string) => unknown };
         weapons: { ctx: { randomInt?: (min: number, max: number) => number } };
       };
       // Сбрасываем поток спавнера, чтобы время загрузки контекстов не влияло на сравнение.
@@ -851,6 +854,12 @@ test('daily challenge date deterministically seeds the map, economy and wave dir
       }));
       const weaponTargetRandom = Array.from({ length: 8 }, () =>
         scene.weapons.ctx.randomInt?.(0, 100) ?? -1);
+      const pawnAi = scene.registry.get('tss-pawnai-ctx') as {
+        random?: () => number;
+        randomInt?: (min: number, max: number) => number;
+      };
+      const pawnRandom = Array.from({ length: 8 }, () => pawnAi.random?.() ?? -1);
+      const pawnRandomInt = Array.from({ length: 8 }, () => pawnAi.randomInt?.(0, 100) ?? -1);
       if (perturbGameplayRng) {
         for (let i = 0; i < 32; i++) scene.gameplayRandom();
       }
@@ -871,6 +880,8 @@ test('daily challenge date deterministically seeds the map, economy and wave dir
         economyRandom: Array.from({ length: 8 }, () => scene.economy.opts.random?.() ?? -1),
         waveRandom: Array.from({ length: 8 }, () => scene.spawner.o.random?.() ?? -1),
         weaponTargetRandom,
+        pawnRandom,
+        pawnRandomInt,
         choices,
       };
     }, { challengeDate: date, perturbGameplayRng });
@@ -891,6 +902,10 @@ test('daily challenge date deterministically seeds the map, economy and wave dir
     expect(repeat.waveRandom).toEqual(first.waveRandom);
     expect(first.weaponTargetRandom.every((value) => value >= 0)).toBe(true);
     expect(repeat.weaponTargetRandom).toEqual(first.weaponTargetRandom);
+    expect(first.pawnRandom.every((value) => value >= 0)).toBe(true);
+    expect(first.pawnRandomInt.every((value) => value >= 0)).toBe(true);
+    expect(repeat.pawnRandom).toEqual(first.pawnRandom);
+    expect(repeat.pawnRandomInt).toEqual(first.pawnRandomInt);
     expect(repeat.choices).toEqual(first.choices);
 
     const seeds = await page.evaluate(async (challengeDate) => {

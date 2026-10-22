@@ -30,6 +30,9 @@ export interface PawnAICtx {
   besiegedBuilding(): Building | null;
   /** Состояние героя — цель полевого лечения монаха (§B.7.2). */
   hero(): { hp: number; maxHp: number; x: number; y: number } | null;
+  /** Date-seeded RNG for deterministic daily challenge pawn routing. */
+  random?: () => number;
+  randomInt?: (min: number, max: number) => number;
 }
 
 const RANGE_WOOD = 46;
@@ -65,6 +68,14 @@ export class PawnAI {
       this.ctx = (this.scene.registry.get('tss-pawnai-ctx') ?? null) as PawnAICtx;
     }
     return this.ctx;
+  }
+
+  private random(): number {
+    return this.c.random?.() ?? Math.random();
+  }
+
+  private randomInt(min: number, max: number): number {
+    return this.c.randomInt?.(min, max) ?? Phaser.Math.Between(min, max);
   }
 
   // ================= ГРАЖДАНСКИЕ (каждый кадр) =================
@@ -778,10 +789,10 @@ export class PawnAI {
     // Патруль вокруг замка: точка смены каждые 6–10 сек (§B.6)
     const swapIn = this.patrolSwap.get(p) ?? 0;
     if (now > swapIn || !this.patrolPoints.get(p)) {
-      const a = Math.random() * Math.PI * 2;
-      const r = 120 + Math.random() * 140;
+      const a = this.random() * Math.PI * 2;
+      const r = 120 + this.random() * 140;
       this.patrolPoints.set(p, { x: sx + Math.cos(a) * r, y: sy + Math.sin(a) * r });
-      this.patrolSwap.set(p, now + Phaser.Math.Between(GARRISON.PATROL_SWAP[0], GARRISON.PATROL_SWAP[1]));
+      this.patrolSwap.set(p, now + this.randomInt(GARRISON.PATROL_SWAP[0], GARRISON.PATROL_SWAP[1]));
     }
     const pt = this.patrolPoints.get(p)!;
     p.state = 'walk';
@@ -913,7 +924,7 @@ export class PawnAI {
       return;
     }
     p.state = 'idle';
-    this.walkTo(p, cx + Math.random() * 40 - 20, cy + Math.random() * 40 - 20, this.curTickMs);
+    this.walkTo(p, cx + this.random() * 40 - 20, cy + this.random() * 40 - 20, this.curTickMs);
   }
 
   /** Сближение и атака (подтипы различаются, §B.7.1). */

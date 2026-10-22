@@ -140,6 +140,7 @@ export class GameScene extends Phaser.Scene {
   private dailyGameplayRng: Phaser.Math.RandomDataGenerator | null = null;
   private dailyEconomyRng: Phaser.Math.RandomDataGenerator | null = null;
   private dailySpawnerRng: Phaser.Math.RandomDataGenerator | null = null;
+  private dailyPawnRng: Phaser.Math.RandomDataGenerator | null = null;
   /** [0, 1) из rng рана. */
   private runRng(): number {
     this.rngState = (this.rngState + 0x6d2b79f5) | 0;
@@ -465,6 +466,8 @@ export class GameScene extends Phaser.Scene {
       ? new Phaser.Math.RandomDataGenerator([`daily-economy:${challengeDate}`]) : null;
     this.dailySpawnerRng = challengeDate
       ? new Phaser.Math.RandomDataGenerator([`daily-spawner:${challengeDate}`]) : null;
+    this.dailyPawnRng = challengeDate
+      ? new Phaser.Math.RandomDataGenerator([`daily-pawn-ai:${challengeDate}`]) : null;
     this.runSeed = challengeDate
       ? dailyChallengeSeedNumber(challengeDate)
       : (Date.now() ^ Math.floor(Math.random() * 0x1_0000_0000)) >>> 0;
@@ -1154,6 +1157,11 @@ export class GameScene extends Phaser.Scene {
       hero: () => this.player
         ? { hp: this.player.hp, maxHp: this.player.maxHp, x: this.player.x, y: this.player.y }
         : null,
+      // Случайность патрулей/простых маршрутов пешек отделена от боевых бросков.
+      random: this.isSeededDailyChallenge ? () => this.dailyPawnRng!.frac() : undefined,
+      randomInt: this.isSeededDailyChallenge
+        ? (min: number, max: number) => min + Math.floor(this.dailyPawnRng!.frac() * (max - min + 1))
+        : undefined,
     });
     // Выбор цели врагом §A.5: гарнизон приоритетнее гражданских.
     // Гражданские в ядре поселения — вне досягаемости: у разбега нет
