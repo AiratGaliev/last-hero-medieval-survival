@@ -704,6 +704,7 @@ export class GameScene extends Phaser.Scene {
         * (this.challengeMods.has('cm_winter') ? 0.85 : 1),
       workSpeedMult: this.fx.workSpeedMult * (this.consumableSet.has('cs_forester') ? 1.25 : 1),
       buildCostMult: this.fx.buildCostMult * (this.contractId === 'c_black_market' ? 1.5 : 1),
+      oreCostMult: this.seasonMod === 'gold_rush_world' ? 1.25 : 1,
       houseCostMult: this.challengeMods.has('cm_winter') ? 0.8 : 1,
       buildTimeMult: this.challengeMods.has('cm_stone') ? 1.3 : 1,
       hireCostMult: this.fx.hireCostMult,
@@ -2659,6 +2660,7 @@ private ordersUnlocked(): boolean {
       this.boss.siege = true;
       this.boss.buildingTarget = this.settlement.castle;
       this.boss.aiState = 'bossPhase2';
+      if (this.seasonMod === 'ogre_return') this.boss.enableOgreReturnAggression();
       this.hud.announce(t('boss.siege'), '#ff5544');
       audio.play('boss');
       this.shakeCamera(300, 0.006);
