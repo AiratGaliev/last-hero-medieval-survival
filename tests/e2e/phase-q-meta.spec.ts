@@ -2788,3 +2788,74 @@ test('blessing domain picker returns three unique deterministic options', async 
   expect(outcome.poolSize).toBe(8);
   expect(outcome.known).toBe(true);
 });
+
+
+test('long siege season starts the first siege at 270 seconds', async ({ page }) => {
+  await page.addInitScript(() => {
+    localStorage.clear();
+    const nativeNow = Date.now.bind(Date);
+    const targetNow = 15 * 86_400_000 + 60_000; // сезон с индексом 1: «Долгая осада»
+    const offset = targetNow - nativeNow();
+    Date.now = () => nativeNow() + offset;
+  });
+  await page.goto('/?lang=en&ysdk=mock');
+  await expect(page.locator('#game canvas')).toBeVisible({ timeout: startupTimeout });
+  await expect(page.locator('#boot')).toHaveCount(0, { timeout: startupTimeout });
+  await expect.poll(() => page.evaluate(() =>
+    ((window as Window & { __tss?: { scene: { isActive(key: string): boolean } } }).__tss?.scene.isActive('Menu')) ?? false,
+  ), { timeout: startupTimeout }).toBe(true);
+  await page.evaluate(() => {
+    const game = (window as Window & {
+      __tss?: { scene: { getScene(key: string): unknown } };
+    }).__tss;
+    if (!game) throw new Error('Phaser runtime is unavailable');
+    const menu = game.scene.getScene('Menu') as {
+      selectedHero?: string; selectedDiff?: string;
+      scene: { start(key: string, data: { hero: string; diff: string }): void };
+    };
+    menu.scene.start('Game', { hero: menu.selectedHero ?? 'warrior', diff: menu.selectedDiff ?? 'normal' });
+  });
+  await expect.poll(() => page.evaluate(() =>
+    ((window as Window & { __tss?: { scene: { isActive(key: string): boolean } } }).__tss?.scene.isActive('Game')) ?? false,
+  ), { timeout: startupTimeout }).toBe(true);
+
+  const result = await page.evaluate(async () => {
+    const game = (window as Window & { __tss?: { scene: { getScene(key: string): unknown } } }).__tss;
+    if (!game) throw new Error('Phaser runtime is unavailable');
+    const data = await import('/src/game/data.ts') as { WAVE_EVENTS: unknown[] };
+    const scene = game.scene.getScene('Game') as {
+      seasonMod: string | null;
+      spawner: {
+        elapsed: number;
+        siegeIdx: number;
+        eventIdx: number;
+        timer: number;
+        o: { siegeIntervalSec: number | null };
+        update(dtSec: number): void;
+      };
+    };
+    const spawner = scene.spawner;
+    // Проверяем только расписание осад, не проигрывая пачку прошлых волн.
+    spawner.elapsed = 0;
+    spawner.siegeIdx = 0;
+    spawner.eventIdx = data.WAVE_EVENTS.length;
+    spawner.timer = Number.MAX_SAFE_INTEGER;
+    const interval = spawner.o.siegeIntervalSec;
+    spawner.update(269.9);
+    const beforeBoundary = spawner.siegeIdx;
+    spawner.update(0.2);
+    return {
+      season: scene.seasonMod,
+      interval,
+      beforeBoundary,
+      afterBoundary: spawner.siegeIdx,
+      elapsed: spawner.elapsed,
+    };
+  });
+
+  expect(result.season).toBe('long_siege');
+  expect(result.interval).toBe(270);
+  expect(result.beforeBoundary).toBe(0);
+  expect(result.afterBoundary).toBe(1);
+  expect(result.elapsed).toBeGreaterThanOrEqual(270);
+});
