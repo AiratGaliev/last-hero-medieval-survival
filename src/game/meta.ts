@@ -1014,6 +1014,9 @@ function sanitize(raw: unknown): MetaState {
   const p = (o.pass ?? {}) as Partial<MetaState['pass']>;
   const cc = (o.crownConvert ?? {}) as Partial<MetaState['crownConvert']>;
   const sk = (o.skins ?? {}) as Partial<MetaState['skins']>;
+  // До отдельного списка знамён weekly banner временно попадал в skins.owned.
+  // Переносим известные ID в новый список до фильтрации старого списка скинов.
+  const legacyBanners = strArr(sk.owned, knownBanners);
   const se = (o.season ?? {}) as Partial<MetaState['season']>;
   const wc = (o.weeklyChallenge ?? {}) as Partial<MetaState['weeklyChallenge']>;
   const cons = (o.consumables ?? {}) as Partial<Record<ConsumableId, number>>;
@@ -1108,7 +1111,7 @@ function sanitize(raw: unknown): MetaState {
     },
     crowns: int(o.crowns),
     crownConvert: { date: typeof cc.date === 'string' ? cc.date.slice(0, 10) : '', count: int(cc.count) },
-    banners: strArr(o.banners, knownBanners),
+    banners: [...new Set([...strArr(o.banners, knownBanners), ...legacyBanners])],
     skins: {
       owned: strArr(sk.owned, knownSkins),
       hero: typeof sk.hero === 'string' ? sk.hero : '',
