@@ -43,7 +43,7 @@ import { track, beginRun, flushRunTelemetry, detectDeviceClass } from '../../pla
 import { analyticsIdentity } from '../../platform/player';
 import {
   consumeRunConfig, dailyChallengeSeedNumber, loadMetaState, rollMetaDay, nodeEffects, seasonDef,
-  takeConsumables, applyRunToMeta, contractDef, contractScoreForRun, QUEST_POOL, markCodex,
+  takeConsumables, applyRunToMeta, contractDef, contractScoreForRun, QUEST_POOL, markCodex, markCodexSeen,
   heroSkinTint, buildingSkinTint, trailSkinTint, activeBanner, matchesPlayed,
   type RunModifiers, type NodeEffects, type SeasonModifier, type RunSummary,
   type QuestMetric,
@@ -3178,6 +3178,7 @@ private bossDeathSequence(e: Enemy): boolean {
     // «Кровавая луна» (A2): скорость врагов ×1.1
     if (this.enemySpeedMult !== 1) e.speed = Math.round(e.speed * this.enemySpeedMult);
     this.enemyGroup.add(e);
+    markCodexSeen(kind);
     return true;
   }
 
@@ -3201,6 +3202,9 @@ private bossDeathSequence(e: Enemy): boolean {
     );
     this.boss.speed = Math.round(this.boss.speed * this.diffDef.speedMult * this.enemySpeedMult);
     this.enemyGroup.add(this.boss);
+    // Огр открывается в кодексе при появлении, даже если игрок не успеет его убить.
+    markCodexSeen('boss');
+    markCodexSeen('boss_ogre');
     this.hud.showBossBar(ENEMIES.boss.name);
     this.hud.bossIntro(
       ENEMIES.boss.name,

@@ -18,6 +18,7 @@ import {
   chainTierValue,
   CODEX_SECTIONS,
   codexCount,
+  codexEntrySeen,
   codexProgress,
   convertCrownsToGold,
   CHAINS,
@@ -677,7 +678,7 @@ export class MetaScene extends Phaser.Scene {
     const chipGap = 8;
     const chipW = (x1 - x0 - (cols - 1) * chipGap) / cols;
     for (const sec of CODEX_SECTIONS) {
-      const seen = sec.entries.filter((e) => codexCount(e.id) > 0).length;
+      const seen = sec.entries.filter((e) => codexEntrySeen(e.id)).length;
       rows.push({
         draw: (cy) => {
           box.add(this.add.text(x0 + 4, cy, `${tr(sec.nameKey)} — ${seen}/${sec.entries.length}`, {
@@ -690,7 +691,7 @@ export class MetaScene extends Phaser.Scene {
         rows.push({
           draw: (cy, rowH) => {
             chunk.forEach((e, j) => {
-              const unlocked = codexCount(e.id) > 0;
+              const unlocked = codexEntrySeen(e.id);
               const cx = x0 + j * (chipW + chipGap) + chipW / 2;
               const g = this.add.graphics();
               g.fillStyle(unlocked ? 0xffe9b0 : 0xefe6d0, 1)
@@ -710,16 +711,28 @@ export class MetaScene extends Phaser.Scene {
                 // первый кадр idle-листа (например, у всадника отдельного аватара нет).
                 box.add(this.add.image(cx - chipW / 2 + 19, cy, portraitKey).setDisplaySize(28, 28));
               }
+              const showMastery = unlocked && e.masterAt !== undefined;
               const label = unlocked ? tr(e.nameKey) : '???';
               const textX = hasPortrait ? cx + 10 : cx;
               const textW = chipW - (hasPortrait ? 36 : 10);
-              const txt = this.add.text(textX, cy, label, {
-                fontFamily: FONT, fontSize: '12px', color: unlocked ? '#3b2410' : '#8d8577',
+              const txt = this.add.text(textX, cy - (showMastery ? 5 : 0), label, {
+                fontFamily: FONT,
+                fontSize: showMastery ? '10px' : '12px',
+                color: unlocked ? '#3b2410' : '#8d8577',
                 align: 'center', wordWrap: { width: textW },
               }).setOrigin(0.5);
               fitTextWidth(txt, textW, 10, 7);
               if (!unlocked) txt.setAlpha(0.55);
               box.add(txt);
+              if (showMastery && e.masterAt !== undefined) {
+                const kills = Math.min(codexCount(e.id), e.masterAt);
+                box.add(this.add.text(textX, cy + 8, `${num(kills)}/${num(e.masterAt)}`, {
+                  fontFamily: FONT,
+                  fontSize: '8px',
+                  color: kills >= e.masterAt ? '#4d7b35' : '#9a6a08',
+                  align: 'center',
+                }).setOrigin(0.5));
+              }
             });
           },
         });

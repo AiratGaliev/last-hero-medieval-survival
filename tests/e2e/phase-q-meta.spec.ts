@@ -1293,6 +1293,7 @@ test('veteran chain counts pawns that reached 3 stars even if they die before th
     };
     type TestMetaState = {
       codex: Record<string, number>;
+      codexSeen: Record<string, boolean>;
       chains: { counters: Record<string, number>; claimed: string[] };
     };
     const runtime = (window as unknown as {
@@ -1590,6 +1591,7 @@ test('codex records each completed building under the exact entry ID', async ({ 
     };
 
     const state = meta.rollMetaDay();
+    state.codexSeen = {};
     state.codex = {
       // Старые корректные алиасы должны мигрировать; b_house намеренно не считается домом.
       b_barracks: 1, b_monastery: 1, b_archery: 1, b_house: 99,
@@ -1685,6 +1687,7 @@ test('codex completion rewards are granted in the same run that fills the final 
     };
     const state = meta.rollMetaDay();
     state.codex = {};
+    state.codexSeen = {};
     for (const section of meta.CODEX_SECTIONS) {
       for (const entry of section.entries) {
         if (entry.id !== 'house') state.codex[entry.id] = 1;
@@ -1724,4 +1727,62 @@ test('codex completion rewards are granted in the same run that fills the final 
   expect(outcome.afterRatio).toBe(1);
   expect(outcome.milestoneClaims).toEqual(['codex:100', 'codex:50', 'codex:75']);
   expect(outcome.goldenGoblinGranted).toBe(true);
+});
+
+
+test('enemy codex unlocks on encounter while mastery remains based on kills', async ({ page }) => {
+  await page.addInitScript(() => localStorage.clear());
+  await page.goto('/?lang=en&ysdk=mock');
+  await expect(page.locator('#game canvas')).toBeVisible({ timeout: startupTimeout });
+  await expect(page.locator('#boot')).toHaveCount(0, { timeout: startupTimeout });
+
+  await page.evaluate(() => {
+    const runtime = (window as unknown as { __tss?: { scene: { getScene(key: string): unknown } } }).__tss;
+    if (!runtime) throw new Error('Phaser runtime is unavailable');
+    const menu = runtime.scene.getScene('Menu') as {
+      selectedHero?: string; selectedDiff?: string;
+      scene: { start(key: string, data: { hero: string; diff: string }): void };
+    };
+    menu.scene.start('Game', { hero: menu.selectedHero ?? 'warrior', diff: menu.selectedDiff ?? 'normal' });
+  });
+  await expect.poll(() => page.evaluate(() => (
+    (window as unknown as { __tss?: { scene: { isActive(key: string): boolean } } }).__tss?.scene.isActive('Game') ?? false
+  )), { timeout: startupTimeout }).toBe(true);
+
+  const outcome = await page.evaluate(async () => {
+    type TestMetaState = { codex: Record<string, number>; codexSeen: Record<string, boolean> };
+    type EnemyScene = { player: { x: number; y: number }; spawnEnemy(kind: string, x: number, y: number): boolean };
+    const runtime = (window as unknown as { __tss?: { scene: { getScene(key: string): unknown } } }).__tss;
+    if (!runtime) throw new Error('Phaser runtime is unavailable');
+    const scene = runtime.scene.getScene('Game') as EnemyScene;
+    const meta = await import('/src/game/meta.ts') as unknown as {
+      rollMetaDay: () => TestMetaState;
+      saveMetaState: (state: TestMetaState) => boolean;
+      codexCount: (id: string) => number;
+      codexEntrySeen: (id: string) => boolean;
+      codexProgress: () => { seen: number; total: number; ratio: number };
+      CODEX_SECTIONS: Array<{ entries: Array<{ id: string; masterAt?: number }> }>;
+    };
+    const state = meta.rollMetaDay();
+    state.codex.goblin = 0;
+    delete state.codexSeen.goblin;
+    meta.saveMetaState(state);
+    const before = meta.codexProgress();
+    const spawned = scene.spawnEnemy('goblin', scene.player.x + 500, scene.player.y + 500);
+    const after = meta.codexProgress();
+    const entry = meta.CODEX_SECTIONS.flatMap((section) => section.entries).find((item) => item.id === 'goblin');
+    return {
+      spawned,
+      seen: meta.codexEntrySeen('goblin'),
+      killCount: meta.codexCount('goblin'),
+      seenDelta: after.seen - before.seen,
+      masteryGoal: entry?.masterAt ?? null,
+    };
+  });
+
+  expect(outcome.spawned).toBe(true);
+  expect(outcome.seen).toBe(true);
+  expect(outcome.killCount).toBe(0);
+  expect(outcome.seenDelta).toBe(1);
+  expect(outcome.masteryGoal).toBe(30);
 });
