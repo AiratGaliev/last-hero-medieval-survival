@@ -15,6 +15,7 @@ import {
   chainClaimed,
   claimDailyBonus,
   claimWeeklyFinal,
+  chainTierValue,
   CODEX_SECTIONS,
   codexCount,
   codexProgress,
@@ -725,7 +726,7 @@ export class MetaScene extends Phaser.Scene {
       rows.push({
         draw: (cy, rowH) => {
           this.rowCard(box, cy, rowH - 4, w);
-          const val = st.chains.counters[c.metric] ?? 0;
+          const val = chainTierValue(c, 0, st.chains.counters);
           box.add(this.add.text(x0 + 14, cy - 16, tr(c.nameKey), {
             fontFamily: FONT, fontSize: '12px', color: '#3b2410',
           }).setOrigin(0, 0.5));
@@ -737,13 +738,14 @@ export class MetaScene extends Phaser.Scene {
           const tierNames = [t('chain.tier0'), t('chain.tier1'), t('chain.tier2')];
           for (let tier = 0; tier < 3; tier++) {
             const goal = c.tiers[tier];
+            const tierVal = chainTierValue(c, tier, st.chains.counters);
             const cx = x1 - 14 - (2 - tier) * (cellW + 6) - cellW / 2;
             const claimed = chainClaimed(c.id, tier);
-            const ready = val >= goal && !claimed;
+            const ready = tierVal >= goal && !claimed;
             box.add(this.add.text(cx, cy - 13, tierNames[tier], {
               fontFamily: FONT, fontSize: '12px', color: claimed ? '#2e7d32' : '#8a5b12',
             }).setOrigin(0.5));
-            box.add(this.add.text(cx, cy, `${Math.min(val, goal)}/${goal}`, {
+            box.add(this.add.text(cx, cy, `${Math.min(tierVal, goal)}/${goal}`, {
               fontFamily: FONT, fontSize: '12px', color: ready ? '#9a6a08' : '#57431f',
             }).setOrigin(0.5));
 

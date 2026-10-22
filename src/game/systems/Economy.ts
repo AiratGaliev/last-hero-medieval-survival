@@ -618,6 +618,11 @@ export class Economy extends Phaser.Events.EventEmitter {
     return out;
   }
 
+  /** Сколько из десяти базовых пятен занято; бонусные пятна не входят в показатель. */
+  occupiedBaseBuildSpots(): number {
+    return this.baseSpots.filter((s) => this.usedSpots.has(`${s.x}:${s.y}`)).length;
+  }
+
   /**
    * Точка внутри защищённой зоны поселения? (TZ §A.5)
    *

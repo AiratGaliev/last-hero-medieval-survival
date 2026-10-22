@@ -618,12 +618,17 @@ export const CODEX_MILESTONES = [
 // Цепочки достижений (§H.11): 8 цепочек × 3 ступени
 // ============================================================
 
+export type ChainMetric = 'siegesDefended' | 'idealWins' | 'successions' | 'healedUnits'
+  | 'veterans' | 'contracts' | 'endlessWave' | 'buildings'
+  | 'buildingsBestRun' | 'buildingsAllSpots';
+
 export interface ChainDef {
   id: string;
   nameKey: string;
-  /** Метрика жизненного счётчика. */
-  metric: 'siegesDefended' | 'idealWins' | 'successions' | 'healedUnits'
-    | 'veterans' | 'contracts' | 'endlessWave' | 'buildings';
+  /** Основной счётчик; для ступеней с разными условиями используется tierMetrics. */
+  metric: ChainMetric;
+  /** Метрика каждой ступени, если она отличается от основной. */
+  tierMetrics?: [ChainMetric, ChainMetric, ChainMetric];
   tiers: [number, number, number];
 }
 
@@ -635,8 +640,24 @@ export const CHAINS: ChainDef[] = [
   { id: 'ch_veteran', nameKey: 'chain.veteran', metric: 'veterans', tiers: [1, 25, 100] },
   { id: 'ch_contractor', nameKey: 'chain.contractor', metric: 'contracts', tiers: [10, 50, 200] },
   { id: 'ch_endless', nameKey: 'chain.endless', metric: 'endlessWave', tiers: [5, 15, 30] },
-  { id: 'ch_architect', nameKey: 'chain.architect', metric: 'buildings', tiers: [7, 10, 100] },
+  {
+    id: 'ch_architect',
+    nameKey: 'chain.architect',
+    metric: 'buildings',
+    tiers: [7, 10, 100],
+    tierMetrics: ['buildingsBestRun', 'buildingsAllSpots', 'buildings'],
+  },
 ];
+
+/** Значение нужной ступени цепочки с учётом её собственной метрики. */
+export function chainTierValue(
+  chain: ChainDef,
+  tier: number,
+  counters: Record<string, number>,
+): number {
+  const metric = chain.tierMetrics?.[tier] ?? chain.metric;
+  return counters[metric] ?? 0;
+}
 
 /** Награды ступеней: бронза 150 золота, серебро 300 золота + жетон благословения, золото 25 крон. */
 export const CHAIN_REWARDS = { bronze: 150, silver: 300, gold: 25 } as const;
@@ -1446,6 +1467,8 @@ export interface RunSummary {
   score: number;
   difficulty: string;
   buildingsBuilt: number;
+  /** Число занятых базовых пятен (из 10) в конце рана. */
+  occupiedBaseBuildSpots?: number;
   pawnsAlive: number;
   siegesDefended: number;
   siegesTotal: number;
@@ -1606,11 +1629,16 @@ export function applyRunToMeta(s: RunSummary): RunMetaResult {
     addPassXp(st, res, PASS.XP.contract);
   }
   c.buildings = (c.buildings ?? 0) + s.buildingsBuilt;
+  c.buildingsBestRun = Math.max(c.buildingsBestRun ?? 0, s.buildingsBuilt);
+  c.buildingsAllSpots = Math.max(
+    c.buildingsAllSpots ?? 0,
+    Math.min(10, Math.max(0, Math.floor(s.occupiedBaseBuildSpots ?? 0))),
+  );
   if (s.endless) c.endlessWave = Math.max(c.endlessWave ?? 0, s.wave);
 
   for (const chain of CHAINS) {
-    const val = st.chains.counters[chain.metric] ?? 0;
     for (let tier = 0; tier < 3; tier++) {
+      const val = chainTierValue(chain, tier, st.chains.counters);
       const key = `${chain.id}:${tier}`;
       if (val >= chain.tiers[tier] && !st.chains.claimed.includes(`${key}:seen`)) {
         st.chains.claimed.push(`${key}:seen`);
@@ -2170,7 +2198,7 @@ export function claimChainReward(chainId: string, tier: number): { ok: boolean; 
   if (!chain || tier < 0 || tier > 2) return { ok: false };
   const key = `${chainId}:${tier}`;
   if (st.chains.claimed.includes(key)) return { ok: false };
-  const val = st.chains.counters[chain.metric] ?? 0;
+  const val = chainTierValue(chain, tier, st.chains.counters);
   if (val < chain.tiers[tier]) return { ok: false };
   st.chains.claimed.push(key);
   if (tier === 0) depositGoldWallet(CHAIN_REWARDS.bronze);

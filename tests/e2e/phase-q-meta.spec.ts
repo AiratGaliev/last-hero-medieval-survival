@@ -1118,3 +1118,106 @@ test('weekly chronicle counts a completed run once when it unlocks an achievemen
   expect(outcome.progress).toBe(1);
   expect(outcome.stage).toBe(0);
 });
+
+test('architect chain checks per-run construction, 10/10 base occupancy and lifetime total separately', async ({ page }) => {
+  await page.goto('/?lang=en&ysdk=mock');
+  await expect(page.locator('#game canvas')).toBeVisible({ timeout: startupTimeout });
+  await expect(page.locator('#boot')).toHaveCount(0, { timeout: startupTimeout });
+
+  const outcome = await page.evaluate(async () => {
+    type RunSummary = {
+      victory: boolean; ideal: boolean; endless: boolean; weeklyChallenge: boolean;
+      wave: number; time: number; kills: number; level: number; gold: number; score: number;
+      difficulty: string; buildingsBuilt: number; occupiedBaseBuildSpots?: number; pawnsAlive: number;
+      siegesDefended: number; siegesTotal: number; monasteryHealed: number; healHp: number;
+      hires: number; successions: number; veterans: number; firstHouseMin: number;
+      barracks: number; monastery: number; archery: number; bestCombo: number;
+      bossKilled: boolean; killsByKind: Record<string, number>; cardsPicked: string[];
+      contract: string | null; ukaz: string | null; challengeMods: string[];
+      blessing: string | null; consumables: string[];
+    };
+    type TestMetaState = {
+      quests: { date: string; ids: string[]; progress: Record<string, number>; done: string[]; rerolls: number };
+      weekly: { week: string; progress: number; stage: number; claimed: boolean };
+      chains: { counters: Record<string, number>; claimed: string[] };
+      pass: { season: string; xp: number; premium: boolean; claimedFree: number; claimedPrem: number };
+    };
+    const meta = await import('/src/game/meta.ts') as unknown as {
+      rollMetaDay: () => TestMetaState;
+      saveMetaState: (state: TestMetaState) => boolean;
+      loadMetaState: () => TestMetaState;
+      applyRunToMeta: (summary: RunSummary) => { chainUnlocked: Array<{ id: string; tier: number }> };
+      claimChainReward: (id: string, tier: number) => { ok: boolean };
+    };
+
+    const state = meta.rollMetaDay();
+    state.quests.ids = [];
+    state.quests.progress = {};
+    state.quests.done = [];
+    state.weekly.progress = 0;
+    state.weekly.stage = 0;
+    state.weekly.claimed = false;
+    state.chains.counters = {};
+    state.chains.claimed = [];
+    // Максимальный уровень пропуска исключает побочные награды в тесте критериев цепочки.
+    state.pass.xp = 5_000;
+    state.pass.premium = false;
+    meta.saveMetaState(state);
+
+    const base: RunSummary = {
+      victory: false, ideal: false, endless: false, weeklyChallenge: false,
+      wave: 0, time: 120, kills: 0, level: 1, gold: 0, score: 0, difficulty: 'normal',
+      buildingsBuilt: 0, occupiedBaseBuildSpots: 0, pawnsAlive: 0,
+      siegesDefended: 0, siegesTotal: 0, monasteryHealed: 0, healHp: 0,
+      hires: 0, successions: 0, veterans: 0, firstHouseMin: 0,
+      barracks: 0, monastery: 0, archery: 0, bestCombo: 0,
+      bossKilled: false, killsByKind: {}, cardsPicked: [], contract: null, ukaz: null,
+      challengeMods: [], blessing: null, consumables: [],
+    };
+    const run = (buildingsBuilt: number, occupiedBaseBuildSpots = 0) =>
+      meta.applyRunToMeta({ ...base, buildingsBuilt, occupiedBaseBuildSpots });
+
+    run(4);
+    run(3);
+    const bronzeBlockedByCumulativeOnly = meta.claimChainReward('ch_architect', 0).ok;
+
+    const bronzeUnlock = run(7);
+    const bronzeUnlockedOnSingleRun = bronzeUnlock.chainUnlocked.some(
+      (item) => item.id === 'ch_architect' && item.tier === 0,
+    );
+    const bronzeClaim = meta.claimChainReward('ch_architect', 0).ok;
+    const silverBlockedBeforeAllPlots = meta.claimChainReward('ch_architect', 1).ok;
+
+    const silverUnlock = run(10, 10);
+    const silverUnlockedWhenAllPlotsOccupied = silverUnlock.chainUnlocked.some(
+      (item) => item.id === 'ch_architect' && item.tier === 1,
+    );
+    const silverClaim = meta.claimChainReward('ch_architect', 1).ok;
+
+    for (let i = 0; i < 7; i++) run(10, 10);
+    const goldBlockedAt94 = meta.claimChainReward('ch_architect', 2).ok;
+    const goldUnlock = run(6, 0);
+    const goldUnlockedAt100Total = goldUnlock.chainUnlocked.some(
+      (item) => item.id === 'ch_architect' && item.tier === 2,
+    );
+    const goldClaim = meta.claimChainReward('ch_architect', 2).ok;
+
+    return {
+      bronzeBlockedByCumulativeOnly, bronzeUnlockedOnSingleRun, bronzeClaim,
+      silverBlockedBeforeAllPlots, silverUnlockedWhenAllPlotsOccupied, silverClaim,
+      goldBlockedAt94, goldUnlockedAt100Total, goldClaim,
+    };
+  });
+
+  expect(outcome).toEqual({
+    bronzeBlockedByCumulativeOnly: false,
+    bronzeUnlockedOnSingleRun: true,
+    bronzeClaim: true,
+    silverBlockedBeforeAllPlots: false,
+    silverUnlockedWhenAllPlotsOccupied: true,
+    silverClaim: true,
+    goldBlockedAt94: false,
+    goldUnlockedAt100Total: true,
+    goldClaim: true,
+  });
+});
