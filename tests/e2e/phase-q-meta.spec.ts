@@ -1494,16 +1494,33 @@ test('daily meta, weekly progress and rewarded day limits share the Moscow calen
   await expect(page.locator('#boot')).toHaveCount(0, { timeout: startupTimeout });
 
   const calendar = await page.evaluate(async () => {
-    const moduleUrl = new URL('/src/platform/calendar.ts', window.location.origin).href;
-    const calendar = await import(/* @vite-ignore */ moduleUrl) as {
+    const calendarUrl = new URL('/src/platform/calendar.ts', window.location.origin).href;
+    const calendar = await import(/* @vite-ignore */ calendarUrl) as {
       mskDayKey: (epochMs: number) => string;
       mskWeekKey: (epochMs: number) => string;
     };
+    const adsUrl = new URL('/src/platform/ads.ts', window.location.origin).href;
+    const ads = await import(/* @vite-ignore */ adsUrl) as {
+      placementAvailable: (placement: 'shop-refresh') => boolean;
+    };
+
+    // Плейсмент исчерпан 23:59:59.999 МСК, но снова доступен в 00:00:00.000 МСК.
+    localStorage.setItem('tss-ads-day', JSON.stringify({
+      date: '2026-10-21',
+      used: { 'shop-refresh': 1 },
+    }));
+    Date.now = () => Date.UTC(2026, 9, 21, 20, 59, 59, 999);
+    const adAvailableBeforeMidnight = ads.placementAvailable('shop-refresh');
+    Date.now = () => Date.UTC(2026, 9, 21, 21, 0, 0, 0);
+    const adAvailableAtMidnight = ads.placementAvailable('shop-refresh');
+
     return {
       dayBeforeMidnight: calendar.mskDayKey(Date.UTC(2026, 9, 21, 20, 59, 59, 999)),
       dayAtMidnight: calendar.mskDayKey(Date.UTC(2026, 9, 21, 21, 0, 0, 0)),
       weekBeforeMonday: calendar.mskWeekKey(Date.UTC(2026, 9, 25, 20, 59, 59, 999)),
       weekAtMonday: calendar.mskWeekKey(Date.UTC(2026, 9, 25, 21, 0, 0, 0)),
+      adAvailableBeforeMidnight,
+      adAvailableAtMidnight,
     };
   });
   expect(calendar).toEqual({
@@ -1511,5 +1528,7 @@ test('daily meta, weekly progress and rewarded day limits share the Moscow calen
     dayAtMidnight: '2026-10-22',
     weekBeforeMonday: '2026-10-19',
     weekAtMonday: '2026-10-26',
+    adAvailableBeforeMidnight: false,
+    adAvailableAtMidnight: true,
   });
 });
