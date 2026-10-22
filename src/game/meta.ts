@@ -1616,6 +1616,8 @@ export interface RunMetaResult {
   endlessWaveCrowns: number;
   weeklyClaimReady: boolean;
   newMatchesPlayed: number;
+  /** False means the run's meta progress could not be committed durably. */
+  persisted: boolean;
 }
 
 /**
@@ -1624,12 +1626,14 @@ export interface RunMetaResult {
  */
 export function applyRunToMeta(s: RunSummary): RunMetaResult {
   const st = rollMetaDay();
+  const before = structuredCloneSafe(st);
+  let walletGold = 0;
   const res: RunMetaResult = {
     glory: null, questsCompleted: [], quests: st.quests,
     passLevelsGained: 0, passLevel: 0, passRewards: [],
     chainUnlocked: [], seasonStepReward: null,
     crownsEarned: 0, endlessWaveCrowns: 0, weeklyClaimReady: false,
-    newMatchesPlayed: st.matchesPlayed,
+    newMatchesPlayed: st.matchesPlayed, persisted: false,
   };
 
   st.matchesPlayed += 1;
@@ -1699,7 +1703,7 @@ export function applyRunToMeta(s: RunSummary): RunMetaResult {
       st.glory += def.reward;
       res.questsCompleted.push(def);
       track('quest_done', { quest: def.id, reward: def.reward });
-      addPassXp(st, res, PASS.XP.quest);
+      walletGold += addPassXp(st, res, PASS.XP.quest);
       bumpWeekly(st, 1);
     }
   }
@@ -1747,7 +1751,7 @@ export function applyRunToMeta(s: RunSummary): RunMetaResult {
   const codexRatio = codexProgressForState(st).ratio;
   if (codexRatio >= 0.5 && !st.chains.claimed.includes('codex:50')) {
     st.chains.claimed.push('codex:50');
-    depositGoldWallet(200);
+    walletGold += 200;
   }
   if (codexRatio >= 0.75 && !st.chains.claimed.includes('codex:75')) {
     st.chains.claimed.push('codex:75'); // титул — косметический статус
@@ -1768,7 +1772,7 @@ export function applyRunToMeta(s: RunSummary): RunMetaResult {
   if (s.contract) {
     c.contracts = (c.contracts ?? 0) + 1;
     st.contractsDone += 1;
-    addPassXp(st, res, PASS.XP.contract);
+    walletGold += addPassXp(st, res, PASS.XP.contract);
   }
   c.buildings = (c.buildings ?? 0) + s.buildingsBuilt;
   c.buildingsBestRun = Math.max(c.buildingsBestRun ?? 0, s.buildingsBuilt);
@@ -1785,7 +1789,7 @@ export function applyRunToMeta(s: RunSummary): RunMetaResult {
       if (val >= chain.tiers[tier] && !st.chains.claimed.includes(`${key}:seen`)) {
         st.chains.claimed.push(`${key}:seen`);
         res.chainUnlocked.push({ id: chain.id, tier, nameKey: chain.nameKey });
-        addPassXp(st, res, PASS.XP.chain);
+        walletGold += addPassXp(st, res, PASS.XP.chain);
       }
     }
   }
@@ -1811,11 +1815,11 @@ export function applyRunToMeta(s: RunSummary): RunMetaResult {
         res.endlessWaveCrowns += w.crowns;
       }
     }
-    addPassXp(st, res, PASS.XP.endlessWave * s.wave);
+    walletGold += addPassXp(st, res, PASS.XP.endlessWave * s.wave);
   }
 
   // --- Пропуск: XP за ран (§J.6.3)
-  addPassXp(st, res, PASS.XP.run);
+  walletGold += addPassXp(st, res, PASS.XP.run);
 
   // --- Недельная цепочка: каждый завершённый ран двигает прогресс (§H.17).
   // Порог награды пересчитываем после прироста, чтобы Game Over получил актуальный флаг.
@@ -1836,7 +1840,23 @@ export function applyRunToMeta(s: RunSummary): RunMetaResult {
     if (!st.firstWinAt) st.firstWinAt = Date.now();
   }
 
-  saveMetaState(st);
+  res.persisted = saveMetaStateWithWalletCredit(st, before, walletGold);
+  if (!res.persisted) {
+    // Не отображаем как выданные награды/задания, которые не удалось сохранить.
+    res.glory = null;
+    res.quests = before.quests;
+    res.questsCompleted = [];
+    res.passLevelsGained = 0;
+    res.passLevel = Math.min(PASS.LEVELS, Math.floor(before.pass.xp / PASS.XP_PER_LEVEL));
+    res.passRewards = [];
+    res.chainUnlocked = [];
+    res.seasonStepReward = null;
+    res.crownsEarned = 0;
+    res.endlessWaveCrowns = 0;
+    res.weeklyClaimReady = before.weekly.stage >= WEEKLY_STAGES.length && !before.weekly.claimed;
+    res.newMatchesPlayed = before.matchesPlayed;
+    return res;
+  }
   res.quests = st.quests;
   res.passLevel = Math.min(PASS.LEVELS, Math.floor(st.pass.xp / PASS.XP_PER_LEVEL));
   return res;
@@ -1846,8 +1866,9 @@ function addPassXp(
   st: MetaState,
   res: Pick<RunMetaResult, 'passLevelsGained' | 'passRewards'> | null,
   xp: number,
-): void {
-  if (xp <= 0) return;
+): number {
+  if (xp <= 0) return 0;
+  let walletGold = 0;
   const before = Math.floor(st.pass.xp / PASS.XP_PER_LEVEL);
   st.pass.xp += xp;
   const after = Math.min(PASS.LEVELS, Math.floor(st.pass.xp / PASS.XP_PER_LEVEL));
@@ -1860,34 +1881,37 @@ function addPassXp(
       const fr = passReward(lv, false);
       if (fr) {
         res?.passRewards.push(fr);
-        grantPassReward(st, fr);
+        walletGold += grantPassReward(st, fr);
       }
       if (st.pass.premium) {
         const pr = passReward(lv, true);
         if (pr) {
           res?.passRewards.push(pr);
-          grantPassReward(st, pr);
+          walletGold += grantPassReward(st, pr);
         }
       }
     }
   }
+  return walletGold;
 }
 
-function grantPassReward(st: MetaState, r: PassReward): void {
+/** Применяет награду пропуска к снимку; золото возвращает вызывающему коду для commit. */
+function grantPassReward(st: MetaState, r: PassReward): number {
   switch (r.kind) {
-    case 'gold': depositGoldWallet(r.amount); break;
-    case 'crowns': st.crowns += r.amount; break;
-    case 'token': st.speedupTokens += r.amount; break;
-    case 'blessing': st.blessingTokens += r.amount; break;
-    case 'skin': if (r.id) grantSkin(st, r.id); break;
-    case 'title': case 'frame': break; // косметика-статус, хранение не требуется
-    case 'banner': break;
+    case 'gold': return r.amount;
+    case 'crowns': st.crowns += r.amount; return 0;
+    case 'token': st.speedupTokens += r.amount; return 0;
+    case 'blessing': st.blessingTokens += r.amount; return 0;
+    case 'skin': if (r.id) grantSkin(st, r.id); return 0;
+    case 'title': case 'frame': return 0; // косметика-статус, хранение не требуется
+    case 'banner': return 0;
   }
 }
 
 /** Золото в кошелёк лавки (единственный сток пропуска/цепочек/бонуса). */
-function depositGoldWallet(gold: number): void {
-  if (gold > 0) depositGold(Math.floor(gold));
+function depositGoldWallet(gold: number): boolean {
+  if (gold <= 0) return true;
+  return depositGold(Math.floor(gold));
 }
 
 /** Выдаёт скин в коллекцию (не назначает активным). */
@@ -2494,6 +2518,6 @@ export function markChallengeVictory(): boolean {
   const before = structuredCloneSafe(st);
   st.challengeWinDate = challengeDay;
   st.crowns += CHALLENGE_CROWNS;
-  addPassXp(st, null, PASS.XP.challenge);
-  return saveMetaStateOrRollback(st, before);
+  const walletGold = addPassXp(st, null, PASS.XP.challenge);
+  return saveMetaStateWithWalletCredit(st, before, walletGold);
 }
