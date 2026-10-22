@@ -548,6 +548,12 @@ export class MetaScene extends Phaser.Scene {
   }
 
   private async doQuestReroll(slot: number): Promise<void> {
+    const quests = rollMetaDay().quests;
+    const currentId = quests.ids[slot];
+    if (!currentId || !Number.isInteger(slot) || slot < 0 || quests.done.includes(currentId)) {
+      this.renderTab();
+      return;
+    }
     const res = await showPlacementRewarded('quest-reroll');
     if (!res.rewarded) return;
     const out = rerollQuestSlot(slot);
@@ -556,6 +562,9 @@ export class MetaScene extends Phaser.Scene {
       this.renderTab();
     } else if (out.reason === 'limit') {
       this.flashNote(t('quest.rerollLimit'));
+    } else if (out.reason === 'completed' || out.reason === 'bad-slot') {
+      this.flashNote(t('quest.done'));
+      this.renderTab();
     }
   }
 

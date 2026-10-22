@@ -2264,18 +2264,22 @@ export function ownedBanners(): string[] {
 }
 
 /** Реролл задания дня за рекламу (R10, лимит 3/день). */
-export function rerollQuestSlot(slot: number): { ok: boolean; reason?: 'limit' | 'bad-slot' } {
+export function rerollQuestSlot(slot: number): { ok: boolean; reason?: 'limit' | 'bad-slot' | 'completed' } {
   const st = rollMetaDay();
   if (st.quests.rerolls >= 3) return { ok: false, reason: 'limit' };
-  if (slot < 0 || slot >= st.quests.ids.length) return { ok: false, reason: 'bad-slot' };
-  st.quests.rerolls += 1;
-  const rng = mulberry32(hashStr(`reroll:${st.quests.date}:${st.quests.rerolls}:${slot}`));
+  if (!Number.isInteger(slot) || slot < 0 || slot >= st.quests.ids.length) {
+    return { ok: false, reason: 'bad-slot' };
+  }
+  const oldId = st.quests.ids[slot];
+  if (st.quests.done.includes(oldId)) return { ok: false, reason: 'completed' };
   const current = new Set(st.quests.ids);
   const pool = QUEST_POOL.map((q) => q.id).filter((id) => !current.has(id));
   if (pool.length === 0) return { ok: false, reason: 'bad-slot' };
+  const nextRerollCount = st.quests.rerolls + 1;
+  const rng = mulberry32(hashStr(`reroll:${st.quests.date}:${nextRerollCount}:${slot}`));
   const next = pool[Math.floor(rng() * pool.length)];
-  const oldId = st.quests.ids[slot];
   delete st.quests.progress[oldId];
+  st.quests.rerolls = nextRerollCount;
   st.quests.ids[slot] = next;
   saveMetaState(st);
   return { ok: true };
