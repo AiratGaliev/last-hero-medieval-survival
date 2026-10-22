@@ -957,6 +957,7 @@ export const en: Record<TranslationKey, string> = {
   'over.gloryX2': 'Watch ad: glory ×2',
   'over.goldX2': 'Watch ad: gold ×2',
   'over.x2Done': 'Already doubled',
+  'over.x2SaveFailed': 'Not saved',
   // §J.3: button unavailable → grey out WITH a reason
   'ad.reasonLimit': 'Ad already used',
   'ad.reasonUnavailable': 'Ad unavailable',
