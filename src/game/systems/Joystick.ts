@@ -50,6 +50,15 @@ export class Joystick {
     scene.input.on('pointerupoutside', release);
   }
 
+  /** Полный сброс до состояния «палец отпущен» — аналогия resetKeys в Phaser для клавиш. */
+  reset(): void {
+    this.pointerId = -1;
+    this.vx = 0;
+    this.vy = 0;
+    this.base.setVisible(false);
+    this.knob.setVisible(false);
+  }
+
   private show(): void {
     this.base.setVisible(true);
     this.knob.setVisible(true);
