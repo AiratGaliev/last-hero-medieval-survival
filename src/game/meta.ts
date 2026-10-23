@@ -1391,19 +1391,33 @@ export async function hydrateMetaStateFromPlayerData(): Promise<void> {
   }
   if (!cloud.available) return;
 
-  metaCloudHydrated = true;
-  installMetaCloudLifecycle();
-
   const local = loadMetaState();
   const value = cloud.value as Partial<MetaCloudEnvelope> | null;
   const envelopeSavedAt = Number(value?.savedAt);
+  const hasPreferences = value !== null && Object.prototype.hasOwnProperty.call(value, 'preferences');
+  const hasShop = value !== null && Object.prototype.hasOwnProperty.call(value, 'shop');
   const remoteState = value?.version === 1 && isValidCloudMetaState(value.state)
     ? sanitize(value.state)
     : null;
   const validEnvelope = remoteState !== null
     && Number.isSafeInteger(envelopeSavedAt)
     && envelopeSavedAt >= 0
-    && remoteState.savedAt === envelopeSavedAt;
+    && remoteState.savedAt === envelopeSavedAt
+    // Старые снимки могли не содержать preferences/shop, но существующие
+    // поля обязаны проходить валидацию: иначе запись поверх них опасна.
+    && (!hasPreferences || isValidCloudMetaPreferences(value?.preferences))
+    && (!hasShop || isValidCloudShopState(value?.shop));
+
+  // null означает, что ключа в Player Data нет и облако можно инициализировать
+  // локальным снимком. Любое существующее, но нераспознанное значение оставляем
+  // нетронутым: это может быть сохранение более новой версии игры.
+  if (value !== null && !validEnvelope) {
+    console.warn('[meta] облачный снимок неизвестной версии или повреждён; перезапись отменена');
+    return;
+  }
+
+  metaCloudHydrated = true;
+  installMetaCloudLifecycle();
 
   if (validEnvelope && remoteState && envelopeSavedAt >= local.savedAt) {
     // Облачный снимок новее или равен локальному; его sanitized-форма
@@ -1429,8 +1443,8 @@ export async function hydrateMetaStateFromPlayerData(): Promise<void> {
     return;
   }
 
-  // Облако отсутствует/повреждено или локальный снимок новее. Поднимаем
-  // монотонную метку и ставим локальный снимок в очередь на первую синхронизацию.
+  // Облачного снимка нет либо локальный снимок новее. Нераспознанные и
+  // повреждённые существующие значения отфильтрованы выше.
   cached = local;
   cachedMetaPreferences = localPreferences;
   metaCloudDirty = true;
