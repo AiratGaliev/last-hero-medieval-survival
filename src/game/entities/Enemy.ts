@@ -821,9 +821,15 @@ export class Enemy extends Phaser.Physics.Arcade.Sprite {
       case 'bomb-fish': {
         // Рыба держит дистанцию и плюётся бомбой; это не камикадзе.
         this.shootCd -= delta;
+        // Покачивание живёт и в замахе: иначе рыба замирает с наклоном,
+        // полученным в погоне, и с ним стоит весь бросок.
+        this.rotation = Math.sin(time / 160) * 0.08;
         if (this.aiState === 'windup') {
           vx = 0;
           vy = 0;
+          // Цель может перебежать за спину за 700 мс замаха — разворот идёт
+          // до самого плевка, иначе бомба летит через плечо.
+          this.setFlipX(this.faceDir(nx));
           this.stateTimer = Math.max(0, this.stateTimer - delta);
           if (this.stateTimer <= 0) this.fireBomb();
         } else {
@@ -839,7 +845,6 @@ export class Enemy extends Phaser.Physics.Arcade.Sprite {
             vx = -ny * this.speed * 0.35;
             vy = nx * this.speed * 0.35;
           }
-          this.rotation = Math.sin(time / 160) * 0.08;
           if (this.shootCd <= 0 && dist < 540 && this.aiState === 'chase') {
             this.setFlipX(this.faceDir(nx));
             this.aiState = 'windup';
