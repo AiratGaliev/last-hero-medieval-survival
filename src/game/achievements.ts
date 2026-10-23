@@ -13,7 +13,7 @@ export interface AchievementDef {
   name: string;
   desc: string;
   icon: string;   // текстура Phaser (в игре)
-  emoji: string;  // для React-сайдбара
+  emoji: string;  // всплывающие тосты и список «НОВЫЕ ДОСТИЖЕНИЯ»
 }
 
 export const ACHIEVEMENTS: AchievementDef[] = [

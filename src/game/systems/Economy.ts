@@ -203,6 +203,8 @@ export class Economy extends Phaser.Events.EventEmitter {
   readonly tune: Tune;
   /** Бесконечный режим: накопитель 5-минутного восстановления жил (§H.12). */
   private veinRegenAcc = 0;
+  /** Накопитель мс между эмиссиями 'change' при покадровом лечении обители. */
+  private woodEmitAccumMs = 0;
 
   constructor(scene: Phaser.Scene, opts: EconomyOpts) {
     super();
@@ -461,12 +463,21 @@ export class Economy extends Phaser.Events.EventEmitter {
    * `spend()` требует полного покрытия остатка, а лечение берёт дробное
    * дерево каждый кадр: при 0.013 дерева на кадр и запасе 0.01 обычный
    * `spend()` отказал бы в списании. Возвращает фактически списанное.
+   *
+   * Эмиссия 'change' здесь ограничена ~10 Гц: это покадровый поток, а
+   * перерисовка HUD 60 раз в секунду не нужна (§B.8/§B.10); депозиты и
+   * остальные события продолжают обновлять HUD мгновенно. Хвост до ~100 мс
+   * догоняет периодический прогон HUD в GameScene.update().
    */
-  spendWoodPartial(amount: number): number {
+  spendWoodPartial(amount: number, dtMs = 0): number {
     const take = Math.min(this.resources.wood, Math.max(0, amount));
     if (take <= 0) return 0;
     this.resources.wood -= take;
-    this.emit('change');
+    this.woodEmitAccumMs += dtMs;
+    if (this.woodEmitAccumMs >= 100) {
+      this.woodEmitAccumMs = 0;
+      this.emit('change');
+    }
     return take;
   }
 

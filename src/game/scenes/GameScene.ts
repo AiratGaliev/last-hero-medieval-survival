@@ -44,10 +44,9 @@ import { analyticsIdentity } from '../../platform/player';
 import {
   consumeRunConfig, dailyChallengeSeedNumber, loadMetaState, rollMetaDay, nodeEffects, seasonDef,
   takeConsumables, applyRunToMeta, contractDef, contractScoreForRun, QUEST_POOL, markCodex, markCodexSeen,
-  grantSpeedupToken,
+  grantSpeedupToken, runValueFor,
   heroSkinTint, buildingSkinTint, trailSkinTint, activeBanner, matchesPlayed,
-  type RunModifiers, type NodeEffects, type SeasonModifier, type RunSummary,
-  type QuestMetric,
+  type RunModifiers, type NodeEffects, type SeasonModifier, type RunSummary, type QuestMetrics,
   getOrAssignExperimentVariant,
 } from '../meta';
 
@@ -4020,7 +4019,7 @@ private bossDeathSequence(e: Enemy): boolean {
       if (st.quests.done.includes(id) || this.questToastDone.has(id)) continue;
       const def = QUEST_POOL.find((q) => q.id === id);
       if (!def) continue;
-      const rv = this.questRunValue(def.metric);
+      const rv = runValueFor(def.metric, this.questMetrics());
       const achieved = def.metric === 'firstHouseMin' ? rv > 0 && rv < def.goal : rv >= def.goal;
       if (achieved) {
         this.questToastDone.add(id);
@@ -4029,30 +4028,29 @@ private bossDeathSequence(e: Enemy): boolean {
     }
   }
 
-  /** Локальная копия маппинга runValue из meta.applyRunToMeta (§H.17). */
-  private questRunValue(m: QuestMetric): number {
-    switch (m) {
-      case 'buildings': return this.buildingsBuilt;
-      case 'siegesDefended': return this.settlement.facts.siegesDefended;
-      case 'monasteryHealed': return this.economy.monasteryHealed;
-      case 'healHp': return Math.round(this.economy.healHpTotal);
-      case 'idealWin': return 0; // идеальная победа определяется только в конце рана
-      case 'hires': return this.hires;
-      case 'successionBoss': return this.successions > 0 && this.bossKilled ? 1 : 0;
-      case 'kills': return this.kills;
-      // Храним точное время: округление до минут засчитывало 2:59 как выполнение «до 2:00».
-      case 'firstHouseMin': return this.firstHouseMin > 0 ? this.firstHouseMin : 99;
-      case 'barracks': return this.builtBarracks;
-      case 'monastery': return this.builtMonastery;
-      case 'archery': return this.builtArchery;
-      case 'veterans': return this.veteransEarnedThisRun;
-      case 'gold': return this.gold;
-      case 'score': return this.currentScore();
-      case 'time': return Math.floor(this.elapsed);
-      case 'bestCombo': return this.bestCombo;
-      case 'noSuccessionBoss': return this.successions === 0 && this.bossKilled ? 1 : 0;
-      default: return 0;
-    }
+  /** Живые счётчики рана в форме QuestMetrics — маппинг общий с meta (§H.17). */
+  private questMetrics(): QuestMetrics {
+    return {
+      // Идеальная победа определяется только в конце рана.
+      ideal: false,
+      buildingsBuilt: this.buildingsBuilt,
+      siegesDefended: this.settlement.facts.siegesDefended,
+      monasteryHealed: this.economy.monasteryHealed,
+      healHp: this.economy.healHpTotal,
+      hires: this.hires,
+      successions: this.successions,
+      kills: this.kills,
+      firstHouseMin: this.firstHouseMin,
+      barracks: this.builtBarracks,
+      monastery: this.builtMonastery,
+      archery: this.builtArchery,
+      veterans: this.veteransEarnedThisRun,
+      gold: this.gold,
+      score: this.currentScore(),
+      time: this.elapsed,
+      bestCombo: this.bestCombo,
+      bossKilled: this.bossKilled,
+    };
   }
 
   /**

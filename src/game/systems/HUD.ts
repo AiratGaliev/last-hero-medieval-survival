@@ -631,7 +631,10 @@ export class HUD {
     // поверх расчёта, и на большом мониторе блок уезжал с левой колонки.
     if (!any && !this.resVisible) return;
     this.resVisible = any;
-    this.resTexts.wood.setText(`${res.wood}`);
+    // Обитель лечит раненых списанием дробного дерева каждый кадр (§G.3) —
+    // в HUD показываем целые единицы, иначе счётчик «дров» показывает
+    // машинные плавающие хвосты вроде 49.987199999999994.
+    this.resTexts.wood.setText(`${Math.floor(res.wood)}`);
     this.resTexts.meat.setText(`${res.meat}`);
     this.resTexts.ore.setText(`${res.ore}`);
   }

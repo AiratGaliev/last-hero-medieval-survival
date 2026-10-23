@@ -72,10 +72,11 @@ export class Monastery {
   healTick(dtMs: number): void {
     const hpPerSec = HEAL_HP_PER_SEC + this.eco.tune.healHps;
     const seconds = dtMs / 1000;
-    // ⚠️ Списание идёт через Economy.spend() (§G.10), а не прямой записью в
-    // resources. Прямая запись не поднимала `emit('change')`, и единственная
-    // подписка HUD (economy.on('change'), §B.8) обновляла дерево только по
-    // случайному совпадению — на экране расходились числа.
+    // ⚠️ Списание идёт через Economy.spendWoodPartial() (§G.10), а не прямой
+    // записью в resources. Прямая запись не поднимала `emit('change')`, и
+    // единственная подписка HUD (economy.on('change'), §B.8) не видела расход.
+    // spendWoodPartial умеет списывать дробный остаток и сама ограничивает
+    // частоту этой покадровой эмиссии ~10 Гц — депозиты остаются мгновенными.
     let remainingWood = Math.max(0, this.eco.resources.wood);
     let spentWood = 0;
     const woodPerHp = Math.max(0, this.healWoodMultiplier()) / 15;
@@ -110,7 +111,7 @@ export class Monastery {
       }
     }
     if (spentWood > 0) {
-      this.eco.spendWoodPartial(spentWood);
+      this.eco.spendWoodPartial(spentWood, dtMs);
     }
   }
 }

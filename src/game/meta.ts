@@ -1640,39 +1640,72 @@ export function daysBetween(a: string, b: string): number {
 // Сводка рана → обновление мета-состояния (§K.2 run_end → мета)
 // ============================================================
 
-/** Счётчики матча, которые сцена собирает за ран. */
-export interface RunSummary {
-  victory: boolean;
+/**
+ * Поля рана, из которых вычисляются метрики заданий дня (§H.17).
+ * Единый источник правды: applyRunToMeta сверяет цели в конце рана,
+ * а сцена тостит прогресс по тем же живым счётчикам.
+ */
+export interface QuestMetrics {
   ideal: boolean;
+  buildingsBuilt: number;
+  siegesDefended: number;
+  monasteryHealed: number;
+  healHp: number;
+  hires: number;
+  successions: number;
+  kills: number;
+  firstHouseMin: number;
+  barracks: number;
+  monastery: number;
+  archery: number;
+  veterans: number;
+  gold: number;
+  score: number;
+  time: number;
+  bestCombo: number;
+  bossKilled: boolean;
+}
+
+/** Значение метрики задания дня по счётчикам рана — маппинг один на всех. */
+export function runValueFor(m: QuestMetric, s: QuestMetrics): number {
+  switch (m) {
+    case 'buildings': return s.buildingsBuilt;
+    case 'siegesDefended': return s.siegesDefended;
+    case 'monasteryHealed': return s.monasteryHealed;
+    case 'healHp': return Math.round(s.healHp);
+    case 'idealWin': return s.ideal ? 1 : 0;
+    case 'hires': return s.hires;
+    case 'successionBoss': return s.successions > 0 && s.bossKilled ? 1 : 0;
+    case 'kills': return s.kills;
+    case 'firstHouseMin': return s.firstHouseMin > 0 ? s.firstHouseMin : 99;
+    case 'barracks': return s.barracks;
+    case 'monastery': return s.monastery;
+    case 'archery': return s.archery;
+    case 'veterans': return s.veterans;
+    case 'gold': return s.gold;
+    case 'score': return s.score;
+    case 'time': return Math.floor(s.time);
+    case 'bestCombo': return s.bestCombo;
+    case 'noSuccessionBoss': return s.successions === 0 && s.bossKilled ? 1 : 0;
+    default: return 0;
+  }
+}
+
+/** Счётчики матча, которые сцена собирает за ран. */
+export interface RunSummary extends QuestMetrics {
+  victory: boolean;
   endless: boolean;
   /** true только для отдельного режима недельного испытания с указом. */
   weeklyChallenge: boolean;
   wave: number;              // волны бесконечного (осады) — 0 вне режима
-  time: number;
-  kills: number;
   level: number;
-  gold: number;
-  score: number;
   difficulty: string;
-  buildingsBuilt: number;
   /** Количество построек каждого вида, завершённых за этот ран (без стартового замка). */
   buildingKindsBuilt?: Partial<Record<Exclude<BuildingKind, 'castle'>, number>>;
   /** Число занятых базовых пятен (из 10) в конце рана. */
   occupiedBaseBuildSpots?: number;
   pawnsAlive: number;
-  siegesDefended: number;
   siegesTotal: number;
-  monasteryHealed: number;
-  healHp: number;
-  hires: number;
-  successions: number;
-  veterans: number;
-  firstHouseMin: number;
-  barracks: number;
-  monastery: number;
-  archery: number;
-  bestCombo: number;
-  bossKilled: boolean;
   killsByKind: Record<string, number>;
   cardsPicked: string[];
   contract: string | null;
@@ -1733,33 +1766,10 @@ export function applyRunToMeta(s: RunSummary): RunMetaResult {
   }
 
   // --- Задания дня (§H.17): параллельный прогресс, лучший за матч
-  const runValue = (m: QuestMetric): number => {
-    switch (m) {
-      case 'buildings': return s.buildingsBuilt;
-      case 'siegesDefended': return s.siegesDefended;
-      case 'monasteryHealed': return s.monasteryHealed;
-      case 'healHp': return Math.round(s.healHp);
-      case 'idealWin': return s.ideal ? 1 : 0;
-      case 'hires': return s.hires;
-      case 'successionBoss': return s.successions > 0 && s.bossKilled ? 1 : 0;
-      case 'kills': return s.kills;
-      case 'firstHouseMin': return s.firstHouseMin > 0 ? s.firstHouseMin : 99;
-      case 'barracks': return s.barracks;
-      case 'monastery': return s.monastery;
-      case 'archery': return s.archery;
-      case 'veterans': return s.veterans;
-      case 'gold': return s.gold;
-      case 'score': return s.score;
-      case 'time': return Math.floor(s.time);
-      case 'bestCombo': return s.bestCombo;
-      case 'noSuccessionBoss': return s.successions === 0 && s.bossKilled ? 1 : 0;
-      default: return 0;
-    }
-  };
   for (const id of st.quests.ids) {
     const def = QUEST_POOL.find((q) => q.id === id);
     if (!def || st.quests.done.includes(id)) continue;
-    const rv = runValue(def.metric);
+    const rv = runValueFor(def.metric, s);
     // Для условия по времени нужен реальный результат постройки, а не sentinel «дом не построен».
     if (def.metric === 'firstHouseMin' && (rv <= 0 || rv >= 99)) continue;
     // «До 2:00» — строго раньше дедлайна; округление целых минут давало ложный успех на 2:59.

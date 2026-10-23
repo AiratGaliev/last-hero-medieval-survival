@@ -15,6 +15,7 @@
 
 import { getSdk, isMockMode, isOnYandex, type YandexCatalogProduct, type YandexPayments } from './sdk';
 import { grantSku, grantSkuForPurchase, hasIapEntitlement, rollMetaDay, showcaseUnlocked } from '../game/meta';
+import { loadJson, saveJson } from '../game/storage';
 import { track } from './analytics';
 
 export type { YandexPayments };
@@ -240,24 +241,14 @@ export async function purchaseSku(sku: string): Promise<PurchaseResult> {
 const LS_ONCE = 'tss-sku-once';
 
 function purchasedOnce(): string[] {
-  try {
-    const raw = localStorage.getItem(LS_ONCE);
-    return raw ? (JSON.parse(raw) as string[]) : [];
-  } catch {
-    return [];
-  }
+  return loadJson<string[]>(LS_ONCE) ?? [];
 }
 
 function markPurchasedOnce(sku: string): void {
-  try {
-    const list = purchasedOnce();
-    if (!list.includes(sku)) {
-      list.push(sku);
-      localStorage.setItem(LS_ONCE, JSON.stringify(list));
-    }
-  } catch {
-    // хранилище недоступно — one-shot не критичен для гостей
-  }
+  const list = purchasedOnce();
+  if (list.includes(sku)) return;
+  // хранилище недоступно — one-shot не критичен для гостей
+  saveJson(LS_ONCE, [...list, sku]);
 }
 
 export interface CatalogProduct {
