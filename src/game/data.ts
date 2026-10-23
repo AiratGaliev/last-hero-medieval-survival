@@ -268,33 +268,46 @@ export interface HeroDef {
 }
 
 export const HEROES: Record<HeroId, HeroDef> = {
+  // Имена/титулы/черты читаются на лету: модуль data.ts импортируется
+  // последовательно main.ts ещё ДО переключения языка (detectLanguage),
+  // и зафиксированные t() вызовы всегда копили бы русские строки — эн-версия
+  // показывала «Воин» вместо «Warrior» в заставке преемника и анонсах.
+  // Так же сделано в shop.ts (§F.9, §I.4).
   warrior: {
-    id: 'warrior', name: t('hero.warrior.name'), title: t('hero.warrior.title'),
-    traits: [t('hero.warrior.t1'), t('hero.warrior.t2')],
+    id: 'warrior',
+    get name() { return t('hero.warrior.name'); },
+    get title() { return t('hero.warrior.title'); },
+    get traits() { return [t('hero.warrior.t1'), t('hero.warrior.t2')]; },
     frameW: 192, scale: 0.55, startWeapon: 'sword',
     portrait: { file: 'ui/avatars/avatars-01.png', box: { x: 22, y: 31, w: 197, h: 182 } },
     maxHp: 110, speed: 200, baseRegen: 0,
     anims: { idle: 'player-idle', run: 'player-run', atk1: 'player-atk1', atk2: 'player-atk2' },
   },
   archer: {
-    id: 'archer', name: t('hero.archer.name'), title: t('hero.archer.title'),
-    traits: [t('hero.archer.t1'), t('hero.archer.t2'), t('hero.archer.t3')],
+    id: 'archer',
+    get name() { return t('hero.archer.name'); },
+    get title() { return t('hero.archer.title'); },
+    get traits() { return [t('hero.archer.t1'), t('hero.archer.t2'), t('hero.archer.t3')]; },
     frameW: 192, scale: 0.55, startWeapon: 'bow',
     portrait: { file: 'ui/avatars/avatars-03.png', box: { x: 64, y: 29, w: 140, h: 160 } },
     maxHp: 90, speed: 230, baseRegen: 0,
     anims: { idle: 'hero-archer-idle', run: 'hero-archer-run', atk1: 'hero-archer-atk', atk2: 'hero-archer-atk' },
   },
   lancer: {
-    id: 'lancer', name: t('hero.lancer.name'), title: t('hero.lancer.title'),
-    traits: [t('hero.lancer.t1'), t('hero.lancer.t2'), t('hero.lancer.t3')],
+    id: 'lancer',
+    get name() { return t('hero.lancer.name'); },
+    get title() { return t('hero.lancer.title'); },
+    get traits() { return [t('hero.lancer.t1'), t('hero.lancer.t2'), t('hero.lancer.t3')]; },
     frameW: 320, scale: 0.34, startWeapon: 'spear',
     portrait: { file: 'ui/avatars/avatars-02.png', box: { x: 52, y: 58, w: 149, h: 129 } },
     maxHp: 130, speed: 190, baseRegen: 0,
     anims: { idle: 'hero-lancer-idle', run: 'hero-lancer-run', atk1: 'hero-lancer-atk', atk2: 'hero-lancer-atk' },
   },
   monk: {
-    id: 'monk', name: t('hero.monk.name'), title: t('hero.monk.title'),
-    traits: [t('hero.monk.t1'), t('hero.monk.t2')],
+    id: 'monk',
+    get name() { return t('hero.monk.name'); },
+    get title() { return t('hero.monk.title'); },
+    get traits() { return [t('hero.monk.t1'), t('hero.monk.t2')]; },
     frameW: 192, scale: 0.55, startWeapon: 'aura',
     portrait: { file: 'ui/avatars/avatars-04.png', box: { x: 57, y: 44, w: 144, h: 155 } },
     maxHp: 100, speed: 195, baseRegen: 0.5,

@@ -385,7 +385,15 @@ export class ShopScene extends Phaser.Scene {
 
     let fetched: CatalogProduct[] = [];
     try { fetched = await fetchCatalog(); } catch { /* fail closed below */ }
-    if (requestId !== this.catalogRequestId || !this.scene.isActive()) return;
+    if (requestId !== this.catalogRequestId || !this.scene.isActive()) {
+      // Визуальный ресайз вызывает scene.restart() прямо по время загрузки:
+      // перезапуск лоадера (LoaderPlugin.shutdown — removeAllListeners) лишает
+      // unlink-обещание 'complete', и витрина могла навсегда остаться
+      // в подписи «Загрузка каталога…». Сбрасываем состояние, чтобы первый же
+      // запуск каталога (create() при restart или открытие вкладки) повторил загрузку.
+      if (this.catalogState === 'loading') this.catalogState = 'idle';
+      return;
+    }
 
     // Only show SKU IDs that this game knows how to grant; never expose an unknown console SKU.
     const byId = new Map<string, CatalogProduct>();
@@ -424,9 +432,17 @@ export class ShopScene extends Phaser.Scene {
     }
     if (pending.size === 0) return;
     await new Promise<void>((resolve) => {
-      this.load.once('complete', () => resolve());
+      let settled = false;
+      const done = (): void => { if (!settled) { settled = true; resolve(); } };
+      this.load.once('complete', done);
       for (const [key, uri] of pending) this.load.image(key, uri);
       if (!this.load.isLoading()) this.load.start();
+      // Страховка от зависания: визуальный ресайз вызывает scene.restart() в
+      // момент, когда лоадер ещё в полёте. Reset лоадера (shutdown →
+      // removeAllListeners) может отменить выдачу 'complete' для этой очереди,
+      // и витрина застревала в «Загрузка каталога…». Тексты и цены не зависят
+      // от картинок, поэтому после страх-тайм-аута редим каталог как загруженный.
+      window.setTimeout(done, 4000);
     });
   }
 
