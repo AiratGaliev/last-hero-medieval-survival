@@ -1969,7 +1969,10 @@ Git tree, а не открытие каждого PNG по пикселям и �
 - [x] Vite: ослабленный `host/allowedHosts` доступен только по явному
       `TSS_SANDBOX_SERVER=1`; обычный режим привязан к `127.0.0.1` и
       использует встроенную проверку Host.
-- [ ] Подтвердить CI Fast и unit-тесты на актуальном PR SHA.
+- [x] CI Fast и unit-тесты на кодовой ревизии PR #63
+      `2a96f7749fc1eaf071f1ba186a66d18a3f4c35b3`: [run #39933742837](https://github.com/AiratGaliev/last-hero-medieval-survival/actions/runs/39933742837)
+      — success; `npm run check`, `npm run test:unit` (13/13) и `npm run build`
+      прошли. Документационный follow-up требует обычного повторного CI на итоговом SHA.
 - [ ] Повторить полный Playwright E2E на чистом актуальном `dev`, разобрать
       воспроизводимые ошибки и только после этого обновить приёмочные гейты.
 - [ ] Внешние гейты Yandex Games (реальные покупки, реклама, SDK и длительный
