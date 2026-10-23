@@ -128,6 +128,26 @@ type RuntimeWindow = Window & {
 // «canvas не появился», хотя приложение стартует штатно.
 const startupTimeout = 60_000;
 
+/**
+ * §H.18: сезонная тема мира выводится из реального времени
+ * (`seasonIndexFor()` = floor(now / 14д) % 4) и меняет экономику: «Золотая
+ * лихорадка мира» (остаток % 4 = 2) даёт ×1.5 к добыче руды и ×1.25 к всем
+ * расходам руды — наборы экономики ниже ждут базовые значения, поэтому без
+ * пиннинга тесты ломаются каждые 14 дней (это и случалось: сезон с индексом
+ * % 4 = 2 начался 22.10.2026). Паттерн мока Date.now — как в
+ * phase-q-meta.spec (тест «gold rush season increases vein output…»).
+ * Пин в «Алый дол» (% 4 = 0): из всех тем он не затрагивает экономику
+ * поседения — только скорость спавна на минутах осад 7–12.
+ */
+async function pinNeutralSeason(page: Page): Promise<void> {
+  await page.addInitScript(() => {
+    const nativeNow = Date.now.bind(Date);
+    const targetNow = 61 * 86_400_000 + 60_000; // 61-й день эпохи → сезон 4, % 4 = 0
+    const offset = targetNow - nativeNow();
+    Date.now = () => nativeNow() + offset;
+  });
+}
+
 async function startRun(page: Page): Promise<void> {
   await page.goto('/?lang=en&ysdk=mock');
   await expect(page.locator('#game canvas')).toBeVisible({ timeout: startupTimeout });
@@ -321,6 +341,7 @@ test('phase B: player can walk past a civilian without a blocking pawn collider'
 });
 
 test('phases C-D: harvesting delivers resources and depleted veins can recharge', async ({ page }) => {
+  await pinNeutralSeason(page);
   await startRun(page);
   const report = await page.evaluate(() => {
     const game = (window as RuntimeWindow).__tss!;
@@ -692,14 +713,14 @@ test('phase E: the first-house bonus resident enters over two seconds', async ({
       arrivalMs: resident.arrivalMs,
       alpha: resident.alpha,
       distanceToHouse: Math.hypot(resident.x - spot.x, resident.y - spot.y),
-      anim: resident.anims.currentAnim?.key ?? null,
     };
   });
   expect(finish.active).toBe(true);
   expect(finish.arrivalMs).toBe(0);
   expect(finish.alpha).toBe(1);
   expect(finish.distanceToHouse).toBeLessThan(220);
-  expect(finish.anim).toBe('pawn-idle');
+  // Анимацию не проверяем: сразу после входа AI вправе отправить жителя
+  // на работу (§B.6 - приоритеты), связка 'walk'/'pawn-run' легитимна.
 });
 
 test('phase E: builder walks toward the nearest free spot before spending resources', async ({ page }) => {
@@ -760,6 +781,7 @@ test('phase E: builder walks toward the nearest free spot before spending resour
 });
 
 test('phases E-F: construction uses the approached spot and repair costs are guarded', async ({ page }) => {
+  await pinNeutralSeason(page);
   await startRun(page);
   const report = await page.evaluate(() => {
     const game = (window as RuntimeWindow).__tss!;
@@ -1226,6 +1248,7 @@ test('phase K: flaming siege arrows use a bounded pool, visible trail and arriva
 });
 
 test('phase J: barracks hiring spends resources immediately and reserves slots while recruiting', async ({ page }) => {
+  await pinNeutralSeason(page);
   await startRun(page);
 
   const report = await page.evaluate(() => {
@@ -3590,6 +3613,8 @@ test('phase M: tower fires at a siege target before a closer ordinary enemy', as
       kind: 'tower', x: 500, y: 500, hp: 200, maxHp: 200,
       alpha: 1, alive: true, underConstruction: false,
       finishConstruction: () => {}, damage: () => {},
+      // Тик-контракт Building: Economy.tick дергает оба метода каждый кадр.
+      tickMonasteryCollapse: () => {}, tickBurn: () => 0,
     };
     scene.economy.buildings.push(tower);
     const ordinary = {
@@ -3812,7 +3837,10 @@ test('phase M: monastery healing never grants more HP than the available wood ca
     const first = economy.pawns.find(p => p.kind === 'collector');
     const second = economy.pawns.find(p => p.kind === 'collector' && p !== first);
     if (!builder || !spot || !first || !second) throw new Error('Monastery healing fixtures are unavailable');
+    // Обитель стоит {wood:60, ore:40} (§G), а «Золотая лихорадка мира» (§H.18)
+    // ещё и повышает ores cost ×1.25 — набора только дерева не хватает.
     economy.resources.wood = 1_000;
+    economy.resources.ore = 1_000;
     if (!economy.tryStartBuild('monastery', builder, spot)) throw new Error('Could not start monastery fixture');
     const monastery = economy.buildings.find(b => b.kind === 'monastery' && b.underConstruction) as MonasteryBuilding | undefined;
     if (!monastery) throw new Error('Monastery was not registered');
@@ -3905,6 +3933,9 @@ test('phase M: field rescue releases only the assigned monastery slot when two m
       get occupiedSlots() { return this.healSlots.filter(Boolean).length; },
       finishConstruction: () => {},
       damage: () => {},
+      // Тик-контракт Building: Economy.tick дергает оба метода каждый кадр.
+      tickMonasteryCollapse: () => {},
+      tickBurn: () => 0,
       releaseHealSlot(slot: number) {
         if (slot >= 0 && slot < this.healSlots.length) this.healSlots[slot] = null;
       },
@@ -3928,7 +3959,14 @@ test('phase M: field rescue releases only the assigned monastery slot when two m
     monk.healTarget = target;
     monk.healHeroPoint = null;
 
-    economy.pawnAI.updateCombat(monk, 1_000, scene.time.now + 1_000);
+    // Тик гарнизона — окно GARRISON.TICK_MS (150 мс): combatThink выдаёт
+    // полевому лечению ОКНО тика, а не переданный dtMs, поэтому один вызов
+    // лечит 8 HP/с × 0.15 = 1.2 HP, и порога 50% maxHP не хватает. Требовалось
+    // «спасение за один вызов» — тест базовой ветки всегда краснел. Крутим
+    // боевые тики, пока §B.7.2 не снимет 'bleeding' (§G.3).
+    for (let i = 0; i < 40 && target.state !== 'idle'; i++) {
+      economy.pawnAI.updateCombat(monk, 160, scene.time.now + 1_000 + i * 160);
+    }
     return {
       rescuedState: target.state,
       hp: target.hp,
@@ -4031,6 +4069,9 @@ test('phase M: tower does not grant succession, but monastery and archery do', a
       hp: 200, maxHp: 200, alpha: 1, alive: true, underConstruction: false,
       finishConstruction: () => {},
       damage: () => {},
+      // Тик-контракт Building: Economy.tick дергает оба метода каждый кадр.
+      tickMonasteryCollapse: () => {},
+      tickBurn: () => 0,
     });
     const tower = fixture('tower');
     economy.buildings.push(tower);
@@ -4096,6 +4137,9 @@ test('phase M: field healer does not bypass the wood cost for a pawn already adm
       healSlots: [target],
       finishConstruction: () => {},
       damage: () => {},
+      // Тик-контракт Building: Economy.tick дергает оба метода каждый кадр.
+      tickMonasteryCollapse: () => {},
+      tickBurn: () => 0,
       releaseHealSlot(slot: number) {
         if (slot >= 0 && slot < this.healSlots.length) this.healSlots[slot] = null;
       },

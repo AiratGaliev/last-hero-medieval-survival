@@ -44,6 +44,7 @@ import { analyticsIdentity } from '../../platform/player';
 import {
   consumeRunConfig, dailyChallengeSeedNumber, loadMetaState, rollMetaDay, nodeEffects, seasonDef,
   takeConsumables, applyRunToMeta, contractDef, contractScoreForRun, QUEST_POOL, markCodex, markCodexSeen,
+  grantSpeedupToken,
   heroSkinTint, buildingSkinTint, trailSkinTint, activeBanner, matchesPlayed,
   type RunModifiers, type NodeEffects, type SeasonModifier, type RunSummary,
   type QuestMetric,
@@ -712,13 +713,15 @@ export class GameScene extends Phaser.Scene {
       hireTimeMult: this.fx.hireTimeMult,
       veinYieldMult: this.fx.veinYieldMult * (this.seasonMod === 'gold_rush_world' ? 1.5 : 1),
       sheepYieldMult: this.fx.sheepYieldMult,
-      woodYieldMult: this.mods.ukaz === 'ukaz_drought' ? 0.7 : 1,
+      woodYieldMult: this.mods.ukaz === 'ukaz_drought' || this.seasonMod === 'chaos' ? 0.7 : 1,
       garrisonHpMult: this.consumableSet.has('cs_horn') ? 1.25 : 1,
       garrisonSlotsBonus: this.fx.garrisonSlotsBonus,
       barracksSlotsBonus: this.fx.barracksSlotsBonus,
       buildingHpMult: this.fx.buildingHpMult
         * (this.challengeMods.has('cm_stone') ? 1.3 : 1)
-        * (this.mods.ukaz === 'ukaz_fragile' ? 0.75 : 1),
+        // Резервный сезон «Хаос» (§H.18) повторяет эффекты «Засухи» (:716)
+        // и «Хрупкой инфраструктуры» — комбинация указов без нового кода.
+        * (this.mods.ukaz === 'ukaz_fragile' || this.seasonMod === 'chaos' ? 0.75 : 1),
       houseHpMult: this.fx.houseHpMult,
       healHpsBonus: this.fx.healHpsBonus,
       monkHpsBonus: this.fx.monkHpsBonus,
@@ -740,6 +743,10 @@ export class GameScene extends Phaser.Scene {
       this.economy.emit('change');
     }
     if (this.fx.startOre > 0) this.economy.resources.ore += this.fx.startOre;
+    // Благословение «Скорость» (A2): один бесплатный жетон ускорения на ран.
+    // Раньше жетон можно было выбрать в R4-оверлее и списать жетон благословения,
+    // а сам эффект нигде не применялся.
+    if (this.mods.blessing === 'bl_speedup_token') grantSpeedupToken();
     this.settlement = new Settlement(this, this.economy, {
       onFeed: (text, color) => this.hud?.feed(text, color),
       onDefeat: (cause) => this.onSettlementDefeat(cause),
@@ -2672,8 +2679,8 @@ private ordersUnlocked(): boolean {
       audio.play('boss');
       this.shakeCamera(300, 0.006);
       const cameraZoom = this.cameras.main.zoom;
-      this.cameras.main.zoomTo(Math.min(1.5, cameraZoom * 1.12), 240, 'Sine.Out');
-      this.time.delayedCall(800, () => this.cameras.main.zoomTo(cameraZoom, 260, 'Sine.Out'));
+      this.cameras.main.zoomTo(Math.min(1.5, cameraZoom * 1.12), 240, 'Sine.easeOut');
+      this.time.delayedCall(800, () => this.cameras.main.zoomTo(cameraZoom, 260, 'Sine.easeOut'));
       // Кинематографичный бит: time-freeze 0.8 с + краткий zoom (§H.13 №9, §E.6)
       this.hitstop(800, true);
       track('siege_start', { index: -1, profile: 'boss-phase2' });

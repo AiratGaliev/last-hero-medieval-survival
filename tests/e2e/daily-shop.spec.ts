@@ -203,8 +203,20 @@ async function readAdDay(page: Page): Promise<AdDay | null> {
   }, adDayStorageKey);
 }
 
-async function browserToday(page: Page): Promise<string> {
-  return page.evaluate(() => new Date(Date.now()).toISOString().slice(0, 10));
+async function liveOpsToday(page: Page): Promise<string> {
+  // Игра использует единый календарь live-ops Europe/Moscow (TZ §J.3/§H.17).
+  // Ожидание в тесте повторяет mskDayKey, иначе сравнение расходится в окне
+  // 21:00–24:00 UTC, когда московская дата уже наступила, а UTC — ещё нет.
+  return page.evaluate(() => {
+    const parts = new Intl.DateTimeFormat('en-US', {
+      timeZone: 'Europe/Moscow',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+    }).formatToParts(new Date());
+    const value = (type: string): string => parts.find((part) => part.type === type)?.value ?? '';
+    return `${value('year')}-${value('month')}-${value('day')}`;
+  });
 }
 
 async function eligibleSkinIds(page: Page): Promise<string[]> {
@@ -259,7 +271,7 @@ test('daily shop offers are valid, visible, marked in the catalogue, and paginat
   expect(rotation).not.toBeNull();
   if (!rotation) throw new Error('Daily rotation was not persisted');
 
-  expect(rotation.date).toBe(await browserToday(page));
+  expect(rotation.date).toBe(await liveOpsToday(page));
   expect(rotation.refreshed).toBe(false);
   expect(rotation.ids).toHaveLength(3);
   expect(new Set(rotation.ids).size).toBe(3);
@@ -408,14 +420,14 @@ test('expired rotation rolls over to today and resets the refresh flag', async (
   const rotation = await readRotation(page);
   expect(rotation).not.toBeNull();
   if (!rotation) throw new Error('Daily rotation was not recreated');
-  expect(rotation.date).toBe(await browserToday(page));
+  expect(rotation.date).toBe(await liveOpsToday(page));
   expect(rotation.refreshed).toBe(false);
   expect(rotation.ids).toHaveLength(3);
   expect(new Set(rotation.ids).size).toBe(3);
   expect(await sceneTexts(page)).toContain(refreshLabel('en', 'available'));
 });
 
-test('daily shop rotation uses UTC even when the browser is in a different timezone', async ({ browser }) => {
+test('daily shop rotation follows the Moscow live-ops calendar even when the device is ahead', async ({ browser }) => {
   const context = await browser.newContext({
     baseURL: 'http://127.0.0.1:3000',
     timezoneId: 'Pacific/Kiritimati',
@@ -423,10 +435,12 @@ test('daily shop rotation uses UTC even when the browser is in a different timez
   const page = await context.newPage();
 
   try {
-    // Pin Date.now near UTC midnight: Kiritimati is already on the next day.
-    // Phaser still uses its monotonic animation clock, so gameplay timers remain live.
+    // Pin 12:00 UTC: в Москве ещё 18-е (15:00 MSK), а на device (+14) уже 19-е.
+    // Ротация обязана следовать единому календарю live-ops, а не локальным
+    // часам устройства; Phaser keeps its monotonic animation clock, so
+    // gameplay timers remain live.
     await page.addInitScript(() => {
-      const fixedNow = Date.UTC(2026, 9, 18, 23, 30, 0);
+      const fixedNow = Date.UTC(2026, 9, 18, 12, 0, 0);
       Date.now = () => fixedNow;
     });
     await openShop(page, { language: 'en' });

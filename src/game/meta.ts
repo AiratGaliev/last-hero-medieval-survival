@@ -454,7 +454,7 @@ export const SEASON_DAYS = 14;
 /** Пропуск имеет собственный 30-дневный цикл (§J.6.3), не совпадающий с 14-дневной темой мира. */
 export const PASS_SEASON_DAYS = 30;
 const DAY_MS = 86_400_000;
-export type SeasonModifier = 'red_valley' | 'long_siege' | 'gold_rush_world' | 'ogre_return';
+export type SeasonModifier = 'red_valley' | 'long_siege' | 'gold_rush_world' | 'ogre_return' | 'chaos';
 
 export interface SeasonDef {
   id: number;
@@ -472,6 +472,27 @@ export const SEASONS: SeasonDef[] = [
   { id: 3, themeKey: 'season.3.name', modifier: 'ogre_return', modDescKey: 'season.3.desc', skinReward: 'skin_hero_lancer_black' },
 ];
 
+/**
+ * Резервный сезон «Хаос» (§H.18): комбинация указов «Засуха» + «Хрупкая
+ * инфраструктура» (§H.17) без нового кода — страховка от срыва расписания,
+ * если плановый сезон не готов к дате. В ротацию 14-дневных тем не входит;
+ * включается только вручную `overrideChaosSeason(true)`.
+ */
+export const CHAOS_SEASON: SeasonDef = {
+  id: 9,
+  themeKey: 'season.chaos.name',
+  modifier: 'chaos',
+  modDescKey: 'season.chaos.desc',
+  skinReward: '',
+};
+
+let chaosSeasonOverride = false;
+
+/** Включить/выключить резервный сезон «Хаос» (доступен только как страховка). */
+export function overrideChaosSeason(on: boolean): void {
+  chaosSeasonOverride = on;
+}
+
 export function seasonIndexFor(now = serverNow()): number {
   return Math.floor(now / (SEASON_DAYS * DAY_MS));
 }
@@ -482,6 +503,8 @@ export function passSeasonIndexFor(now = serverNow()): number {
 }
 
 export function seasonDef(index = seasonIndexFor()): SeasonDef {
+  // Резервный сезон (§H.18) целиком заменяет плановую тему, только пока включён.
+  if (chaosSeasonOverride) return CHAOS_SEASON;
   return SEASONS[((index % SEASONS.length) + SEASONS.length) % SEASONS.length];
 }
 
@@ -798,6 +821,13 @@ export function saveRunConfig(cfg: RunModifiers): void {
 /** Читает и погашает конфиг рана: повторный старт — уже обычный ран. */
 export function consumeRunConfig(): RunModifiers {
   const raw = loadJson<Partial<RunModifiers> | null>(RUN_KEY);
+  // Погашение конфига обязательно: без удаления ключа следующий ран
+  // (кнопка «ЕЩЁ РАЗ», «Заново» в паузе) молча унаследовал бы контракт,
+  // указ, благословение и режим испытания недели. Благословение при этом
+  // выдавалось бы повторно (жетон ускорения/стартовое дерево) без списания
+  // жетона благословения, а обычный ран с указом продолжал бы писать
+  // недельный рекорд вопреки принятой изоляции испытания (§H.18).
+  removeKey(RUN_KEY);
   const cfg: RunModifiers = {
     contract: null,
     ukaz: null,
@@ -1851,8 +1881,10 @@ export function applyRunToMeta(s: RunSummary): RunMetaResult {
   }
   // Косметика выдаётся только за пятый шаг (§H.18 / SeasonDef.skinReward).
   // Промежуточные вехи двигают прогресс, но не пытаются повторно выдать тот же скин.
-  if (st.season.claimed === SEASON_STEPS.length && !st.skins.owned.includes(seasonDef().skinReward)) {
-    const sd = seasonDef();
+  // Резервный сезон «Хаос» не выдаёт косметику (пустой skinReward).
+  const sd = seasonDef();
+  if (st.season.claimed === SEASON_STEPS.length && sd.skinReward
+      && !st.skins.owned.includes(sd.skinReward)) {
     grantSkin(st, sd.skinReward);
     res.seasonStepReward = sd.skinReward;
   }
@@ -2486,6 +2518,18 @@ export function spendSpeedupToken(): boolean {
   st.speedupTokens -= 1;
   // Списание подтверждается только после сохранения. Helper восстанавливает
   // локальный кэш и повторно ставит исходный снимок в облачную очередь при отказе.
+  return saveMetaStateOrRollback(st, before);
+}
+
+/**
+ * Начисление жетона ускорения — единственный источник благословения
+ * «Скорость» (A2 / §J.3 R4). Атомарно: без подтверждённой записи жетон не
+ * выдаётся, иначе игрок мог бы потом списать его при пустом складе.
+ */
+export function grantSpeedupToken(): boolean {
+  const st = rollMetaDay();
+  const before = structuredCloneSafe(st);
+  st.speedupTokens += 1;
   return saveMetaStateOrRollback(st, before);
 }
 

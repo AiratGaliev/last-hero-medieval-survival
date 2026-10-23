@@ -1,4 +1,5 @@
 import { serverNow } from '../platform/sdk';
+import { mskDayKey } from '../platform/calendar';
 import { loadJson, saveJson } from './storage';
 import { SKINS } from './meta';
 
@@ -17,9 +18,11 @@ const eligibleIds = (): string[] =>
     .map((skin) => skin.id);
 
 function dateKey(): string {
-  // serverNow() is an epoch timestamp; UTC keeps rotations identical in every
-  // browser timezone and prevents local timezone changes from resetting offers.
-  return new Date(serverNow()).toISOString().slice(0, 10);
+  // Единый календарь live-ops (TZ §J.3/§H.17): ротация лавки и дневные лимиты
+  // рекламы (tss-ads-day, mskDayKey) обязаны переключаться в один и тот же миг
+  // 00:00 Europe/Moscow. Раньше дата бралась по UTC (см. дефект daily-shop),
+  // и в окне 21:00–24:00 UTC обновлённая лавка расходилась с лимитом рекламы.
+  return mskDayKey(serverNow());
 }
 
 function hashSeed(value: string): number {

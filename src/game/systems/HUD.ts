@@ -762,27 +762,30 @@ private bottomStack(): { iconsY: number; speedupY: number; feedY: number } {
         key: 'repairCurrency', kind: 'currency', group: 0,
         label: currencyLabel('repair', repairTarget),
         enabled: repairTarget && (hasSpeedupToken || walletBalance >= SPEEDUP_COST.repair),
-        click: this.speedupHandlers.repairCurrency,
+        // Кнопки создаются один раз и захватывают onClick из def навсегда,
+        // поэтому обработчик должен читаться из таблицы В момент клика:
+        // setSpeedupHandlers после создания кнопок иначе игнорируется.
+        click: (): void => this.speedupHandlers.repairCurrency(),
       },
       {
         key: 'repairAd', kind: 'ad', group: 0,
         label: !repairTarget ? t('speedup.noTargetShort')
           : repairAdAvailable ? t('speedup.adButton') : t('speedup.adUnavailableShort'),
         enabled: repairTarget && repairAdAvailable,
-        click: this.speedupHandlers.repairAd,
+        click: (): void => this.speedupHandlers.repairAd(),
       },
       {
         key: 'healCurrency', kind: 'currency', group: 1,
         label: currencyLabel('heal', healTarget),
         enabled: healTarget && (hasSpeedupToken || walletBalance >= SPEEDUP_COST.heal),
-        click: this.speedupHandlers.healCurrency,
+        click: (): void => this.speedupHandlers.healCurrency(),
       },
       {
         key: 'healAd', kind: 'ad', group: 1,
         label: !healTarget ? t('speedup.noTargetShort')
           : healAdAvailable ? t('speedup.adButton') : t('speedup.adUnavailableShort'),
         enabled: healTarget && healAdAvailable,
-        click: this.speedupHandlers.healAd,
+        click: (): void => this.speedupHandlers.healAd(),
       },
     ] as const;
 
