@@ -436,8 +436,7 @@ export const ENEMIES: Record<EnemyKind, EnemyDef> = {
   'bomb-fish': {
     // Рыба плюётся бомбой на дистанции; взрыв смерти сохраняет цепную реакцию.
     kind: 'bomb-fish', name: t('enemy.bomb-fish.name'), frameW: 192, scale: 0.5,
-    // Листы idle/run/shoot мордой влево — как у остальных морских рыб.
-    body: { cx: 92, cy: 118, r: 18 }, groundY: 134, facesRight: false,
+    body: { cx: 92, cy: 118, r: 18 }, groundY: 134,
     hp: 18, speed: 108, damage: 4, xp: 2, gem: 'gem-green',
     shotDmg: 14, shotRadius: 110,
     buildingDmg: 8,
