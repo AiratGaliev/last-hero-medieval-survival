@@ -1,5 +1,9 @@
 import { defineConfig } from 'vite';
 
+// Открытый bind и отключённая проверка Host нужны только доверенной песочнице.
+// В обычной разработке оставляем безопасный локальный bind и встроенный allowlist.
+const sandboxServer = process.env.TSS_SANDBOX_SERVER === '1';
+
 /**
  * Игра публикуется на Yandex Games архивом: платформа отдаёт файлы из своего
  * CDN по подкаталогу, поэтому все ссылки в собранном index.html должны быть
@@ -12,12 +16,14 @@ export default defineConfig({
   server: {
     port: 3000,
     strictPort: true,
-    // Слушаем все интерфейсы (IPv4+IPv6): шлюз песочницы проксирует на
-    // localhost:3000, а по умолчанию Vite биндится только на [::1].
-    host: true,
-    // В песочнице dev-сервер доступен через шлюз-прокси с чужим Host-заголовком,
-    // без этого Vite отвечает «Blocked request» (403). На сборку не влияет.
-    allowedHosts: true,
+    ...(sandboxServer
+      ? {
+          // Только в доверенной изолированной песочнице, где прокси приносит
+          // внешний Host: включаем доступ через все интерфейсы и отключаем allowlist.
+          host: true as const,
+          allowedHosts: true as const,
+        }
+      : { host: '127.0.0.1' as const }),
   },
   preview: {
     port: 3000,
