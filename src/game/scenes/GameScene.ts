@@ -225,7 +225,6 @@ export class GameScene extends Phaser.Scene {
   private lastMove = { x: 1, y: 0 };
   private lastHudUpdate = 0;
   private lastSettleHud = 0;
-  private lastChangeHud = 0;
   private lastDespawn = 0;
   private lastDieSound = 0;
   private lastIndicatorUpdate = 0;
@@ -463,7 +462,6 @@ export class GameScene extends Phaser.Scene {
     this.shamansSlain = 0;
     this.extinctAt = null;
     this.lastSettleHud = 0;
-    this.lastChangeHud = 0;
     this.weaponStats.clear();
     this.ambientRect?.destroy();
     this.ambientRect = null;
@@ -1361,10 +1359,6 @@ export class GameScene extends Phaser.Scene {
 
     // ---- Подписки HUD на экономику (обновление по событию, §B.8) ----
     this.economy.on('change', () => {
-      // Лечение в обители шлёт 'change' каждый кадр (древесина списывается
-      // по 0.013, §G.3) — HUD перерисовываем не чаще 100 мс.
-      if (this.time.now - this.lastChangeHud < 100) return;
-      this.lastChangeHud = this.time.now;
       this.hud.updateResources(this.economy.resources);
       this.hud.updateSettlement(
         this.settlement.castle.hp / Math.max(1, this.settlement.castle.maxHp),
