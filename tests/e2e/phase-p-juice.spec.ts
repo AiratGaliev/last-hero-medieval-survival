@@ -142,7 +142,13 @@ test('phase P: premium shop tabs stay hidden until the fifth finished match', as
     state.matchesPlayed = 0;
     meta.saveMetaState(state);
 
-    game.scene.launch('Shop');
+    // window.__tss — Phaser.Game; у SceneManager нет launch(). Запускаем лавку
+    // через ScenePlugin существующей сцены, как это делает реальный HUD-переход.
+    const menu = game.scene.getScene('Menu') as {
+      scene: { launch(key: string): void };
+    } | null;
+    if (!menu) throw new Error('Menu scene is unavailable');
+    menu.scene.launch('Shop');
     const shop = game.scene.getScene('Shop') as {
       tab: string;
       availableTabs: () => string[];
@@ -231,7 +237,7 @@ test('phase P: building completion raises the construction flag', async ({ page 
     return typeof scene.effects?.buildFlag === 'function';
   }), { timeout: startupTimeout }).toBe(true);
 
-  const calls = await page.evaluate(() => {
+  const calls = await page.evaluate(async () => {
     const game = (window as unknown as {
       __tss?: { scene: { getScene(key: string): unknown } };
     }).__tss;
@@ -471,7 +477,9 @@ test('phase P: slow-motion restores Phaser time scales and siege warning arms th
     };
     scene.hud.showSiegeVignette(2_000);
     const vignetteUntil = scene.hud.siegeVignetteUntil;
-    scene.applyJuiceSlowMotion(300, 0.5);
+    // §H.13: не-essential time-effects запрещены на low-качестве (мобильные),
+    // поэтому проверяем essential-путь — он разрешён на всех профилях.
+    scene.applyJuiceSlowMotion(300, 0.5, true);
     return {
       scales,
       changed: {
@@ -570,17 +578,27 @@ test('phase P: victory announcement reveals letters and completes the full local
     scene.hud.announceTypewriter('VICTORY', '#ffd700', 60);
   });
 
-  const visibleText = () => page.evaluate(() => {
+  const reveal = await page.evaluate(async () => {
+    const sleep = (ms: number) => new Promise((res) => setTimeout(res, ms as number));
     const game = (window as unknown as { __tss?: { scene: { getScene(key: string): unknown } } }).__tss;
-    if (!game) return '';
-    return (game.scene.getScene('Game') as { hud: { announceText: { text: string } } }).hud.announceText.text;
+    const scene = game?.scene.getScene('Game') as { hud?: { announceText?: { text: string } } } | undefined;
+    if (!scene?.hud) throw new Error('HUD is unavailable inside Game scene');
+    const states: string[] = [];
+    let last = '';
+    // Тайпрайтер тикает по игровым дельтам: под нагрузкой Phaser клампит дельту
+    // (мин. FPS по умолчанию), поэтому wall-дедлайны делают тест флейковым.
+    // Снимаем все состояния вывода до полного текста и проверяем постфактум.
+    for (let i = 0; i < 150; i++) {
+      const t = scene.hud.announceText.text;
+      if (t && t !== last) { states.push(t); last = t; }
+      if (t === 'VICTORY') break;
+      await sleep(25);
+    }
+    return { states, last };
   });
-  await page.waitForTimeout(100);
-  const partial = await visibleText();
-  expect(partial.length).toBeGreaterThan(0);
-  expect(partial.length).toBeLessThan('VICTORY'.length);
-
-  await expect.poll(visibleText, { timeout: 1_000 }).toBe('VICTORY');
+  // Печать идёт постепенно, а не мгновенным сдвигом; итог — полный текст.
+  expect(reveal.states.length).toBeGreaterThanOrEqual(2);
+  expect(reveal.last).toBe('VICTORY');
 });
 
 

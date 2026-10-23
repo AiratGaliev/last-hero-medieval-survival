@@ -242,6 +242,29 @@ test('speedup wallet and rewarded actions are separate clickable controls', asyn
     const runtime = (window as Window & { __tss?: { scene: { getScene(key: string): unknown } } }).__tss;
     return !((runtime?.scene.getScene('Game') as { hintOverlayPaused?: boolean })?.hintOverlayPaused ?? true);
   }), { timeout: 10_000 }).toBe(true);
+  // Реальная цель ремонта: без repairJobs у активной игры кнопка через ~0.7 c
+  // per-frame updateSpeedups сбрасывается в «NONE» (enabled=false), и клик
+  // между замером и нажатием молча терялся. В свежем ране из построек есть
+  // только замок, поэтому job якорим на него: job без пешки не исполняется
+  // и не удаляется (cleanup спит до прогресса пешки) — см. Economy.tick.
+  await page.evaluate(() => {
+    const runtime = (window as unknown as { __tss?: { scene: { getScene(key: string): unknown } } }).__tss;
+    const scene = runtime?.scene.getScene('Game') as unknown as {
+      // Свойство сцены называется economy; eco — поле систем (Speedup/PawnAI).
+      economy?: {
+        buildings?: Array<{ kind?: string; alive?: boolean }>;
+        repairJobs?: Array<Record<string, unknown>>;
+      };
+    };
+    const eco = scene?.economy;
+    const castle = eco?.buildings?.find((b) => b.kind === 'castle' && b.alive);
+    if (!eco || !castle || !Array.isArray(eco.repairJobs)) {
+      throw new Error(`economy/castle unavailable: eco=${eco ? 1 : 0} buildings=${(eco?.buildings ?? []).map((b) => b.kind).join(',')}`);
+    }
+    if (!eco.repairJobs.some((job) => job.building === castle)) {
+      eco.repairJobs.push({ building: castle, progress: 0, pawn: null, rebuild: false });
+    }
+  });
 
   const expected = await page.evaluate(() => {
     type ButtonRuntime = {
@@ -307,6 +330,17 @@ test('speedup wallet and rewarded actions are separate clickable controls', asyn
   expect(Math.abs(expected.imageCenter.x - expected.hitCenter.x)).toBeLessThan(2);
   expect(Math.abs(expected.imageCenter.y - expected.hitCenter.y)).toBeLessThan(2);
 
+  // Phaser кэширует bounding rect канвы и обновляет его в step() не чаще
+  // 500 мс. #boot — статический блок на 100dvh, канва создана ниже него:
+  // после удаления boot канва переносится на top=0, но кэш ещё хранит
+  // старый top, и клик по CSS-координатам уходит мимо (pointer.y < 0).
+  // Перед кликом принудительно обновляем кэш (§R4-перф: реальный pointer).
+  await page.evaluate(() => {
+    const runtime = (window as Window & { __tss?: { scene: { getScene(key: string): unknown } } }).__tss;
+    const scene = runtime?.scene.getScene('Game') as { scale: { refresh(): void } } | undefined;
+    if (!scene) throw new Error('Phaser runtime is unavailable');
+    scene.scale.refresh();
+  });
   await page.mouse.click(expected.imageCenter.x, expected.imageCenter.y);
   await expect.poll(() => page.evaluate(() => (
     (window as Window & { __phaseOSpeedupCalls?: string[] }).__phaseOSpeedupCalls ?? []
