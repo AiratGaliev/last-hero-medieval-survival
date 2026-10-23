@@ -7,7 +7,6 @@ import { t, num, clock, type TranslationKey, type TranslateParams } from '../../
 import { FTUE_MATCH_GATE } from '../data';
 import { track } from '../../platform/analytics';
 import { placementAvailable, showPlacementRewarded, showStickyBanner, refundPlacement } from '../../platform/ads';
-import { purchaseSku } from '../../platform/payments';
 import {
   bonusAvailable,
   dailyBonusPreviewIndex,
@@ -22,6 +21,8 @@ import {
   codexEntrySeen,
   codexProgress,
   convertCrownsToGold,
+  buyPassWithCrowns,
+  PASS_CROWNS_PRICE,
   CHAINS,
   DAILY_BONUS,
   rerollQuestSlot,
@@ -866,9 +867,20 @@ export class MetaScene extends Phaser.Scene {
     cy += 26;
     if (!st.pass.premium) {
       if (seasonPassUnlocked()) {
-        const buyPassBtn = makeButton(this, this.px, cy, 260, 44, t('store.pass'), () => {
-          void this.buyPass();
-        }, 'red', 12);
+        const buyPassBtn = makeButton(this, this.px, cy, 260, 44,
+          t('pass.buyCrowns', { v: PASS_CROWNS_PRICE }), () => {
+            const result = buyPassWithCrowns();
+            if (result.ok) {
+              audio.play('levelup');
+              this.renderTab();
+            } else if (result.reason === 'poor') {
+              this.flashNote(t('pass.crownsPoor'));
+            } else if (result.reason === 'storage') {
+              this.flashNote(t('meta.runSaveFailed'));
+            } else {
+              this.flashNote(result.reason === 'locked' ? t('store.locked') : t('store.fail'));
+            }
+          }, 'red', 11);
         box.add([buyPassBtn.img, buyPassBtn.txt, buyPassBtn.hit]);
         this.contentButtons.push(buyPassBtn);
       } else {
@@ -916,14 +928,6 @@ export class MetaScene extends Phaser.Scene {
     }
     if (rewards.length > 0) {
       this.renderRows(box, rewards, cy + 12, y1 - 4, 32);
-    }
-  }
-
-  private async buyPass(): Promise<void> {
-    const res = await purchaseSku('pass_chronicle');
-    if (res.ok) {
-      audio.play('levelup');
-      this.renderTab();
     }
   }
 

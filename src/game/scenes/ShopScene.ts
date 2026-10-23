@@ -18,6 +18,8 @@ import {
   ownedBanners,
   passReward,
   convertCrownsToGold,
+  buyPassWithCrowns,
+  PASS_CROWNS_PRICE,
   SKINS,
   BANNERS,
   CONSUMABLES,
@@ -1028,9 +1030,21 @@ export class ShopScene extends Phaser.Scene {
 
     if (!st.pass.premium) {
       if (seasonPassUnlocked()) {
-        const bh = tight ? 40 : 44;
-        const buy = makeButton(this, this.px, y + bh / 2, 280, bh, t('store.pass'),
-          () => { void this.buySku('pass_chronicle'); }, 'blue', 13, { stopPropagation: true });
+        const bh = tight ? 38 : 42;
+        const buy = makeButton(this, this.px, y + bh / 2, 280, bh,
+          t('pass.buyCrowns', { v: PASS_CROWNS_PRICE }), () => {
+            const result = buyPassWithCrowns();
+            if (result.ok) {
+              audio.play('levelup');
+              this.renderTab();
+            } else if (result.reason === 'poor') {
+              this.toast(t('pass.crownsPoor'));
+            } else if (result.reason === 'storage') {
+              this.toast(t('meta.runSaveFailed'));
+            } else {
+              this.toast(result.reason === 'locked' ? t('store.locked') : t('store.fail'));
+            }
+          }, 'blue', 11, { stopPropagation: true });
         box.add([buy.img, buy.txt, buy.hit]);
         this.contentButtons.push(buy);
         y += bh + (tight ? 8 : 12);

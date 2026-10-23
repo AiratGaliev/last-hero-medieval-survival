@@ -165,6 +165,10 @@ export class BootScene extends Phaser.Scene {
     this.load.spritesheet('proj-bone', asset('tiny-swords', 'enemies/gnoll/gnoll-bone.png'), { frameWidth: 64, frameHeight: 64 });
     this.load.spritesheet('proj-hex', asset('tiny-swords', 'enemies/goblin-raiders/hex-shaman/hex-shaman-projectile.png'), { frameWidth: 128, frameHeight: 128 });
     this.load.image('proj-harpoon', asset('tiny-swords', 'enemies/pirate-fish/harpoon-shark/harpoon.png'));
+    // Рыба-бомба использует собственные ассеты снаряда, а не динамит героя.
+    this.load.spritesheet('proj-bomb', asset('tiny-swords', 'enemies/pirate-fish/bomb/bomb-spinning.png'), { frameWidth: 64, frameHeight: 64 });
+    this.load.spritesheet('proj-bomb-fuse', asset('tiny-swords', 'enemies/pirate-fish/bomb/bomb-fuse-lit.png'), { frameWidth: 64, frameHeight: 64 });
+    this.load.spritesheet('proj-bomb-idle', asset('tiny-swords', 'enemies/pirate-fish/bomb/bomb-idle.png'), { frameWidth: 64, frameHeight: 64 });
     this.load.spritesheet('fx-hex', asset('tiny-swords', 'enemies/goblin-raiders/hex-shaman/hex-shaman-explosion.png'), { frameWidth: 128, frameHeight: 128 });
     // Аватары существ для кино-заставок элит и босса (HUD.bossIntro)
     for (const [kind, file] of CREATURE_FACES) {
@@ -504,9 +508,23 @@ export class BootScene extends Phaser.Scene {
         }
       }
     }
-    // Снаряды врагов и FX взрыва шара
+    // Снаряды врагов и FX: кадры бомб берём из фактического Texture.frameTotal,
+    // чтобы листы с разной длиной не ссылались на несуществующие кадры.
     this.sheet('proj-bone-spin', 'proj-bone', 4, 10);
     this.sheet('proj-hex-orb', 'proj-hex', 3, 8);
+    for (const [key, textureKey, frameRate, repeat] of [
+      ['proj-bomb-spin', 'proj-bomb', 10, -1],
+      ['proj-bomb-fuse-lit', 'proj-bomb-fuse', 12, 0],
+      ['proj-bomb-idle', 'proj-bomb-idle', 8, 0],
+    ] as const) {
+      const lastFrame = Math.max(0, this.textures.get(textureKey).frameTotal - 2);
+      this.anims.create({
+        key,
+        frames: this.anims.generateFrameNumbers(textureKey, { start: 0, end: lastFrame }),
+        frameRate,
+        repeat,
+      });
+    }
     this.once('fx-hex', 'fx-hex', 9, 14);
     // Эффекты
     this.once('fx-explosion1', 'fx-explosion1', 8, 16);

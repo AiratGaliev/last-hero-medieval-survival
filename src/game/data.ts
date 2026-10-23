@@ -380,6 +380,9 @@ export interface EnemyDef {
   isBoss?: boolean;
   explodeDmg?: number;   // для рыбы-бомбы
   explodeRadius?: number;
+  /** Урон и радиус выплюнутой бомбы; отдельно от цепного взрыва при смерти. */
+  shotDmg?: number;
+  shotRadius?: number;
   armorFront?: number;   // Доля входящего урона, которую гасит защита вида
   auraSpeed?: number;    // Шаман: радиус ауры ускорения союзников
   /** Урон по зданиям за удар (TZ §E.4.1, вариант A ×0.65) — НЕ производное от damage */
@@ -431,10 +434,12 @@ export const ENEMIES: Record<EnemyKind, EnemyDef> = {
     buildingDmg: 1.5,   // 1 HP/с обычной атаки; отдельный осадный рывок — 8 HP в окне
   },
   'bomb-fish': {
-    // Рыба-бомба: камикадзе — разгоняется, мигает и взрывается
+    // Рыба плюётся бомбой на дистанции; взрыв смерти сохраняет цепную реакцию.
     kind: 'bomb-fish', name: t('enemy.bomb-fish.name'), frameW: 192, scale: 0.5,
     body: { cx: 92, cy: 118, r: 18 }, groundY: 134,
     hp: 18, speed: 108, damage: 4, xp: 2, gem: 'gem-green',
+    shotDmg: 14, shotRadius: 110,
+    buildingDmg: 8,
     explodeDmg: 24, explodeRadius: 150,
   },
   // Резервный набор раунда 2: эти существа могут входить в ежедневный пул.
