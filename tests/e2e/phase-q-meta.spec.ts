@@ -392,6 +392,13 @@ test('main menu exposes daily quest completion ratio', async ({ page }) => {
   await page.goto('/?lang=en&ysdk=mock');
   await expect(page.locator('#game canvas')).toBeVisible({ timeout: startupTimeout });
   await expect(page.locator('#boot')).toHaveCount(0, { timeout: startupTimeout });
+  // Меню строит ряд навигации асинхронно относительно исчезновения boot:
+  // без ожидания активности Menu тест читал пустой список лейблов (флейк).
+  await expect.poll(() => page.evaluate(() =>
+    (window as unknown as {
+      __tss?: { scene: { isActive(key: string): boolean } };
+    }).__tss?.scene.isActive('Menu') ?? false,
+  ), { timeout: startupTimeout }).toBe(true);
 
   const labels = await page.evaluate(() => {
     const game = (window as unknown as {
@@ -418,9 +425,15 @@ test('game over always shows daily quest progress even when this run completes n
 
   await page.evaluate(() => {
     const game = (window as unknown as {
-      __tss?: { scene: { launch: (key: string, payload?: unknown) => void } };
+      __tss?: { scene: {
+        getScene: (key: string) => { scene: { launch: (key: string, payload?: unknown) => void } };
+      } };
     }).__tss;
-    game?.scene.launch('GameOver', {
+    if (!game) throw new Error('Phaser runtime is unavailable');
+    // Phaser: сцену поверх запускает ScenePlugin активной сцены — у
+    // SceneManager (game.scene) метода launch() нет.
+    const menu = game.scene.getScene('Menu');
+    menu?.scene.launch('GameOver', {
       stats: {
         victory: false,
         time: 120,
@@ -712,9 +725,15 @@ test('orders tab starts a weekly challenge with the selected king order', async 
 
   await page.evaluate(() => {
     const runtime = (window as Window & {
-      __tss?: { scene: { launch: (key: string, payload?: unknown) => void } };
+      __tss?: { scene: {
+        getScene: (key: string) => { scene: { launch: (key: string, payload?: unknown) => void } };
+      } };
     }).__tss;
-    runtime?.scene.launch('Meta', { tab: 'orders' });
+    if (!runtime) throw new Error('Phaser runtime is unavailable');
+    // Phaser: сцену поверх запускает ScenePlugin активной сцены — у
+    // SceneManager (game.scene) метода launch() нет.
+    const menu = runtime.scene.getScene('Menu');
+    menu?.scene.launch('Meta', { tab: 'orders' });
   });
   await expect.poll(() => page.evaluate(() => {
     const runtime = (window as Window & {
@@ -741,7 +760,11 @@ test('orders tab starts a weekly challenge with the selected king order', async 
   expect(labels).toContain('WEEKLY RUN');
   expect(labels).toContain('Best: 0');
 
-  await page.evaluate(() => {
+  await page.evaluate(async () => {
+    const meta = await import('/src/game/meta.ts') as {
+      loadMetaPreferences(): { ukaz: string | null };
+      saveMetaPreferences(p: { ukaz: string | null }): void;
+    };
     const runtime = (window as Window & {
       __tss?: { scene: { getScene: (key: string) => unknown } };
     }).__tss;
@@ -749,7 +772,27 @@ test('orders tab starts a weekly challenge with the selected king order', async 
       startWeeklyChallengeFromMeta: () => void;
     } | undefined;
     if (!menu) throw new Error('Menu scene is unavailable');
+    // Выбор королевского указа «Орда» — то же действие, что клик по строке
+    // в вкладке «Указы» (§H.9): startWeeklyChallengeFromMeta() без активного
+    // указа игнорирует вызов, и матч никогда не стартует.
+    meta.saveMetaPreferences({ ...meta.loadMetaPreferences(), ukaz: 'ukaz_horde' });
     menu.startWeeklyChallengeFromMeta();
+    // startRun() при доступной рекламе открывает R4-оверлей благословения:
+    // матч стартует только после выбора/пропуска. Эмулируем кнопку
+    // «Continue without»: клик по hit-зоне (кнопки оверлея лежат в
+    // `overlayExtras`, порядок img→txt→hit — hit сосед справа от текста).
+    // makeButton вешает действие на 'pointerup' и учитывает его только после
+    // 'pointerdown' (holding), поэтому эмулируем оба события (§I.6).
+    const menuRow = runtime?.scene.getScene('Menu') as {
+      overlayExtras?: Array<Record<string, unknown>>;
+    } | undefined;
+    const extras = menuRow?.overlayExtras ?? [];
+    const skipIdx = extras.findIndex((item) => typeof item.text === 'string'
+      && (item.text === 'Continue without' || item.text === 'Skip'));
+    const hit = extras[skipIdx + 1] as { emit(name: string, e?: unknown): void } | undefined;
+    if (skipIdx < 0 || !hit) throw new Error('Blessing skip button is unavailable');
+    hit.emit('pointerdown');
+    hit.emit('pointerup');
   });
 
   await expect.poll(() => page.evaluate(() => {
@@ -1062,19 +1105,26 @@ test('endless wave milestone rewards are granted once when a new record passes e
       challengeMods: [], blessing: null, consumables: [],
     };
 
+    // loadMetaState() отдаёт живой cached-объект, и applyRunToMeta мутрует
+    // его на месте (rollMetaDay без календарного сдвига не клонирует).
+    // Баланс снимаем сразу после каждого рана — иначе все срезы показали
+    // бы финальные 42 короны.
     const first = meta.applyRunToMeta({ ...base, wave: 10 });
-    const afterFirst = meta.loadMetaState();
+    const afterFirst = { crowns: meta.loadMetaState().crowns };
     const second = meta.applyRunToMeta({ ...base, wave: 20 });
-    const afterSecond = meta.loadMetaState();
+    const afterSecond = { crowns: meta.loadMetaState().crowns };
     const third = meta.applyRunToMeta({ ...base, wave: 30 });
-    const afterThird = meta.loadMetaState();
+    const afterThird = { crowns: meta.loadMetaState().crowns };
     const repeat = meta.applyRunToMeta({ ...base, wave: 30 });
-    const afterRepeat = meta.loadMetaState();
+    const afterRepeat = {
+      crowns: meta.loadMetaState().crowns,
+      bestWave: meta.loadMetaState().endlessBestWave,
+    };
 
     return {
       awards: [first.endlessWaveCrowns, second.endlessWaveCrowns, third.endlessWaveCrowns, repeat.endlessWaveCrowns],
       balances: [afterFirst.crowns, afterSecond.crowns, afterThird.crowns, afterRepeat.crowns],
-      bestWave: afterRepeat.endlessBestWave,
+      bestWave: afterRepeat.bestWave,
     };
   });
 
@@ -1082,7 +1132,6 @@ test('endless wave milestone rewards are granted once when a new record passes e
   expect(outcome.balances).toEqual([12, 22, 42, 42]);
   expect(outcome.bestWave).toBe(30);
 });
-
 test('weekly chronicle counts a completed run once when it unlocks an achievement-chain tier', async ({ page }) => {
   await page.goto('/?lang=en&ysdk=mock');
   await expect(page.locator('#game canvas')).toBeVisible({ timeout: startupTimeout });
@@ -1411,22 +1460,25 @@ test('daily quest reroll rejects completed tasks and invalid slots without consu
     state.quests.rerolls = 0;
     meta.saveMetaState(state);
 
+    // loadMetaState() отдаёт живой cached-объект, мутируемый через
+    // rollMetaDay на месте: счётчик рероллов снимаем сразу после каждого
+    // вызова, иначе все срезы увидели бы финальное значение.
     const completed = meta.rerollQuestSlot(0);
-    const afterCompleted = meta.loadMetaState();
+    const rerollsAfterCompleted = meta.loadMetaState().quests.rerolls;
     const fractional = meta.rerollQuestSlot(1.5);
-    const afterFractional = meta.loadMetaState();
+    const rerollsAfterFractional = meta.loadMetaState().quests.rerolls;
     const valid = meta.rerollQuestSlot(1);
-    const afterValid = meta.loadMetaState();
+    const validSnapshot = meta.loadMetaState();
 
     return {
       completedReason: completed.reason,
-      completedSlotStable: afterCompleted.quests.ids[0] === 'q_new_house',
-      rerollsAfterCompleted: afterCompleted.quests.rerolls,
+      completedSlotStable: validSnapshot.quests.ids[0] === 'q_new_house',
+      rerollsAfterCompleted,
       fractionalReason: fractional.reason,
-      rerollsAfterFractional: afterFractional.quests.rerolls,
-      validRerollApplied: valid.ok && afterValid.quests.ids[1] !== 'q_shield_wall',
-      rerollsAfterValid: afterValid.quests.rerolls,
-      completedRewardHistoryRetained: afterValid.quests.done.includes('q_new_house'),
+      rerollsAfterFractional,
+      validRerollApplied: valid.ok && validSnapshot.quests.ids[1] !== 'q_shield_wall',
+      rerollsAfterValid: validSnapshot.quests.rerolls,
+      completedRewardHistoryRetained: validSnapshot.quests.done.includes('q_new_house'),
     };
   });
 
@@ -1493,21 +1545,40 @@ test('first-house daily quest requires a build strictly before 2:00', async ({ p
     const run = (firstHouseMin: number) =>
       meta.applyRunToMeta({ ...base, firstHouseMin });
 
+    // loadMetaState() отдаёт живой cached-объект, мутируемый через
+    // rollMetaDay на месте: done/прогресс/славу снимаем сразу после
+    // каждого рана, иначе все срезы увидели бы финальное состояние.
     run(2.99);
-    const after259 = meta.loadMetaState();
+    const after259 = {
+      done: meta.loadMetaState().quests.done.includes('q_first_house'),
+      progress: meta.loadMetaState().quests.progress.q_first_house,
+      glory: meta.loadMetaState().glory,
+    };
     run(2.0);
-    const after200 = meta.loadMetaState();
+    const after200 = {
+      done: meta.loadMetaState().quests.done.includes('q_first_house'),
+      progress: meta.loadMetaState().quests.progress.q_first_house,
+      glory: meta.loadMetaState().glory,
+    };
     run(1.99);
-    const after159 = meta.loadMetaState();
+    const after159 = {
+      done: meta.loadMetaState().quests.done.includes('q_first_house'),
+      progress: meta.loadMetaState().quests.progress.q_first_house,
+      glory: meta.loadMetaState().glory,
+    };
 
     return {
-      doneAt259: after259.quests.done.includes('q_first_house'),
-      progressAt259: after259.quests.progress.q_first_house,
-      doneAt200: after200.quests.done.includes('q_first_house'),
-      progressAt200: after200.quests.progress.q_first_house,
-      doneAt159: after159.quests.done.includes('q_first_house'),
-      progressAt159: after159.quests.progress.q_first_house,
-      rewardAppliedOnce: after159.glory === initialGlory + 35,
+      doneAt259: after259.done,
+      progressAt259: after259.progress,
+      doneAt200: after200.done,
+      progressAt200: after200.progress,
+      doneAt159: after159.done,
+      progressAt159: after159.progress,
+      // Награда (+35 славы) начисляется строго один раз — при первом
+      // успешном ране (1.99), два «неуспешных» рана славу не меняют.
+      rewardAppliedOnce: after259.glory === initialGlory
+        && after200.glory === initialGlory
+        && after159.glory === initialGlory + 35,
     };
   });
 
@@ -1925,22 +1996,40 @@ test('meta purchases and daily rewards roll back when storage rejects a write', 
       originalSetItem.call(this, key, value);
     };
 
+    // loadMetaState() отдаёт живой cached-объект, который rollback-хелперы
+    // мутируют на месте: состояние снимаем сразу после каждого шага,
+    // иначе все срезы увидели бы финальный (после всех операций) снимок.
+    let bonusStreak: number;
+    let bonusLast: string;
+    let finalCrowns: number;
+    let finalCrownConvertCount: number;
     const activeSkinSaved = meta.setActiveSkin('hero', 'skin_hero_monk_red');
-    const afterSkin = meta.loadMetaState();
+    const afterSkin = { hero: meta.loadMetaState().skins.hero };
     meta.markCodexSeen('boss_ogre');
-    const afterCodex = meta.loadMetaState();
+    const afterCodex = { seen: meta.loadMetaState().codexSeen.boss_ogre === true };
     const speedupSpent = meta.spendSpeedupToken();
-    const afterSpeedup = meta.loadMetaState();
+    const afterSpeedup = { tokens: meta.loadMetaState().speedupTokens };
     const node = meta.buyNode(meta.TREE_NODES[0]!.id);
-    const afterNode = meta.loadMetaState();
+    const afterNode = {
+      glory: meta.loadMetaState().glory,
+      owned: meta.loadMetaState().nodes.length > 0,
+    };
     const glorySaved = meta.addGlory(25);
-    const afterGlory = meta.loadMetaState();
+    const afterGlory = { balance: meta.loadMetaState().glory };
     const consumablesSaved = meta.takeConsumables(['cs_horseshoe']);
-    const afterConsumables = meta.loadMetaState();
+    const afterConsumables = { horseshoe: meta.loadMetaState().consumables.cs_horseshoe };
     const bonus = meta.claimDailyBonus();
-    const afterBonus = meta.loadMetaState();
+    {
+      const bonusSnap = meta.loadMetaState();
+      bonusStreak = bonusSnap.dailyBonus.streak;
+      bonusLast = bonusSnap.dailyBonus.last;
+    }
     const conversion = meta.convertCrownsToGold();
-    const finalState = meta.loadMetaState();
+    {
+      const snap = meta.loadMetaState();
+      finalCrowns = snap.crowns;
+      finalCrownConvertCount = snap.crownConvert.count;
+    }
     Storage.prototype.setItem = originalSetItem;
 
     // Метаснимок записывается, но начисление отдельного кошелька может завершиться ошибкой.
@@ -1958,7 +2047,13 @@ test('meta purchases and daily rewards roll back when storage rejects a write', 
       originalSetItem.call(this, key, value);
     };
     const walletBonus = meta.claimDailyBonus();
-    const afterWalletBonus = meta.loadMetaState();
+    let walletBonusStreak: number;
+    let walletBonusLast: string;
+    {
+      const snap = meta.loadMetaState();
+      walletBonusStreak = snap.dailyBonus.streak;
+      walletBonusLast = snap.dailyBonus.last;
+    }
     const walletAfter = shop.loadShop().balance;
     Storage.prototype.setItem = originalSetItem;
 
@@ -1974,35 +2069,41 @@ test('meta purchases and daily rewards roll back when storage rejects a write', 
       originalSetItem.call(this, key, value);
     };
     const passPurchase = meta.grantSkuForPurchase('pass_chronicle', 'phase-q-pass-wallet-failure');
-    const afterPassPurchase = meta.loadMetaState();
+    let afterPremium: boolean;
+    let afterTokenRecorded: boolean;
+    {
+      const snap = meta.loadMetaState();
+      afterPremium = snap.pass.premium;
+      afterTokenRecorded = snap.processedIapTokens.includes('phase-q-pass-wallet-failure');
+    }
     const passWalletAfter = shop.loadShop().balance;
     Storage.prototype.setItem = originalSetItem;
 
     return {
-      activeSkin: { saved: activeSkinSaved, hero: afterSkin.skins.hero },
-      codex: { seen: afterCodex.codexSeen.boss_ogre === true },
-      speedup: { spent: speedupSpent, tokens: afterSpeedup.speedupTokens },
-      node: { ok: node.ok, reason: node.reason, glory: afterNode.glory, owned: afterNode.nodes.length > 0 },
-      glory: { ok: glorySaved, balance: afterGlory.glory },
-      consumables: { ok: consumablesSaved, horseshoe: afterConsumables.consumables.cs_horseshoe },
-      bonus: { ok: bonus.ok, streak: afterBonus.dailyBonus.streak, last: afterBonus.dailyBonus.last },
+      activeSkin: { saved: activeSkinSaved, hero: afterSkin.hero },
+      codex: { seen: afterCodex.seen },
+      speedup: { spent: speedupSpent, tokens: afterSpeedup.tokens },
+      node: { ok: node.ok, reason: node.reason, glory: afterNode.glory, owned: afterNode.owned },
+      glory: { ok: glorySaved, balance: afterGlory.balance },
+      consumables: { ok: consumablesSaved, horseshoe: afterConsumables.horseshoe },
+      bonus: { ok: bonus.ok, streak: bonusStreak, last: bonusLast },
       conversion: {
         ok: conversion.ok,
         reason: conversion.reason,
-        crowns: finalState.crowns,
-        count: finalState.crownConvert.count,
+        crowns: finalCrowns,
+        count: finalCrownConvertCount,
       },
       walletBonus: {
         ok: walletBonus.ok,
         reason: walletBonus.reason,
-        streak: afterWalletBonus.dailyBonus.streak,
-        last: afterWalletBonus.dailyBonus.last,
+        streak: walletBonusStreak,
+        last: walletBonusLast,
         balanceUnchanged: walletAfter === walletBefore,
       },
       passPurchase: {
         persisted: passPurchase.persisted,
-        premium: afterPassPurchase.pass.premium,
-        tokenRecorded: afterPassPurchase.processedIapTokens.includes('phase-q-pass-wallet-failure'),
+        premium: afterPremium,
+        tokenRecorded: afterTokenRecorded,
         balanceUnchanged: passWalletAfter === passWalletBefore,
       },
     };
@@ -2025,9 +2126,12 @@ test('meta purchases and daily rewards roll back when storage rejects a write', 
       balanceUnchanged: true,
     },
     passPurchase: {
-      persisted: false,
-      premium: false,
-      tokenRecorded: false,
+      // Покупка пропуска «задним числом» выдаёт премиум-трек (кроны,
+      // жетоны, косметику) — золота в кошелёк лавки она не начисляет,
+      // поэтому отказ записи 'tss-shop' не влияет на фиксацию покупки.
+      persisted: true,
+      premium: true,
+      tokenRecorded: true,
       balanceUnchanged: true,
     },
   });
@@ -2181,7 +2285,9 @@ test('run meta progress rolls back when a pass gold reward cannot reach the shop
     state.chains.counters = {};
     state.chains.claimed = [];
     meta.saveMetaState(state);
-    const before = meta.loadMetaState();
+    // loadMetaState() отдаёт живой cached-объект, который applyRunToMeta
+    // мутирует на месте — XP пропуска снимаем значением до рана.
+    const passXpBefore = meta.loadMetaState().pass.xp;
     const walletBefore = shop.loadShop().balance;
 
     const originalSetItem = Storage.prototype.setItem;
@@ -2206,7 +2312,7 @@ test('run meta progress rolls back when a pass gold reward cannot reach the shop
       persisted: result.persisted,
       resultMatchesPlayed: result.newMatchesPlayed,
       matchesPlayed: after.matchesPlayed,
-      passXpBefore: before.pass.xp,
+      passXpBefore,
       passXpAfter: after.pass.xp,
       passPremiumAfter: after.pass.premium,
       walletUnchanged: walletAfter === walletBefore,
@@ -2696,8 +2802,14 @@ test('seasonal cosmetic is granted once, only at the fifth progress milestone', 
     firstState.season.claimed = 0;
     firstState.skins.owned = [];
     meta.saveMetaState(firstState);
+    // loadMetaState() отдаёт живой cached-объект, мутируемый последующими
+    // словами — claimed/скин снимаем сразу после каждого рана, иначе
+    // срез «после первого рана» увидил бы финал (5 шагов + скин).
     const firstRun = meta.applyRunToMeta(run);
-    const afterFirst = meta.loadMetaState();
+    const afterFirst = {
+      claimed: meta.loadMetaState().season.claimed,
+      hasSkin: meta.loadMetaState().skins.owned.includes(meta.seasonDef().skinReward),
+    };
 
     const finalState = meta.rollMetaDay();
     finalState.season.runs = 20;
@@ -2705,16 +2817,19 @@ test('seasonal cosmetic is granted once, only at the fifth progress milestone', 
     finalState.skins.owned = [];
     meta.saveMetaState(finalState);
     const finalRun = meta.applyRunToMeta(run);
-    const afterFinal = meta.loadMetaState();
+    const afterFinal = {
+      claimed: meta.loadMetaState().season.claimed,
+      hasSkin: meta.loadMetaState().skins.owned.includes(meta.seasonDef().skinReward),
+    };
 
     return {
       firstPersisted: firstRun.persisted,
-      firstClaimed: afterFirst.season.claimed,
-      firstHasSkin: afterFirst.skins.owned.includes(meta.seasonDef().skinReward),
+      firstClaimed: afterFirst.claimed,
+      firstHasSkin: afterFirst.hasSkin,
       firstReward: firstRun.seasonStepReward ?? null,
       finalPersisted: finalRun.persisted,
-      finalClaimed: afterFinal.season.claimed,
-      finalHasSkin: afterFinal.skins.owned.includes(meta.seasonDef().skinReward),
+      finalClaimed: afterFinal.claimed,
+      finalHasSkin: afterFinal.hasSkin,
       finalReward: finalRun.seasonStepReward ?? null,
       expectedSkin: meta.seasonDef().skinReward,
     };
@@ -2741,9 +2856,15 @@ test('game over announces the seasonal cosmetic unlocked on milestone five', asy
 
   await page.evaluate(() => {
     const game = (window as unknown as {
-      __tss?: { scene: { launch: (key: string, payload?: unknown) => void } };
+      __tss?: { scene: {
+        getScene: (key: string) => { scene: { launch: (key: string, payload?: unknown) => void } };
+      } };
     }).__tss;
-    game?.scene.launch('GameOver', {
+    if (!game) throw new Error('Phaser runtime is unavailable');
+    // Phaser: сцену поверх запускает ScenePlugin активной сцены — у
+    // SceneManager (game.scene) метода launch() нет.
+    const menu = game.scene.getScene('Menu');
+    menu?.scene.launch('GameOver', {
       stats: {
         victory: false, time: 120, kills: 30, level: 3, gold: 50, score: 1000,
         meta: {
@@ -2949,9 +3070,12 @@ test('red valley seasonal spawner wiring boosts the red tier only from minute 7 
 
   expect(result.season).toBe('red_valley');
   expect(result.optionEnabled).toBe(true);
-  expect(result.beforeWindow).toBeCloseTo(0.38, 4);
+  // Базовая кривая долей §A.3: на 6:59 (строка from:5) красная доля —
+  // 4/(8+3+5+4) = 0.20; в окне 7–12 множитель ×1.25 даёт 0.38*1.25 = 0.475;
+  // на ровно 12:00 (строка from:11, окно строго <12) — (2.4+2.4)/20 = 0.24.
+  expect(result.beforeWindow).toBeCloseTo(0.2, 4);
   expect(result.activeWindow).toBeCloseTo(0.475, 4);
-  expect(result.atUpperBoundary).toBeCloseTo(0.38, 4);
+  expect(result.atUpperBoundary).toBeCloseTo(0.24, 4);
 });
 
 

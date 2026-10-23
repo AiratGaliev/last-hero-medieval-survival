@@ -486,6 +486,10 @@ test('phase I: harpoon shark still fires when its throw animation is interrupted
     };
     return scene.__e2eHarpoonInterrupted === true;
   }), { timeout: 5_000 }).toBe(true);
+  // Немедленный выпуск лежит на 900-мс Scene Clock fallback (Enemy.tickHarpoonAtk),
+  // но тик состоит из игровых дельт (TimeStep Phaser сглаживает/клэмпит дельты),
+  // поэтому wall-бюджет опроса обязан покрывать налог загруженного runner'а —
+  // как и в :538-кейсе тайпрайтера. 2.5 с — узко; 5 с совпадают с poll 1 выше.
   await expect.poll(() => page.evaluate(() => {
     const game = (window as unknown as { __tss?: RuntimeGame }).__tss;
     if (!game) return false;
@@ -496,7 +500,7 @@ test('phase I: harpoon shark still fires when its throw animation is interrupted
     };
     return scene.projectiles.enemyShots.getChildren()
       .some((shot) => shot.active && shot.shotKind === 'harpoon' && shot.texture.key === 'proj-harpoon');
-  }), { timeout: 2_500 }).toBe(true);
+  }), { timeout: 5_000 }).toBe(true);
   expect(pageErrors).toEqual([]);
 });
 

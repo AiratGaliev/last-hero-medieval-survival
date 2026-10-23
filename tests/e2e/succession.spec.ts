@@ -136,7 +136,7 @@ test('phase P: first house reward names its real resident instead of a placehold
 test('phase P: first succession explains the rule once, then remembers it', async ({ page }) => {
   await startRun(page);
 
-  const result = await page.evaluate(() => {
+  const result = await page.evaluate(async () => {
     const game = (window as RuntimeWindow).__tss;
     if (!game) throw new Error('Phaser runtime is unavailable');
     const scene = game.scene.getScene('Game') as GameSceneRuntime;
@@ -144,13 +144,31 @@ test('phase P: first succession explains the rule once, then remembers it', asyn
       kind: 'barracks',
       alive: true,
       underConstruction: false,
+      // Заглушка обязана выполнять тик-контракт Building (Economy.tick
+      // вызывает tickMonasteryCollapse/tickBurn у каждого здания реестра).
+      tickMonasteryCollapse: () => {},
+      tickBurn: () => 0,
     });
     for (const pawn of [...scene.economy.pawns]) {
       const candidate = pawn as { canBecomeHero?: () => boolean };
       if (candidate.canBecomeHero?.()) scene.economy.removePawn(pawn, false);
     }
 
+    // Phaser запускает scene.launch на следующем шаге SceneManager (см. доку
+    // Phaser.Scenes.ScenePlugin: «not immediately»), а данные публикует
+    // SuccessionScene.create() — синхронные чтения data_ всегда видели null.
+    // Ждём готовности оверлея (§F.5).
+    const waitSuccession = async () => {
+      for (let i = 0; i < 200; i++) {
+        const s = game.scene.getScene('Succession') as SuccessionSceneRuntime;
+        if (game.scene.isActive('Succession') && s.data_ !== null) return;
+        await new Promise((r) => setTimeout(r, 25));
+      }
+      throw new Error('Succession scene never initialized');
+    };
+
     scene.onHeroDeath();
+    await waitSuccession();
     const succession = game.scene.getScene('Succession') as SuccessionSceneRuntime;
     const firstTutorial = succession.data_?.firstTutorial === true;
     const tutorialVisible = succession.children.list.some((child) =>
@@ -161,6 +179,7 @@ test('phase P: first succession explains the rule once, then remembers it', asyn
     scene.scene.resume();
     scene.overlayOpen = false;
     scene.onHeroDeath();
+    await waitSuccession();
     const secondSuccession = game.scene.getScene('Succession') as SuccessionSceneRuntime;
     const secondTutorial = secondSuccession.data_?.firstTutorial === true;
 
@@ -178,7 +197,7 @@ test('phase P: first succession explains the rule once, then remembers it', asyn
 test('phase N: no living warrior still exposes first-free resource succession and clears the old build', async ({ page }) => {
   await startRun(page);
 
-  const result = await page.evaluate(() => {
+  const result = await page.evaluate(async () => {
     const game = (window as RuntimeWindow).__tss;
     if (!game) throw new Error('Phaser runtime is unavailable');
     const scene = game.scene.getScene('Game') as GameSceneRuntime;
@@ -187,6 +206,10 @@ test('phase N: no living warrior still exposes first-free resource succession an
       kind: 'barracks',
       alive: true,
       underConstruction: false,
+      // Заглушка обязана выполнять тик-контракт Building (Economy.tick
+      // вызывает tickMonasteryCollapse/tickBurn у каждого здания реестра).
+      tickMonasteryCollapse: () => {},
+      tickBurn: () => 0,
     });
     // Исключаем живых кандидатов, чтобы проверялся именно сценарий без
     // готового преемника, а не автоматическая ветка живого гарнизонца.
@@ -204,6 +227,17 @@ test('phase N: no living warrior still exposes first-free resource succession an
     const successorIntroCalls: Array<{ name: string; title: string }> = [];
     scene.hud.successorIntro = (name, title) => successorIntroCalls.push({ name, title });
     scene.onHeroDeath();
+    // Phaser запускает scene.launch на следующем шаге SceneManager («not
+    // immediately»), данные публикует SuccessionScene.create() — синхронное
+    // чтение data_ всегда видело null. Ждём готовности оверлея (§F.5).
+    await (async () => {
+      for (let i = 0; i < 200; i++) {
+        const checker = game.scene.getScene('Succession') as SuccessionSceneRuntime;
+        if (game.scene.isActive('Succession') && checker.data_ !== null) return;
+        await new Promise((r) => setTimeout(r, 25));
+      }
+      throw new Error('Succession scene never initialized');
+    })();
     const succession = game.scene.getScene('Succession') as SuccessionSceneRuntime;
     const data = succession.data_;
     if (!data) throw new Error('SuccessionScene was not initialized');
@@ -266,20 +300,41 @@ test('phase N: no living warrior still exposes first-free resource succession an
 test('phase N: later succession without a resource cost renders safely and keeps the resource branch unavailable', async ({ page }) => {
   await startRun(page);
 
-  const result = await page.evaluate(() => {
+  const result = await page.evaluate(async () => {
     const game = (window as RuntimeWindow).__tss;
     if (!game) throw new Error('Phaser runtime is unavailable');
-    const scene = game.scene.getScene('Game') as GameSceneRuntime;
+    const scene = game.scene.getScene('Game') as GameSceneRuntime & {
+      hints?: { markSeen(id: string): void };
+    };
     scene.economy.buildings.push({
       kind: 'barracks',
       alive: true,
       underConstruction: false,
+      // Заглушка обязана выполнять тик-контракт Building (Economy.tick
+      // вызывает tickMonasteryCollapse/tickBurn у каждого здания реестра).
+      tickMonasteryCollapse: () => {},
+      tickBurn: () => 0,
     });
     scene.succession.freeUsed = true;
     scene.succession.successionsDone = 3;
     scene.gold = 0;
+    // «Поздняя» преемственность: аккаунт уже видел объяснение правила.
+    // Без этой отметки onHeroDeath добавит обучающий блок (§F.4/§I.2), где
+    // строка «…succession is FREE» ломает фильтр «нет FREE-лейбла» ниже.
+    scene.hints?.markSeen('succession');
 
     scene.onHeroDeath();
+    // Phaser запускает scene.launch на следующем шаге SceneManager («not
+    // immediately»), данные публикует SuccessionScene.create() — синхронное
+    // чтение data_ всегда видело null. Ждём готовности оверлея (§F.5).
+    await (async () => {
+      for (let i = 0; i < 200; i++) {
+        const checker = game.scene.getScene('Succession') as SuccessionSceneRuntime;
+        if (game.scene.isActive('Succession') && checker.data_ !== null) return;
+        await new Promise((r) => setTimeout(r, 25));
+      }
+      throw new Error('Succession scene never initialized');
+    })();
     const succession = game.scene.getScene('Succession') as SuccessionSceneRuntime;
     const data = succession.data_;
     if (!data) throw new Error('SuccessionScene was not initialized');
@@ -319,11 +374,25 @@ test('phase N: a failed rewarded attempt dims only the ad branch and leaves surr
       kind: 'barracks',
       alive: true,
       underConstruction: false,
+      // Заглушка обязана выполнять тик-контракт Building (Economy.tick
+      // вызывает tickMonasteryCollapse/tickBurn у каждого здания реестра).
+      tickMonasteryCollapse: () => {},
+      tickBurn: () => 0,
     });
     scene.succession.freeUsed = true;
     scene.succession.successionsDone = 1;
     scene.onHeroDeath();
-
+    // Phaser запускает scene.launch на следующем шаге SceneManager («not
+    // immediately»), create() строит кнопку rewarded — синхронное чтение
+    // adButton всегда видело null. Ждём готовности оверлея (§F.5).
+    await (async () => {
+      for (let i = 0; i < 200; i++) {
+        const checker = game.scene.getScene('Succession') as SuccessionSceneRuntime;
+        if (game.scene.isActive('Succession') && checker.data_ !== null) return;
+        await new Promise((r) => setTimeout(r, 25));
+      }
+      throw new Error('Succession scene never initialized');
+    })();
     const succession = game.scene.getScene('Succession') as SuccessionSceneRuntime;
     if (!succession.adButton) throw new Error('Rewarded button was not created');
     await succession.takeAd();
