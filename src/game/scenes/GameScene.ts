@@ -1011,20 +1011,33 @@ export class GameScene extends Phaser.Scene {
       this.settlement.castle.hp += 50;
     }
 
-    // Облака (дрейф вправо, относительный твин с переносом)
+    // Облака: мировые спрайты — их движение не зависит от камеры и игрока.
+    // Генерация привязана к окну рендера: спавн всегда за ЛЕВЫМ краем текущего
+    // вида (стартовый вид ≈ замок, до него доезжает lerp камеры), дрейф вправо,
+    // возврат — снова за край текущего вида. Pop-in невозможен: видимый
+    // прямоугольник камеры поймать объект может только пересечением своей
+    // границы. Отступ 1200 закрывает половину ширины текстур и расширение вида
+    // при zoom 0.55; «+3700» ≈ ширина вида при zoom 1 (1280) + отступы (2400),
+    // т.е. за цикл облако гарантированно уходит за правый край.
+    const cam = this.cameras.main;
     for (let i = 0; i < 10; i++) {
-      const [x, y] = [rng.between(0, S), rng.between(0, S)];
-      const c = this.add.image(x, y, `cloud${rng.between(1, 8)}`)
+      const c = this.add.image(
+        this.castleX - cam.width / 2 - 1200 - rng.between(0, 1200),
+        this.castleY - cam.height / 2 + rng.between(0, cam.height),
+        `cloud${rng.between(1, 8)}`,
+      )
         .setAlpha(0.42)
-        // Дальний план: выше воды и обрыва, но ниже теней и сущностей.
-        // На DEPTH.FX + 50 облака накрывали врагов в бою.
-        .setDepth(DEPTH.DECOR_BACK);
+        // Выше всего на карте: над сущностями, снарядами, HP-барами и FX (макс. 5000)
+        .setDepth(DEPTH.FX + 50);
       this.tweens.add({
         targets: c,
-        x: '+=700',
-        duration: rng.between(60, 100) * 1000,
+        x: '+=3700',
+        duration: rng.between(60, 120) * 1000,
         repeat: -1,
-        onRepeat: () => { c.x = -320; },
+        onRepeat: () => {
+          c.x = cam.scrollX - 1200 - rng.between(0, 1200);
+          c.y = cam.scrollY + rng.between(0, cam.height);
+        },
       });
     }
   }
@@ -1649,6 +1662,35 @@ export class GameScene extends Phaser.Scene {
     }) as Keys;
     kb.addCapture('UP,DOWN,LEFT,RIGHT,SPACE');
     this.joystick = new Joystick(this);
+    // При паузе сцены Phaser сам сбрасывает клавиши (resetKeys на PAUSE), а
+    // джойстик — нет: тач, удерживавший вектор в момент открытия оверлея
+    // (выбор улучшения/паузa/преемник), оставлял vx/vy застрявшими навсегда —
+    // после резюма герой не мог двигаться по одной из осей.
+    this.events.on(Phaser.Scenes.Events.PAUSE, () => this.joystick.reset());
+    // Пока сцена на паузе (оверлей выбора улучшений и т.п.), KeyboardPlugin
+    // не принимает keydown/keyup, при этом на PAUSE Phaser сбрасывает клавиши:
+    // нажатия, сделанные под паузой, после резюма выглядят «не нажатыми»
+    // (ось движения «умирает» до отжатия и повторного нажатия).
+    // Своя тень физического состояния клавиатуры + синхронизация на RESUME.
+    const byCode = new Map<number, Phaser.Input.Keyboard.Key>();
+    for (const key of Object.values(this.keys)) byCode.set(key.keyCode, key);
+    const physDown = new Set<number>();
+    const markPhys = (e: KeyboardEvent) => (e.type === 'keydown' ? physDown.add(e.keyCode) : physDown.delete(e.keyCode));
+    const clearPhys = () => physDown.clear();
+    window.addEventListener('keydown', markPhys);
+    window.addEventListener('keyup', markPhys);
+    // Фокус ушёл — браузер ничего не пришлёт, тень невалидна: обнуляем.
+    window.addEventListener('blur', clearPhys);
+    this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
+      window.removeEventListener('keydown', markPhys);
+      window.removeEventListener('keyup', markPhys);
+      window.removeEventListener('blur', clearPhys);
+    });
+    this.events.on(Phaser.Scenes.Events.RESUME, () => {
+      for (const key of byCode.values()) {
+        if (physDown.has(key.keyCode)) { key.isDown = true; key.isUp = false; }
+      }
+    });
 
     // ---- Приказы пешкам: Shift+ЛКМ (десктоп) / лонг-пресс 500 мс (тач) (§B.6) ----
     this.input.on('pointerdown', (
@@ -3340,6 +3382,8 @@ private bossDeathSequence(e: Enemy): boolean {
       }
       this.xp -= this.xpNext;
       this.level++;
+      // Новый уровень — здоровье героя до максимума (если нет — hpBar остаётся).
+      this.player.heal(this.player.maxHp);
       this.xpNext = XP_CURVE(this.level);
       this.pendingLevelUps++;
       this.ach?.event({ type: 'level', value: this.level });
