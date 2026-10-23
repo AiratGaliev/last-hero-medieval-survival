@@ -3171,8 +3171,9 @@ private bossDeathSequence(e: Enemy): boolean {
   /** Короткая анимация зажжённого фитиля из набора bomb/; удаляется по завершении. */
   private playBombFuseEffect(x: number, y: number): void {
     if (!this.anims.exists('proj-bomb-fuse-lit')) return;
+    // Кадр фитиля 128×128: 0.45 держит прежний видимый размер ~58px
     const fuse = this.add.sprite(x, y, 'proj-bomb-fuse', 0)
-      .setScale(0.9)
+      .setScale(0.45)
       .setDepth(DEPTH.FX);
     fuse.play('proj-bomb-fuse-lit');
     fuse.once('animationcomplete', () => fuse.destroy());

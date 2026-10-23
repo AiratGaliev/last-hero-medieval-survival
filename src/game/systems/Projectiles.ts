@@ -52,7 +52,8 @@ const ENEMY_SHOTS: Record<EnemyShotKind, { tex: string; anim?: string; speed: nu
   bone:    { tex: 'proj-bone', anim: 'proj-bone-spin', speed: 340, life: 2200, body: 26, scale: 1 },
   hex:     { tex: 'proj-hex',  anim: 'proj-hex-orb',  speed: 300, life: 2600, body: 30, scale: 1 },
   harpoon: { tex: 'proj-harpoon', speed: 320, life: 2400, body: 22, scale: 0.72 },
-  bomb:     { tex: 'proj-bomb', anim: 'proj-bomb-spin', speed: 260, life: 2800, body: 24, scale: 0.72 },
+  // Кадры бомбы 128×128: scale 0.36 держит видимый размер ~46px
+  bomb:     { tex: 'proj-bomb', anim: 'proj-bomb-spin', speed: 260, life: 2800, body: 24, scale: 0.36 },
 };
 
 export interface ProjectileCtx {
