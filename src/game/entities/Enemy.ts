@@ -282,7 +282,13 @@ export class Enemy extends Phaser.Physics.Arcade.Sprite {
   private pickTarget(): void {
     const hx = this.ctx.playerX(), hy = this.ctx.playerY();
     const heroD = Math.hypot(hx - this.x, hy - this.y);
-    if (heroD <= AGGRO.HERO) { this.targetPawn = null; return; }
+    // Финальный Огр — исключение из общего выбора NPC: пока не началась фаза 2,
+    // он обязан преследовать героя даже за пределами AGGRO.HERO. Иначе при спавне
+    // за экраном доступная пешка может перетянуть цель в сторону от боя.
+    if (this.def.isBoss || heroD <= AGGRO.HERO) {
+      this.targetPawn = null;
+      return;
+    }
     const finder = this.scene.registry.get('tss-picktarget') as ((e: Enemy) => Pawn | null) | undefined;
     const pawn = finder?.(this) ?? null;
     this.targetPawn = pawn;
