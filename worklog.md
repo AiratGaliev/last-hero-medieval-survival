@@ -4717,3 +4717,12 @@ callback `onSiegeWindowEnd` и TZ §E.6 сверены; изменение вн�
 - Новые проверки текущей ветки не запускались до CI. Локальный checkout в доступной среде не создан из-за DNS-ошибки при обращении к GitHub. После открытия PR проверить CI Fast на фактическом head SHA; не переносить результаты старых запусков на новую ревизию.
 - Остаточные внешние задачи: Yandex Games ЕЛС/SKU/цены/иконки, сценарии транзакций и восстановления pending receipts, alert `iap_consume_fail`, мобильная touch/safe-area-приёмка, длинный матч и согласование целевого недельного дохода крон.
 - Рекомендация следующего спринта после базовой приёмки: начать с малого инкремента PLANS §17, этап 1 — остановка работы пешки при реальной угрозе, с unit-проверкой правила угрозы и E2E на игровом сценарии. Не начинать параллельно кампанию, туман войны, дерево технологий и procedural map.
+
+
+## 2026-10-24 — Подтверждение финального среза после merge PR #81 и #82
+
+- PR #81 merged в `dev` (merge squash SHA `8b40ea0eb125d47a3c230b896d5a0dfc985119f2`); CI Fast run [#40125943801](https://github.com/AiratGaliev/last-hero-medieval-survival/actions/runs/40125943801) на head SHA `e8799d40e9e9f43fd7c2da87c2fb13a98c3137cd` — success для typecheck/lint, unit tests и production build.
+- PR #82 merged в `dev` (merge squash SHA `48a7bfe5995da9af045f171001fe1708cda48582`); CI Fast run [#40126179424](https://github.com/AiratGaliev/last-hero-medieval-survival/actions/runs/40126179424) на head SHA `6be466424f4934a7ac661d81cde1038f7cfacd1b` — success для typecheck/lint, unit tests и production build.
+- Новая Playwright-регрессия адресного агро находится в `tests/e2e/settlement-economy.spec.ts`, но не запускалась fast CI. Полный E2E после последних merge не считается закрытым.
+- Следующая работа из PLANS §10.1 заведена как issue [#83](https://github.com/AiratGaliev/last-hero-medieval-survival/issues/83): сначала зафиксировать контракт угрозы/переноски груза/платных работ, так как wishlist и TZ §B.6 задают конкурирующие приоритеты.
+- Локальные команды не запускались: checkout не удалось скачать из-за DNS-ошибки GitHub. Статусы CI выше — реальные результаты GitHub Actions, не локальная проверка.
