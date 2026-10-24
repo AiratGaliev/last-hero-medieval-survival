@@ -4500,7 +4500,6 @@ test('phase R: low-health civilians retreat, recover at a shelter and resume the
     let sawSheltered = false;
     let shelteredWasHidden = false;
     let shelterDamageBlocked = false;
-    let visibleAfterRecovery: boolean;
     let autoRecovered = false;
     for (let i = 0; i < 240; i++) {
       now += 100;
@@ -4536,7 +4535,7 @@ test('phase R: low-health civilians retreat, recover at a shelter and resume the
         }
       }
     }
-    visibleAfterRecovery = worker.visible;
+    const visibleAfterRecovery = worker.visible;
     const autoOrderPreserved = worker.order === 'collect';
 
     // Ручной «ОТДЫХАТЬ» лечит до полного HP, затем очищает только этот приказ.
