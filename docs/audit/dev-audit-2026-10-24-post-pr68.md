@@ -42,6 +42,6 @@
 ## Статус проверок
 
 - Исходники и документы просмотрены через GitHub connector на указанной базе.
-- Локальный `npm run check`, `npm run test:unit`, `npm run build` и `npm run test:e2e` из этого окружения не запускались: checkout проекта недоступен из-за ошибки DNS при обращении к GitHub.
-- Новые тестовые сценарии добавлены, но до их фактического выполнения CI они не считаются пройденными.
-- Релизный статус не повышается: `dev → test` остаётся закрытым до полного актуального E2E и внешних gates.
+- Локальные `npm run check`, `npm run test:unit`, `npm run build` и `npm run test:e2e` из этого окружения не запускались: checkout проекта недоступен из-за ошибки DNS при обращении к GitHub.
+- CI Fast run [#40091917282](https://github.com/AiratGaliev/last-hero-medieval-survival/actions/runs/40091917282) на head SHA `fb89368eeb5b15ff90fd3b40b0f0f7390a982ad2` завершился успешно: typecheck/lint, Vitest **21/21 в 3 файлах**, production build.
+- Playwright E2E-сценарии через реальный `GameScene.gameOver()` не запускались: они добавлены, но Fast CI не выполняет их на PR в `dev`. Релизный статус не повышается: `dev → test` остаётся закрытым до полного актуального E2E и внешних gates.
