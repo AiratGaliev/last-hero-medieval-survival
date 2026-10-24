@@ -125,6 +125,9 @@ export class Player extends Phaser.Physics.Arcade.Sprite {
     this.iframesUntil = now + 500;
     this.hp = Math.max(0, this.hp - Math.max(1, Math.round(amount * multiplier)));
     if (this.lastDamageWasGuarded && guard) {
+      // Блок прерывает текущий замах; старый callback не должен нанести урон
+      // после переключения на guard-анимацию.
+      this.clearAttackImpactListeners();
       this.play(guard, true);
     } else {
       this.scene.tweens.add({

@@ -690,8 +690,15 @@ export class Enemy extends Phaser.Physics.Arcade.Sprite {
       // Звон щита скелета — блок заметен и без чтения чисел урона.
       if (this.kind === 'skull' && Math.random() < 0.3) audio.play('hit');
     }
-    // Ящер заметно реагирует на попадание: hit-лист есть только у этого вида.
-    if (this.kind === 'lizard' && !this.dead) this.playOnce('lizard-hit');
+    // Реакция ящера заменяет текущую анимацию: ожидающий замах обязан отмениться,
+    // иначе animationupdate больше не дойдёт до кадра попадания.
+    if (this.kind === 'lizard' && !this.dead) {
+      if (this.meleeImpactPending) {
+        this.cancelMeleeAttack();
+        this.meleeRecoveryMs = Math.max(this.meleeRecoveryMs, COMBAT_TIMING.ENEMY_MELEE_RECOVERY_MS);
+      }
+      this.playOnce('lizard-hit');
+    }
     this.hp -= final;
     // Вспышка урона (белая заливка в Phaser 4: setTint + FILL режим)
     this.setTint(0xffffff);
