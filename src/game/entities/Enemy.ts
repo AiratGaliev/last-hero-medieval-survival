@@ -3,6 +3,7 @@ import { DEPTH, DESPAWN_DIST, WORLD, SHADOW_SCALE, SHADOW_BOX, SHADOW_SRC, AGGRO
 import { ENEMIES, type EnemyDef, type EnemyKind } from '../data';
 import { audio } from '../systems/Audio';
 import type { Pawn } from './Pawn';
+import { COMBAT_TIMING } from '../systems/Combat';
 
 // ============ Враг — существо из пака enemies/ (TZ §A) ============
 
@@ -22,6 +23,8 @@ export interface EnemyContext {
   enemiesNear(x: number, y: number, radius: number): Phaser.Physics.Arcade.Sprite[];
   /** Враг ранит пешку — осада по лимиту профиля (§E.4), обычный бой — §A.5 */
   attackPawn(pawn: Pawn, dmg: number, siege: boolean): void;
+  /** Удар по герою в момент попадания, не от касания коллайдера. */
+  attackHero(dmg: number, sourceX: number): void;
   /** Осада бьёт здание (fire=true — огненный шар шамана с поджогом); isBoss — вне потолка/таунта */
   attackBuilding(b: unknown, dmg: number, fire: boolean, isBoss: boolean): void;
   /** Бросок снаряда по зданию (кость гнолла / шар шамана); building — цель урона */
@@ -36,6 +39,10 @@ type AiState = 'chase' | 'windup' | 'charge' | 'recover' | 'bossPhase2';
 
 /** После попадания героя Огр отвлекается от замка на шесть секунд. */
 const OGRE_HERO_TAUNT_MS = 6000;
+const TIMED_MELEE_KINDS = new Set<EnemyKind>([
+  'goblin', 'thief', 'skull', 'bear', 'spider', 'snake', 'lizard', 'turtle',
+  'gnome', 'panda', 'spear-goblin', 'paddle-shark',
+]);
 
 export class Enemy extends Phaser.Physics.Arcade.Sprite {
   readonly def: EnemyDef;
@@ -100,6 +107,11 @@ export class Enemy extends Phaser.Physics.Arcade.Sprite {
    * было невозможно, поле было приватным, и перехват срабатывал только на осаду.
    */
   get aimedPawn(): Pawn | null { return this.targetPawn; }
+  get isStaggered(): boolean { return this.staggerRemainingMs > 0; }
+  get usesTimedMelee(): boolean {
+    return TIMED_MELEE_KINDS.has(this.kind) || this.targetPawn !== null
+      || this.meleeWindupMs > 0 || this.meleeRecoveryMs > 0;
+  }
   private lastPick = 0;
   private buildingAtkCd = 0;
   /** Сезон «Возвращение Огра» ускоряет только атаки по замку во второй фазе. */
@@ -117,6 +129,12 @@ export class Enemy extends Phaser.Physics.Arcade.Sprite {
   /** До какого active-time Огр преследует героя после последнего попадания. */
   private heroProvokedUntil = 0;
   private meleeCd = 0;
+  private meleeWindupMs = 0;
+  private meleeRecoveryMs = 0;
+  private meleeTargetPawn: Pawn | null = null;
+  private meleeTargetsHero = false;
+  private staggerRemainingMs = 0;
+  private staggerAnimationPlayed = false;
 
   constructor(scene: Phaser.Scene, x: number, y: number, kind: EnemyKind, hpMult: number, dmgMult: number, ctx: EnemyContext) {
     const def = ENEMIES[kind];
@@ -343,6 +361,12 @@ export class Enemy extends Phaser.Physics.Arcade.Sprite {
     const interceptRadius = this.ctx.siegeInterceptRadius?.() ?? SIEGE.INTERCEPT_R;
     const bossPulledByHero = persistentBossSiege && time < this.heroProvokedUntil;
     if (heroD < interceptRadius || bossPulledByHero) {
+      if (TIMED_MELEE_KINDS.has(this.kind) && heroD <= 70 && this.atkCd <= 0) {
+        this.atkCd = 1500;
+        this.beginMeleeAttack(null);
+        body.setVelocity(0, 0);
+        return;
+      }
       // Герой может перехватить и сорвать телеграфированный осадный рывок.
       if (this.kind === 'pig-rider' && this.siegeChargeStage !== 'idle') {
         this.siegeChargeStage = 'idle';
@@ -531,6 +555,80 @@ export class Enemy extends Phaser.Physics.Arcade.Sprite {
     this.deathCleanup = null;
   }
 
+  /** Сильный удар героя отменяет замах/телеграф и даёт врагу окно восстановления. */
+  stagger(durationMs: number): void {
+    if (this.dead || !Number.isFinite(durationMs) || durationMs <= 0) return;
+    this.staggerRemainingMs = Math.max(this.staggerRemainingMs, durationMs);
+    this.staggerAnimationPlayed = false;
+    this.meleeWindupMs = 0;
+    this.meleeRecoveryMs = 0;
+    this.meleeTargetPawn = null;
+    this.meleeTargetsHero = false;
+    this.atkCd = Math.max(this.atkCd, durationMs + 250);
+    this.shootCd = Math.max(this.shootCd, durationMs + 250);
+    this.meleeCd = Math.max(this.meleeCd, durationMs + 250);
+    this.buildingAtkCd = Math.max(this.buildingAtkCd, durationMs + 250);
+    this.harpoonWindupTimer?.remove(false);
+    this.harpoonWindupTimer = null;
+    this.harpoonWindupActive = false;
+    this.harpoonShotFired = false;
+    this.bombWindupTimer?.remove(false);
+    this.bombWindupTimer = null;
+    this.bombWindupActive = false;
+    this.bombShotFired = false;
+    if (this.kind === 'pig-rider' && this.siegeChargeStage !== 'idle') {
+      this.siegeChargeStage = 'idle';
+      this.siegeChargeTimerMs = 0;
+      this.siegeChargeCooldownMs = Math.max(this.siegeChargeCooldownMs, durationMs + 250);
+      this.setSiegeChargeTint(false);
+    }
+    if (this.def.isBoss && (this.aiState === 'windup' || this.aiState === 'charge')) {
+      this.aiState = 'recover';
+      this.stateTimer = Math.max(this.stateTimer, durationMs + 400);
+      this.bossTimer = Math.max(this.bossTimer, durationMs + 900);
+    } else if (this.aiState === 'windup' || this.aiState === 'charge') {
+      this.aiState = 'chase';
+      this.stateTimer = 0;
+    }
+    if (this.animationCompleteHandler) {
+      this.off('animationcomplete', this.animationCompleteHandler);
+      this.animationCompleteHandler = null;
+    }
+    this.lastAnim = '';
+    if (!this.enraged) this.clearTint();
+  }
+
+  private updateStoppedVisuals(): void {
+    const groundOff = this.def.groundY - this.def.frameW / 2;
+    this.shadow.setPosition(this.x, this.y + groundOff * this.def.scale);
+    this.setDepth(DEPTH.ENTITY_BASE + this.y);
+    if (this.def.isElite || this.def.isBoss) this.drawHpBar();
+  }
+
+  private beginMeleeAttack(targetPawn: Pawn | null): void {
+    this.meleeTargetPawn = targetPawn;
+    this.meleeTargetsHero = targetPawn === null;
+    this.meleeWindupMs = COMBAT_TIMING.ENEMY_MELEE_WINDUP_MS;
+    const tx = targetPawn ? targetPawn.x : this.ctx.playerX();
+    this.setFlipX(this.faceDir(tx - this.x));
+    this.playOnce(`${this.kind}-atk`);
+  }
+
+  private resolveMeleeAttack(): void {
+    const pawn = this.meleeTargetPawn;
+    if (pawn) {
+      if (pawn.active && !pawn.dead && Math.hypot(pawn.x - this.x, pawn.y - this.y) <= 82) {
+        this.ctx.attackPawn(pawn, this.damage, false);
+      }
+    } else if (this.meleeTargetsHero
+      && Math.hypot(this.ctx.playerX() - this.x, this.ctx.playerY() - this.y) <= 82) {
+      this.ctx.attackHero(this.damage, this.x);
+    }
+    this.meleeTargetPawn = null;
+    this.meleeTargetsHero = false;
+    this.meleeRecoveryMs = COMBAT_TIMING.ENEMY_MELEE_RECOVERY_MS;
+  }
+
   takeDamage(dmg: number): boolean {
     if (this.dead) return false;
     let final = dmg;
@@ -641,6 +739,36 @@ export class Enemy extends Phaser.Physics.Arcade.Sprite {
 
     const dt = delta / 1000;
 
+    if (this.staggerRemainingMs > 0) {
+      this.staggerRemainingMs = Math.max(0, this.staggerRemainingMs - delta);
+      if (!this.staggerAnimationPlayed) {
+        const hitAnim = `${this.kind}-hit`;
+        if (this.scene.anims.exists(hitAnim)) this.playOnce(hitAnim);
+        this.staggerAnimationPlayed = true;
+      }
+      const body = this.body as Phaser.Physics.Arcade.Body;
+      body.setVelocity(this.knockX, this.knockY);
+      const decay = Math.pow(0.5, dt / 0.13);
+      this.knockX *= decay;
+      this.knockY *= decay;
+      this.updateStoppedVisuals();
+      if (this.staggerRemainingMs === 0) this.staggerAnimationPlayed = false;
+      return;
+    }
+    if (this.meleeWindupMs > 0) {
+      this.meleeWindupMs = Math.max(0, this.meleeWindupMs - delta);
+      (this.body as Phaser.Physics.Arcade.Body).setVelocity(0, 0);
+      if (this.meleeWindupMs === 0) this.resolveMeleeAttack();
+      this.updateStoppedVisuals();
+      return;
+    }
+    if (this.meleeRecoveryMs > 0) {
+      this.meleeRecoveryMs = Math.max(0, this.meleeRecoveryMs - delta);
+      (this.body as Phaser.Physics.Arcade.Body).setVelocity(0, 0);
+      this.updateStoppedVisuals();
+      return;
+    }
+
     // ---- Осада: цель — здание профиля, игрок может перехватить (§E.4) ----
     if (this.siege && this.buildingTarget) {
       this.updateSiege(activeTime, delta);
@@ -669,13 +797,15 @@ export class Enemy extends Phaser.Physics.Arcade.Sprite {
       this.targetPawn = null;
     }
 
-    // Атака пешки: ближний урон по цели (§A.5 — гражданские гибнут)
+    // Урон по пешке идёт после замаха и повторной проверки дистанции.
     if (this.targetPawn && dist < 64 && this.aiState === 'chase') {
       this.atkCd -= delta;
       if (this.atkCd <= 0) {
         this.atkCd = 1500;
-        this.playOnce(`${this.kind}-atk`);
-        this.ctx.attackPawn(this.targetPawn, this.damage, false);
+        this.beginMeleeAttack(this.targetPawn);
+        (this.body as Phaser.Physics.Arcade.Body).setVelocity(0, 0);
+        this.updateStoppedVisuals();
+        return;
       }
     }
 
@@ -695,12 +825,13 @@ export class Enemy extends Phaser.Physics.Arcade.Sprite {
       case 'panda':
       case 'spear-goblin':
       case 'paddle-shark':
-        // Простой погон; вблизи — косметический замах (урон наносит overlap)
+        // Замах → попадание при сохранении дистанции → восстановление.
         vx = nx * this.speed; vy = ny * this.speed;
         this.atkCd -= delta;
         if (dist < 70 && this.atkCd <= 0 && this.aiState === 'chase') {
           this.atkCd = 1500;
-          this.playOnce(`${this.kind}-atk`);
+          this.beginMeleeAttack(this.targetPawn);
+          vx = 0; vy = 0;
         }
         break;
 
