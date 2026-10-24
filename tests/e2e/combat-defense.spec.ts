@@ -88,7 +88,7 @@ test('staggered enemy cannot counterattack during recovery', async ({page}) => {
     if(!scene.spawnEnemy('goblin',p.x+30,p.y))throw new Error('Could not spawn test enemy');
     const e=scene.enemyGroup.getChildren().find(x=>x.active&&!x.dead);
     if(!e)throw new Error('Spawned enemy missing');
-    e.body?.setVelocity(0,0);scene.damageEnemy(e,10,1,0,190,'sword');
+    e.body?.setVelocity(0,0);scene.damageEnemy(e,10,0,0,190,'sword');
     return {hp:p.hp,staggered:e.isStaggered};
   });
   expect(before.staggered).toBe(true);
