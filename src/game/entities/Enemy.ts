@@ -588,8 +588,8 @@ export class Enemy extends Phaser.Physics.Arcade.Sprite {
     }
     if (this.def.isBoss && (this.aiState === 'windup' || this.aiState === 'charge')) {
       this.aiState = 'recover';
-      this.stateTimer = Math.max(this.stateTimer, durationMs + 400);
-      this.bossTimer = Math.max(this.bossTimer, durationMs + 900);
+      this.stateTimer = Math.max(this.stateTimer, 400);
+      this.bossTimer = Math.max(this.bossTimer, 900);
     } else if (this.aiState === 'windup' || this.aiState === 'charge') {
       this.aiState = 'chase';
       this.stateTimer = 0;
@@ -746,6 +746,14 @@ export class Enemy extends Phaser.Physics.Arcade.Sprite {
 
     if (this.staggerRemainingMs > 0) {
       this.staggerRemainingMs = Math.max(0, this.staggerRemainingMs - delta);
+      // Timers keep ticking during hit-stun, so the post-stun recovery isn't doubled.
+      this.atkCd = Math.max(0, this.atkCd - delta);
+      this.shootCd = Math.max(0, this.shootCd - delta);
+      this.meleeCd = Math.max(0, this.meleeCd - delta);
+      this.buildingAtkCd = Math.max(0, this.buildingAtkCd - delta);
+      this.stateTimer = Math.max(0, this.stateTimer - delta);
+      this.bossTimer = Math.max(0, this.bossTimer - delta);
+      this.siegeChargeCooldownMs = Math.max(0, this.siegeChargeCooldownMs - delta);
       if (!this.staggerAnimationPlayed) {
         const hitAnim = `${this.kind}-hit`;
         if (this.scene.anims.exists(hitAnim)) this.playOnce(hitAnim);
