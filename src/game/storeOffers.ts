@@ -30,11 +30,11 @@ export interface StoreOfferFacts {
  * (не более 45 секунд до конца 15-минутного матча).
  */
 export function resolveStoreOffer(facts: StoreOfferFacts): StoreOfferKind | null {
-  if (!facts.storefrontUnlocked) return null;
+  // Образовательный триггер не зависит от доступности платной витрины:
+  // если пак закрыт/истёк, экран результата всё равно объяснит механику.
+  if (facts.monasteryCollapseVictims >= 5) return 'monastery';
 
-  if (facts.monasteryCollapseVictims >= 5 && facts.starterAvailable) {
-    return 'monastery';
-  }
+  if (!facts.storefrontUnlocked) return null;
 
   const duration = facts.matchDurationSeconds;
   const remaining = duration - facts.elapsedSeconds;
