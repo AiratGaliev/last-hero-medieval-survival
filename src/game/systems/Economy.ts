@@ -914,6 +914,8 @@ export class Economy extends Phaser.Events.EventEmitter {
   // ---------- Тик ----------
 
   tick(dtMs: number, now: number): void {
+    // Все пешки этого кадра используют один актуальный снимок угроз.
+    this.pawnAI.refreshEnemySnapshot();
 
     // Стройка: прогресс идёт, только если строитель у места и работает
     for (let i = this.buildJobs.length - 1; i >= 0; i--) {
