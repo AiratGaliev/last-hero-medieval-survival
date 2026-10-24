@@ -30,3 +30,12 @@ export function staggerDuration(damage: number, force: number, critical: boolean
   if (force >= COMBAT_TIMING.LIGHT_HIT_FORCE || (critical && damage >= 22)) return COMBAT_TIMING.LIGHT_STAGGER_MS;
   return 0;
 }
+
+/**
+ * Кадр, на котором действие считается попавшим: середина одноразовой анимации.
+ * Урон не должен вычисляться в момент play(); он разрешается по animationupdate.
+ */
+export function attackImpactFrameIndex(frameCount: number): number {
+  if (!Number.isInteger(frameCount) || frameCount <= 1) return 0;
+  return Math.min(frameCount - 1, Math.max(1, Math.ceil((frameCount - 1) / 2)));
+}

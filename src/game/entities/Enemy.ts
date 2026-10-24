@@ -3,7 +3,7 @@ import { DEPTH, DESPAWN_DIST, WORLD, SHADOW_SCALE, SHADOW_BOX, SHADOW_SRC, AGGRO
 import { ENEMIES, type EnemyDef, type EnemyKind } from '../data';
 import { audio } from '../systems/Audio';
 import type { Pawn } from './Pawn';
-import { COMBAT_TIMING } from '../systems/Combat';
+import { COMBAT_TIMING, attackImpactFrameIndex } from '../systems/Combat';
 
 // ============ Враг — существо из пака enemies/ (TZ §A) ============
 
@@ -108,10 +108,10 @@ export class Enemy extends Phaser.Physics.Arcade.Sprite {
    */
   get aimedPawn(): Pawn | null { return this.targetPawn; }
   get isStaggered(): boolean { return this.staggerRemainingMs > 0; }
-  get isContactLocked(): boolean { return this.staggerRemainingMs > 0 || this.contactRecoveryMs > 0; }
+  get isContactLocked(): boolean { return this.staggerRemainingMs > 0 || this.contactRecoveryMs > 0 || this.meleeImpactPending; }
   get usesTimedMelee(): boolean {
     return TIMED_MELEE_KINDS.has(this.kind) || this.targetPawn !== null
-      || this.meleeWindupMs > 0 || this.meleeRecoveryMs > 0;
+      || this.meleeImpactPending || this.meleeRecoveryMs > 0;
   }
   private lastPick = 0;
   private buildingAtkCd = 0;
@@ -130,7 +130,9 @@ export class Enemy extends Phaser.Physics.Arcade.Sprite {
   /** До какого active-time Огр преследует героя после последнего попадания. */
   private heroProvokedUntil = 0;
   private meleeCd = 0;
-  private meleeWindupMs = 0;
+  private meleeImpactPending = false;
+  private meleeImpactHandler: ((animation: Phaser.Animations.Animation, frame: Phaser.Animations.AnimationFrame) => void) | null = null;
+  private meleeImpactFallbackTimer: Phaser.Time.TimerEvent | null = null;
   private meleeRecoveryMs = 0;
   private meleeTargetPawn: Pawn | null = null;
   private meleeTargetsHero = false;
@@ -567,11 +569,8 @@ export class Enemy extends Phaser.Physics.Arcade.Sprite {
     this.staggerRemainingMs = Math.max(this.staggerRemainingMs, durationMs);
     this.contactRecoveryMs = Math.max(this.contactRecoveryMs, durationMs + 250);
     this.staggerAnimationPlayed = false;
-    this.meleeWindupMs = 0;
+    this.cancelMeleeAttack();
     this.meleeRecoveryMs = 0;
-    this.meleeTargetPawn = null;
-    this.meleeTargetsHero = false;
-    this.meleeTargetsSiegePawn = false;
     this.atkCd = Math.max(this.atkCd, durationMs + 250);
     this.shootCd = Math.max(this.shootCd, durationMs + 250);
     this.meleeCd = Math.max(this.meleeCd, durationMs + 250);
@@ -613,17 +612,57 @@ export class Enemy extends Phaser.Physics.Arcade.Sprite {
     if (this.def.isElite || this.def.isBoss) this.drawHpBar();
   }
 
+  private clearMeleeImpactListeners(): void {
+    if (this.meleeImpactHandler) this.off('animationupdate', this.meleeImpactHandler);
+    this.meleeImpactHandler = null;
+    this.meleeImpactFallbackTimer?.remove(false);
+    this.meleeImpactFallbackTimer = null;
+  }
+
+  private cancelMeleeAttack(): void {
+    this.meleeImpactPending = false;
+    this.clearMeleeImpactListeners();
+    this.meleeTargetPawn = null;
+    this.meleeTargetsHero = false;
+    this.meleeTargetsSiegePawn = false;
+  }
+
   private beginMeleeAttack(targetPawn: Pawn | null, siegePawn = false): void {
+    this.cancelMeleeAttack();
     this.meleeTargetPawn = targetPawn;
     this.meleeTargetsHero = targetPawn === null;
     this.meleeTargetsSiegePawn = siegePawn;
-    this.meleeWindupMs = COMBAT_TIMING.ENEMY_MELEE_WINDUP_MS;
+    this.meleeImpactPending = true;
     const tx = targetPawn ? targetPawn.x : this.ctx.playerX();
     this.setFlipX(this.faceDir(tx - this.x));
-    this.playOnce(`${this.kind}-atk`);
+
+    const key = `${this.kind}-atk`;
+    if (!this.scene.anims.exists(key)) {
+      // Только при отсутствующей анимации используем таймерный fallback.
+      this.meleeImpactFallbackTimer = this.scene.time.delayedCall(COMBAT_TIMING.ENEMY_MELEE_WINDUP_MS, () => {
+        this.meleeImpactFallbackTimer = null;
+        this.resolveMeleeAttack();
+      });
+      return;
+    }
+
+    const impactIndex = attackImpactFrameIndex(this.scene.anims.get(key).frames.length);
+    this.meleeImpactHandler = (animation, frame): void => {
+      if (animation.key !== key || frame.index < impactIndex) return;
+      this.clearMeleeImpactListeners();
+      this.resolveMeleeAttack();
+    };
+    this.on('animationupdate', this.meleeImpactHandler);
+    // If Phaser misses an update event, resolve only after this animation completes.
+    this.playOnce(key, () => {
+      if (this.meleeImpactPending) this.resolveMeleeAttack();
+    });
   }
 
   private resolveMeleeAttack(): void {
+    if (!this.meleeImpactPending) return;
+    this.clearMeleeImpactListeners();
+    this.meleeImpactPending = false;
     const pawn = this.meleeTargetPawn;
     if (pawn) {
       if (pawn.active && !pawn.dead && Math.hypot(pawn.x - this.x, pawn.y - this.y) <= 82) {
@@ -665,8 +704,10 @@ export class Enemy extends Phaser.Physics.Arcade.Sprite {
       }
     });
     if (this.def.isElite || this.def.isBoss) this.drawHpBar();
-    if (this.hp <= 0) this.dead = true;
-    else if (this.kind === 'skull' && !this.enraged && this.hp < this.maxHp * 0.4) {
+    if (this.hp <= 0) {
+      this.dead = true;
+      this.cancelMeleeAttack();
+    } else if (this.kind === 'skull' && !this.enraged && this.hp < this.maxHp * 0.4) {
       this.breakShield();
     }
     return this.hp <= 0;
@@ -774,10 +815,8 @@ export class Enemy extends Phaser.Physics.Arcade.Sprite {
       if (this.staggerRemainingMs === 0) this.staggerAnimationPlayed = false;
       return;
     }
-    if (this.meleeWindupMs > 0) {
-      this.meleeWindupMs = Math.max(0, this.meleeWindupMs - delta);
+    if (this.meleeImpactPending) {
       (this.body as Phaser.Physics.Arcade.Body).setVelocity(0, 0);
-      if (this.meleeWindupMs === 0) this.resolveMeleeAttack();
       this.updateStoppedVisuals();
       return;
     }

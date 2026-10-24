@@ -206,71 +206,72 @@ export class WeaponSystem {
     const p = this.ctx.player();
     if (!p.active) return;
 
-    // Визуал и анимация начинаются только если цель действительно попадает
-    // в радиус и сектор удара; одного врага в радиусе поиска недостаточно.
     const range = evolved ? 175 : 130;
     const arcHalf = evolved ? Math.PI : Phaser.Math.DegToRad(75);
-    const targets = (candidates ?? this.ctx.enemies()).filter((e) => {
+    const collectTargets = (): Enemy[] => (candidates ?? this.ctx.enemies()).filter((e) => {
       if (!e.active || e.dead) return false;
       const dx = e.x - p.x, dy = e.y - p.y;
       if (Math.hypot(dx, dy) > range + e.def.body.r) return false;
       const diff = Math.abs(Phaser.Math.Angle.Wrap(Math.atan2(dy, dx) - angle));
       return diff <= arcHalf;
     });
-    if (targets.length === 0) return;
 
-    // Визуал: полумесяц (эволюция — золотой и крупнее)
-    const slash = this.scene.add.image(p.x, p.y, 'slash')
-      .setScale(evolved ? 1.25 : 0.85)
-      .setRotation(angle)
-      .setDepth(DEPTH.FX - 5)
-      .setAlpha(0.95);
-    if (evolved) slash.setTint(0xffe9a0);
-    this.scene.tweens.add({
-      targets: slash,
-      scale: evolved ? 1.55 : 1.1,
-      alpha: 0,
-      duration: evolved ? 240 : 190,
-      ease: 'Quad.easeOut',
-      onComplete: () => slash.destroy(),
-    });
+    // Враг в радиусе запускает анимацию, но здоровье меняется только на кадре удара.
+    if (collectTargets().length === 0) return;
+    (p as Player).playAttack(followUp, () => {
+      if (!p.active) return;
+      const targetsAtImpact = collectTargets();
+      if (targetsAtImpact.length === 0) return;
 
-    // Обычный удар всегда использует attack1; второй взмах нужен только
-    // целям, пережившим попадание и всё ещё остающимся в радиусе меча.
-    (p as Player).playAttack(followUp);
-    const hitEnemies: Enemy[] = [];
-    const survivors: Enemy[] = [];
-    for (const e of targets) {
-      const dx = e.x - p.x, dy = e.y - p.y;
-      this.ctx.damageEnemy(e, dmg, dx, dy, 130, 'sword');
-      if (evolved && e.active && !e.dead) hitEnemies.push(e);
-      if (!evolved && e.active && !e.dead) survivors.push(e);
-    }
-
-    if (!evolved && !followUp && survivors.length > 0) {
-      this.scene.time.delayedCall(SWORD_FOLLOW_UP_DELAY_MS, () => {
-        this.swordSwing(angle, dmg, false, true, survivors);
+      // FX появления привязан к попаданию, а не к началу замаха.
+      const slash = this.scene.add.image(p.x, p.y, 'slash')
+        .setScale(evolved ? 1.25 : 0.85)
+        .setRotation(angle)
+        .setDepth(DEPTH.FX - 5)
+        .setAlpha(0.95);
+      if (evolved) slash.setTint(0xffe9a0);
+      this.scene.tweens.add({
+        targets: slash,
+        scale: evolved ? 1.55 : 1.1,
+        alpha: 0,
+        duration: evolved ? 240 : 190,
+        ease: 'Quad.easeOut',
+        onComplete: () => slash.destroy(),
       });
-    }
 
-    // Молнии-цепи: каждый задетый враг бьёт разрядом в ближайшего соседа
-    // (кап 6 разрядов за взмах — лимит графики на плотных толпах)
-    if (evolved) {
-      for (const src of hitEnemies.slice(0, 6)) {
-        if (!src.active || src.dead) continue;
-        let best: Enemy | null = null;
-        let bestD = 250 * 250;
-        for (const e of this.ctx.enemies()) {
-          if (e === src || !e.active || e.dead || hitEnemies.includes(e)) continue;
-          const d = (e.x - src.x) ** 2 + (e.y - src.y) ** 2;
-          if (d < bestD) { bestD = d; best = e; }
-        }
-        if (best) {
-          this.ctx.effects().chainLightning(src.x, src.y - 26, best.x, best.y - 26);
-          this.ctx.damageEnemy(best, Math.round(dmg * 0.45), best.x - src.x, best.y - src.y, 90, 'sword');
+      const hitEnemies: Enemy[] = [];
+      const survivors: Enemy[] = [];
+      for (const e of targetsAtImpact) {
+        const dx = e.x - p.x, dy = e.y - p.y;
+        this.ctx.damageEnemy(e, dmg, dx, dy, 130, 'sword');
+        if (evolved && e.active && !e.dead) hitEnemies.push(e);
+        if (!evolved && e.active && !e.dead) survivors.push(e);
+      }
+
+      if (!evolved && !followUp && survivors.length > 0) {
+        this.scene.time.delayedCall(SWORD_FOLLOW_UP_DELAY_MS, () => {
+          this.swordSwing(angle, dmg, false, true, survivors);
+        });
+      }
+
+      // Молнии-цепи тоже запускаются от фактического попадания основного клинка.
+      if (evolved) {
+        for (const src of hitEnemies.slice(0, 6)) {
+          if (!src.active || src.dead) continue;
+          let best: Enemy | null = null;
+          let bestD = 250 * 250;
+          for (const e of this.ctx.enemies()) {
+            if (e === src || !e.active || e.dead || hitEnemies.includes(e)) continue;
+            const d = (e.x - src.x) ** 2 + (e.y - src.y) ** 2;
+            if (d < bestD) { bestD = d; best = e; }
+          }
+          if (best) {
+            this.ctx.effects().chainLightning(src.x, src.y - 26, best.x, best.y - 26);
+            this.ctx.damageEnemy(best, Math.round(dmg * 0.45), best.x - src.x, best.y - src.y, 90, 'sword');
+          }
         }
       }
-    }
+    });
   }
 
   // ---------- ЛУК: самонаведение ----------
