@@ -1243,7 +1243,7 @@ export class GameScene extends Phaser.Scene {
       let garrisonDistance = Infinity;
       let civilianDistance = Infinity;
       for (const p of this.economy.pawns) {
-        if (p.dead || !p.active) continue;
+        if (p.dead || !p.active || p.sheltered) continue;
         if (p.state === 'wounded' || p.state === 'bleeding') continue;
         const d = Math.hypot(p.x - e.x, p.y - e.y);
         if (d > AGGRO.NPC) continue;
@@ -1403,8 +1403,11 @@ export class GameScene extends Phaser.Scene {
         track('first_house', { t_sec: Math.floor(this.elapsed) });
       }
       if (kind === 'barracks' && this.builtBarracks === 1) {
-        // Телеметрия §K.2: первые казармы
+        // Телеметрия §K.2: первые казармы.
         track('first_barracks', { t_sec: Math.floor(this.elapsed) });
+        // Постройка не нанимает воинов автоматически: сразу подсказываем,
+        // где открыть меню найма и что гарнизон стоит ресурсов.
+        this.hud.feed(t('hire.barracksBuilt'), '#9fd8ff');
       }
       // Скин построек (§J.6.2): новая постройка тоже под tint
       if (this.bldTint !== null) this.tintAllBuildings();
@@ -3593,13 +3596,12 @@ private bossDeathSequence(e: Enemy): boolean {
       onChoose: (card: UpgradeCard) => {
         this.applyCard(card);
         this.pendingLevelUps--;
-        if (this.pendingLevelUps <= 0) {
-          this.scene.resume();
-          this.overlayOpen = false;
-          gameplayStart();
-          return true; // готово
-        }
-        return false; // показать следующий выбор
+        return this.pendingLevelUps <= 0;
+      },
+      onFinished: () => {
+        this.scene.resume();
+        this.overlayOpen = false;
+        gameplayStart();
       },
     });
   }
@@ -4274,8 +4276,10 @@ private bossDeathSequence(e: Enemy): boolean {
       siegeInterceptRadius: () => SIEGE.INTERCEPT_R + 40 * this.economy.card('militia'),
       onEnemyShoot: (x, y, proj, targetPawn) => {
         // Большинство снарядов направлены на героя; рыба учитывает выбранную AI-цель-пешку.
-        const tx = proj === 'bomb' && targetPawn?.active && !targetPawn.dead ? targetPawn.x : this.player.x;
-        const ty = proj === 'bomb' && targetPawn?.active && !targetPawn.dead ? targetPawn.y : this.player.y;
+        const canTargetPawn = proj === 'bomb' && targetPawn?.active
+          && !targetPawn.dead && !targetPawn.sheltered;
+        const tx = canTargetPawn ? targetPawn!.x : this.player.x;
+        const ty = canTargetPawn ? targetPawn!.y : this.player.y;
         if (proj === 'bomb') {
           const fish = ENEMIES['bomb-fish'];
           const dmg = Math.round((fish.shotDmg ?? 14) * this.spawner.dmgMult);
@@ -4320,7 +4324,7 @@ private bossDeathSequence(e: Enemy): boolean {
       // Враг ранит пешку (§A.5): обычный бой — напрямую, осада — по лимиту профиля
       attackHero: (dmg, sourceX) => this.hurtPlayer(dmg, sourceX),
       attackPawn: (pawn, dmg, siege) => {
-        if (pawn.dead) return;
+        if (pawn.dead || pawn.sheltered) return;
         if (siege) this.settlement.siegeWoundPawn(pawn, dmg, this.activeTimeMs);
         else {
           // Таунт мечника перетягивает и урон по гражданскому (§B.7.1).
@@ -4383,7 +4387,7 @@ private bossDeathSequence(e: Enemy): boolean {
         for (const p of this.economy.pawns) {
           // Уже раненые не могут получить второе ранение и не должны блокировать
           // поиск следующей цели осады.
-          if (p.dead || !p.active || p.state === 'wounded' || p.state === 'bleeding') continue;
+          if (p.dead || !p.active || p.sheltered || p.state === 'wounded' || p.state === 'bleeding') continue;
           // Герой — не пешка, его ранение идёт обычным путём (§A.5)
           const d = Math.hypot(p.x - x, p.y - y);
           if (d < bestD) { bestD = d; best = p; }

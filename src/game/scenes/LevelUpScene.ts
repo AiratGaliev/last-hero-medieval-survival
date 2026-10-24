@@ -14,7 +14,9 @@ import { t } from '../../i18n';
 
 interface LevelUpData {
   getChoices: () => UpgradeCard[];
-  onChoose: (card: UpgradeCard) => boolean; // true = готово
+  onChoose: (card: UpgradeCard) => boolean; // true = выбран последний уровень наград
+  /** Вызывается после визуального эффекта повышения уровня, перед возвратом в матч. */
+  onFinished?: () => void;
   /** Нормализованная позиция героя в игровом viewport до паузы мира. */
   heroPoint?: { x: number; y: number };
   /**
@@ -30,7 +32,7 @@ interface LevelUpData {
 interface CardUi {
   container: Phaser.GameObjects.Container;
   paper: Phaser.GameObjects.NineSlice;
-  icon: Phaser.GameObjects.Image;
+  icon: Phaser.GameObjects.Image | Phaser.GameObjects.Sprite;
   title: Phaser.GameObjects.Text;
   subtitle: Phaser.GameObjects.Text;
   desc: Phaser.GameObjects.Text;
@@ -56,6 +58,8 @@ export class LevelUpScene extends Phaser.Scene {
   private ui!: OverlayLayer;
   /** Клавиатурная навигация: подсвеченная карточка (−1 = ничего) */
   private hoverIdx = -1;
+  /** Защита от повторного выбора, пока карточки закрываются и играет эффект левел-апа. */
+  private choosing = false;
   /** Центр ленты-заголовка и её высота: от них считается блок карточек. */
   private titleY = 0;
   private ribbonH = 0;
@@ -126,6 +130,7 @@ export class LevelUpScene extends Phaser.Scene {
       this.lastPayload = payload;
     }
     this.payload = payload;
+    this.choosing = false;
 
     // Мобильные экраны: виртуальное полотно 460×780 + зум камеры
     const realW = this.scale.width;
@@ -147,8 +152,6 @@ export class LevelUpScene extends Phaser.Scene {
     // опыта и иконки оружия — они светились сквозь «выбор карты».
     this.ui = new OverlayLayer(this, DEPTH.OVERLAY + 2);
     this.ui.rectangle(width / 2, height / 2, width / this.overlayZoom + 80, height / this.overlayZoom + 80, 0x0a0a12, 0.72);
-    this.showHeroLevelUpBeam(payload.heroPoint, width, height);
-
     // Заголовок на ленте. Лента не даёт заголовку висеть в пустом
     // тёмном поле и повторяет стиль остальных экранов.
     //
@@ -327,8 +330,15 @@ export class LevelUpScene extends Phaser.Scene {
         }
       }
 
-      const icon = this.add.image(0, -cardH * 0.30, card.icon)
-        .setDisplaySize(Math.min(72, cardH * 0.32), Math.min(72, cardH * 0.32));
+      // У пороховой бочки есть отдельный спрайт-лист с горящим фитилём.
+      // В карточке показываем именно этот ассет и его анимацию, а не условную UI-иконку.
+      const iconSize = Math.min(72, cardH * 0.32);
+      const isBombWeapon = card.id === 'bomb'
+        && (card.kind === 'weapon-new' || card.kind === 'weapon-up' || card.kind === 'weapon-evolve');
+      const icon = isBombWeapon
+        ? this.add.sprite(0, -cardH * 0.30, 'barrel').play('barrel-burn')
+        : this.add.image(0, -cardH * 0.30, card.icon);
+      icon.setDisplaySize(iconSize, iconSize);
       if (isEvo) icon.setTint(0xffe9a0);
       container.add(icon);
       // Эволюция: иконка «дышит» золотом
@@ -496,27 +506,49 @@ export class LevelUpScene extends Phaser.Scene {
   }
 
   private chooseCard(card: UpgradeCard): void {
+    if (this.choosing) return;
+    this.choosing = true;
+
     const done = this.payload.onChoose(card);
+    this.currentChoices = null;
+    for (const c of this.cards) {
+      // Бесконечные твиды сияния/звёзд эволюции — убить до уничтожения.
+      this.tweens.killTweensOf(c.container);
+      c.container.list.forEach((child) => this.tweens.killTweensOf(child));
+      c.container.disableInteractive();
+      this.tweens.add({
+        targets: c.container,
+        alpha: 0,
+        scale: 0.86,
+        y: c.container.y - 24,
+        duration: 180,
+        ease: 'Cubic.easeIn',
+        onComplete: () => c.container.destroy(),
+      });
+    }
+    this.cards = [];
+
     if (done) {
-      // Матч продолжается — следующий левел-ап сгенерирует новые карты
-      this.currentChoices = null;
-      this.scene.stop();
-    } else {
-      // Следующий выбор — новый набор карт
-      this.currentChoices = null;
-      for (const c of this.cards) {
-        // Бесконечные твиды сияния/звёзд эволюции — убить до уничтожения
-        this.tweens.killTweensOf(c.container);
-        c.container.list.forEach((child) => this.tweens.killTweensOf(child));
-        this.tweens.add({
-          targets: c.container,
-          alpha: 0, y: c.container.y - 30,
-          duration: 180,
-          onComplete: () => c.container.destroy(),
+      // Карточки исчезают ПЕРЕД вспышкой: эффект не должен теряться за UI.
+      // Match оставляем на паузе, пока игрок видит результат повышения уровня.
+      this.scale.off('resize', this.rebuild, this);
+      this.time.delayedCall(200, () => {
+        this.showHeroLevelUpBeam(
+          this.payload.heroPoint,
+          this.vw || this.scale.width,
+          this.vh || this.scale.height,
+        );
+        this.time.delayedCall(480, () => {
+          this.payload.onFinished?.();
+          this.scene.stop();
         });
-      }
-      this.cards = [];
-      this.time.delayedCall(190, () => this.renderCards());
+      });
+    } else {
+      // Несколько уровней подряд: следующий набор показываем после выхода старого.
+      this.time.delayedCall(190, () => {
+        this.choosing = false;
+        this.renderCards();
+      });
     }
   }
 }

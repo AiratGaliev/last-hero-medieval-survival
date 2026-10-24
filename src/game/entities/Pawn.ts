@@ -9,8 +9,8 @@ import type { Enemy } from './Enemy';
 
 // ============ Пешка поселения: гражданские и гарнизон (TZ §B.2) ============
 //
-// Состояния: idle/walk/work/carry/flee (гражданские) + fight/retreat/kite/heal
-// (гарнизон) + wounded/bleeding/cooldown (все). Логика переходов — PawnAI,
+// Состояния: idle/walk/work/carry/flee/retreat/resting (гражданские) +
+// fight/retreat/kite/heal (гарнизон) + wounded/bleeding/cooldown (все). Логика — PawnAI,
 // здесь только сущность: анимации, HP, имена, ветеранство, урон.
 
 export interface PawnCtx {
@@ -47,6 +47,12 @@ export class Pawn extends Phaser.Physics.Arcade.Sprite {
   arrivalMs = 0;
   /** Таймер истечения кровью (bleeding). */
   bleedTimer = 0;
+  /** Закреплённая безопасная точка подхода на время цикла восстановления. */
+  recoveryTarget: { x: number; y: number } | null = null;
+  /** Здание, в котором гражданский находится на восстановлении. */
+  recoveryBuilding: Building | null = null;
+  /** Укрытый юнит невидим и не может быть выбран врагом целью. */
+  sheltered = false;
   /** Кулдаут атаки (гарнизон). */
   attackCd = 0;
   attackPending = false;
@@ -327,7 +333,7 @@ export class Pawn extends Phaser.Physics.Arcade.Sprite {
 
   /** Урон от врага. false — выжил; true — перешёл в wounded (§G.3). */
   takeDamage(dmg: number, _now: number): boolean {
-    if (this.dead || this.state === 'wounded' || this.state === 'bleeding') return false;
+    if (this.dead || this.sheltered || this.state === 'wounded' || this.state === 'bleeding') return false;
     this.hp = Math.max(0, this.hp - dmg);
     this.setTint(0xffffff);
     this.setTintMode(Phaser.TintModes.FILL);
@@ -354,6 +360,33 @@ export class Pawn extends Phaser.Physics.Arcade.Sprite {
     return false;
   }
 
+  /** Физический вход/выход из укрытия. Лечение продолжает идти, но юнит
+   *  убирается с поля и исключается из вражеского таргетинга до выхода. */
+  setSheltered(sheltered: boolean): void {
+    if (this.sheltered === sheltered) return;
+    this.sheltered = sheltered;
+    this.setVisible(!sheltered);
+    this.shadow.setVisible(!sheltered);
+    const body = this.body as Phaser.Physics.Arcade.Body | null;
+    if (body) {
+      if (sheltered) body.setVelocity(0, 0);
+      body.enable = !sheltered;
+    }
+    if (sheltered) {
+      this.hpBar.setVisible(false);
+      this.starBadge?.setVisible(false);
+      this.stateBadge?.setVisible(false);
+      this.bleedBadge?.setVisible(false);
+      this.tauntBadge?.setVisible(false);
+      this.tauntText?.setVisible(false);
+      return;
+    }
+    if (this.hp < this.maxHp) this.drawHpBar();
+    this.updateStarBadge();
+    this.updateBleedBadge();
+    this.updateStateBadge();
+  }
+
   healBy(v: number): void {
     if (this.dead) return;
     this.hp = Math.min(this.maxHp, this.hp + v);
@@ -368,6 +401,10 @@ export class Pawn extends Phaser.Physics.Arcade.Sprite {
   }
 
   private drawHpBar(): void {
+    if (this.sheltered) {
+      this.hpBar.setVisible(false);
+      return;
+    }
     if (this.hp >= this.maxHp) {
       this.hpBar.setVisible(false);
       return;
@@ -397,6 +434,10 @@ export class Pawn extends Phaser.Physics.Arcade.Sprite {
       this.starBadge.setText('★'.repeat(this.veteranStars));
     }
     this.updateBleedBadge();
+    if (this.sheltered) {
+      this.starBadge?.setVisible(false);
+      this.bleedBadge?.setVisible(false);
+    }
   }
 
   /**
@@ -432,22 +473,29 @@ export class Pawn extends Phaser.Physics.Arcade.Sprite {
  */
   /** Подпись над головой делает состояния retreat/wounded визуально читаемыми. */
   private updateStateBadge(): void {
+    if (this.sheltered) {
+      this.stateBadge?.setVisible(false);
+      return;
+    }
     const label = this.state === 'retreat'
       ? t('pawn.badgeRetreat')
-      : this.state === 'wounded' || this.state === 'bleeding'
-        ? t('pawn.badgeWounded')
-        : '';
+      : this.state === 'resting'
+        ? t('pawn.badgeResting')
+        : this.state === 'wounded' || this.state === 'bleeding'
+          ? t('pawn.badgeWounded')
+          : '';
     if (!label) {
       this.stateBadge?.destroy();
       this.stateBadge = null;
       return;
     }
     const isRetreating = this.state === 'retreat';
+    const isResting = this.state === 'resting';
     if (!this.stateBadge || !this.stateBadge.active) {
       this.stateBadge = this.scene.add.text(this.x, this.y - 52, label, {
         fontFamily: FONT,
         fontSize: `${FS.small}px`,
-        color: isRetreating ? '#ffd76e' : '#ff806e',
+        color: isRetreating ? '#ffd76e' : isResting ? '#9fd8ff' : '#ff806e',
         backgroundColor: '#1a0f08',
         padding: { x: 3, y: 1 },
         stroke: '#1a0f08',
@@ -455,7 +503,7 @@ export class Pawn extends Phaser.Physics.Arcade.Sprite {
       }).setOrigin(0.5).setDepth(DEPTH.HPBAR);
     }
     if (this.stateBadge.text !== label) this.stateBadge.setText(label);
-    this.stateBadge.setColor(isRetreating ? '#ffd76e' : '#ff806e');
+    this.stateBadge.setColor(isRetreating ? '#ffd76e' : isResting ? '#9fd8ff' : '#ff806e');
     // Индикатор истечения кровью и звёзды остаются отдельными, не накладываются.
     const offset = this.state === 'bleeding' ? 66 : this.starBadge?.active ? 64 : 48;
     this.stateBadge.setPosition(this.x, this.y - offset).setVisible(true);
@@ -503,6 +551,18 @@ export class Pawn extends Phaser.Physics.Arcade.Sprite {
     if (!this.active || this.scene.registry.get('tss-hint-overlay-paused') === true) return;
     super.preUpdate(time, delta);
     if (!this.active) return;
+    if (this.sheltered) {
+      this.setVisible(false);
+      this.shadow.setVisible(false);
+      this.hpBar.setVisible(false);
+      this.starBadge?.setVisible(false);
+      this.bleedBadge?.setVisible(false);
+      this.stateBadge?.setVisible(false);
+      this.tauntBadge?.setVisible(false);
+      this.tauntText?.setVisible(false);
+      return;
+    }
+    this.shadow.setVisible(true);
     this.shadow.setPosition(this.x, this.y + 8);
     this.setDepth(DEPTH.ENTITY_BASE + this.y);
     if (this.hpBar.visible) this.drawHpBar();

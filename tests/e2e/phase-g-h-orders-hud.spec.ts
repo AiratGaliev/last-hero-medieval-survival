@@ -242,14 +242,26 @@ test('phase G: command menu is explicit, closable and BUILD order ends after con
   expect(entries).toEqual([
     { key: 'collect', disabled: false },
     { key: 'build', disabled: false },
-    { key: 'repair', disabled: true },
-    { key: 'rest', disabled: true },
+    { key: 'repair', disabled: false },
+    { key: 'rest', disabled: false },
   ]);
 
-  // Нижняя кнопка «ЧИНИТЬ» имеет центр в 74 CSS px от пешки.
-  const disabledPoint = { x: point.x, y: point.y + 74 };
-  await page.mouse.click(disabledPoint.x, disabledPoint.y);
-  await expect.poll(isOpen).toBe(true);
+  // «ЧИНИТЬ» — рабочий приказ: меню закрывается, а пешка получает команду.
+  const repairPoint = { x: point.x, y: point.y + 74 };
+  await page.mouse.click(repairPoint.x, repairPoint.y);
+  await expect.poll(isOpen).toBe(false);
+  await expect.poll(() => page.evaluate(() => {
+    const game = (window as RuntimeWindow).__tss!;
+    const scene = game.scene.getScene('Game') as GameSceneRuntime;
+    return scene.economy.pawns.find(p => p.kind === 'collector')?.order ?? null;
+  })).toBe('repair');
+  await page.evaluate(() => {
+    const game = (window as RuntimeWindow).__tss!;
+    const scene = game.scene.getScene('Game') as GameSceneRuntime;
+    const pawn = scene.economy.pawns.find(p => p.kind === 'collector')!;
+    pawn.order = null;
+    pawn.orderTarget = null;
+  });
 
   await shiftClick(page, point.x, point.y);
   await expect.poll(isOpen).toBe(false);
