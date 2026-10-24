@@ -61,6 +61,8 @@ tool-results/
 /upload/
 /bun.lock
 /test-results/
+# HTML-отчёт Playwright (генерируется прогоном, смотреть: npx playwright show-report)
+/playwright-report/
 
 # Локальный инструментарий разработчика (18 скриптов QA и отладки в tools/).
 # Папка НЕ нужна ни игре, ни сборке, ни CI: `npm run check`, `build`, `build:yg`
