@@ -640,37 +640,6 @@ export class PawnAI {
     // бессмертным (§G.3).
     if (p.state === 'wounded' || p.state === 'bleeding') { this.woundedTick(p, tickMs); return; }
 
-    if (p.attackWindupMs > 0) {
-      p.attackWindupMs = Math.max(0, p.attackWindupMs - tickMs);
-      p.setVelocity(0, 0);
-      if (p.attackWindupMs === 0) {
-        const target = p.attackTarget;
-        const weapon = p.attackWeapon;
-        const damage = p.attackDamage;
-        p.attackTarget = null;
-        p.attackWeapon = null;
-        p.attackRecoveryMs = COMBAT_TIMING.PAWN_ATTACK_RECOVERY_MS;
-        if (target && target.active && !target.dead && weapon) {
-          const d = Phaser.Math.Distance.Between(p.x, p.y, target.x, target.y);
-          const radius = target.def.body.r * target.def.scale;
-          const reach = weapon === 'bow' ? FIGHTERS.bow.range + 40
-            : weapon === 'lance' ? 100 + radius : FIGHTERS.sword.range + radius;
-          if (d <= reach) {
-            if (weapon === 'bow') this.c.shootArrow(p, target);
-            else this.c.pawnAttackEnemy(target, damage, weapon);
-          }
-        }
-      }
-      return;
-    }
-    if (p.attackRecoveryMs > 0) {
-      p.attackRecoveryMs = Math.max(0, p.attackRecoveryMs - tickMs);
-      p.setVelocity(0, 0);
-      return;
-    }
-    // Не перезаписываем скорость копейщика во время рывка.
-    if (p.weapon === 'lance' && p.taskProgress > 0) return;
-
     // Отступление при HP < 35%: к монастырю/замку, слот не занимает (§B.7.1)
     if (p.state !== 'retreat' && p.hp < p.maxHp * RETREAT_HP) {
       p.state = 'retreat';
@@ -708,7 +677,42 @@ export class PawnAI {
       return;
     }
 
+    // Attack cooldown advances during windup/recovery as well as while moving.
     p.attackCd = Math.max(0, p.attackCd - tickMs);
+
+
+    if (p.attackWindupMs > 0) {
+      p.attackWindupMs = Math.max(0, p.attackWindupMs - tickMs);
+      p.setVelocity(0, 0);
+      if (p.attackWindupMs === 0) {
+        const target = p.attackTarget;
+        const weapon = p.attackWeapon;
+        const damage = p.attackDamage;
+        p.attackTarget = null;
+        p.attackWeapon = null;
+        p.attackRecoveryMs = COMBAT_TIMING.PAWN_ATTACK_RECOVERY_MS;
+        if (target && target.active && !target.dead && weapon) {
+          const d = Phaser.Math.Distance.Between(p.x, p.y, target.x, target.y);
+          const radius = target.def.body.r * target.def.scale;
+          const reach = weapon === 'bow' ? FIGHTERS.bow.range + 40
+            : weapon === 'lance' ? 100 + radius : FIGHTERS.sword.range + radius;
+          if (d <= reach) {
+            if (weapon === 'bow') this.c.shootArrow(p, target);
+            else this.c.pawnAttackEnemy(target, damage, weapon);
+          }
+        }
+      }
+      return;
+    }
+    if (p.attackRecoveryMs > 0) {
+      p.attackRecoveryMs = Math.max(0, p.attackRecoveryMs - tickMs);
+      p.setVelocity(0, 0);
+      return;
+    }
+    // Не перезаписываем скорость копейщика во время рывка.
+    if (p.weapon === 'lance' && p.taskProgress > 0) return;
+
+
 
     const enemies = this.c.enemies();
 
