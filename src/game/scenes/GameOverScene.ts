@@ -17,6 +17,7 @@ import {
   addGlory, challengeVictoryToday, contractDef, gloryDoubleExtra, loadMetaState, markChallengeVictory, saveRunConfig,
 } from '../meta';
 import { depositGold } from '../shop';
+import { claimStoreOfferForSession, type StoreOfferKind } from '../storeOffers';
 
 // ============ Экран конца матча: статистика + рекорд + монетизация ============
 // Всё внутри Phaser: гость вводит имя в нативный <input> (DOMElement),
@@ -83,6 +84,10 @@ export interface GameOverStats {
     persisted?: boolean;
     /** False means a run's separate gold wallet credit was not persisted. */
     walletRewardSaved?: boolean;
+    /** Тип контекстного предложения, рассчитанный после фиксации текущего рана. */
+    storeOffer?: StoreOfferKind;
+    /** Сохраняет уже показанное предложение при перерисовке экрана после resize. */
+    storeOfferSessionClaimed?: boolean;
     /** False means a successful daily challenge did not persist its daily reward. */
     challengeRewardSaved?: boolean;
     challenge: boolean;
@@ -523,6 +528,7 @@ export class GameOverScene extends Phaser.Scene {
 
     // --- Near-miss (§H.3, блок 2): ровно одна строка, приоритет сверху вниз ---
     y = this.renderNearMiss(body, s, y, width, compact, bottom - top - y - pad);
+    y = this.renderStoreOffer(body, s, y, width, compact, bottom - top - y - pad);
 
     // --- Урон по оружию ---
     y = this.renderWeaponStats(body, s, y, width, compact, bottom - top - y - pad);
@@ -839,6 +845,75 @@ export class GameOverScene extends Phaser.Scene {
       align: 'center', wordWrap: { width: wrap }, lineSpacing: 4,
     }).setOrigin(0.5, 0));
     return cursor + chronicleHeight;
+  }
+
+  /** Контекстное предложение (§J.6.4) появляется только на экране итога и по выбору игрока. */
+  private renderStoreOffer(
+    body: Phaser.GameObjects.Container,
+    s: GameOverStats,
+    cursor: number,
+    width: number,
+    compact: boolean,
+    avail: number,
+  ): number {
+    const meta = s.meta;
+    const offer = meta?.storeOffer;
+    if (!meta || !offer) return cursor;
+
+    const messageKey: Record<StoreOfferKind, TranslationKey> = {
+      starter: 'store.offerStarterMessage',
+      monastery: 'store.offerMonasteryMessage',
+      pass: 'store.offerPassMessage',
+    };
+    const message = this.add.text(width / 2, cursor, t(messageKey[offer]), {
+      fontFamily: FONT,
+      fontSize: compact ? '10px' : '12px',
+      color: '#6b4a1e',
+      align: 'center',
+      lineSpacing: 2,
+      wordWrap: { width: Math.min(500, width - 52) },
+    }).setOrigin(0.5, 0);
+
+    const buttonH = 44;
+    const gap = compact ? 5 : 8;
+    const needed = message.height + gap + buttonH + 4;
+    if (avail < needed) {
+      message.destroy();
+      return cursor;
+    }
+
+    if (!meta.storeOfferSessionClaimed) {
+      if (!claimStoreOfferForSession()) {
+        message.destroy();
+        // Сессия уже использовала предложение или хранилище недоступно:
+        // не показываем повтор и не нарушаем лимит §J.9.
+        meta.storeOffer = undefined;
+        return cursor;
+      }
+      meta.storeOfferSessionClaimed = true;
+      track('store_offer_shown', { offer });
+    }
+
+    body.add(message);
+    const buttonW = Math.min(270, width - 48);
+    const buttonY = cursor + message.height + gap + buttonH / 2;
+    const button = makeButton(
+      this, width / 2, buttonY, buttonW, buttonH, t('store.offerOpen'),
+      () => this.openStoreOffer(offer), 'blue', compact ? 10 : 12,
+      { hitW: buttonW, hitH: buttonH, stopPropagation: true },
+    );
+    button.img.setScrollFactor(0);
+    button.txt.setScrollFactor(0);
+    button.hit.setScrollFactor(0);
+    body.add([button.img, button.txt, button.hit]);
+    return cursor + needed;
+  }
+
+  private openStoreOffer(offer: StoreOfferKind): void {
+    const tab = offer === 'pass' ? 'pass' : 'crowns';
+    if (this.scene.isActive('Shop')) return;
+    track('store_offer_opened', { offer, tab });
+    this.scene.launch('Shop', { tab });
   }
 
   /** Near-miss (§H.3, блок 2): «чуть-чуть» — триггер ещё одного рана. */
