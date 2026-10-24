@@ -517,6 +517,147 @@ test('phase I: harpoon shark still fires when its throw animation is interrupted
   expect(pageErrors).toEqual([]);
 });
 
+test('Ogre siege persists, pursues the hero after hits, and returns to the castle', async ({ page }) => {
+  const pageErrors: string[] = [];
+  page.on('pageerror', (error) => pageErrors.push(error.message));
+  await openApp(page);
+  await startGameplay(page);
+
+  const result = await page.evaluate(() => {
+    const game = (window as unknown as { __tss?: RuntimeGame }).__tss;
+    if (!game) throw new Error('Phaser runtime is unavailable');
+    const scene = game.scene.getScene('Game') as RuntimeScene & {
+      activeTimeMs: number;
+      registry: { set(key: string, value: unknown): void };
+      bossPhaseCheck: () => void;
+      damageEnemy: (enemy: RuntimeEnemy, dmg: number) => void;
+      settlement: NonNullable<RuntimeScene['settlement']> & {
+        castle: { x: number; y: number; alive: boolean };
+      };
+      player: RuntimeScene['player'] & { setPosition: (x: number, y: number) => unknown };
+    };
+
+    scene.spawner.stopped = true;
+    for (const enemy of scene.enemyGroup.getChildren()) scene.enemyGroup.remove(enemy, true, true);
+    const castle = scene.settlement.castle;
+    scene.player.setPosition(castle.x + 900, castle.y);
+    if (!scene.spawnEnemy('boss', castle.x + 500, castle.y)) {
+      throw new Error('Could not spawn a QA Ogre');
+    }
+
+    const boss = scene.enemyGroup.getChildren().find((enemy) =>
+      enemy.active && enemy.kind === 'boss') as RuntimeEnemy & {
+        dead: boolean;
+        hp: number;
+        maxHp: number;
+        siege: boolean;
+        buildingTarget: unknown;
+        attackWindowEnds: number;
+        aiState: string;
+        body: { velocity: { x: number; y: number } } | null;
+        def: { isBoss: boolean };
+      } | undefined;
+    if (!boss) throw new Error('QA Ogre was not added to the enemy group');
+    boss.hp = boss.maxHp * 0.4;
+    scene.bossPhaseCheck();
+
+    const enteredPhaseTwo = boss.aiState === 'bossPhase2'
+      && boss.siege && boss.buildingTarget === castle;
+    // Emulate a stale/generic 10-second attack deadline. It must not govern the
+    // final boss, whose siege phase is persistent by TZ §E.6.
+    const deadline = scene.activeTimeMs + 100;
+    boss.attackWindowEnds = deadline;
+    scene.registry.set('tss-active-time-ms', deadline + 1);
+    scene.registry.set('tss-freeze', 0);
+    boss.preUpdate?.(deadline + 1, 16);
+
+    const retainedAfterDeadline = boss.active
+      && scene.enemyGroup.contains(boss)
+      && boss.aiState === 'bossPhase2'
+      && boss.siege
+      && boss.buildingTarget === castle
+      && boss.attackWindowEnds === 0;
+    const velocity = boss.body?.velocity;
+    const velocityTowardCastle = velocity
+      ? (castle.x - boss.x) * velocity.x + (castle.y - boss.y) * velocity.y
+      : 0;
+
+    // Реальное попадание героя отвлекает Огра от замка, даже если герой дальше
+    // обычного радиуса перехвата; без новых попаданий через 6 сек осада возобновляется.
+    const hitAt = scene.activeTimeMs;
+    scene.registry.set('tss-active-time-ms', hitAt);
+    scene.damageEnemy(boss, 1);
+    scene.activeTimeMs = hitAt + 16;
+    scene.registry.set('tss-active-time-ms', hitAt + 16);
+    boss.preUpdate?.(hitAt + 16, 16);
+    const velocityAfterHit = boss.body?.velocity;
+    const velocityTowardHero = velocityAfterHit
+      ? (scene.player.x - boss.x) * velocityAfterHit.x + (scene.player.y - boss.y) * velocityAfterHit.y
+      : 0;
+    const distractedByHero = boss.active && boss.aiState === 'bossPhase2'
+      && boss.siege && boss.buildingTarget === castle && velocityTowardHero > 0;
+
+    // Второе попадание на четвёртой секунде продлевает агро ещё на 6 секунд.
+    const refreshAt = hitAt + 4000;
+    scene.activeTimeMs = refreshAt;
+    scene.registry.set('tss-active-time-ms', refreshAt);
+    scene.damageEnemy(boss, 1);
+    const refreshedCheckAt = hitAt + 9000;
+    scene.activeTimeMs = refreshedCheckAt;
+    scene.registry.set('tss-active-time-ms', refreshedCheckAt);
+    boss.preUpdate?.(refreshedCheckAt, 16);
+    const velocityAfterRefresh = boss.body?.velocity;
+    const stillChasingAfterRefresh = velocityAfterRefresh
+      ? (scene.player.x - boss.x) * velocityAfterRefresh.x + (scene.player.y - boss.y) * velocityAfterRefresh.y > 0
+      : false;
+
+    const tauntExpiresAt = refreshAt + 6001;
+    scene.activeTimeMs = tauntExpiresAt;
+    scene.registry.set('tss-active-time-ms', tauntExpiresAt);
+    boss.preUpdate?.(tauntExpiresAt, 16);
+    const velocityAfterTaunt = boss.body?.velocity;
+    const velocityBackToCastle = velocityAfterTaunt
+      ? (castle.x - boss.x) * velocityAfterTaunt.x + (castle.y - boss.y) * velocityAfterTaunt.y
+      : 0;
+    const siegeResumedAfterTaunt = boss.active && boss.aiState === 'bossPhase2'
+      && boss.siege && boss.buildingTarget === castle && velocityBackToCastle > 0;
+
+    // If another cleanup clears the siege flag/target, the scene must restore
+    // the phase-2 contract without replaying the entrance cinematic.
+    boss.siege = false;
+    boss.buildingTarget = null;
+    scene.bossPhaseCheck();
+    const phaseRearmed = boss.aiState === 'bossPhase2'
+      && boss.siege
+      && boss.buildingTarget === castle
+      && boss.attackWindowEnds === 0;
+
+    return {
+      enteredPhaseTwo,
+      retainedAfterDeadline,
+      velocityTowardCastle,
+      distractedByHero,
+      velocityTowardHero,
+      stillChasingAfterRefresh,
+      siegeResumedAfterTaunt,
+      velocityBackToCastle,
+      phaseRearmed,
+    };
+  });
+
+  expect(result.enteredPhaseTwo).toBe(true);
+  expect(result.retainedAfterDeadline).toBe(true);
+  expect(result.velocityTowardCastle).toBeGreaterThan(0);
+  expect(result.distractedByHero).toBe(true);
+  expect(result.velocityTowardHero).toBeGreaterThan(0);
+  expect(result.stillChasingAfterRefresh).toBe(true);
+  expect(result.siegeResumedAfterTaunt).toBe(true);
+  expect(result.velocityBackToCastle).toBeGreaterThan(0);
+  expect(result.phaseRearmed).toBe(true);
+  expect(pageErrors).toEqual([]);
+});
+
+
 test('gameplay spawns the opening goblin and keeps Ogre death animation alive to completion', async ({ page }) => {
   const pageErrors: string[] = [];
   page.on('pageerror', (error) => pageErrors.push(error.message));
