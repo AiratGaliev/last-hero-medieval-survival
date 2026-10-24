@@ -288,9 +288,8 @@ export class BootScene extends Phaser.Scene {
         );
       }
     }
-    // ---- Гарнизон (§B.2): воины казарм/тирa/обители — префикс pawn-*
-    // обязателен, иначе столкнётся с hero-* (§A.6)
-    // Гарнизон использует текстуры героя; отдельные pawn-* анимации создаются ниже.
+    // ---- Гарнизон (§B.2): ключи анимаций сохраняют namespace pawn-* (§A.6).
+    // Кадры используют общие листы hero/player без повторной загрузки PNG.
     for (let i = 1; i <= 5; i++) {
       this.load.image(`gold-vein-${i}`, asset('tiny-swords', `terrain/resources/gold-stones/gold-stone-${i}.png`));
       this.load.spritesheet(
