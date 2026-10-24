@@ -3988,12 +3988,20 @@ private bossDeathSequence(e: Enemy): boolean {
         const passLevelAfter = Math.min(PASS.LEVELS, Math.floor(postRun.pass.xp / PASS.XP_PER_LEVEL));
         const storefrontUnlocked = showcaseUnlocked();
         const starterAvailable = isStarterCastellanAvailable(postRun);
+        // Near-miss измеряем фактическим остатком HP босса, а не временем рана.
+        // В обычном режиме босс появляется на 15-й минуте и может пережить 900 с;
+        // при сдаче через SuccessionScene это не считается близким поражением.
+        const bossHpRemainingPercent = !this.mods.endless && !this.surrendered
+          && this.boss?.active && !this.boss.dead
+          && this.boss.maxHp > 0 && this.boss.hp > 0
+          ? (this.boss.hp / this.boss.maxHp) * 100
+          : null;
         const storeOffer = resolveStoreOffer({
           storefrontUnlocked,
           passUnlocked: seasonPassUnlocked(),
           victory,
-          elapsedSeconds: stats.time,
-          matchDurationSeconds: GAME_DURATION,
+          endless: this.mods.endless,
+          bossHpRemainingPercent,
           monasteryCollapseVictims: this.maxMonasteryCollapseVictims,
           passLevelBefore,
           passLevelAfter,
