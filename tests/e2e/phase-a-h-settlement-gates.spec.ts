@@ -139,11 +139,22 @@ test('phase A: enemies prefer the hero and leave the settlement core alone (TZ �
     await new Promise((r) => setTimeout(r, 600));
     const heroPick = heroEnemy.aimedPawn;
 
-    // 2. Враг далеко от героя, но рядом с гражданским ВНЕ ядра: цель — пешка.
+    // 2. Враг далеко от героя, рядом с гражданским ВНЕ защищённого ядра.
+    // Не зашиваем +700: ядро включает не только радиус замка, но и пояс
+    // вокруг каждой точки стройки/постройки. На +700 пешка могла всё ещё быть
+    // защищена, поэтому E2E ожидал выбор цели, который правила запрещают.
     scene.enemyGroup.remove(heroEnemy, true, true);
     scene.player.setPosition?.(core.x - 900, core.y - 900);
-    collector.setPosition(core.x + 700, core.y);
-    const hunterTarget = scene.spawnEnemy('goblin', core.x + 760, core.y);
+    const coreCheck = economy as typeof economy & {
+      isSettlementCore(x: number, y: number): boolean;
+    };
+    const hunterPosition = [1050, 1100, 1150, 1200, 1250, 1300]
+      .map((offset) => ({ x: core.x + offset, y: core.y }))
+      .find(({ x, y }) => !coreCheck.isSettlementCore(x, y)
+        && !coreCheck.isSettlementCore(x + 60, y));
+    if (!hunterPosition) throw new Error('Could not find an unprotected target fixture outside the settlement core');
+    collector.setPosition(hunterPosition.x, hunterPosition.y);
+    const hunterTarget = scene.spawnEnemy('goblin', hunterPosition.x + 60, hunterPosition.y);
     if (!hunterTarget) throw new Error('Could not spawn the second QA goblin');
     const hunter = scene.enemyGroup.getChildren().find((e) => e.active && e.kind === 'goblin');
     if (!hunter) throw new Error('The second QA goblin was not registered');
@@ -164,6 +175,8 @@ test('phase A: enemies prefer the hero and leave the settlement core alone (TZ �
     return {
       heroTargetIsNull: heroPick === null,
       hunterTargetIsCollector: hunterPick === collector,
+      hunterTargetOutsideCore: !coreCheck.isSettlementCore(hunterPosition.x, hunterPosition.y)
+        && !coreCheck.isSettlementCore(hunter.x, hunter.y),
       coreTargetIsNull: corePick === null,
       collectorCoreDistance: Math.round(Math.hypot(collector.x - core.x, collector.y - core.y)),
     };
@@ -171,7 +184,9 @@ test('phase A: enemies prefer the hero and leave the settlement core alone (TZ �
 
   // Герой — первая цель (§A.5, №1).
   expect(report.heroTargetIsNull).toBe(true);
-  // Гражданский вне ядра — цель №3, когда геря рядом нет.
+  // Гражданский находится за пределами ядра по реальному predicate Economy,
+  // а не только по расстоянию до замка; вне ядра он становится целью №3.
+  expect(report.hunterTargetOutsideCore).toBe(true);
   expect(report.hunterTargetIsCollector).toBe(true);
   // Гражданский в ядре — вне досягаемости обычной волны (отклонение §A.5).
   expect(report.coreTargetIsNull).toBe(true);
