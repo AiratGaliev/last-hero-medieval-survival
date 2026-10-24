@@ -188,6 +188,88 @@ async function continueInitialTutorial(page: Page): Promise<void> {
   }), { timeout: 10_000 }).toBe(false);
 }
 
+test('phase B: only the civilian targeted by a nearby enemy flees', async ({ page }) => {
+  await startRun(page);
+
+  const report = await page.evaluate(() => {
+    const game = (window as RuntimeWindow).__tss;
+    if (!game) throw new Error('Phaser runtime is unavailable');
+    const scene = game.scene.getScene('Game') as GameSceneRuntime & {
+      spawner: { stopped: boolean };
+      enemyGroup: { clear(removeFromScene?: boolean, destroyChildren?: boolean): void };
+    };
+    const economy = scene.economy;
+    scene.spawner.stopped = true;
+    scene.enemyGroup.clear(true, true);
+
+    const civilianEconomy = economy as EconomyRuntime & {
+      isSettlementCore(x: number, y: number): boolean;
+    };
+    const workers = economy.pawns.filter((pawn) => {
+      const unit = pawn as PawnRuntime & { cls?: string };
+      return unit.cls === 'civilian' && pawn.active && !pawn.dead
+        && !economy.buildJobs.some((job) => job.pawn === pawn)
+        && !economy.repairJobs.some((job) => job.pawn === pawn);
+    });
+    const victim = workers[0];
+    const bystander = workers[1];
+    if (!victim || !bystander) throw new Error('Two free civilian workers are required');
+
+    // Оба работника стоят рядом, вне защищённого ядра поселения.
+    // Один mock-враг нацелен только на victim; bystander не должен паниковать.
+    victim.setPosition(2_760, 2_700);
+    bystander.setPosition(2_880, 2_700);
+    for (const pawn of [victim, bystander]) {
+      pawn.arrivalMs = 0;
+      pawn.cooldown = 0;
+      pawn.state = 'work';
+      pawn.carrying = null;
+      pawn.carriedAmount = 0;
+      pawn.taskProgress = 0;
+      pawn.order = null;
+      pawn.workNode = null;
+    }
+
+    const outsideCore = !civilianEconomy.isSettlementCore(victim.x, victim.y)
+      && !civilianEconomy.isSettlementCore(bystander.x, bystander.y);
+    if (!outsideCore) throw new Error('Threat-target fixture unexpectedly landed inside settlement core');
+
+    const threat = {
+      active: true,
+      dead: false,
+      x: 2_820,
+      y: 2_700,
+      siege: false,
+      aimedPawn: victim,
+    };
+    const context = scene.registry.get('tss-pawnai-ctx') as {
+      enemies: () => unknown[];
+    } | undefined;
+    if (!context) throw new Error('Pawn AI context is unavailable');
+    context.enemies = () => [threat];
+
+    const ai = economy.pawnAI as unknown as {
+      refreshEnemySnapshot(): void;
+      updateCivilian(pawn: PawnRuntime, dtMs: number, now: number): void;
+    };
+    ai.refreshEnemySnapshot();
+    ai.updateCivilian(victim, 16, scene.time.now);
+    ai.updateCivilian(bystander, 16, scene.time.now);
+
+    return {
+      outsideCore,
+      victimState: victim.state,
+      bystanderState: bystander.state,
+      threatTargetsVictim: threat.aimedPawn === victim,
+    };
+  });
+
+  expect(report.outsideCore).toBe(true);
+  expect(report.threatTargetsVictim).toBe(true);
+  expect(report.victimState).toBe('flee');
+  expect(report.bystanderState).not.toBe('flee');
+});
+
 test('phase B: four workers, correct faction animations and live Economy tick', async ({ page }) => {
   const pageErrors: string[] = [];
   const consoleErrors: string[] = [];
