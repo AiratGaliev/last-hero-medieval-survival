@@ -2313,7 +2313,8 @@ private ordersUnlocked(): boolean {
     if (force > 0) e.knockback(kx, ky, force);
     this.effects.hitSound(this.activeTimeMs);
     const died = e.takeDamage(final);
-    if (byHero && !died) {
+    if (!died) {
+      // Сильные удары героя и гарнизона должны одинаково прерывать атаку врага.
       const recovery = staggerDuration(final, force, crit);
       if (recovery > 0) e.stagger(recovery);
     }
