@@ -810,7 +810,15 @@ export class Enemy extends Phaser.Physics.Arcade.Sprite {
       this.siegeChargeCooldownMs = Math.max(0, this.siegeChargeCooldownMs - delta);
       if (!this.staggerAnimationPlayed) {
         const hitAnim = `${this.kind}-hit`;
-        if (this.scene.anims.exists(hitAnim)) this.playOnce(hitAnim);
+        // Only some creature sheets (e.g. lizard) provide a dedicated hit reaction.
+        // Play it once, then hold idle for the rest of hit-stun. playOnce() calls
+        // onComplete immediately when the hit sheet is absent, so all other kinds
+        // also leave their old run/attack loop instead of gliding through the stun.
+        this.playOnce(hitAnim, () => {
+          if (this.active && this.staggerRemainingMs > 0) {
+            this.playLoop(`${this.kind}-idle`);
+          }
+        });
         this.staggerAnimationPlayed = true;
       }
       const body = this.body as Phaser.Physics.Arcade.Body;
