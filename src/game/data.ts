@@ -262,7 +262,7 @@ export interface HeroDef {
   maxHp: number;
   speed: number;
   baseRegen: number;   // innate HP/s (монах)
-  anims: { idle: string; run: string; atk1: string; atk2: string };
+  anims: { idle: string; run: string; atk1: string; atk2: string; guard?: string };
   /** Портрет из ui/avatars для карточки выбора */
   portrait: PortraitDef;
 }
@@ -281,7 +281,7 @@ export const HEROES: Record<HeroId, HeroDef> = {
     frameW: 192, scale: 0.55, startWeapon: 'sword',
     portrait: { file: 'ui/avatars/avatars-01.png', box: { x: 22, y: 31, w: 197, h: 182 } },
     maxHp: 110, speed: 200, baseRegen: 0,
-    anims: { idle: 'player-idle', run: 'player-run', atk1: 'player-atk1', atk2: 'player-atk2' },
+    anims: { idle: 'player-idle', run: 'player-run', atk1: 'player-atk1', atk2: 'player-atk2', guard: 'player-guard' },
   },
   archer: {
     id: 'archer',

@@ -9,6 +9,7 @@ import type { Pawn } from '../entities/Pawn';
 import type { Building } from '../entities/Building';
 import type { ResourceNode } from '../entities/ResourceNode';
 import type { Enemy } from '../entities/Enemy';
+import { COMBAT_TIMING } from './Combat';
 
 // ============ AI пешки (TZ §B.6, §B.7) ============
 //
@@ -643,6 +644,11 @@ export class PawnAI {
     if (p.state !== 'retreat' && p.hp < p.maxHp * RETREAT_HP) {
       p.state = 'retreat';
       p.attackCd = 0;
+      p.cancelPendingAttack();
+      p.attackRecoveryMs = 0;
+      p.chargeTarget = null;
+      p.chargeWindup = 0;
+      p.taskProgress = 0;
       // Телеметрия §K.2: отступление гарнизона
       track('garrison_retreat', { weapon: p.weapon ?? 'sword', hp_pct: Math.round((p.hp / p.maxHp) * 100) });
     }
@@ -669,7 +675,23 @@ export class PawnAI {
       return;
     }
 
+    // Attack cooldown advances during windup/recovery as well as while moving.
     p.attackCd = Math.max(0, p.attackCd - tickMs);
+
+
+    if (p.attackPending) {
+      p.setVelocity(0, 0);
+      return;
+    }
+    if (p.attackRecoveryMs > 0) {
+      p.attackRecoveryMs = Math.max(0, p.attackRecoveryMs - tickMs);
+      p.setVelocity(0, 0);
+      return;
+    }
+    // Не перезаписываем скорость копейщика во время рывка.
+    if (p.weapon === 'lance' && p.taskProgress > 0) return;
+
+
 
     const enemies = this.c.enemies();
 
@@ -927,6 +949,41 @@ export class PawnAI {
     this.walkTo(p, cx + this.random() * 40 - 20, cy + this.random() * 40 - 20, this.curTickMs);
   }
 
+  private startAttack(p: Pawn, e: Enemy, weapon: 'sword' | 'lance' | 'bow', damage: number): void {
+    p.attackCd = FIGHTERS[weapon].period;
+    p.attackTarget = e;
+    p.attackDamage = damage;
+    p.attackWeapon = weapon;
+    p.attackPending = true;
+    p.setFlipX(e.x < p.x);
+    if (weapon !== 'bow' || p.state !== 'kite') p.setVelocity(0, 0);
+    const fallbackMs = weapon === 'bow'
+      ? COMBAT_TIMING.PAWN_BOW_WINDUP_MS
+      : COMBAT_TIMING.PAWN_SWORD_WINDUP_MS;
+    p.playAttackOnce(() => this.resolvePendingAttack(p), fallbackMs);
+  }
+
+  /** Перепроверяет цель на кадре попадания, а не при начале анимации. */
+  private resolvePendingAttack(p: Pawn): void {
+    if (!p.attackPending) return;
+    p.attackPending = false;
+    const target = p.attackTarget;
+    const weapon = p.attackWeapon;
+    const damage = p.attackDamage;
+    p.attackTarget = null;
+    p.attackWeapon = null;
+    p.attackRecoveryMs = COMBAT_TIMING.PAWN_ATTACK_RECOVERY_MS;
+    if (!target || !target.active || target.dead || !weapon) return;
+
+    const d = Phaser.Math.Distance.Between(p.x, p.y, target.x, target.y);
+    const radius = target.def.body.r * target.def.scale;
+    const reach = weapon === 'bow' ? FIGHTERS.bow.range + 40
+      : weapon === 'lance' ? 100 + radius : FIGHTERS.sword.range + radius;
+    if (d > reach) return;
+    if (weapon === 'bow') this.c.shootArrow(p, target);
+    else this.c.pawnAttackEnemy(target, damage, weapon);
+  }
+
   /** Сближение и атака (подтипы различаются, §B.7.1). */
   private approachAndAttack(p: Pawn, e: Enemy, now: number): void {
     const w = p.weapon ?? 'sword';
@@ -964,9 +1021,7 @@ export class PawnAI {
         p.setVelocity(0, 0);
       }
       if (d <= def.range + 40 && p.attackCd <= 0) {
-        p.attackCd = def.period;
-        this.c.shootArrow(p, e);
-        p.playAttackOnce();
+        this.startAttack(p, e, 'bow', def.dmg);
       }
       return;
     }
@@ -983,6 +1038,8 @@ export class PawnAI {
           const body = p.body as Phaser.Physics.Arcade.Body;
           body.setVelocity(Math.cos(a) * 430, Math.sin(a) * 430);
           p.taskProgress = 400; // остаток пути рывка
+          p.chargeTarget = e;
+          p.chargeDamage = def.dmg;
           p.attackCd = def.period;
           p.playAttackOnce();
         }
@@ -990,12 +1047,12 @@ export class PawnAI {
       }
       if (d <= 200 && d > 90 && p.attackCd <= 0) {
         p.chargeWindup = def.telegraph ?? 480;
+        p.chargeTarget = e;
+        p.chargeDamage = def.dmg;
         return;
       }
       if (d <= def.range && p.attackCd <= 0) {
-        p.attackCd = def.period;
-        this.c.pawnAttackEnemy(e, def.dmg, 'lance');
-        p.playAttackOnce();
+        this.startAttack(p, e, 'lance', def.dmg);
       }
       if (d > def.range) this.walkTo(p, e.x, e.y, this.curTickMs);
       else { p.playMove(false); p.setVelocity(0, 0); }
@@ -1008,9 +1065,7 @@ export class PawnAI {
       p.playMove(false);
       p.setVelocity(0, 0);
       if (p.attackCd <= 0) {
-        p.attackCd = def.period;
-        this.c.pawnAttackEnemy(e, def.dmg, 'sword');
-        p.playAttackOnce();
+        this.startAttack(p, e, 'sword', def.dmg);
       }
     } else {
       p.state = 'fight';
@@ -1023,9 +1078,18 @@ export class PawnAI {
   private combatMove(p: Pawn, dtMs: number): void {
     const body = p.body as Phaser.Physics.Arcade.Body | null;
     if (p.taskProgress > 0 && p.weapon === 'lance' && body) {
-      const step = 430 * (dtMs / 1000);
-      p.taskProgress -= step;
-      if (p.taskProgress <= 0) { body.setVelocity(0, 0); p.taskProgress = 0; }
+      const target = p.chargeTarget;
+      if (target && target.active && !target.dead
+        && Phaser.Math.Distance.Between(p.x, p.y, target.x, target.y) <= 40 + target.def.body.r * target.def.scale) {
+        this.c.pawnAttackEnemy(target, p.chargeDamage, 'lance');
+        p.chargeTarget = null;
+      }
+      p.taskProgress -= 430 * (dtMs / 1000);
+      if (p.taskProgress <= 0) {
+        body.setVelocity(0, 0);
+        p.taskProgress = 0;
+        p.chargeTarget = null;
+      }
       // Листы units/* смотрят ВПРАВО (как у героя: flipX при движении влево)
       p.setFlipX(body.velocity.x < 0);
       p.playMove(true);

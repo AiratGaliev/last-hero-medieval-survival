@@ -1,6 +1,7 @@
 import Phaser from 'phaser';
 import { DEPTH, SHADOW_SCALE, SHADOW_BOX, SHADOW_SRC } from '../constants';
 import type { HeroDef } from '../data';
+import { COMBAT_TIMING, attackImpactFrameIndex, isFrontalHit } from '../systems/Combat';
 
 // ============ Игрок ============
 export class Player extends Phaser.Physics.Arcade.Sprite {
@@ -8,9 +9,12 @@ export class Player extends Phaser.Physics.Arcade.Sprite {
   maxHp: number;
   speed: number;
   iframesUntil = 0;
+  lastDamageWasGuarded = false;
   readonly hero: HeroDef;
   hpBar: Phaser.GameObjects.Graphics;
   private shadow: Phaser.GameObjects.Image;
+  private attackImpactFrameHandler: ((animation: Phaser.Animations.Animation, frame: Phaser.Animations.AnimationFrame) => void) | null = null;
+  private attackImpactCompleteHandler: ((animation: Phaser.Animations.Animation) => void) | null = null;
 
   constructor(scene: Phaser.Scene, x: number, y: number, hero: HeroDef) {
     super(scene, x, y, hero.anims.idle);
@@ -49,45 +53,90 @@ export class Player extends Phaser.Physics.Arcade.Sprite {
     this.hpBar = scene.add.graphics().setDepth(DEPTH.HPBAR);
 
     this.on('animationcomplete', (anim: Phaser.Animations.Animation) => {
+      const body = this.body as Phaser.Physics.Arcade.Body;
+      if (anim.key === this.hero.anims.guard) {
+        if (body.velocity.length() > 10) this.play(this.hero.anims.run, true);
+        else this.play(this.hero.anims.idle, true);
+        return;
+      }
       if (anim.key === this.hero.anims.atk1 || anim.key === this.hero.anims.atk2) {
-        const body = this.body as Phaser.Physics.Arcade.Body;
         if (body.velocity.length() > 10) this.play(this.hero.anims.run, true);
         else this.play(this.hero.anims.idle, true);
       }
     });
   }
 
-  playAttack(alt: boolean): void {
+  private clearAttackImpactListeners(): void {
+    if (this.attackImpactFrameHandler) this.off('animationupdate', this.attackImpactFrameHandler);
+    if (this.attackImpactCompleteHandler) this.off('animationcomplete', this.attackImpactCompleteHandler);
+    this.attackImpactFrameHandler = null;
+    this.attackImpactCompleteHandler = null;
+  }
+
+  /**
+   * Запускает атаку и разрешает её попадание только на среднем кадре анимации.
+   * animationcomplete — страховка на случай, если Phaser пропустил animationupdate.
+   */
+  playAttack(alt: boolean, onHit?: () => void): void {
     const cur = this.anims.currentAnim?.key ?? '';
-    if (alt) {
-      // Добивающий взмах должен запускать attack2 даже если attack1 ещё играет.
-      if (cur !== this.hero.anims.atk2) this.play(this.hero.anims.atk2, true);
-      return;
+    if (this.hero.anims.guard && cur === this.hero.anims.guard) return;
+
+    const key = alt ? this.hero.anims.atk2 : this.hero.anims.atk1;
+    if (!key || !this.scene.anims.exists(key)) return;
+
+    this.clearAttackImpactListeners();
+    if (onHit) {
+      let fired = false;
+      const impactIndex = attackImpactFrameIndex(this.scene.anims.get(key)?.frames.length ?? 0);
+      const fireImpact = (): void => {
+        if (fired) return;
+        fired = true;
+        this.clearAttackImpactListeners();
+        if (this.active) onHit();
+      };
+      this.attackImpactFrameHandler = (animation, frame): void => {
+        if (animation.key === key && frame.index >= impactIndex) fireImpact();
+      };
+      this.attackImpactCompleteHandler = (animation): void => {
+        if (animation.key === key) fireImpact();
+      };
+      this.on('animationupdate', this.attackImpactFrameHandler);
+      this.on('animationcomplete', this.attackImpactCompleteHandler);
     }
-    if (cur !== this.hero.anims.atk1 && cur !== this.hero.anims.atk2) {
-      this.play(this.hero.anims.atk1, true);
-    }
+
+    // Каждая атака получает собственный цикл замаха/попадания, в том числе combo attack2.
+    this.play(key, true);
   }
 
   setAnimForVelocity(): void {
     const cur = this.anims.currentAnim?.key ?? '';
-    if (cur === this.hero.anims.atk1 || cur === this.hero.anims.atk2) return;
+    if (cur === this.hero.anims.guard || cur === this.hero.anims.atk1 || cur === this.hero.anims.atk2) return;
     const moving = (this.body as Phaser.Physics.Arcade.Body).velocity.length() > 10;
     const want = moving ? this.hero.anims.run : this.hero.anims.idle;
     if (cur !== want) this.play(want, true);
   }
 
-  damage(amount: number, now: number): boolean {
+  damage(amount: number, now: number, sourceX?: number): boolean {
     if (now < this.iframesUntil) return false;
+    const guard = this.hero.anims.guard;
+    const frontal = typeof sourceX === 'number' && isFrontalHit(this.flipX, this.x, sourceX);
+    this.lastDamageWasGuarded = !!guard && frontal;
+    const multiplier = this.lastDamageWasGuarded ? COMBAT_TIMING.FRONT_GUARD_DAMAGE_MULTIPLIER : 1;
     this.iframesUntil = now + 500;
-    this.hp = Math.max(0, this.hp - amount);
-    // Мигание
-    this.scene.tweens.add({
-      targets: this,
-      alpha: { from: 0.25, to: 1 },
-      duration: 90,
-      repeat: 4,
-    });
+    this.hp = Math.max(0, this.hp - Math.max(1, Math.round(amount * multiplier)));
+    if (this.lastDamageWasGuarded && guard) {
+      // Блок прерывает текущий замах; старый callback не должен нанести урон
+      // после переключения на guard-анимацию.
+      this.clearAttackImpactListeners();
+      this.play(guard, true);
+    } else {
+      this.scene.tweens.add({
+        targets: this,
+        alpha: { from: 0.25, to: 1 },
+        duration: 90,
+        repeat: 4,
+      });
+    }
     this.drawHpBar();
     return this.hp <= 0;
   }
@@ -123,6 +172,7 @@ export class Player extends Phaser.Physics.Arcade.Sprite {
   }
 
   destroy(fromScene?: boolean): void {
+    this.clearAttackImpactListeners();
     this.shadow.destroy();
     this.hpBar.destroy();
     super.destroy(fromScene);

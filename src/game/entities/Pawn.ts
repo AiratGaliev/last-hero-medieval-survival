@@ -3,7 +3,9 @@ import { DEPTH, SHADOW_SCALE, SHADOW_BOX, SHADOW_SRC, FONT } from '../constants'
 import { FS } from '../systems/Text';
 import { t } from '../../i18n';
 import { PAWNS, FIGHTERS, type PawnKind, type PawnState, type PawnWeapon, type ResourceKind, type PawnDef } from '../data';
+import { COMBAT_TIMING, attackImpactFrameIndex } from '../systems/Combat';
 import type { Building } from './Building';
+import type { Enemy } from './Enemy';
 
 // ============ Пешка поселения: гражданские и гарнизон (TZ §B.2) ============
 //
@@ -47,6 +49,17 @@ export class Pawn extends Phaser.Physics.Arcade.Sprite {
   bleedTimer = 0;
   /** Кулдаут атаки (гарнизон). */
   attackCd = 0;
+  attackPending = false;
+  attackRecoveryMs = 0;
+  attackTarget: Enemy | null = null;
+  attackDamage = 0;
+  attackWeapon: 'sword' | 'lance' | 'bow' | null = null;
+  chargeTarget: Enemy | null = null;
+  chargeDamage = 0;
+  private attackAnimationHandler: ((anim: Phaser.Animations.Animation) => void) | null = null;
+  private attackImpactFrameHandler: ((animation: Phaser.Animations.Animation, frame: Phaser.Animations.AnimationFrame) => void) | null = null;
+  private attackImpactCompleteHandler: ((animation: Phaser.Animations.Animation) => void) | null = null;
+  private attackImpactFallbackTimer: Phaser.Time.TimerEvent | null = null;
   /** Телеграф рывка копья (гарнизон lance). */
   chargeWindup = 0;
   /** Слот монастыря: индекс места, пока лечится в обители. */
@@ -176,6 +189,7 @@ export class Pawn extends Phaser.Physics.Arcade.Sprite {
     } else {
       want = this.carrying ? `${p}-carry-idle-${this.carrying === 'ore' ? 'gold' : this.carrying}` : `${p}-idle`;
     }
+    if (this.lastAnim === `${p}-attack1` || this.lastAnim === `${p}-attack2` || this.lastAnim === `${p}-atk`) return;
     if (this.lastAnim !== want) {
       this.lastAnim = want;
       // Ключ может отсутствовать (нет carry-idle в пака) — фолбэк на базовый
@@ -228,19 +242,80 @@ export class Pawn extends Phaser.Physics.Arcade.Sprite {
     }
   }
 
-  /** Однократная боевая анимация гарнизона. */
-  playAttackOnce(): void {
+  private clearAttackImpactListeners(): void {
+    if (this.attackImpactFrameHandler) this.off('animationupdate', this.attackImpactFrameHandler);
+    if (this.attackImpactCompleteHandler) this.off('animationcomplete', this.attackImpactCompleteHandler);
+    this.attackImpactFrameHandler = null;
+    this.attackImpactCompleteHandler = null;
+    this.attackImpactFallbackTimer?.remove(false);
+    this.attackImpactFallbackTimer = null;
+  }
+
+  /** Прерывает ожидающий удар: отступление/ранение не должно наносить урон после отмены. */
+  cancelPendingAttack(): void {
+    this.attackPending = false;
+    this.attackTarget = null;
+    this.attackWeapon = null;
+    this.clearAttackImpactListeners();
+  }
+
+  /**
+   * Анимация гарнизона; callback срабатывает на среднем кадре действия.
+   * Если лист отсутствует, применяется отдельный таймерный fallback; у штатных
+   * анимаций попадание разрешает только animationupdate.
+   */
+  playAttackOnce(onImpact?: () => void, fallbackMs: number = COMBAT_TIMING.PAWN_SWORD_WINDUP_MS): void {
     const p = this.prefix;
     const key = p === 'pawn-warrior' ? `${p}-attack1` : `${p}-atk`;
     const real = this.scene.anims.exists(key) ? key : `${p}-attack1`;
-    if (this.lastAnim !== real) {
-      this.lastAnim = real;
-      this.play(real, true);
+
+    this.clearAttackImpactListeners();
+    if (this.attackAnimationHandler) {
+      this.off('animationcomplete', this.attackAnimationHandler);
+      this.attackAnimationHandler = null;
     }
-    this.once('animationcomplete', (anim: Phaser.Animations.Animation) => {
-      void anim;
+
+    if (!this.scene.anims.exists(real)) {
+      this.lastAnim = '';
+      if (onImpact) {
+        this.attackImpactFallbackTimer = this.scene.time.delayedCall(fallbackMs, () => {
+          this.attackImpactFallbackTimer = null;
+          if (this.active) onImpact();
+        });
+      }
+      return;
+    }
+
+    const handler = (anim: Phaser.Animations.Animation): void => {
+      if (anim.key !== real) return;
+      this.off('animationcomplete', handler);
+      if (this.attackAnimationHandler === handler) this.attackAnimationHandler = null;
       if (this.active) this.lastAnim = '';
-    });
+    };
+    this.attackAnimationHandler = handler;
+    this.on('animationcomplete', handler);
+
+    if (onImpact) {
+      let fired = false;
+      const impactIndex = attackImpactFrameIndex(this.scene.anims.get(real)?.frames.length ?? 0);
+      const fireImpact = (): void => {
+        if (fired) return;
+        fired = true;
+        this.clearAttackImpactListeners();
+        if (this.active) onImpact();
+      };
+      this.attackImpactFrameHandler = (animation, frame): void => {
+        if (animation.key === real && frame.index >= impactIndex) fireImpact();
+      };
+      this.attackImpactCompleteHandler = (animation): void => {
+        if (animation.key === real) fireImpact();
+      };
+      this.on('animationupdate', this.attackImpactFrameHandler);
+      this.on('animationcomplete', this.attackImpactCompleteHandler);
+    }
+
+    this.lastAnim = real;
+    this.play(real, true);
   }
 
   // ---------- Урон и лечение ----------
@@ -259,6 +334,11 @@ export class Pawn extends Phaser.Physics.Arcade.Sprite {
     });
     this.drawHpBar();
     if (this.hp <= 0) {
+      this.cancelPendingAttack();
+      this.attackRecoveryMs = 0;
+      this.attackWeapon = null;
+      this.chargeTarget = null;
+      this.taskProgress = 0;
       // Не умирает сразу — раненый идёт в монастырь (§G.3)
       this.state = 'wounded';
       this.carrying = null;
@@ -436,6 +516,8 @@ export class Pawn extends Phaser.Physics.Arcade.Sprite {
   }
 
   destroy(fromScene?: boolean): void {
+    this.cancelPendingAttack();
+    this.clearAttackImpactListeners();
     this.shadow.destroy();
     this.hpBar.destroy();
     this.starBadge?.destroy();
