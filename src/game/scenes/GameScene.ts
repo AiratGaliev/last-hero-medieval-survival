@@ -1578,7 +1578,7 @@ export class GameScene extends Phaser.Scene {
   private setupCollisions(): void {
     this.physics.add.overlap(this.player, this.enemyGroup, (_p, e) => {
       const enemy = e as Enemy;
-      if (enemy.isStaggered || enemy.usesTimedMelee) return;
+      if (enemy.isContactLocked || enemy.usesTimedMelee) return;
       this.hurtPlayer(enemy.damage, enemy.x);
     });
 
