@@ -59,8 +59,13 @@ export class Player extends Phaser.Physics.Arcade.Sprite {
 
   playAttack(alt: boolean): void {
     const cur = this.anims.currentAnim?.key ?? '';
+    if (alt) {
+      // Добивающий взмах должен запускать attack2 даже если attack1 ещё играет.
+      if (cur !== this.hero.anims.atk2) this.play(this.hero.anims.atk2, true);
+      return;
+    }
     if (cur !== this.hero.anims.atk1 && cur !== this.hero.anims.atk2) {
-      this.play(alt ? this.hero.anims.atk2 : this.hero.anims.atk1, true);
+      this.play(this.hero.anims.atk1, true);
     }
   }
 

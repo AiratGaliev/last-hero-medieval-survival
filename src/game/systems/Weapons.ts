@@ -7,6 +7,9 @@ import type { Projectiles } from './Projectiles';
 import type { Effects } from './Effects';
 import { audio } from './Audio';
 
+/** Пауза между первым ударом мечом и добивающим вторым взмахом. */
+const SWORD_FOLLOW_UP_DELAY_MS = 280;
+
 // ============ Система оружия: автоатаки по кулдаунам + эволюции ============
 
 export interface WeaponCtx {
@@ -193,9 +196,29 @@ export class WeaponSystem {
     }
   }
 
-  private swordSwing(angle: number, dmg: number, evolved = false): void {
+  private swordSwing(
+    angle: number,
+    dmg: number,
+    evolved = false,
+    followUp = false,
+    candidates?: Enemy[],
+  ): void {
     const p = this.ctx.player();
     if (!p.active) return;
+
+    // Визуал и анимация начинаются только если цель действительно попадает
+    // в радиус и сектор удара; одного врага в радиусе поиска недостаточно.
+    const range = evolved ? 175 : 130;
+    const arcHalf = evolved ? Math.PI : Phaser.Math.DegToRad(75);
+    const targets = (candidates ?? this.ctx.enemies()).filter((e) => {
+      if (!e.active || e.dead) return false;
+      const dx = e.x - p.x, dy = e.y - p.y;
+      if (Math.hypot(dx, dy) > range + e.def.body.r) return false;
+      const diff = Math.abs(Phaser.Math.Angle.Wrap(Math.atan2(dy, dx) - angle));
+      return diff <= arcHalf;
+    });
+    if (targets.length === 0) return;
+
     // Визуал: полумесяц (эволюция — золотой и крупнее)
     const slash = this.scene.add.image(p.x, p.y, 'slash')
       .setScale(evolved ? 1.25 : 0.85)
@@ -211,31 +234,34 @@ export class WeaponSystem {
       ease: 'Quad.easeOut',
       onComplete: () => slash.destroy(),
     });
-    // Анимация удара игрока
-    (p as Player).playAttack(Math.random() < 0.5);
-    // Урон: эволюция — полный круг и бóльшая дальность
-    const range = evolved ? 175 : 130;
-    const arcHalf = evolved ? Math.PI : Phaser.Math.DegToRad(75);
+
+    // Обычный удар всегда использует attack1; второй взмах нужен только
+    // целям, пережившим попадание и всё ещё остающимся в радиусе меча.
+    (p as Player).playAttack(followUp);
     const hitEnemies: Enemy[] = [];
-    for (const e of this.ctx.enemies()) {
+    const survivors: Enemy[] = [];
+    for (const e of targets) {
       const dx = e.x - p.x, dy = e.y - p.y;
-      const d = Math.hypot(dx, dy);
-      if (d > range + e.def.body.r) continue;
-      const diff = Math.abs(Phaser.Math.Angle.Wrap(Math.atan2(dy, dx) - angle));
-      if (diff <= arcHalf) {
-        this.ctx.damageEnemy(e, dmg, dx, dy, 130, 'sword');
-        if (evolved && e.active) hitEnemies.push(e);
-      }
+      this.ctx.damageEnemy(e, dmg, dx, dy, 130, 'sword');
+      if (evolved && e.active && !e.dead) hitEnemies.push(e);
+      if (!evolved && e.active && !e.dead) survivors.push(e);
     }
+
+    if (!evolved && !followUp && survivors.length > 0) {
+      this.scene.time.delayedCall(SWORD_FOLLOW_UP_DELAY_MS, () => {
+        this.swordSwing(angle, dmg, false, true, survivors);
+      });
+    }
+
     // Молнии-цепи: каждый задетый враг бьёт разрядом в ближайшего соседа
     // (кап 6 разрядов за взмах — лимит графики на плотных толпах)
     if (evolved) {
       for (const src of hitEnemies.slice(0, 6)) {
-        if (!src.active) continue;
+        if (!src.active || src.dead) continue;
         let best: Enemy | null = null;
         let bestD = 250 * 250;
         for (const e of this.ctx.enemies()) {
-          if (e === src || !e.active || hitEnemies.includes(e)) continue;
+          if (e === src || !e.active || e.dead || hitEnemies.includes(e)) continue;
           const d = (e.x - src.x) ** 2 + (e.y - src.y) ** 2;
           if (d < bestD) { bestD = d; best = e; }
         }
