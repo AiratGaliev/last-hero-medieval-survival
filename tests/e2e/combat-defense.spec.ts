@@ -48,16 +48,6 @@ async function startWarriorRun(page: Page): Promise<void> {
   ).toBe(true);
 }
 
-function slashCount(scene: RuntimeScene): number {
-  return scene.children.list.filter((child) => child.texture?.key === 'slash').length;
-}
-
-function clearEnemies(scene: RuntimeScene): void {
-  for (const enemy of [...scene.enemyGroup.getChildren()]) {
-    scene.enemyGroup.remove(enemy, true, true);
-  }
-}
-
 
 test('warrior guard reduces frontal damage and not damage from behind', async ({page}) => {
   await startWarriorRun(page);
@@ -102,7 +92,9 @@ test('sword damage lands on the attack animation impact frame', async ({page}) =
   const before = await page.evaluate(() => {
     const scene = (window as RuntimeWindow).__tss!.scene.getScene('Game') as RuntimeScene;
     scene.spawner.stopped = true;
-    clearEnemies(scene);
+    for (const enemy of [...scene.enemyGroup.getChildren()]) {
+      scene.enemyGroup.remove(enemy, true, true);
+    }
     const p = scene.player;
     if (!scene.spawnEnemy('goblin', p.x + 50, p.y)) throw new Error('Could not spawn sword target');
     const enemy = scene.enemyGroup.getChildren().find(e => e.active && !e.dead);
@@ -129,7 +121,9 @@ test('staggered enemies switch from running to idle and resume running afterward
   await page.evaluate(() => {
     const scene = (window as RuntimeWindow).__tss!.scene.getScene('Game') as RuntimeScene;
     scene.spawner.stopped = true;
-    clearEnemies(scene);
+    for (const enemy of [...scene.enemyGroup.getChildren()]) {
+      scene.enemyGroup.remove(enemy, true, true);
+    }
     const p = scene.player;
     if (!scene.spawnEnemy('goblin', p.x + 280, p.y)) throw new Error('Could not spawn animation target');
   });

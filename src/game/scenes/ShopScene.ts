@@ -1,4 +1,5 @@
 import Phaser from 'phaser';
+import { armIdleThrottle } from '../systems/IdleThrottle';
 import { FONT } from '../constants';
 import { audio } from '../systems/Audio';
 import { Cursor } from '../systems/Cursor';
@@ -299,6 +300,9 @@ export class ShopScene extends Phaser.Scene {
       this.scale.off('resize', this.rebuild, this);
       if (kb) kb.off('keydown-ESC', this.close, this);
     });
+
+    // Лавка статична: без ввода рендерим 15 fps
+    armIdleThrottle(this);
   }
 
   private close(): void {

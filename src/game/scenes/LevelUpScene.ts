@@ -1,4 +1,5 @@
 import Phaser from 'phaser';
+import { armIdleThrottle } from '../systems/IdleThrottle';
 import { Cursor } from '../systems/Cursor';
 import { DEPTH, FONT } from '../constants';
 import { makeRibbon, OverlayLayer } from '../systems/Ui';
@@ -232,6 +233,9 @@ export class LevelUpScene extends Phaser.Scene {
       this.scale.off('resize', this.rebuild, this);
       this.hoverIdx = -1;
     });
+
+    // Карточки статичны: без ввода рендерим 15 fps (матч под ними рисуется)
+    armIdleThrottle(this);
   }
 
   private rebuild = (): void => {

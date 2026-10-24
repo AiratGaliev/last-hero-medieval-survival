@@ -1,4 +1,5 @@
 import Phaser from 'phaser';
+import { armIdleThrottle } from '../systems/IdleThrottle';
 import { FONT, DEPTH } from '../constants';
 import { BUILDING_PLANS, type ResourceCost } from '../data';
 import { showPlacementRewarded, placementAvailable } from '../../platform/ads';
@@ -231,6 +232,9 @@ export class SuccessionScene extends Phaser.Scene {
       this.scale.off('resize', this.rebuild, this);
       kb?.off('keydown-ESC', this.requestSurrender, this);
     });
+
+    // Панель преемственности статична: без ввода рендерим 15 fps
+    armIdleThrottle(this);
   }
 
   /** Пересборка под новые габариты: поворот экрана на телефоне. */

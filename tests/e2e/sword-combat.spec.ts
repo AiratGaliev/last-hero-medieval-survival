@@ -85,15 +85,6 @@ async function startWarriorRun(page: Page): Promise<void> {
   ).toBe(true);
 }
 
-function slashCount(scene: RuntimeScene): number {
-  return scene.children.list.filter((child) => child.texture?.key === 'slash').length;
-}
-
-function clearEnemies(scene: RuntimeScene): void {
-  for (const enemy of [...scene.enemyGroup.getChildren()]) {
-    scene.enemyGroup.remove(enemy, true, true);
-  }
-}
 
 test('warrior only swings in sword range and uses attack2 on a surviving target', async ({ page }) => {
   await startWarriorRun(page);
@@ -101,7 +92,9 @@ test('warrior only swings in sword range and uses attack2 on a surviving target'
   const idleReport = await page.evaluate(() => {
     const scene = (window as RuntimeWindow).__tss!.scene.getScene('Game') as RuntimeScene;
     scene.spawner.stopped = true;
-    clearEnemies(scene);
+    for (const enemy of [...scene.enemyGroup.getChildren()]) {
+      scene.enemyGroup.remove(enemy, true, true);
+    }
     // Проверяем цикл атаки напрямую, не полагаясь на случайное состояние кулдауна.
     scene.weapons.cooldowns.set('sword', 60_000);
     for (const child of [...scene.children.list]) {
@@ -111,7 +104,7 @@ test('warrior only swings in sword range and uses attack2 on a surviving target'
     scene.weapons.fireSword(12, 1);
     return {
       animation: scene.player.anims.currentAnim?.key ?? '',
-      slashes: slashCount(scene),
+      slashes: scene.children.list.filter((child) => child.texture?.key === 'slash').length,
     };
   });
   expect(idleReport.animation).not.toMatch(/^player-atk/);
@@ -132,16 +125,18 @@ test('warrior only swings in sword range and uses attack2 on a surviving target'
       animation: scene.player.anims.currentAnim?.key ?? '',
       hpBefore,
       hpAfter: target.hp,
-      slashes: slashCount(scene),
+      slashes: scene.children.list.filter((child) => child.texture?.key === 'slash').length,
     };
   });
   expect(farReport.animation).not.toMatch(/^player-atk/);
   expect(farReport.hpAfter).toBe(farReport.hpBefore);
   expect(farReport.slashes).toBe(0);
 
-  const firstHit = await page.evaluate(() => {
+  const { hpBefore } = await page.evaluate(() => {
     const scene = (window as RuntimeWindow).__tss!.scene.getScene('Game') as RuntimeScene;
-    clearEnemies(scene);
+    for (const enemy of [...scene.enemyGroup.getChildren()]) {
+      scene.enemyGroup.remove(enemy, true, true);
+    }
     scene.player.play('player-idle', true);
     if (!scene.spawnEnemy('goblin', scene.player.x + 60, scene.player.y)) {
       throw new Error('Could not spawn a goblin in sword reach');
@@ -153,14 +148,25 @@ test('warrior only swings in sword range and uses attack2 on a surviving target'
     scene.registry.set('qa-sword-target', target);
     const hpBefore = target.hp;
     scene.weapons.fireSword(12, 1);
-    return {
-      animation: scene.player.anims.currentAnim?.key ?? '',
-      hpBefore,
-      hpAfter: target.hp,
-    };
+    return { hpBefore };
   });
-  expect(firstHit.animation).toBe('player-atk1');
-  expect(firstHit.hpAfter).toBeLessThan(firstHit.hpBefore);
+  // Продукт ставит свинг через delayedCall на следующий тик — синхропном
+  // снапшоте animation/hp ещё idle, поэтому читаем опросом живого лупа.
+  await expect.poll(
+    () => page.evaluate(() => {
+      const scene = (window as RuntimeWindow).__tss!.scene.getScene('Game') as RuntimeScene;
+      return scene.player.anims.currentAnim?.key ?? '';
+    }),
+    { timeout: 3_000 },
+  ).toBe('player-atk1');
+  await expect.poll(
+    () => page.evaluate(() => {
+      const scene = (window as RuntimeWindow).__tss!.scene.getScene('Game') as RuntimeScene;
+      const target = scene.registry.get('qa-sword-target') as { hp: number } | null;
+      return target?.hp ?? -1;
+    }),
+    { timeout: 5_000 },
+  ).toBeLessThan(hpBefore);
 
   await expect.poll(
     () => page.evaluate(() => {
@@ -177,5 +183,5 @@ test('warrior only swings in sword range and uses attack2 on a surviving target'
       return target?.hp ?? Number.POSITIVE_INFINITY;
     }),
     { timeout: 2_000 },
-  ).toBeLessThan(firstHit.hpAfter);
+  ).toBeLessThan(hpBefore);
 });

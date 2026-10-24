@@ -558,8 +558,18 @@ test('Ogre siege persists, pursues the hero after hits, and returns to the castl
         def: { isBoss: boolean };
       } | undefined;
     if (!boss) throw new Error('QA Ogre was not added to the enemy group');
+    // spawnEnemy не регистрирует босса в сцене (это делает только spawnBoss),
+    // а bossPhaseCheck гейтится на scene.boss — регистрируем вручную.
+    (scene as { boss?: unknown }).boss = boss;
     boss.hp = boss.maxHp * 0.4;
     scene.bossPhaseCheck();
+    // Диагностика на момент входа: при регрессии видно, какая нога отвалилась.
+    const enterState = {
+      sceneBossRegistered: (scene as { boss?: unknown }).boss === boss,
+      aiState: boss.aiState,
+      siege: boss.siege,
+      targetIsCastle: boss.buildingTarget === castle,
+    };
 
     const enteredPhaseTwo = boss.aiState === 'bossPhase2'
       && boss.siege && boss.buildingTarget === castle;
@@ -634,6 +644,7 @@ test('Ogre siege persists, pursues the hero after hits, and returns to the castl
 
     return {
       enteredPhaseTwo,
+      enterState,
       retainedAfterDeadline,
       velocityTowardCastle,
       distractedByHero,
@@ -830,12 +841,14 @@ test('bomb fish spits the bundled bomb projectile in normal combat instead of se
       shot.active && shot.shotKind === 'bomb' && shot.texture.key === 'proj-bomb') ?? false;
   }), { timeout: 6_000, message: 'Bomb fish should create a projectile using bomb-spinning.png' }).toBe(true);
 
-  await expect.poll(() => page.evaluate(() => {
-    const probe = (window as unknown as { __bombFishProbe?: {
-      scene: RuntimeScene & { __bombImpactCount?: number };
-    } }).__bombFishProbe;
-    return probe?.scene.__bombImpactCount ?? 0;
-  }), { timeout: 5_000, message: 'The launched bomb should resolve its impact callback exactly once' }).toBe(1);
+  // impacts инкрементируется при вызове колбека, а урон наносится на 350 мс
+  // позже (фитиль playBombFuseEffect) — фактический «дошёл до героя» меряем hp.
+  const bombStartHp = await page.evaluate(() =>
+    (window as unknown as { __bombFishProbe?: { startHp: number } }).__bombFishProbe?.startHp
+    ?? Number.POSITIVE_INFINITY);
+  await expect.poll(() => page.evaluate(() =>
+    (window as unknown as { __bombFishProbe?: { scene?: { player?: { hp?: number } } } }).__bombFishProbe?.scene?.player?.hp
+    ?? Number.POSITIVE_INFINITY), { timeout: 8_000, message: 'The bomb should detonate on the hero via its 350 ms fuse' }).toBeLessThan(bombStartHp);
 
   const report = await page.evaluate(() => {
     const game = (window as unknown as { __tss?: RuntimeGame }).__tss;
@@ -851,6 +864,8 @@ test('bomb fish spits the bundled bomb projectile in normal combat instead of se
       hasSpinAnimation: game.anims.exists('proj-bomb-spin'),
       hasFuseAnimation: game.anims.exists('proj-bomb-fuse-lit'),
       fishStillAlive: probe.fish.active,
+      hpBefore: probe.startHp,
+      hpAfter: probe.scene.player.hp,
       damagedHero: typeof probe.scene.player.hp === 'number' ? probe.scene.player.hp < probe.startHp : false,
       impacts: probe.scene.__bombImpactCount ?? 0,
     };
@@ -861,7 +876,8 @@ test('bomb fish spits the bundled bomb projectile in normal combat instead of se
   expect(report.hasSpinAnimation).toBe(true);
   expect(report.hasFuseAnimation).toBe(true);
   expect(report.fishStillAlive).toBe(true);
-  expect(report.damagedHero).toBe(true);
+  // hp в сообщении: видно, попал ли снаряд в героя и насколько изменился запас
+  expect(report.damagedHero, `hp ${report.hpBefore} → ${report.hpAfter}, impacts=${report.impacts}`).toBe(true);
   expect(report.impacts).toBe(1);
   expect(pageErrors).toEqual([]);
 });

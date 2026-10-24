@@ -12,6 +12,7 @@ import { ACHIEVEMENTS, loadUnlocked, loadMeta } from '../achievements';
 import { t, num, clock, type TranslationKey, type TranslateParams } from '../../i18n';
 import { topScores } from '../../platform/leaderboard';
 import { notifyReady } from '../../platform/lifecycle';
+import { armIdleThrottle } from '../systems/IdleThrottle';
 import { loadText, saveText } from '../storage';
 import { resetSafeInsets, safeInsets } from '../safeArea';
 import { isAuthorized, offerAuth, displayName } from '../../platform/player';
@@ -650,6 +651,9 @@ export class MenuScene extends Phaser.Scene {
     // Тихая тема меню (заставка живёт и после возврата из матча)
     audio.unlock();
     audio.startMusic(true);
+
+    // Меню статично: без ввода рендерим 15 fps вместо 60 (systems/IdleThrottle)
+    armIdleThrottle(this);
 
     // Требование Yandex Games 1.19.2: LoadingAPI.ready() вызывается ровно
     // тогда, когда игрок уже может нажать «Играть». Раньше площадка держит

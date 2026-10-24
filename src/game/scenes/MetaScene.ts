@@ -1,4 +1,5 @@
 import Phaser from 'phaser';
+import { armIdleThrottle } from '../systems/IdleThrottle';
 import { Cursor } from '../systems/Cursor';
 import { FONT } from '../constants';
 import { audio } from '../systems/Audio';
@@ -219,6 +220,9 @@ export class MetaScene extends Phaser.Scene {
       this.scale.off('resize', this.rebuild, this);
       if (kb) kb.off('keydown-ESC', this.close, this);
     });
+
+    // Вкладки мета статичны: без ввода рендерим 15 fps
+    armIdleThrottle(this);
   }
 
   private close(): void {
