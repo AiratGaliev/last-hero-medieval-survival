@@ -1237,7 +1237,11 @@ export class PawnAI {
       p.recoveryBuilding = selection.building;
     }
     const target = p.recoveryTarget;
-    const distance = Phaser.Math.Distance.Between(p.x, p.y, target.x, target.y);
+    // После входа центр пешки совпадает с центром здания, а не с точкой подхода.
+    // Не выталкиваем её обратно на улицу на следующем AI-тике.
+    const distance = p.sheltered && p.recoveryBuilding
+      ? 0
+      : Phaser.Math.Distance.Between(p.x, p.y, target.x, target.y);
     if (distance > 92) {
       p.setSheltered(false);
       p.state = 'retreat';
