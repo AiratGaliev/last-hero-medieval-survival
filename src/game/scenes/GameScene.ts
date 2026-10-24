@@ -1,7 +1,7 @@
 import Phaser from 'phaser';
 import { Cursor } from '../systems/Cursor';
 import {
-  WORLD, PLAYER_BASE, DEPTH, ENEMY_CAP, SCORE, XP_CURVE, COMBO, MAX_LEVEL,
+  GAME_DURATION, WORLD, PLAYER_BASE, DEPTH, ENEMY_CAP, SCORE, XP_CURVE, COMBO, MAX_LEVEL,
   AGGRO, SIEGE, LONGPRESS_MS, VEIN_COUNT, VEIN_CHARGES, VEIN_YIELD,
   TOWER, BOSS_GOLD, HEAL_HP_PER_SEC, GARRISON_DPS_CAP, SETTLEMENT_CORE,
 } from '../constants';
@@ -44,11 +44,12 @@ import { analyticsIdentity } from '../../platform/player';
 import {
   consumeRunConfig, dailyChallengeSeedNumber, loadMetaState, rollMetaDay, nodeEffects, seasonDef,
   takeConsumables, applyRunToMeta, contractDef, contractScoreForRun, QUEST_POOL, markCodex, markCodexSeen,
-  grantSpeedupToken, runValueFor,
+  grantSpeedupToken, runValueFor, PASS, isStarterCastellanAvailable, showcaseUnlocked, seasonPassUnlocked,
   heroSkinTint, buildingSkinTint, trailSkinTint, activeBanner, matchesPlayed,
   type RunModifiers, type NodeEffects, type SeasonModifier, type RunSummary, type QuestMetrics,
   getOrAssignExperimentVariant,
 } from '../meta';
+import { resolveStoreOffer } from '../storeOffers';
 
 type Keys = Record<string, Phaser.Input.Keyboard.Key>;
 
@@ -286,6 +287,8 @@ export class GameScene extends Phaser.Scene {
   private builtBarracks = 0;
   private builtMonastery = 0;
   private builtArchery = 0;
+  /** Максимум жертв при одном обрушении монастыря за текущий ран. */
+  private maxMonasteryCollapseVictims = 0;
   /** Время (минуты) первой постройки дома — задание «Новый дом» §H.17. */
   private firstHouseMin = 0;
   private hires = 0;
@@ -533,6 +536,7 @@ export class GameScene extends Phaser.Scene {
     this.buildingsBuilt = 0;
     this.buildingKindsBuilt = {};
     this.builtBarracks = 0; this.builtMonastery = 0; this.builtArchery = 0;
+    this.maxMonasteryCollapseVictims = 0;
     this.firstHouseMin = 0;
     this.hires = 0;
     this.successions = 0;
@@ -763,6 +767,7 @@ export class GameScene extends Phaser.Scene {
         ));
       },
       onMonasteryCollapsed: (victims, building) => {
+        this.maxMonasteryCollapseVictims = Math.max(this.maxMonasteryCollapseVictims, victims.length);
         const names = victims.map((pawn) => `${this.pawnTitle(pawn)} ${pawn.name}`);
         this.hud?.announce(t('siege.monasteryCollapsed', { v: victims.length }), '#ff5544');
         if (names.length > 0) {
@@ -3967,11 +3972,44 @@ private bossDeathSequence(e: Enemy): boolean {
     if (this.mods.challenge) {
       track('challenge_result', { victory, ideal, score, wave: this.wave });
     }
+    // Уровень до начисления XP текущего рана нужен для точного перехода через L30.
+    const passBefore = rollMetaDay().pass;
+    const passLevelBefore = Math.min(PASS.LEVELS, Math.floor(passBefore.xp / PASS.XP_PER_LEVEL));
+    const passWasPremium = passBefore.premium;
     this.commitMatchMeta(victory, score);
     // Мета фаз Q/S (§K.2): сводка рана → applyRunToMeta ровно один раз,
     // результат прикрепляется к payload stats.meta
     const meta = this.applyRunMeta(victory, score, ideal);
-    if (meta) stats.meta = meta;
+    if (meta) {
+      // Eligibility считается после фиксации рана, когда matchesPlayed уже обновлён.
+      // Не предлагаем покупки при ошибке персистентности мета-наград.
+      if (meta.persisted === true) {
+        const postRun = rollMetaDay();
+        const passLevelAfter = Math.min(PASS.LEVELS, Math.floor(postRun.pass.xp / PASS.XP_PER_LEVEL));
+        const storefrontUnlocked = showcaseUnlocked();
+        const starterAvailable = isStarterCastellanAvailable(postRun);
+        const storeOffer = resolveStoreOffer({
+          storefrontUnlocked,
+          passUnlocked: seasonPassUnlocked(),
+          victory,
+          elapsedSeconds: stats.time,
+          matchDurationSeconds: GAME_DURATION,
+          monasteryCollapseVictims: this.maxMonasteryCollapseVictims,
+          passLevelBefore,
+          passLevelAfter,
+          passPremium: passWasPremium || postRun.pass.premium,
+          starterAvailable,
+        });
+        if (storeOffer) {
+          meta.storeOffer = storeOffer;
+          // Обрушение сначала должно обучить игрока. CTA на starter-набор
+          // доступна только в окне 48 ч и после разблокировки витрины.
+          meta.storeOfferCanOpenShop = storeOffer !== 'monastery'
+            || (storefrontUnlocked && starterAvailable);
+        }
+      }
+      stats.meta = meta;
+    }
     // Персистентный буфер телеметрии (§K.1). ВАЖНО: сброс идёт ПОСЛЕ
     // applyRunMeta — иначе glory_earned/quest_done/pass_level попадали
     // в буфер СЛЕДУЮЩЕГО рана, и группировка событий по ранам сдвигалась.

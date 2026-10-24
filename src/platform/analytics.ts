@@ -22,6 +22,7 @@ export type AnalyticsEvent =
   | 'daily_claim' | 'daily_chest_claim' | 'challenge_start' | 'challenge_result' | 'codex_entry'
   | 'contract_signed' | 'ukaz_taken' | 'endless_start' | 'endless_death'
   | 'pass_level' | 'sku_view' | 'skin_equipped' | 'shop_refreshed'
+  | 'store_offer_shown' | 'store_offer_opened'
   | 'iap_purchase' | 'iap_consume_fail';
 
 export interface BufferedEvent { e: AnalyticsEvent; p: Params; t: number; run: number }

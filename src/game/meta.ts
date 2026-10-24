@@ -948,6 +948,16 @@ export interface MetaState {
   processedIapTokens: string[];
 }
 
+/** Доступность стартового набора: общий источник для магазина и контекстных триггеров. */
+export function isStarterCastellanAvailable(
+  state: Pick<MetaState, 'firstWinAt' | 'purchasedSkus'>,
+  now = serverNow(),
+): boolean {
+  if (state.purchasedSkus.includes('starter_castellan')) return false;
+  const elapsed = now - state.firstWinAt;
+  return state.firstWinAt > 0 && elapsed >= 0 && elapsed < 48 * 60 * 60 * 1000;
+}
+
 const LS_META2 = 'tss-meta2';
 
 function todayKey(now = serverNow()): string {
