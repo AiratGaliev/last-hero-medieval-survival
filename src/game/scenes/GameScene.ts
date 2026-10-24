@@ -1209,7 +1209,8 @@ export class GameScene extends Phaser.Scene {
 
     // Контекст AI пешек (создаётся с Economy — контекст подкидывается сюда)
     this.registry.set('tss-pawnai-ctx', {
-      enemies: () => this.activeEnemies(),
+      // PawnAI фильтрует активных врагов в одном снимке на кадр.
+      enemies: () => this.enemyGroup.getChildren() as Enemy[],
       playerX: () => this.player.x,
       playerY: () => this.player.y,
       pawnAttackEnemy: (e: Enemy, dmg: number, weapon: string) => this.damageEnemyByPawn(e, dmg, weapon),
