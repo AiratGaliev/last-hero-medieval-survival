@@ -4500,7 +4500,7 @@ test('phase R: low-health civilians retreat, recover at a shelter and resume the
     let sawSheltered = false;
     let shelteredWasHidden = false;
     let shelterDamageBlocked = false;
-    let visibleAfterRecovery = false;
+    let visibleAfterRecovery: boolean;
     let autoRecovered = false;
     for (let i = 0; i < 240; i++) {
       now += 100;
