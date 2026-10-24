@@ -360,6 +360,8 @@ export const en: Record<TranslationKey, string> = {
   'hud.pawns': 'Pawns: {a}/{b}',
 
   // ---------- Settlement feed (TZ §H.2) ----------
+  'pawn.titled.worker': 'worker',
+  'pawn.titled.workerF': 'worker',
   'pawn.titled.collector': 'collector',
   'pawn.titled.collectorF': 'collector',
   'pawn.titled.builder': 'mason',
@@ -711,8 +713,8 @@ export const en: Record<TranslationKey, string> = {
   'tree.e3.desc': 'Building prices −15%',
   'tree.e4.name': 'Starting supplies',
   'tree.e4.desc': 'Match start: +15 wood, +10 ore',
-  'tree.e5.name': 'Extra gatherer',
-  'tree.e5.desc': 'Start: 3 gatherers instead of 2',
+  'tree.e5.name': 'Extra worker',
+  'tree.e5.desc': 'Start with +1 universal worker',
   'tree.e6.name': 'Sixth spot',
   'tree.e6.desc': '+1 house building spot',
   'tree.e7.name': 'Pasture',

@@ -828,43 +828,6 @@ export class GameScene extends Phaser.Scene {
         .setScale(0.85).setAlpha(0.16).setDepth(DEPTH.GEM);
       place(sx, sy, 96);
     }
-    // ---- Декоративные постройки других поселений ----
-    // ⚠️ Раньше они ставились относительно центра карты (±240…470 от него),
-    // то есть в 230–360 px от ЗАМКА — прямо на пятна стройки и на рабочий
-    // пояс. Теперь они отнесены на 900+ px от базы: это чужие деревни на
-    // карте, а не деталь, растущая сквозь казармы.
-    const decor: Array<[string, number, number, number]> = [
-      ['house2', -620, 700, 0.8],
-      ['house1', 640, 690, 0.8],
-      ['tower', -900, 260, 0.85],
-      ['tower', 880, -240, 0.85],
-      ['monastery', 120, 1150, 0.8],
-    ];
-    for (const [key, dx, dy, scale] of decor) {
-      const x = this.castleX + dx, y = this.castleY + dy;
-      if (x < m + 120 || x > S - m - 120 || y < m + 120 || y > S - m - 120) continue;
-      this.add.image(x, y, key).setScale(scale).setDepth(DEPTH.ENTITY_BASE + y);
-      place(x, y, key === 'monastery' ? 160 : 120);
-    }
-
-    // Дома и башни по карте
-    for (let i = 0; i < 8; i++) {
-      const [x, y] = randPos();
-      if (canPlace(x, y, 120)) {
-        const k = this.isSeededDailyChallenge
-          ? rng.pick(['house1', 'house2', 'house3'])
-          : Phaser.Math.RND.pick(['house1', 'house2', 'house3']);
-        this.add.image(x, y, k).setScale(0.75).setDepth(DEPTH.ENTITY_BASE + y);
-        place(x, y, 120);
-      }
-    }
-    for (let i = 0; i < 6; i++) {
-      const [x, y] = randPos();
-      if (canPlace(x, y, 110)) {
-        this.add.image(x, y, 'tower').setScale(0.8).setDepth(DEPTH.ENTITY_BASE + y);
-        place(x, y, 110);
-      }
-    }
     // ---- Овечки: ресурс мяса — 3 за цикл, овца исчезает (§B.3) ----
     // «Дефицит» (A2): овец ×2; контракт «Голодный год» (§H.9): овцы не доятся
     //
@@ -2729,8 +2692,9 @@ private ordersUnlocked(): boolean {
   }
 
   private pawnTitle(pawn: Pawn): string {
-    // Титул с родом: «каменщица Агата» (Приложение A1)
-    return t(`pawn.titled.${pawn.kind}${pawn.female ? 'F' : ''}` as Parameters<typeof t>[0]);
+    // Citizens are universal workers; a profession-specific title would be misleading.
+    const titleKind = pawn.cls === 'civilian' ? 'worker' : pawn.kind;
+    return t(`pawn.titled.${titleKind}${pawn.female ? 'F' : ''}` as Parameters<typeof t>[0]);
   }
 
   /** Фаза 2 босса: HP < 50% → постоянная осада замка (§E.6). */

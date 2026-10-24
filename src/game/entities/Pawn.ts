@@ -170,7 +170,7 @@ export class Pawn extends Phaser.Physics.Arcade.Sprite {
     return prefix === 'pawn-lancer' ? 0.34 : 0.55;
   }
 
-  /** Префикс анимаций: pawn/pawny для рабочих, pawn-warrior/lancer/archer/monk для гарнизона. */
+  /** Префикс анимаций: единый pawn для гражданских; специализированные листы — у гарнизона. */
   static spritePrefix(kind: PawnKind, weapon?: PawnWeapon): string {
     if (kind === 'fighter') {
       return weapon === 'lance' ? 'pawn-lancer' : weapon === 'bow' ? 'pawn-archer' : 'pawn-warrior';
