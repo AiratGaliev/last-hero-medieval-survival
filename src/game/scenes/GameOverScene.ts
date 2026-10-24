@@ -86,6 +86,8 @@ export interface GameOverStats {
     walletRewardSaved?: boolean;
     /** Тип контекстного предложения, рассчитанный после фиксации текущего рана. */
     storeOffer?: StoreOfferKind;
+    /** Магазин доступен из этого предложения; монастырский триггер может быть обучающим без SKU CTA. */
+    storeOfferCanOpenShop?: boolean;
     /** Сохраняет уже показанное предложение при перерисовке экрана после resize. */
     storeOfferSessionClaimed?: boolean;
     /** False means a successful daily challenge did not persist its daily reward. */
@@ -874,9 +876,10 @@ export class GameOverScene extends Phaser.Scene {
       wordWrap: { width: Math.min(500, width - 52) },
     }).setOrigin(0.5, 0);
 
+    const canOpenShop = offer !== 'monastery' || meta.storeOfferCanOpenShop === true;
     const buttonH = 44;
     const gap = compact ? 5 : 8;
-    const needed = message.height + gap + buttonH + 4;
+    const needed = message.height + (canOpenShop ? gap + buttonH + 4 : 4);
     if (avail < needed) {
       message.destroy();
       return cursor;
@@ -895,17 +898,19 @@ export class GameOverScene extends Phaser.Scene {
     }
 
     body.add(message);
-    const buttonW = Math.min(270, width - 48);
-    const buttonY = cursor + message.height + gap + buttonH / 2;
-    const button = makeButton(
-      this, width / 2, buttonY, buttonW, buttonH, t('store.offerOpen'),
-      () => this.openStoreOffer(offer), 'blue', compact ? 10 : 12,
-      { hitW: buttonW, hitH: buttonH, stopPropagation: true },
-    );
-    button.img.setScrollFactor(0);
-    button.txt.setScrollFactor(0);
-    button.hit.setScrollFactor(0);
-    body.add([button.img, button.txt, button.hit]);
+    if (canOpenShop) {
+      const buttonW = Math.min(270, width - 48);
+      const buttonY = cursor + message.height + gap + buttonH / 2;
+      const button = makeButton(
+        this, width / 2, buttonY, buttonW, buttonH, t('store.offerOpen'),
+        () => this.openStoreOffer(offer), 'blue', compact ? 10 : 12,
+        { hitW: buttonW, hitH: buttonH, stopPropagation: true },
+      );
+      button.img.setScrollFactor(0);
+      button.txt.setScrollFactor(0);
+      button.hit.setScrollFactor(0);
+      body.add([button.img, button.txt, button.hit]);
+    }
     return cursor + needed;
   }
 
