@@ -13,9 +13,10 @@ describe('directional guard and combat recovery', () => {
   });
   it('stops enemies only after a substantial hit', () => {
     expect(staggerDuration(12, 90, false)).toBe(0);
+    expect(staggerDuration(12, 130, false)).toBe(COMBAT_TIMING.LIGHT_STAGGER_MS);
     expect(staggerDuration(12, 190, false)).toBe(COMBAT_TIMING.LIGHT_STAGGER_MS);
     expect(staggerDuration(22, 90, true)).toBe(COMBAT_TIMING.LIGHT_STAGGER_MS);
     expect(staggerDuration(31, 90, false)).toBe(COMBAT_TIMING.HEAVY_STAGGER_MS);
-    expect(staggerDuration(12, 301, false)).toBe(COMBAT_TIMING.HEAVY_STAGGER_MS);
+    expect(staggerDuration(12, 251, false)).toBe(COMBAT_TIMING.HEAVY_STAGGER_MS);
   });
 });
