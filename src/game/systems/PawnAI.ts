@@ -1205,8 +1205,8 @@ export class PawnAI {
     if (!required) return false;
 
     if (p.state !== 'retreat' && p.state !== 'resting') {
-      const node = p.workNode;
-      if (node instanceof ResourceNode) {
+      const node = p.workNode as ResourceNode | null;
+      if (node && typeof node.available === 'boolean' && typeof node.release === 'function') {
         node.release(p);
         p.workNode = null;
         p.taskProgress = 0;
