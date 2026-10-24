@@ -1176,7 +1176,9 @@ export class PawnAI {
 
       enemyNear = true;
       if (enemy.siege) siegeNear = true;
-      if (enemy.aimedPawn !== null) hunterNear = true;
+      // Агро относится только к пешке, которую враг действительно выбрал целью.
+      // Иначе один нападающий одновременно отправляет в бегство всех соседних рабочих.
+      if (enemy.aimedPawn === p) hunterNear = true;
       if (siegeNear && hunterNear) break;
     }
 
