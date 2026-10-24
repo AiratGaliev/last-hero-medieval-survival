@@ -24,7 +24,7 @@ import { Speedup } from '../systems/Speedup';
 import { Hints, type HintTargetResolver } from '../systems/Hints';
 import { OrderMenu } from '../systems/OrderMenu';
 import { audio } from '../systems/Audio';
-import { staggerDuration } from '../systems/Combat';
+import { COMBAT_TIMING, staggerDuration } from '../systems/Combat';
 import { Effects } from '../systems/Effects';
 import { JuicePolicy } from '../systems/Juice';
 import { Pickups } from '../systems/Pickups';
@@ -2987,8 +2987,13 @@ private bossDeathSequence(e: Enemy): boolean {
     if (final <= 0) return;
     this.effects.damage(e.x, e.y - 40 * e.def.scale, final, false);
     const died = e.takeDamage(final);
+    if (!died) {
+      // Удар гарнизонного копейщика во время рывка должен сбивать замах; обычные удары меча/стрелы не stun-lock.
+      const impactForce = weapon === 'lance' ? COMBAT_TIMING.LIGHT_HIT_FORCE + 20 : 0;
+      const recovery = staggerDuration(final, impactForce, false);
+      if (recovery > 0) e.stagger(recovery);
+    }
     if (died) this.onEnemyDeath(e, undefined, true);
-    void weapon;
   }
 
   // ================= ПРЕЕМСТВЕННОСТЬ (TZ §F) =================
