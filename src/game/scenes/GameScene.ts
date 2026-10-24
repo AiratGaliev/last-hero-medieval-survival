@@ -24,6 +24,7 @@ import { Speedup } from '../systems/Speedup';
 import { Hints, type HintTargetResolver } from '../systems/Hints';
 import { OrderMenu } from '../systems/OrderMenu';
 import { audio } from '../systems/Audio';
+import { staggerDuration } from '../systems/Combat';
 import { Effects } from '../systems/Effects';
 import { JuicePolicy } from '../systems/Juice';
 import { Pickups } from '../systems/Pickups';
@@ -1577,7 +1578,8 @@ export class GameScene extends Phaser.Scene {
   private setupCollisions(): void {
     this.physics.add.overlap(this.player, this.enemyGroup, (_p, e) => {
       const enemy = e as Enemy;
-      this.hurtPlayer(enemy.damage);
+      if (enemy.isStaggered || enemy.usesTimedMelee) return;
+      this.hurtPlayer(enemy.damage, enemy.x);
     });
 
     this.physics.add.overlap(this.projectiles.arrows, this.enemyGroup, (proj, e) => {
@@ -1633,8 +1635,9 @@ export class GameScene extends Phaser.Scene {
       if (!p.active) return;
       if (this.projectiles.impactEnemyShot(p)) return;
       if (p.shotKind === 'hex') this.effects.hexBlast(p.x, p.y);
+      const sourceX = p.x;
       this.projectiles.releaseEnemyShot(p);
-      this.hurtPlayer(p.dmg);
+      this.hurtPlayer(p.dmg, sourceX);
     });
 
     // Стрелы NPC-лучника бьют врагов: KILL растёт, комбо игрока — нет (§B.7.1)
@@ -2310,6 +2313,10 @@ private ordersUnlocked(): boolean {
     if (force > 0) e.knockback(kx, ky, force);
     this.effects.hitSound(this.activeTimeMs);
     const died = e.takeDamage(final);
+    if (byHero && !died) {
+      const recovery = staggerDuration(final, force, crit);
+      if (recovery > 0) e.stagger(recovery);
+    }
     // Попадания героя в фазе 2 переключают Огра на преследование; взрыв самой
     // рыбы-бомбы — урон врага, поэтому его вызов явно передаёт byHero=false.
     if (byHero && !died && e.def.isBoss) e.provokeByHero(this.activeTimeMs);
@@ -2347,16 +2354,16 @@ private ordersUnlocked(): boolean {
     }
   }
 
-  private hurtPlayer(amount: number): void {
+  private hurtPlayer(amount: number, sourceX?: number): void {
     if (this.gameEnded || this.victoryPending || this.defeatPending) return;
-    // Эффекты урона (звук/тряска/хитстоп) — только когда удар реально прошёл
     if (this.activeTimeMs < this.player.iframesUntil) return;
     const dmg = Math.max(1, Math.round(amount * this.armorMult));
-    const dead = this.player.damage(dmg, this.activeTimeMs);
-    audio.play('hurt');
-    this.shakeCamera(120, 0.0035);
-    this.cameras.main.flash(110, 190, 40, 30, false);
-    this.hitstop(80);
+    const dead = this.player.damage(dmg, this.activeTimeMs, sourceX);
+    const guarded = this.player.lastDamageWasGuarded;
+    audio.play(guarded ? 'hit' : 'hurt');
+    this.shakeCamera(guarded ? 70 : 120, guarded ? 0.0018 : 0.0035);
+    if (!guarded) this.cameras.main.flash(110, 190, 40, 30, false);
+    this.hitstop(guarded ? 50 : 80);
     // §H.4: «Серия сбрасывается пропущенным ударом по герою (как сейчас) —
     // вехи достижимы только скиллом». Без этого сундучки вех сыпались за
     // безнаказанное стояние на месте.
@@ -3208,7 +3215,7 @@ private bossDeathSequence(e: Enemy): boolean {
       audio.play('explosion');
       this.shakeCamera(140, 0.0035);
       this.hitstop(45);
-      if (Math.hypot(this.player.x - x, this.player.y - y) <= radius) this.hurtPlayer(dmg);
+      if (Math.hypot(this.player.x - x, this.player.y - y) <= radius) this.hurtPlayer(dmg, x);
       // Вражеский взрыв ранит поселение через общий боевой контекст, а не через
       // damageEnemy(): иначе убийства от NPC ошибочно поднимали бы комбо героя.
       for (const pawn of this.economy.pawns) {
@@ -4275,7 +4282,7 @@ private bossDeathSequence(e: Enemy): boolean {
         audio.play('explosion');
         this.shakeCamera(180, 0.005);
         if (Math.hypot(this.player.x - x, this.player.y - y) < 170) {
-          this.hurtPlayer(dmg);
+          this.hurtPlayer(dmg, x);
         }
       },
       onBossSummon: (x, y) => {
@@ -4296,6 +4303,7 @@ private bossDeathSequence(e: Enemy): boolean {
       },
       enemiesNear: (x, y, r) => this.enemiesNear(x, y, r),
       // Враг ранит пешку (§A.5): обычный бой — напрямую, осада — по лимиту профиля
+      attackHero: (dmg, sourceX) => this.hurtPlayer(dmg, sourceX),
       attackPawn: (pawn, dmg, siege) => {
         if (pawn.dead) return;
         if (siege) this.settlement.siegeWoundPawn(pawn, dmg, this.activeTimeMs);
@@ -4338,7 +4346,7 @@ private bossDeathSequence(e: Enemy): boolean {
               audio.play('explosion');
               this.shakeCamera(140, 0.0035);
               if (Math.hypot(this.player.x - bx, this.player.y - by) <= blastRadius) {
-                this.hurtPlayer(Math.round((ENEMIES['bomb-fish'].shotDmg ?? 14) * this.spawner.dmgMult));
+                this.hurtPlayer(Math.round((ENEMIES['bomb-fish'].shotDmg ?? 14) * this.spawner.dmgMult), bx);
               }
               if (b && b.alive) this.settlement.damageBuilding(b, dmg, firedAt, false);
             });
