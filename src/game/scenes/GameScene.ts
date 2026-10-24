@@ -232,6 +232,7 @@ export class GameScene extends Phaser.Scene {
   private lastIndicatorUpdate = 0;
   private extinctAt: number | null = null;
   private sepGrid = new Map<number, Enemy[]>();
+  private readonly sepNear: Enemy[] = [];
   private heroDef: HeroDef = HEROES.warrior;
   private diffDef: DifficultyDef = DIFFICULTIES.normal;
   private xpMult = 1;
@@ -1209,7 +1210,8 @@ export class GameScene extends Phaser.Scene {
 
     // Контекст AI пешек (создаётся с Economy — контекст подкидывается сюда)
     this.registry.set('tss-pawnai-ctx', {
-      enemies: () => this.activeEnemies(),
+      // PawnAI фильтрует активных врагов в одном снимке на кадр.
+      enemies: () => this.enemyGroup.getChildren() as Enemy[],
       playerX: () => this.player.x,
       playerY: () => this.player.y,
       pawnAttackEnemy: (e: Enemy, dmg: number, weapon: string) => this.damageEnemyByPawn(e, dmg, weapon),
@@ -3365,10 +3367,12 @@ private bossDeathSequence(e: Enemy): boolean {
   }
 
   private separateEnemies(): void {
-    this.sepGrid.clear();
+    // Корзины сохраняются и очищаются на месте: Map/массивы ячеек не создаются заново каждый кадр.
+    for (const bucket of this.sepGrid.values()) bucket.length = 0;
     const cell = 64;
     const px = this.player.x, py = this.player.y;
-    const near: Enemy[] = [];
+    const near = this.sepNear;
+    near.length = 0;
     for (const e of this.enemyGroup.getChildren() as Enemy[]) {
       if (!e.active) continue;
       if (Math.abs(e.x - px) > 900 || Math.abs(e.y - py) > 700) continue;
@@ -3387,11 +3391,12 @@ private bossDeathSequence(e: Enemy): boolean {
           for (const o of arr) {
             if (o === e || o.x < e.x) continue; // каждая пара один раз
             const dx = o.x - e.x, dy = o.y - e.y;
-            const d = Math.hypot(dx, dy);
+            const distanceSq = dx * dx + dy * dy;
             const min = (e.def.body.r + o.def.body.r) * 0.85;
-            if (d > 0.001 && d < min) {
-              const push = (min - d) / 2;
-              const nx = dx / d, ny = dy / d;
+            if (distanceSq > 0.000001 && distanceSq < min * min) {
+              const distance = Math.sqrt(distanceSq);
+              const push = (min - distance) / 2;
+              const nx = dx / distance, ny = dy / distance;
               e.x -= nx * push; e.y -= ny * push;
               o.x += nx * push; o.y += ny * push;
             }

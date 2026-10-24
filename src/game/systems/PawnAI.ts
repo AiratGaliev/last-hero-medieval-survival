@@ -10,6 +10,7 @@ import type { Building } from '../entities/Building';
 import type { ResourceNode } from '../entities/ResourceNode';
 import type { Enemy } from '../entities/Enemy';
 import { COMBAT_TIMING } from './Combat';
+import { SpatialHash } from './SpatialHash';
 
 // ============ AI пешки (TZ §B.6, §B.7) ============
 //
@@ -42,6 +43,11 @@ export class PawnAI {
   private scene: Phaser.Scene;
   private eco: Economy;
   private ctx: PawnAICtx;
+  /** Снимок живых врагов на текущий кадр: не создаём новый массив для каждого NPC. */
+  private readonly enemySnapshot: Enemy[] = [];
+  /** Индекс угроз для локальных проверок рабочих и ресурсных узлов. */
+  private readonly enemySpatialHash = new SpatialHash<Enemy>(260);
+  private readonly nearbyEnemyScratch: Enemy[] = [];
   /** Аккумулятор тика combatAI — строго на каждого воина (§B.7.1). */
   private combatAcc = new Map<Pawn, number>();
   private curTickMs: number = GARRISON.TICK_MS;
@@ -69,6 +75,15 @@ export class PawnAI {
       this.ctx = (this.scene.registry.get('tss-pawnai-ctx') ?? null) as PawnAICtx;
     }
     return this.ctx;
+  }
+
+  /** Обновить единый снимок и spatial hash один раз перед тиками всех пешек. */
+  refreshEnemySnapshot(): void {
+    this.enemySnapshot.length = 0;
+    for (const enemy of this.c.enemies()) {
+      if (enemy.active && !enemy.dead) this.enemySnapshot.push(enemy);
+    }
+    this.enemySpatialHash.rebuild(this.enemySnapshot);
   }
 
   private random(): number {
@@ -369,7 +384,6 @@ export class PawnAI {
    */
   private pickNodeFor(p: Pawn, minimums?: Partial<Record<ResourceKind, number>>): ResourceNode | null {
     const eco = this.eco;
-    const enemies = this.c.enemies();
     // Дефицит: план расхода (стройки/ремонт/лечение/наём) против склада.
     //
     // ⚠️ Раньше здесь стоял жёсткий базовый план `{ wood: 30, ore: 15, meat: 3 }`
@@ -419,10 +433,13 @@ export class PawnAI {
       const deficit = Math.max(0, target[n.res] - eco.resources[n.res]);
       const dist = Math.max(60, Math.hypot(n.x - p.x, n.y - p.y));
       let score = deficit / dist;
-      // Штраф: враги в 260 px от узла делают его непривлекательным
-      for (const e of enemies) {
+      // Смотрим только соседние ячейки вместо полного прохода по всем врагам.
+      const nearby = this.enemySpatialHash.query(n.x, n.y, 260, this.nearbyEnemyScratch);
+      for (const e of nearby) {
         if (!e.active || e.dead) continue;
-        if (Math.hypot(e.x - n.x, e.y - n.y) < 260) { score *= 0.05; break; }
+        const dx = e.x - n.x;
+        const dy = e.y - n.y;
+        if (dx * dx + dy * dy < 260 * 260) { score *= 0.05; break; }
       }
       if (score > bestScore) { bestScore = score; best = n; }
     }
@@ -693,7 +710,7 @@ export class PawnAI {
 
 
 
-    const enemies = this.c.enemies();
+    const enemies = this.enemySnapshot;
 
     // Монах: полевое лечение работает ВСЕГДА (§B.6 — приказы СЛЕДОВАТЬ /
     // НА ПОСТ / ДЕРЖАТЬ тоже лечат, иначе приказ полностью обессценивает
@@ -861,7 +878,7 @@ export class PawnAI {
   private nearestEnemy(p: Pawn, r: number): Enemy | null {
     let best: Enemy | null = null;
     let bestD = r;
-    for (const e of this.c.enemies()) {
+    for (const e of this.enemySnapshot) {
       if (!e.active || e.dead) continue;
       const d = Phaser.Math.Distance.Between(p.x, p.y, e.x, e.y);
       if (d < bestD) { bestD = d; best = e; }
@@ -1119,14 +1136,6 @@ export class PawnAI {
     void dtMs;
   }
 
-  private enemyNear(x: number, y: number, r: number): boolean {
-    for (const e of this.c.enemies()) {
-      if (!e.active || e.dead) continue;
-      if (Math.hypot(e.x - x, e.y - y) < r) return true;
-    }
-    return false;
-  }
-
   /**
    * Паника гражданского (§B.2, §A.5).
    *
@@ -1151,34 +1160,29 @@ export class PawnAI {
    *     из §B.2. Именно тогда игрок должен вернуться к базе.
    */
   private shouldFlee(p: Pawn): boolean {
-    const eco = this.eco;
-    if (!this.enemyNear(p.x, p.y, AGGRO.PANIC)) return false;
-    const inCore = eco.isSettlementCore(p.x, p.y);
-    // В ядре поселения обычная волна не достаёт до гражданских (§A.5) —
-    // паникует только осада, единственная угроза базе (§D.1).
-    if (inCore) return this.siegeNear(p.x, p.y, AGGRO.PANIC);
-    // Враг идёт за героем — угрозы лично для рабочему нет. Паника
-    // включается, когда враг переключился на поселение.
-    return this.hunterNear(p.x, p.y, AGGRO.PANIC);
-  }
+    const radius = AGGRO.PANIC;
+    const nearby = this.enemySpatialHash.query(p.x, p.y, radius, this.nearbyEnemyScratch);
+    const radiusSq = radius * radius;
+    let enemyNear = false;
+    let siegeNear = false;
+    let hunterNear = false;
 
-  /** Осадный враг рядом: доходит до самой базы (§D.1). */
-  private siegeNear(x: number, y: number, r: number): boolean {
-    for (const e of this.c.enemies()) {
-      if (!e.active || e.dead || !e.siege) continue;
-      if (Math.hypot(e.x - x, e.y - y) < r) return true;
-    }
-    return false;
-  }
+    // Один локальный проход одновременно проверяет врага, осаду и агро на пешку.
+    for (const enemy of nearby) {
+      if (!enemy.active || enemy.dead) continue;
+      const dx = enemy.x - p.x;
+      const dy = enemy.y - p.y;
+      if (dx * dx + dy * dy >= radiusSq) continue;
 
-  /** Враг, переключившийся на поселение (цель-пешка вместо героя, §A.5). */
-  private hunterNear(x: number, y: number, r: number): boolean {
-    for (const e of this.c.enemies()) {
-      if (!e.active || e.dead) continue;
-      if (e.aimedPawn === null) continue;
-      if (Math.hypot(e.x - x, e.y - y) < r) return true;
+      enemyNear = true;
+      if (enemy.siege) siegeNear = true;
+      if (enemy.aimedPawn !== null) hunterNear = true;
+      if (siegeNear && hunterNear) break;
     }
-    return false;
+
+    if (!enemyNear) return false;
+    // В ядре угрозой считается только осада; вне ядра — враг, выбравший пешку целью.
+    return this.eco.isSettlementCore(p.x, p.y) ? siegeNear : hunterNear;
   }
 
   /** Позиция монаха: 200 px за ближайшим бойцом относительно врага. */

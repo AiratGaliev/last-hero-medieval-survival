@@ -189,10 +189,10 @@ export class Pickups {
       if (!g.img.active) { this.gems.splice(i, 1); continue; }
       const dx = px - g.img.x;
       const dy = py - g.img.y;
-      const dist = Math.hypot(dx, dy);
+      const distSq = dx * dx + dy * dy;
 
       if (g.kind === 'chest') {
-        if (dist < 58) this.collectChest(i);
+        if (distSq < 58 * 58) this.collectChest(i);
         continue;
       }
 
@@ -200,22 +200,23 @@ export class Pickups {
       // магнитом; герой наступил — ценность уходит через onGold (в отдельный
       // счётчик GameScene, не в золото матча)
       if (!this.heroCollectsGold && g.gold > 0 && g.xp === 0 && g.heal === 0) {
-        if (dist < 34) this.collect(i);
+        if (distSq < 34 * 34) this.collect(i);
         continue;
       }
 
       if (g.pulling) {
-        // Притяжение к игроку с ускорением
+        // Корень нужен только предметам, которые уже движутся к герою.
+        const dist = Math.sqrt(distSq);
         const sp = Math.min(900, 420 + (900 - Math.min(900, dist)) * 0.6);
         g.vx = (dx / (dist || 1)) * sp;
         g.vy = (dy / (dist || 1)) * sp;
         g.img.x += g.vx * dt;
         g.img.y += g.vy * dt;
-        if (dist < 30) this.collect(i);
+        if (distSq < 30 * 30) this.collect(i);
         continue;
       }
 
-      if (dist < magnetR) {
+      if (distSq < magnetR * magnetR) {
         g.pulling = true;
         continue;
       }

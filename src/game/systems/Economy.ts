@@ -175,6 +175,9 @@ export class Economy extends Phaser.Events.EventEmitter {
   pawns: Pawn[] = [];
   nodes: ResourceNode[] = [];
   buildings: Building[] = [];
+  /** Переиспользуемые снимки: не создаём новые массивы в покадровом тике. */
+  private readonly buildingTickSnapshot: Building[] = [];
+  private readonly pawnTickSnapshot: Pawn[] = [];
   /** Занятые пятна стройки: ключ «x:y» → building kind. */
   private usedSpots = new Set<string>();
   /** Активные стройки (читает PawnAI для плана дефицита §B.6). */
@@ -914,6 +917,8 @@ export class Economy extends Phaser.Events.EventEmitter {
   // ---------- Тик ----------
 
   tick(dtMs: number, now: number): void {
+    // Все пешки этого кадра используют один актуальный снимок угроз.
+    this.pawnAI.refreshEnemySnapshot();
 
     // Стройка: прогресс идёт, только если строитель у места и работает
     for (let i = this.buildJobs.length - 1; i >= 0; i--) {
@@ -1027,8 +1032,11 @@ export class Economy extends Phaser.Events.EventEmitter {
     }
 
     // Окно обрушения монастыря продвигается тем же игровым временем, что и экономика.
-    // Копия массива нужна: при истечении срока callback удаления может убрать здание из реестра.
-    for (const b of [...this.buildings]) {
+    // Снимок нужен: callback может удалить здание прямо во время этого прохода.
+    const buildingSnapshot = this.buildingTickSnapshot;
+    buildingSnapshot.length = 0;
+    for (const building of this.buildings) buildingSnapshot.push(building);
+    for (const b of buildingSnapshot) {
       if (!b.alive) continue;
       b.tickMonasteryCollapse(dtMs);
       if (!b.alive) continue;
@@ -1045,7 +1053,11 @@ export class Economy extends Phaser.Events.EventEmitter {
     // идёт с множителем — пешка в состоянии work над узлом не двигается,
     // поэтому инфляция dtMs ускоряет только работу.
     const workSpeed = this.tune.workSpeed;
-    for (const p of [...this.pawns]) {
+    // Сохраняем порядок и состав обхода кадра, переиспользуя буфер вместо spread-копии.
+    const pawnSnapshot = this.pawnTickSnapshot;
+    pawnSnapshot.length = 0;
+    for (const pawn of this.pawns) pawnSnapshot.push(pawn);
+    for (const p of pawnSnapshot) {
       if (p.dead || !p.active) continue;
       if (p.cls === 'civilian') {
         const atNode = workSpeed !== 1 && p.state === 'work' && p.workNode !== null
