@@ -30,6 +30,15 @@ export default defineConfig({
     trace: 'retain-on-failure',
     screenshot: 'only-on-failure',
     video: 'retain-on-failure',
+    // Локальные прогоны: channel chrome (--enable-gpu) даёт аппаратный WebGL-рендер.
+    // Собранный headless-shell рисует через SwiftShader на CPU (~30 мс/кадр — ядро под
+    // загрузкой весь прогон, игровой цикл держит лишь 24–37 fps); с реальным GPU
+    // main thread занят на единицы процентов. На CI-агентах (Linux без GPU) блок
+    // не применяется: там от флага всё равно откатываются на софт-рендер, а
+    // channel 'chrome' потребовал бы установленного Chrome.
+    ...(process.env.CI
+      ? {}
+      : { channel: 'chrome', launchOptions: { args: ['--enable-gpu', '--ignore-gpu-blocklist'] } }),
   },
   projects: [
     {

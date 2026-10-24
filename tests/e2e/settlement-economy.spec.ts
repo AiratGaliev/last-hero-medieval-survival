@@ -1947,6 +1947,8 @@ test('phase L: rank II doubles numeric settlement-card effects and rank III cann
       active: true, dead: false, def: { scale: 1 },
       x: scene.player.x + 50, y: scene.player.y + 50,
       takeDamage: (amount: number): boolean => { dealt.push(amount); return false; },
+      // damageEnemyByPawn встряхивает выжившую цель (контракт Enemy.stagger)
+      stagger: (_ms: number): void => undefined,
     };
     scene.damageEnemyByPawn(dummy, 40, 'sword');
     economy.applySettlementCard('militia');
@@ -3372,7 +3374,7 @@ test('phase K: destroying the castle sets the castle defeat cause and announces 
 
 test('phase M: autonomous archers prioritize siege shamans over closer enemies', async ({ page }) => {
   await startRun(page);
-  const report = await page.evaluate(() => {
+  await page.evaluate(() => {
     const game = (window as RuntimeWindow).__tss;
     if (!game) throw new Error('Phaser runtime is unavailable');
     const scene = game.scene.getScene('Game') as GameSceneRuntime & {
@@ -3405,10 +3407,13 @@ test('phase M: autonomous archers prioritize siege shamans over closer enemies',
 
     const closerEnemy = {
       active: true, dead: false, kind: 'skull', siege: false,
+      // def нужен: resolvePendingAttack считает радиус цели при попадании
+      def: { body: { r: 0 }, scale: 1 },
       x: postX + 40, y: postY,
     };
     const siegeShaman = {
       active: true, dead: false, kind: 'shaman', siege: true,
+      def: { body: { r: 0 }, scale: 1 },
       x: postX + 200, y: postY,
     };
     const context = scene.registry.get('tss-pawnai-ctx') as {
@@ -3423,11 +3428,21 @@ test('phase M: autonomous archers prioritize siege shamans over closer enemies',
     };
 
     economy.pawnAI.updateCombat(archer, 1_000, scene.time.now + 1_000);
-    return { shots, state: archer.state };
+    // Замах резолвится колбеком анимации ПОСЛЕ evaluate — состояние и выстрел
+    // дол тикает живой луп; выносим probe в window и читаем опросом.
+    (window as RuntimeWindow & { __archerProbeMM?: unknown }).__archerProbeMM = { shots, pawn: archer };
   });
 
-  expect(report.shots[0]).toBe('shaman:true');
-  expect(report.state).toBe('fight');
+  await expect.poll(
+    () => page.evaluate(() =>
+      ((window as RuntimeWindow & { __archerProbeMM?: { shots: string[] } }).__archerProbeMM?.shots[0] ?? '')),
+    { timeout: 10_000 },
+  ).toBe('shaman:true');
+  await expect.poll(
+    () => page.evaluate(() =>
+      ((window as RuntimeWindow & { __archerProbeMM?: { pawn?: { state: string } } }).__archerProbeMM?.pawn?.state ?? '')),
+    { timeout: 10_000 },
+  ).toBe('fight');
 });
 
 test('phase M: an archer beyond the 420 px leash returns to its post before attacking', async ({ page }) => {
@@ -3569,24 +3584,31 @@ test('phase M: all new buildings and unit animations have loaded textures', asyn
     if (!game) throw new Error('Phaser runtime is unavailable');
     const runtime = game as unknown as PhaserRuntime & {
       textures: { exists(key: string): boolean };
+      anims: { get(key: string): { frames: Array<{ textureKey: string }> } | null };
     };
     const textureKeys = [
       'archery', 'monastery', 'tower',
-      'pawn-archer-idle', 'pawn-archer-run', 'pawn-archer-atk',
-      'pawn-monk-idle', 'pawn-monk-run', 'pawn-monk-atk',
     ];
+    // pawn-* — это анимации поверх спрайт-листов hero-*: отдельной текстуры
+    // с префиксом «pawn-» в сети нет — проверяем спрайт-лист, кадрами которого
+    // рисуется гарнизонная пешка.
     const animationKeys = [
       'pawn-archer-idle', 'pawn-archer-run', 'pawn-archer-atk',
       'pawn-monk-idle', 'pawn-monk-run', 'pawn-monk-atk',
     ];
-    return {
-      textures: Object.fromEntries(textureKeys.map(key => [key, runtime.textures.exists(key)])),
-      animations: Object.fromEntries(animationKeys.map(key => [key, runtime.anims.exists(key)])),
-    };
+    const missingTextures = textureKeys.filter(key => !runtime.textures.exists(key));
+    const missingAnimations = animationKeys.filter((key) => {
+      const anim = runtime.anims.get(key);
+      if (!anim) return true;
+      // Phaser 4: ключ спрайт-листа живёт в textureKey кадра (AnimationFrame.textureKey)
+      const source = anim.frames?.[0]?.textureKey ?? '';
+      return !runtime.textures.exists(source);
+    });
+    return { missingTextures, missingAnimations };
   });
 
-  expect(Object.values(report.textures).every(Boolean)).toBe(true);
-  expect(Object.values(report.animations).every(Boolean)).toBe(true);
+  expect(report.missingTextures, 'missing textures').toEqual([]);
+  expect(report.missingAnimations, 'missing animations').toEqual([]);
 });
 
 test('phase M: tower fires at a siege target before a closer ordinary enemy', async ({ page }) => {

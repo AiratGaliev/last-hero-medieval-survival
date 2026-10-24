@@ -1,4 +1,5 @@
 import Phaser from 'phaser';
+import { armIdleThrottle } from '../systems/IdleThrottle';
 import { Cursor } from '../systems/Cursor';
 import { DEPTH, FONT } from '../constants';
 import { audio } from '../systems/Audio';
@@ -149,6 +150,9 @@ export class PauseScene extends Phaser.Scene {
     // При изменении размера окна (поворот телефона) — перерисовать меню на новых координатах
     this.scale.on('resize', this.rebuild, this);
     this.events.once('shutdown', () => this.scale.off('resize', this.rebuild, this));
+
+    // Пауза статична: без ввода рендерим 15 fps (матч под ней продолжает рисоваться)
+    armIdleThrottle(this);
   }
 
   private resume(): void {

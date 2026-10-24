@@ -1,4 +1,5 @@
 import Phaser from 'phaser';
+import { armIdleThrottle } from '../systems/IdleThrottle';
 import { Cursor } from '../systems/Cursor';
 import { FONT } from '../constants';
 import { makePanel, makeRibbon, makeButton, fitTextWidth, type Button } from '../systems/Ui';
@@ -381,6 +382,9 @@ export class GameOverScene extends Phaser.Scene {
       this.nameInput = null;
       this.scale.off('resize', this.rebuild, this);
     });
+
+    // Экран итогов статичен: без ввода рендерим 15 fps
+    armIdleThrottle(this);
   }
 
   /**
