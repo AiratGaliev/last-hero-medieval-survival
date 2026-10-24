@@ -22,7 +22,7 @@ const base: StoreOfferFacts = {
 
 describe('contextual store offer resolution', () => {
   it('does not bypass the paid storefront gate for starter and pass offers', () => {
-    expect(resolveStoreOffer({ ...base, storefrontUnlocked: false, elapsedSeconds: 899 }))
+    expect(resolveStoreOffer({ ...base, storefrontUnlocked: false, bossHpRemainingPercent: 1 }))
       .toBeNull();
     expect(resolveStoreOffer({ ...base, storefrontUnlocked: false, passLevelBefore: 29, passLevelAfter: 30 }))
       .toBeNull();
