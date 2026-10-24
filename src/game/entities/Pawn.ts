@@ -4,6 +4,7 @@ import { FS } from '../systems/Text';
 import { t } from '../../i18n';
 import { PAWNS, FIGHTERS, type PawnKind, type PawnState, type PawnWeapon, type ResourceKind, type PawnDef } from '../data';
 import type { Building } from './Building';
+import type { Enemy } from './Enemy';
 
 // ============ Пешка поселения: гражданские и гарнизон (TZ §B.2) ============
 //
@@ -47,6 +48,14 @@ export class Pawn extends Phaser.Physics.Arcade.Sprite {
   bleedTimer = 0;
   /** Кулдаут атаки (гарнизон). */
   attackCd = 0;
+  attackWindupMs = 0;
+  attackRecoveryMs = 0;
+  attackTarget: Enemy | null = null;
+  attackDamage = 0;
+  attackWeapon: 'sword' | 'lance' | 'bow' | null = null;
+  chargeTarget: Enemy | null = null;
+  chargeDamage = 0;
+  private attackAnimationHandler: ((anim: Phaser.Animations.Animation) => void) | null = null;
   /** Телеграф рывка копья (гарнизон lance). */
   chargeWindup = 0;
   /** Слот монастыря: индекс места, пока лечится в обители. */
@@ -176,6 +185,7 @@ export class Pawn extends Phaser.Physics.Arcade.Sprite {
     } else {
       want = this.carrying ? `${p}-carry-idle-${this.carrying === 'ore' ? 'gold' : this.carrying}` : `${p}-idle`;
     }
+    if (this.lastAnim === `${p}-attack1` || this.lastAnim === `${p}-attack2` || this.lastAnim === `${p}-atk`) return;
     if (this.lastAnim !== want) {
       this.lastAnim = want;
       // Ключ может отсутствовать (нет carry-idle в пака) — фолбэк на базовый
@@ -228,19 +238,26 @@ export class Pawn extends Phaser.Physics.Arcade.Sprite {
     }
   }
 
-  /** Однократная боевая анимация гарнизона. */
+  /** Боевая анимация гарнизона; завершение слушает только свой ключ. */
   playAttackOnce(): void {
     const p = this.prefix;
     const key = p === 'pawn-warrior' ? `${p}-attack1` : `${p}-atk`;
     const real = this.scene.anims.exists(key) ? key : `${p}-attack1`;
-    if (this.lastAnim !== real) {
-      this.lastAnim = real;
-      this.play(real, true);
+    if (!this.scene.anims.exists(real)) return;
+    if (this.attackAnimationHandler) {
+      this.off('animationcomplete', this.attackAnimationHandler);
+      this.attackAnimationHandler = null;
     }
-    this.once('animationcomplete', (anim: Phaser.Animations.Animation) => {
-      void anim;
+    const handler = (anim: Phaser.Animations.Animation): void => {
+      if (anim.key !== real) return;
+      this.off('animationcomplete', handler);
+      if (this.attackAnimationHandler === handler) this.attackAnimationHandler = null;
       if (this.active) this.lastAnim = '';
-    });
+    };
+    this.attackAnimationHandler = handler;
+    this.on('animationcomplete', handler);
+    this.lastAnim = real;
+    this.play(real, true);
   }
 
   // ---------- Урон и лечение ----------
@@ -259,6 +276,12 @@ export class Pawn extends Phaser.Physics.Arcade.Sprite {
     });
     this.drawHpBar();
     if (this.hp <= 0) {
+      this.attackTarget = null;
+      this.attackWindupMs = 0;
+      this.attackRecoveryMs = 0;
+      this.attackWeapon = null;
+      this.chargeTarget = null;
+      this.taskProgress = 0;
       // Не умирает сразу — раненый идёт в монастырь (§G.3)
       this.state = 'wounded';
       this.carrying = null;
