@@ -1,4 +1,5 @@
 import Phaser from 'phaser';
+import { COMBAT_TIMING } from '../systems/Combat';
 import { FONT } from '../constants';
 import { asset } from '../assets';
 import { HEROES } from '../data';
@@ -133,6 +134,7 @@ export class BootScene extends Phaser.Scene {
     this.load.spritesheet('player-run', asset('tiny-swords', 'units/blue/warrior/warrior-run.png'), { frameWidth: 192, frameHeight: 192 });
     this.load.spritesheet('player-atk1', asset('tiny-swords', 'units/blue/warrior/warrior-attack1.png'), { frameWidth: 192, frameHeight: 192 });
     this.load.spritesheet('player-atk2', asset('tiny-swords', 'units/blue/warrior/warrior-attack2.png'), { frameWidth: 192, frameHeight: 192 });
+    this.load.spritesheet('player-guard', asset('tiny-swords', 'units/blue/warrior/warrior-guard.png'), { frameWidth: 192, frameHeight: 192 });
 
     // ---- Герои: лучница, копейщик и монах (синяя фракция) ----
     this.load.spritesheet('hero-archer-idle', asset('tiny-swords', 'units/blue/archer/archer-idle.png'), { frameWidth: 192, frameHeight: 192 });
@@ -498,6 +500,7 @@ export class BootScene extends Phaser.Scene {
     this.sheet('player-run', 'player-run', 6, 10);
     this.once('player-atk1', 'player-atk1', 4, 16);
     this.once('player-atk2', 'player-atk2', 4, 16);
+    this.once('player-guard', 'player-guard', COMBAT_TIMING.GUARD_FRAME_COUNT, COMBAT_TIMING.GUARD_FRAME_RATE);
     // Враги — существа: циклы и однократные анимации по таблице CREATURE_SHEETS
     for (const c of CREATURE_SHEETS) {
       for (const [anim, , frames, rate] of c.sheets) {
