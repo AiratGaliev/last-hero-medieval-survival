@@ -612,6 +612,81 @@ test('gameplay spawns the opening goblin and keeps Ogre death animation alive to
 });
 
 
+test('Ogre pursues the hero in phase one even when a pawn is available farther from the hero', async ({ page }) => {
+  const pageErrors: string[] = [];
+  page.on('pageerror', (error) => pageErrors.push(error.message));
+  await openApp(page);
+  await startGameplay(page);
+
+  const chase = await page.evaluate(() => {
+    const game = (window as unknown as { __tss?: RuntimeGame }).__tss;
+    if (!game) throw new Error('Phaser game instance is unavailable');
+
+    const scene = game.scene.getScene('Game') as RuntimeScene & {
+      registry: { get: (key: string) => unknown; set: (key: string, value: unknown) => void };
+      economy: {
+        pawns: Array<{
+          x: number; y: number; active: boolean; dead: boolean; state: string; cls: string;
+          setPosition: (x: number, y: number) => unknown;
+        }>;
+      };
+    };
+    scene.spawner.stopped = true;
+    for (const enemy of scene.enemyGroup.getChildren()) {
+      scene.enemyGroup.remove(enemy, true, true);
+    }
+
+    const heroX = scene.player.x;
+    const heroY = scene.player.y;
+    if (!scene.spawnEnemy('boss', heroX + 800, heroY)) {
+      throw new Error('Could not spawn QA Ogre outside the hero aggro radius');
+    }
+    const boss = scene.enemyGroup.getChildren().find((enemy) => enemy.active && enemy.kind === 'boss') as
+      (RuntimeEnemy & {
+        aimedPawn: unknown;
+        body: { velocity: { x: number; y: number } };
+      }) | undefined;
+    if (!boss) throw new Error('QA Ogre was not added to the enemy group');
+
+    // Перемещаем настоящую стартовую пешку на 350 px за Огра, дальше от героя.
+    // Так реальный tss-picktarget выбрал бы её по действующим правилам агро.
+    const pawn = scene.economy.pawns.find((item) =>
+      item.active && !item.dead && item.cls === 'civilian'
+      && item.state !== 'wounded' && item.state !== 'bleeding');
+    if (!pawn) throw new Error('Could not find an eligible civilian pawn');
+    pawn.setPosition(boss.x + 350, boss.y);
+
+    const originalPicker = scene.registry.get('tss-picktarget') as
+      ((enemy: RuntimeEnemy) => unknown) | undefined;
+    if (!originalPicker) throw new Error('The live NPC target selector is not registered');
+    const pawnWouldBeSelected = originalPicker(boss) === pawn;
+    if (!pawnWouldBeSelected) {
+      throw new Error('Test setup failed: the live target selector did not choose the relocated pawn');
+    }
+
+    scene.registry.set('tss-active-time-ms', 1_000);
+    boss.preUpdate?.(1_000, 16);
+
+    return {
+      heroDistance: Math.hypot(scene.player.x - boss.x, scene.player.y - boss.y),
+      pawnWouldBeSelected,
+      aimedAtPawn: boss.aimedPawn === pawn,
+      velocityTowardHero: (scene.player.x - boss.x) * boss.body.velocity.x
+        + (scene.player.y - boss.y) * boss.body.velocity.y,
+      velocityTowardPawn: (pawn.x - boss.x) * boss.body.velocity.x
+        + (pawn.y - boss.y) * boss.body.velocity.y,
+    };
+  });
+
+  expect(chase.heroDistance).toBeGreaterThan(600);
+  expect(chase.pawnWouldBeSelected).toBe(true);
+  expect(chase.aimedAtPawn).toBe(false);
+  expect(chase.velocityTowardHero).toBeGreaterThan(0);
+  expect(chase.velocityTowardPawn).toBeLessThan(0);
+  expect(pageErrors).toEqual([]);
+});
+
+
 test('Red Valley increases the expected skull/shaman share by exactly 25% in its active window', async ({ page }) => {
   await openApp(page);
   const shares = await page.evaluate(async () => {
