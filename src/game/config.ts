@@ -15,6 +15,9 @@ export function createGame(parent: HTMLElement): Phaser.Game {
   return new Phaser.Game({
     type: Phaser.AUTO,
     parent,
+    // Не рендерим игру чаще 60 FPS на дисплеях с высокой частотой обновления.
+    // Для меню это убирает лишние кадры, а для матча сохраняет стандартные 60 FPS.
+    fps: { limit: 60 },
     backgroundColor: '#3f8ed0',
     // DOM-контейнер нужен для нативного <input> ввода имени на экране рекорда
     dom: { createContainer: true },

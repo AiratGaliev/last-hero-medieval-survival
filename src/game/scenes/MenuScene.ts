@@ -250,8 +250,8 @@ export class MenuScene extends Phaser.Scene {
     this.add.tileSprite(-80, height / 2, 200, coverH + 400, 'water-tile');
     this.add.tileSprite(width + 80, height / 2, 200, coverH + 400, 'water-tile');
 
-    // Облака
-    for (let i = 0; i < 6; i++) {
+    // Три медленно движущихся облака сохраняют глубину фона без шести постоянных tween-обновлений.
+    for (let i = 0; i < 3; i++) {
       const c = this.add.image(
         Phaser.Math.Between(0, width),
         Phaser.Math.Between(30, height * 0.45),
@@ -270,11 +270,9 @@ export class MenuScene extends Phaser.Scene {
     // там, где теперь логотип, и стены проглядывали сквозь клинки. Убран в
     // левый верхний угол и уменьшен: меню сверху теперь занято названием.
     this.add.image(width * 0.17, height * 0.14, 'castle').setScale(0.5).setAlpha(0.45);
-    const sheep = this.add.sprite(width * 0.1, height * 0.9, 'sheep').setScale(0.65).setAlpha(0.9);
-    sheep.play('sheep-idle');
-    const goblin = this.add.sprite(width * 0.9, height * 0.92, 'goblin-idle').setScale(0.5).setAlpha(0.9);
-    goblin.play('goblin-idle');
-    void sheep; void goblin;
+    // Мелкий декор статичен: он не требует постоянного обновления кадров анимации в меню.
+    this.add.image(width * 0.1, height * 0.9, 'sheep', 0).setScale(0.65).setAlpha(0.9);
+    this.add.image(width * 0.9, height * 0.92, 'goblin-idle', 0).setScale(0.5).setAlpha(0.9);
 
     // ---------- Сетка карточек героя ----------
     // Раскладка считается СНИЗУ ВВЕРХ: строка версии, навигация, кнопка
@@ -1626,9 +1624,8 @@ export class MenuScene extends Phaser.Scene {
       audio.play('click');
       void this.openDailyChest();
     });
-    this.tweens.add({
-      targets: chip.container, scale: { from: 1, to: 1.05 }, duration: 1000, yoyo: true, repeat: -1, ease: 'Sine.easeInOut',
-    });
+    // В отличие от дара дня, сундук не пульсирует бесконечно: сам факт доступности
+    // награды уже показан подписью, а статичная плашка экономит ещё один tween.
     this.chestChip = chip.container;
   }
 
