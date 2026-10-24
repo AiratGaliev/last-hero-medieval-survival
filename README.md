@@ -80,7 +80,8 @@ npm run build:yg     # -> release/tiny-sword-survivors.zip
 | `npm run preview` | Локальный прогон собранной версии |
 | `npm run typecheck` | `tsc --noEmit` |
 | `npm run lint` | ESLint по репозиторию |
-| `npm run check` | typecheck + lint |
+| `npm run check` | `typecheck` + `lint` |
+| `npm run test:unit` | Юнит-тесты Vitest: проверка мета-экономики и безопасности облачных сохранений, без браузера |
 | `npm run test:e2e` | Playwright smoke tests (Chromium desktop + mobile; RU + EN startup) |
 | `npm run test:e2e:ui` | Playwright interactive test runner |
 
@@ -152,6 +153,7 @@ feat/* | fix/* | refactor/* | test/* | docs/* | chore/*
 
 ```bash
 npm run check
+npm run test:unit
 npm run build
 ```
 
@@ -159,6 +161,7 @@ npm run build
 |---|---|---|
 | `npm run check` | Каждый PR в `dev`, `test`, `main` | Обязательно: TypeScript + ESLint |
 | `npm run build` | Каждый PR в `dev`, `test`, `main` | Обязательно: проверка production-компиляции |
+| `npm run test:unit` | Каждый PR в `dev`, `test`, `main` | Быстрые юнит-тесты Vitest из `tests/unit/`; запускаются в Node.js без браузера |
 | `npm run test:e2e` | Только PR в `test` и `main`; также вручную в Actions | Полная браузерная приёмка, не запускается для обычных PR в `dev` |
 | `npm run test:e2e:ui` | Автоматически не запускается | Только интерактивная локальная отладка Playwright; не добавлять в обычный CI |
 | `npm run build:yg` | Только релизный workflow на `main` | Создаёт и проверяет `release/tiny-sword-survivors.zip` |
@@ -181,7 +184,7 @@ npm run build
 
 ### 6. Какие workflow существуют
 
-- **CI Fast** (`.github/workflows/ci.yml`) — `npm ci`, `npm run check` и `npm run build` для PR в `dev`, `test`, `main`. Chromium не устанавливается, E2E не запускается.
+- **CI Fast** (`.github/workflows/ci.yml`) — `npm ci`, `npm run check`, `npm run test:unit` и `npm run build` для PR в `dev`, `test`, `main`. Юнит-тесты Vitest выполняются в Node.js; Chromium не устанавливается, браузерные E2E не запускаются.
 - **E2E** (`.github/workflows/e2e.yml`) — Playwright для PR в `test` и `main`; при падении сохраняет диагностику Playwright.
 - **Release** (`.github/workflows/release.yml`) — выполняет `npm run check` и `npm run build:yg` только на `main` и публикует ZIP как артефакт GitHub Actions. Ручной запуск разрешён только при выборе ветки `main`.
 
@@ -191,7 +194,7 @@ GitHub branch protection должна требовать статус `CI Fast /
 
 ## Автоматические браузерные проверки
 
-Playwright проверяет запуск игры на Chromium desktop и mobile, в русском и английском режимах, а также игровые регрессии. Локальный запуск делайте осознанно — преимущественно перед приёмкой, а не после каждого изменения.
+Playwright проверяет запуск игры на Chromium desktop и mobile, в русском и английском режимах, а также игровые регрессии. Эти браузерные проверки отделены от быстрых юнит-тестов `npm run test:unit`, которые запускаются в CI Fast на каждом PR. Локальный E2E-запуск делайте осознанно — преимущественно перед приёмкой, а не после каждого изменения.
 
 ```bash
 npm ci
