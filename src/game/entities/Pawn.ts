@@ -100,9 +100,14 @@ export class Pawn extends Phaser.Physics.Arcade.Sprite {
     female: boolean,
     weapon?: PawnWeapon,
   ) {
-    // Спрайт гарнизона берётся из отдельных листов с префиксом pawn-*
+    // Ключи анимаций гарнизона отдельные, но графика переиспользует листы героя.
     const prefix = Pawn.spritePrefix(kind, weapon);
-    super(scene, x, y, `${prefix}-idle`);
+    const textureKey = prefix === 'pawn-warrior' ? 'player-idle'
+      : prefix === 'pawn-lancer' ? 'hero-lancer-idle'
+        : prefix === 'pawn-archer' ? 'hero-archer-idle'
+          : prefix === 'pawn-monk' ? 'hero-monk-idle'
+            : `${prefix}-idle`;
+    super(scene, x, y, textureKey);
     this.kind = kind;
     const pd = PAWNS[kind];
     this.def = pd;
