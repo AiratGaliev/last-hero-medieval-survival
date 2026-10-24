@@ -1,7 +1,7 @@
 import Phaser from 'phaser';
 import { Cursor } from '../systems/Cursor';
 import {
-  GAME_DURATION, WORLD, PLAYER_BASE, DEPTH, ENEMY_CAP, SCORE, XP_CURVE, COMBO, MAX_LEVEL,
+  WORLD, PLAYER_BASE, DEPTH, ENEMY_CAP, SCORE, XP_CURVE, COMBO, MAX_LEVEL,
   AGGRO, SIEGE, LONGPRESS_MS, VEIN_COUNT, VEIN_CHARGES, VEIN_YIELD,
   TOWER, BOSS_GOLD, HEAL_HP_PER_SEC, GARRISON_DPS_CAP, SETTLEMENT_CORE,
 } from '../constants';
@@ -3989,8 +3989,8 @@ private bossDeathSequence(e: Enemy): boolean {
         const storefrontUnlocked = showcaseUnlocked();
         const starterAvailable = isStarterCastellanAvailable(postRun);
         // Near-miss измеряем фактическим остатком HP босса, а не временем рана.
-        // В обычном режиме босс появляется на 15-й минуте и может пережить 900 с;
-        // при сдаче через SuccessionScene это не считается близким поражением.
+        // Обычно босс появляется на 15-й минуте, в сезоне «Возвращение Огра» — на 12-й;
+        // бой может идти дальше. Сдача через SuccessionScene не считается near-miss.
         const bossHpRemainingPercent = !this.mods.endless && !this.surrendered
           && this.boss?.active && !this.boss.dead
           && this.boss.maxHp > 0 && this.boss.hp > 0
