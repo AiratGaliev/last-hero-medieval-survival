@@ -3986,8 +3986,10 @@ private bossDeathSequence(e: Enemy): boolean {
       if (meta.persisted === true) {
         const postRun = rollMetaDay();
         const passLevelAfter = Math.min(PASS.LEVELS, Math.floor(postRun.pass.xp / PASS.XP_PER_LEVEL));
+        const storefrontUnlocked = showcaseUnlocked();
+        const starterAvailable = isStarterCastellanAvailable(postRun);
         const storeOffer = resolveStoreOffer({
-          storefrontUnlocked: showcaseUnlocked(),
+          storefrontUnlocked,
           passUnlocked: seasonPassUnlocked(),
           victory,
           elapsedSeconds: stats.time,
@@ -3996,9 +3998,15 @@ private bossDeathSequence(e: Enemy): boolean {
           passLevelBefore,
           passLevelAfter,
           passPremium: passWasPremium || postRun.pass.premium,
-          starterAvailable: isStarterCastellanAvailable(postRun),
+          starterAvailable,
         });
-        if (storeOffer) meta.storeOffer = storeOffer;
+        if (storeOffer) {
+          meta.storeOffer = storeOffer;
+          // Обрушение сначала должно обучить игрока. CTA на starter-набор
+          // доступна только в окне 48 ч и после разблокировки витрины.
+          meta.storeOfferCanOpenShop = storeOffer !== 'monastery'
+            || (storefrontUnlocked && starterAvailable);
+        }
       }
       stats.meta = meta;
     }
