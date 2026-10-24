@@ -2,7 +2,7 @@ import { expect, test, type Page } from '@playwright/test';
 
 const startupTimeout = 60_000;
 type RuntimePlayer = { x:number; y:number; hp:number; iframesUntil:number; flipX:boolean; lastDamageWasGuarded:boolean; anims:{currentAnim?:{key?:string}|null}; damage(amount:number,now:number,sourceX?:number):boolean; };
-type RuntimeEnemy = { active:boolean; dead:boolean; x:number; y:number; hp:number; isStaggered:boolean; stagger(durationMs:number):void; body?:{setVelocity(x:number,y:number):unknown}; };
+type RuntimeEnemy = { active:boolean; dead:boolean; x:number; y:number; hp:number; isStaggered:boolean; anims:{currentAnim?:{key?:string}|null}; stagger(durationMs:number):void; body?:{setVelocity(x:number,y:number):unknown}; };
 type RuntimeScene = { player:RuntimePlayer; weapons:{swordSwing(angle:number,dmg:number,evolved?:boolean,followUp?:boolean,candidates?:RuntimeEnemy[]):void}; enemyGroup:{getChildren():RuntimeEnemy[];remove(enemy:RuntimeEnemy,removeFromScene?:boolean,destroyChild?:boolean):unknown}; spawner:{stopped:boolean}; spawnEnemy(kind:string,x:number,y:number):boolean; damageEnemy(e:RuntimeEnemy,dmg:number,kx:number,ky:number,force:number,src?:string,byHero?:boolean):void; overlayOpen:boolean; };
 type RuntimeGame = { scene:{getScene(key:string):unknown;isActive(key:string):boolean} };
 type RuntimeWindow = Window & { __tss?:RuntimeGame };
@@ -121,4 +121,34 @@ test('sword damage lands on the attack animation impact frame', async ({page}) =
     return scene.enemyGroup.getChildren().find(e => e.active && !e.dead)?.hp ?? 99999;
   });
   expect(after).toBeLessThan(before.hp);
+});
+
+
+test('staggered enemies switch from running to idle and resume running afterwards', async ({page}) => {
+  await startWarriorRun(page);
+  await page.evaluate(() => {
+    const scene = (window as RuntimeWindow).__tss!.scene.getScene('Game') as RuntimeScene;
+    scene.spawner.stopped = true;
+    clearEnemies(scene);
+    const p = scene.player;
+    if (!scene.spawnEnemy('goblin', p.x + 280, p.y)) throw new Error('Could not spawn animation target');
+  });
+
+  const animationKey = () => page.evaluate(() => {
+    const scene = (window as RuntimeWindow).__tss!.scene.getScene('Game') as RuntimeScene;
+    return scene.enemyGroup.getChildren().find(e => e.active && !e.dead)?.anims.currentAnim?.key ?? 'missing';
+  });
+
+  // Ensure the goblin was visibly chasing first; it has no dedicated goblin-hit animation.
+  await expect.poll(animationKey, { timeout: 5_000 }).toBe('goblin-run');
+  await page.evaluate(() => {
+    const scene = (window as RuntimeWindow).__tss!.scene.getScene('Game') as RuntimeScene;
+    const enemy = scene.enemyGroup.getChildren().find(e => e.active && !e.dead);
+    if (!enemy) throw new Error('Animation target disappeared before hit');
+    scene.damageEnemy(enemy, 10, 0, 0, 190, 'sword');
+  });
+
+  await expect.poll(animationKey, { timeout: 1_000 }).toBe('goblin-idle');
+  await page.waitForTimeout(380);
+  await expect.poll(animationKey, { timeout: 2_000 }).toBe('goblin-run');
 });
