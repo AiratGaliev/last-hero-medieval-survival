@@ -2299,7 +2299,7 @@ private ordersUnlocked(): boolean {
     this.registry.set('tss-freeze', this.hitstopUntil);
   }
 
-  private damageEnemy(e: Enemy, dmg: number, kx = 0, ky = 0, force = 0, src?: WeaponId): void {
+  private damageEnemy(e: Enemy, dmg: number, kx = 0, ky = 0, force = 0, src?: WeaponId, byHero = true): void {
     if (!e.active || e.dead) return;
     let final = dmg * this.mightMult;
     const crit = this.gameplayRandom() < this.critChance;
@@ -2310,6 +2310,9 @@ private ordersUnlocked(): boolean {
     if (force > 0) e.knockback(kx, ky, force);
     this.effects.hitSound(this.activeTimeMs);
     const died = e.takeDamage(final);
+    // Попадания героя в фазе 2 переключают Огра на преследование; взрыв самой
+    // рыбы-бомбы — урон врага, поэтому его вызов явно передаёт byHero=false.
+    if (byHero && !died && e.def.isBoss) e.provokeByHero(this.activeTimeMs);
     if (src) {
       const st = this.weaponStats.get(src) ?? { dmg: 0, kills: 0 };
       st.dmg += final;
@@ -2713,24 +2716,29 @@ private ordersUnlocked(): boolean {
     return t(`pawn.titled.${pawn.kind}${pawn.female ? 'F' : ''}` as Parameters<typeof t>[0]);
   }
 
-  /** Фаза 2 босса: HP < 50% → идёт на замок (§E.6). */
+  /** Фаза 2 босса: HP < 50% → постоянная осада замка (§E.6). */
   private bossPhaseCheck(): void {
-    if (!this.boss?.active || this.boss.dead) return;
-    if (this.boss.aiState !== 'bossPhase2' && this.boss.hp < this.boss.maxHp * 0.5 && !this.boss.siege) {
-      this.boss.siege = true;
-      this.boss.buildingTarget = this.settlement.castle;
-      this.boss.aiState = 'bossPhase2';
-      if (this.seasonMod === 'ogre_return') this.boss.enableOgreReturnAggression();
-      this.hud.announce(t('boss.siege'), '#ff5544');
-      audio.play('boss');
-      this.shakeCamera(300, 0.006);
-      const cameraZoom = this.cameras.main.zoom;
-      this.cameras.main.zoomTo(Math.min(1.5, cameraZoom * 1.12), 240, 'Sine.easeOut');
-      this.time.delayedCall(800, () => this.cameras.main.zoomTo(cameraZoom, 260, 'Sine.easeOut'));
-      // Кинематографичный бит: time-freeze 0.8 с + краткий zoom (§H.13 №9, §E.6)
-      this.hitstop(800, true);
-      track('siege_start', { index: -1, profile: 'boss-phase2' });
-    }
+    if (!this.boss?.active || this.boss.dead || this.boss.hp >= this.boss.maxHp * 0.5) return;
+
+    // Фаза 2 — состояние до конца боя. Обычная осада/любой общий cleanup не
+    // должны сбрасывать цель или включать для босса отступление.
+    const enteringPhaseTwo = this.boss.aiState !== 'bossPhase2';
+    this.boss.siege = true;
+    this.boss.buildingTarget = this.settlement.castle;
+    this.boss.attackWindowEnds = 0;
+    this.boss.aiState = 'bossPhase2';
+    if (!enteringPhaseTwo) return;
+
+    if (this.seasonMod === 'ogre_return') this.boss.enableOgreReturnAggression();
+    this.hud.announce(t('boss.siege'), '#ff5544');
+    audio.play('boss');
+    this.shakeCamera(300, 0.006);
+    const cameraZoom = this.cameras.main.zoom;
+    this.cameras.main.zoomTo(Math.min(1.5, cameraZoom * 1.12), 240, 'Sine.easeOut');
+    this.time.delayedCall(800, () => this.cameras.main.zoomTo(cameraZoom, 260, 'Sine.easeOut'));
+    // Кинематографичный бит: time-freeze 0.8 с + краткий zoom (§H.13 №9, §E.6)
+    this.hitstop(800, true);
+    track('siege_start', { index: -1, profile: 'boss-phase2' });
   }
 
   private onEnemyDeath(e: Enemy, src?: WeaponId, byPawn = false): void {
@@ -3224,7 +3232,7 @@ private bossDeathSequence(e: Enemy): boolean {
       for (const s of this.enemiesNear(x, y, R + 40)) {
         const e = s as Enemy;
         if (!e.active || e.def.isBoss) continue;
-        this.damageEnemy(e, dmg * 0.8, e.x - x, e.y - y, 260, src);
+        this.damageEnemy(e, dmg * 0.8, e.x - x, e.y - y, 260, src, false);
       }
     });
   }
@@ -4360,7 +4368,15 @@ private bossDeathSequence(e: Enemy): boolean {
         return best;
       },
       onSiegeWindowEnd: (e) => {
-        // Окно атаки истекло — осада уходит за край карты (§E.4.2).
+        // Финальный Огр не отступает по таймеру обычной осады (§E.6).
+        // Защитный инвариант и в callback: сохраняем босса и возвращаем цель на замок.
+        if (e.def.isBoss && e.aiState === 'bossPhase2') {
+          e.siege = true;
+          e.buildingTarget = this.settlement.castle;
+          e.attackWindowEnds = 0;
+          return;
+        }
+        // Окно атаки обычной осады истекло — отряд уходит за край карты (§E.4.2).
         this.enemyGroup.remove(e, true, true);
       },
     };

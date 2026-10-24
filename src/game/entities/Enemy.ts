@@ -34,6 +34,9 @@ export interface EnemyContext {
 
 type AiState = 'chase' | 'windup' | 'charge' | 'recover' | 'bossPhase2';
 
+/** После попадания героя Огр отвлекается от замка на шесть секунд. */
+const OGRE_HERO_TAUNT_MS = 6000;
+
 export class Enemy extends Phaser.Physics.Arcade.Sprite {
   readonly def: EnemyDef;
   readonly kind: EnemyKind;
@@ -111,6 +114,8 @@ export class Enemy extends Phaser.Physics.Arcade.Sprite {
   spawnedAt = 0;
   /** Окно атаки у стены, конец в мс (0 — не ограничено; §E.4.2) */
   attackWindowEnds = 0;
+  /** До какого active-time Огр преследует героя после последнего попадания. */
+  private heroProvokedUntil = 0;
   private meleeCd = 0;
 
   constructor(scene: Phaser.Scene, x: number, y: number, kind: EnemyKind, hpMult: number, dmgMult: number, ctx: EnemyContext) {
@@ -290,12 +295,25 @@ export class Enemy extends Phaser.Physics.Arcade.Sprite {
 
   // ================= ОСАДА (TZ §E.4) =================
 
-  /** Осадный враг: идёт к зданию, бьёт его; игрок в 260 px перехватывает. */
+  /**
+   * Попадание героя отвлекает Огра от замка, но не передаёт цель гарнизону.
+   * Допускается удар, который сам переводит босса через порог фазы 2.
+   */
+  provokeByHero(activeTime: number): void {
+    if (!this.def.isBoss || this.dead || this.hp >= this.maxHp * 0.5) return;
+    this.heroProvokedUntil = Math.max(this.heroProvokedUntil, activeTime + OGRE_HERO_TAUNT_MS);
+  }
+
+  /** Осадный враг: идёт к зданию, бьёт его; герой перехватывает осаду. */
   private updateSiege(time: number, delta: number): void {
     const body = this.body as Phaser.Physics.Arcade.Body;
-    // Срок атаки проверяется ДО перехвата героем: близость игрока не должна
-    // продлевать десятисекундное окно у стены (§E.4.2).
-    if (this.attackWindowEnds > 0 && time >= this.attackWindowEnds) {
+    // Вторая фаза Огра — постоянная осада финального босса, а не обычное
+    // десятисекундное окно отряда. Она продолжается до смерти босса/победы или
+    // поражения игрока; общий таймер отступления не должен уводить Огра.
+    const persistentBossSiege = this.def.isBoss && this.aiState === 'bossPhase2';
+    if (persistentBossSiege) this.attackWindowEnds = 0;
+    // Срок атаки обычной осады проверяется ДО перехвата героем (§E.4.2).
+    if (!persistentBossSiege && this.attackWindowEnds > 0 && time >= this.attackWindowEnds) {
       if (this.kind === 'pig-rider') {
         this.siegeChargeStage = 'idle';
         this.setSiegeChargeTint(false);
@@ -320,9 +338,11 @@ export class Enemy extends Phaser.Physics.Arcade.Sprite {
     const hx = this.ctx.playerX(), hy = this.ctx.playerY();
     const heroD = Math.hypot(hx - this.x, hy - this.y);
 
-    // Игрок рядом перехватывает осаду — она бьёт его, не постройку (§E.4.2)
+    // Герой рядом перехватывает осаду. Во второй фазе попадание героя также
+    // отвлекает Огра на 6 сек с момента последнего попадания, даже издали.
     const interceptRadius = this.ctx.siegeInterceptRadius?.() ?? SIEGE.INTERCEPT_R;
-    if (heroD < interceptRadius) {
+    const bossPulledByHero = persistentBossSiege && time < this.heroProvokedUntil;
+    if (heroD < interceptRadius || bossPulledByHero) {
       // Герой может перехватить и сорвать телеграфированный осадный рывок.
       if (this.kind === 'pig-rider' && this.siegeChargeStage !== 'idle') {
         this.siegeChargeStage = 'idle';
