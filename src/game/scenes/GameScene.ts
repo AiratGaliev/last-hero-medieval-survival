@@ -1960,8 +1960,12 @@ private ordersUnlocked(): boolean {
     if (len > 0.1) this.lastMove = { x: vx / Math.max(0.001, len), y: vy / Math.max(0.001, len) };
     if (Math.abs(vx) > 0.05) this.player.setFlipX(vx < 0);
 
-    // Пыль под ногами
-    if (len > 0.5 && Math.random() < dt * 6) {
+    // Пыль создаётся только при фактическом перемещении физического тела.
+    // Вектор ввода сам по себе недостаточен: герой может упираться в стену,
+    // а игрок — продолжать удерживать направление уже после остановки.
+    const playerBody = this.player.body as Phaser.Physics.Arcade.Body;
+    const actuallyMoving = playerBody.velocity.length() > 10;
+    if (actuallyMoving && Math.random() < dt * 6) {
       this.effects.dust(this.player.x, this.player.y + 14, 1);
     }
     // Шлейф скина (§J.6.2): частицы только в движении
