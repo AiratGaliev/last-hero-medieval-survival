@@ -1403,8 +1403,11 @@ export class GameScene extends Phaser.Scene {
         track('first_house', { t_sec: Math.floor(this.elapsed) });
       }
       if (kind === 'barracks' && this.builtBarracks === 1) {
-        // Телеметрия §K.2: первые казармы
+        // Телеметрия §K.2: первые казармы.
         track('first_barracks', { t_sec: Math.floor(this.elapsed) });
+        // Постройка не нанимает воинов автоматически: сразу подсказываем,
+        // где открыть меню найма и что гарнизон стоит ресурсов.
+        this.hud.feed(t('hire.barracksBuilt'), '#9fd8ff');
       }
       // Скин построек (§J.6.2): новая постройка тоже под tint
       if (this.bldTint !== null) this.tintAllBuildings();
@@ -3593,13 +3596,12 @@ private bossDeathSequence(e: Enemy): boolean {
       onChoose: (card: UpgradeCard) => {
         this.applyCard(card);
         this.pendingLevelUps--;
-        if (this.pendingLevelUps <= 0) {
-          this.scene.resume();
-          this.overlayOpen = false;
-          gameplayStart();
-          return true; // готово
-        }
-        return false; // показать следующий выбор
+        return this.pendingLevelUps <= 0;
+      },
+      onFinished: () => {
+        this.scene.resume();
+        this.overlayOpen = false;
+        gameplayStart();
       },
     });
   }

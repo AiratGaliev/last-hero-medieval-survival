@@ -1,5 +1,5 @@
 import Phaser from 'phaser';
-import { AGGRO, GARRISON, RETREAT_HP, KITE, HEALER, BLEEDOUT_SEC, REPAIR } from '../constants';
+import { AGGRO, GARRISON, RETREAT_HP, KITE, HEALER, BLEEDOUT_SEC, REPAIR, WORLD } from '../constants';
 import { RESOURCES, FIGHTERS, BUILDING_PLANS, garrisonSourceOf, type BuildingKind, type ResourceKind } from '../data';
 import { t } from '../../i18n';
 import { track } from '../../platform/analytics';
@@ -115,8 +115,15 @@ export class PawnAI {
       return;
     }
 
-    // --- Кулдаун между задачами ---
-    if (p.cooldown > 0) {
+    // Прямой приказ «ОТДЫХАТЬ» и критически низкое HP обходят короткий
+    // cooldown. Сначала сохраняем груз: он доставляется до начала восстановления.
+    const recoveryRequired = p.state === 'retreat'
+      || p.state === 'resting'
+      || p.order === 'rest'
+      || p.hp <= p.maxHp * RETREAT_HP;
+
+    // --- Кулдаун между обычными задачами ---
+    if (p.cooldown > 0 && !recoveryRequired) {
       p.playMove(false);
       p.setVelocity(0, 0);
       return;
@@ -138,6 +145,11 @@ export class PawnAI {
       }
       return;
     }
+
+    // Гражданский не должен работать до потери последних HP. Он прерывает
+    // работу, освобождает ресурсный узел, добирается до безопасной постройки,
+    // лечится и возвращается к работе без потери оплаченных строительных jobs.
+    if (this.updateCivilianRecovery(p, dtMs)) return;
 
     // Узел мог исчезнуть между тиками: освобождаем устаревшую цель,
     // но не трогаем build/repair jobs (у Building нет boolean available).
@@ -216,8 +228,15 @@ export class PawnAI {
       if (b && eco.repair(b, p)) {
         p.state = 'work';
         p.taskProgress = 0;
+        // The job now owns this pawn; the one-shot command is consumed.
+        // updateCivilian() resumes the active repair job independently of order.
+        p.order = null;
         return;
       }
+      this.eco.emit('feed', {
+        text: t(b ? 'building.cannot' : 'order.repairNoTarget'),
+        color: '#ffd76e',
+      });
       p.order = null;
     }
     if (p.order === 'collect') {
@@ -1134,6 +1153,91 @@ export class PawnAI {
     p.setFlipX(dx < 0);
     p.playMove(true);
     void dtMs;
+  }
+
+  /** Безопасная точка у готового здания, которое сейчас не атакует осада. */
+  private civilianShelterPoint(p: Pawn): { x: number; y: number } {
+    const threatened = new Set<unknown>();
+    for (const enemy of this.enemySnapshot) {
+      if (enemy.active && !enemy.dead && enemy.siege && enemy.buildingTarget) {
+        threatened.add(enemy.buildingTarget);
+      }
+    }
+
+    let shelter: Building | null = null;
+    let bestDistance = Infinity;
+    for (const building of this.eco.buildings) {
+      if (!building.alive || building.underConstruction || building.collapsePending
+        || threatened.has(building)) continue;
+      const distance = Phaser.Math.Distance.Between(p.x, p.y, building.x, building.y);
+      if (distance < bestDistance) {
+        shelter = building;
+        bestDistance = distance;
+      }
+    }
+
+    if (!shelter) {
+      return {
+        x: Phaser.Math.Clamp(this.eco.castleX + 120, 64, WORLD.SIZE - 64),
+        y: Phaser.Math.Clamp(this.eco.castleY + 120, 64, WORLD.SIZE - 64),
+      };
+    }
+
+    const side = p.x <= shelter.x ? -1 : 1;
+    return {
+      x: Phaser.Math.Clamp(shelter.x + side * 78, 64, WORLD.SIZE - 64),
+      y: Phaser.Math.Clamp(shelter.y + 58, 64, WORLD.SIZE - 64),
+    };
+  }
+
+  /**
+   * Автоматическое восстановление гражданского:
+   * ниже 35% HP — к безопасному зданию; восстановление до 70% и назад к задаче.
+   * Явный приказ rest лечит до полного HP. Груз обрабатывается раньше этой ветки.
+   */
+  private updateCivilianRecovery(p: Pawn, dtMs: number): boolean {
+    const manualRest = p.order === 'rest';
+    const required = manualRest || p.state === 'retreat' || p.state === 'resting'
+      || p.hp <= p.maxHp * RETREAT_HP;
+    if (!required) return false;
+
+    if (p.state !== 'retreat' && p.state !== 'resting') {
+      const node = p.workNode;
+      if (node instanceof ResourceNode) {
+        node.release(p);
+        p.workNode = null;
+        p.taskProgress = 0;
+      }
+      // Закрепляем убежище на весь цикл: выбор ближайшего здания каждый кадр
+      // приводил бы к метанию туда-сюда на границе двух равных маршрутов.
+      p.recoveryTarget = this.civilianShelterPoint(p);
+      p.state = 'retreat';
+    }
+
+    const target = p.recoveryTarget ?? this.civilianShelterPoint(p);
+    p.recoveryTarget = target;
+    const distance = Phaser.Math.Distance.Between(p.x, p.y, target.x, target.y);
+    if (distance > 92) {
+      p.state = 'retreat';
+      this.walkTo(p, target.x, target.y, dtMs, 0.95);
+      return true;
+    }
+
+    p.state = 'resting';
+    p.setVelocity(0, 0);
+    p.playMove(false);
+    // Базовый отдых бесплатный и медленный; монастырь остаётся полноценной
+    // лечебницей с высокой скоростью и платой ресурсами.
+    p.healBy(Math.max(0, dtMs) * 3 / 1000);
+
+    const resumeAt = manualRest ? p.maxHp : p.maxHp * 0.7;
+    if (p.hp >= resumeAt) {
+      p.state = 'idle';
+      p.recoveryTarget = null;
+      if (manualRest) p.order = null;
+      p.cooldown = 0.5;
+    }
+    return true;
   }
 
   /**

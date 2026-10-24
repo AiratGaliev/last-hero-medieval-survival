@@ -9,8 +9,8 @@ import type { Enemy } from './Enemy';
 
 // ============ Пешка поселения: гражданские и гарнизон (TZ §B.2) ============
 //
-// Состояния: idle/walk/work/carry/flee (гражданские) + fight/retreat/kite/heal
-// (гарнизон) + wounded/bleeding/cooldown (все). Логика переходов — PawnAI,
+// Состояния: idle/walk/work/carry/flee/retreat/resting (гражданские) +
+// fight/retreat/kite/heal (гарнизон) + wounded/bleeding/cooldown (все). Логика — PawnAI,
 // здесь только сущность: анимации, HP, имена, ветеранство, урон.
 
 export interface PawnCtx {
@@ -47,6 +47,8 @@ export class Pawn extends Phaser.Physics.Arcade.Sprite {
   arrivalMs = 0;
   /** Таймер истечения кровью (bleeding). */
   bleedTimer = 0;
+  /** Закреплённая точка отдыха гражданского на время одного цикла восстановления. */
+  recoveryTarget: { x: number; y: number } | null = null;
   /** Кулдаут атаки (гарнизон). */
   attackCd = 0;
   attackPending = false;
@@ -434,20 +436,23 @@ export class Pawn extends Phaser.Physics.Arcade.Sprite {
   private updateStateBadge(): void {
     const label = this.state === 'retreat'
       ? t('pawn.badgeRetreat')
-      : this.state === 'wounded' || this.state === 'bleeding'
-        ? t('pawn.badgeWounded')
-        : '';
+      : this.state === 'resting'
+        ? t('pawn.badgeResting')
+        : this.state === 'wounded' || this.state === 'bleeding'
+          ? t('pawn.badgeWounded')
+          : '';
     if (!label) {
       this.stateBadge?.destroy();
       this.stateBadge = null;
       return;
     }
     const isRetreating = this.state === 'retreat';
+    const isResting = this.state === 'resting';
     if (!this.stateBadge || !this.stateBadge.active) {
       this.stateBadge = this.scene.add.text(this.x, this.y - 52, label, {
         fontFamily: FONT,
         fontSize: `${FS.small}px`,
-        color: isRetreating ? '#ffd76e' : '#ff806e',
+        color: isRetreating ? '#ffd76e' : isResting ? '#9fd8ff' : '#ff806e',
         backgroundColor: '#1a0f08',
         padding: { x: 3, y: 1 },
         stroke: '#1a0f08',
@@ -455,7 +460,7 @@ export class Pawn extends Phaser.Physics.Arcade.Sprite {
       }).setOrigin(0.5).setDepth(DEPTH.HPBAR);
     }
     if (this.stateBadge.text !== label) this.stateBadge.setText(label);
-    this.stateBadge.setColor(isRetreating ? '#ffd76e' : '#ff806e');
+    this.stateBadge.setColor(isRetreating ? '#ffd76e' : isResting ? '#9fd8ff' : '#ff806e');
     // Индикатор истечения кровью и звёзды остаются отдельными, не накладываются.
     const offset = this.state === 'bleeding' ? 66 : this.starBadge?.active ? 64 : 48;
     this.stateBadge.setPosition(this.x, this.y - offset).setVisible(true);

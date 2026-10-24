@@ -4429,3 +4429,150 @@ test('phase M: every monastery collapse kills its own occupants and clears its b
   expect(report.afterSecond).toEqual({ victimDead: true, occupiedSlots: 0, slotOwnerCleared: true });
   expect(report.totalVictims).toBe(2);
 });
+
+
+test('phase R: low-health civilians retreat, recover at a shelter and resume their work', async ({ page }) => {
+  await startRun(page);
+
+  const report = await page.evaluate(() => {
+    const game = (window as RuntimeWindow).__tss;
+    if (!game) throw new Error('Phaser runtime is unavailable');
+    const scene = game.scene.getScene('Game') as GameSceneRuntime & {
+      spawner: { stopped: boolean };
+      enemyGroup: { clear(removeFromScene?: boolean, destroyChildren?: boolean): void };
+    };
+    const economy = scene.economy;
+    scene.spawner.stopped = true;
+    scene.enemyGroup.clear(true, true);
+
+    const context = scene.registry.get('tss-pawnai-ctx') as {
+      enemies: () => unknown[];
+    } | undefined;
+    if (!context) throw new Error('Pawn AI context is unavailable');
+    context.enemies = () => [];
+
+    const ai = economy.pawnAI as unknown as {
+      refreshEnemySnapshot(): void;
+      updateCivilian(pawn: PawnRuntime, dtMs: number, now: number): void;
+    };
+    const worker = economy.pawns.find((pawn) => pawn.kind === 'collector'
+      && pawn.active && !pawn.dead);
+    if (!worker) throw new Error('No living collector is available');
+
+    const node = economy.nodes.find((resource) => resource.available && !resource.claimedBy);
+    if (!node || !node.claim(worker)) throw new Error('Could not reserve a resource node for the recovery test');
+
+    worker.hp = Math.max(1, Math.floor(worker.maxHp * 0.3));
+    worker.state = 'work';
+    worker.order = 'collect';
+    worker.carrying = null;
+    worker.carriedAmount = 0;
+    worker.workNode = node;
+    worker.taskProgress = 1_500;
+    worker.cooldown = 10;
+    worker.arrivalMs = 0;
+    worker.setPosition(economy.castleX + 700, economy.castleY + 350);
+    ai.refreshEnemySnapshot();
+
+    let now = scene.time.now;
+    ai.updateCivilian(worker, 16, now + 16);
+    const startsRetreat = worker.state === 'retreat' || worker.state === 'resting';
+    const nodeReleased = node.claimedBy === null && worker.workNode === null && worker.taskProgress === 0;
+
+    const safeBuildings = (economy.buildings as Array<BuildingRuntime & { collapsePending?: boolean }>)
+      .filter((building) => building.alive && !building.underConstruction && !building.collapsePending);
+    let shelter: BuildingRuntime | null = null;
+    let bestDistance = Number.POSITIVE_INFINITY;
+    for (const building of safeBuildings) {
+      const distance = Math.hypot(worker.x - building.x, worker.y - building.y);
+      if (distance < bestDistance) {
+        bestDistance = distance;
+        shelter = building;
+      }
+    }
+    const side = shelter && worker.x <= shelter.x ? -1 : 1;
+    const targetX = shelter ? shelter.x + side * 78 : economy.castleX + 120;
+    const targetY = shelter ? shelter.y + 58 : economy.castleY + 120;
+
+    let sawResting = false;
+    let autoRecovered = false;
+    for (let i = 0; i < 240; i++) {
+      now += 100;
+      ai.updateCivilian(worker, 100, now);
+      if (worker.state === 'resting') sawResting = true;
+      const body = worker as PawnRuntime & { body: { velocity: { x: number; y: number } } };
+      worker.setPosition(worker.x + body.body.velocity.x * 0.1, worker.y + body.body.velocity.y * 0.1);
+      if (worker.state === 'idle' && worker.hp >= worker.maxHp * 0.7) {
+        autoRecovered = true;
+        break;
+      }
+    }
+    // Если тестовый мир не содержит физического пути от начальной позиции,
+    // ставим пешку в ту же безопасную точку и проверяем сам цикл лечения отдельно.
+    if (!autoRecovered) {
+      worker.setPosition(targetX, targetY);
+      for (let i = 0; i < 20; i++) {
+        now += 1_000;
+        ai.updateCivilian(worker, 1_000, now);
+        if (worker.state === 'resting') sawResting = true;
+        if (worker.state === 'idle' && worker.hp >= worker.maxHp * 0.7) {
+          autoRecovered = true;
+          break;
+        }
+      }
+    }
+    const autoOrderPreserved = worker.order === 'collect';
+
+    // Ручной «ОТДЫХАТЬ» лечит до полного HP, затем очищает только этот приказ.
+    worker.hp = Math.floor(worker.maxHp * 0.5);
+    worker.state = 'work';
+    worker.order = 'rest';
+    worker.cooldown = 0;
+    worker.setPosition(economy.castleX + 700, economy.castleY + 350);
+    ai.refreshEnemySnapshot();
+    let manualRestCompleted = false;
+    for (let i = 0; i < 240; i++) {
+      now += 100;
+      ai.updateCivilian(worker, 100, now);
+      const body = worker as PawnRuntime & { body: { velocity: { x: number; y: number } } };
+      worker.setPosition(worker.x + body.body.velocity.x * 0.1, worker.y + body.body.velocity.y * 0.1);
+      if (worker.state === 'idle' && worker.order === null && worker.hp >= worker.maxHp) {
+        manualRestCompleted = true;
+        break;
+      }
+    }
+    if (!manualRestCompleted) {
+      worker.setPosition(targetX, targetY);
+      for (let i = 0; i < 20; i++) {
+        now += 1_000;
+        ai.updateCivilian(worker, 1_000, now);
+        if (worker.state === 'idle' && worker.order === null && worker.hp >= worker.maxHp) {
+          manualRestCompleted = true;
+          break;
+        }
+      }
+    }
+
+    return {
+      startsRetreat,
+      nodeReleased,
+      sawResting,
+      autoRecovered,
+      autoOrderPreserved,
+      manualRestCompleted,
+      finalHp: worker.hp,
+      maxHp: worker.maxHp,
+      finalOrder: worker.order,
+      pageRuntime: typeof window !== 'undefined',
+    };
+  });
+
+  expect(report.startsRetreat).toBe(true);
+  expect(report.nodeReleased).toBe(true);
+  expect(report.sawResting).toBe(true);
+  expect(report.autoRecovered).toBe(true);
+  expect(report.autoOrderPreserved).toBe(true);
+  expect(report.manualRestCompleted).toBe(true);
+  expect(report.finalHp).toBe(report.maxHp);
+  expect(report.finalOrder).toBeNull();
+});

@@ -706,7 +706,7 @@ export type PawnClass = 'civilian' | 'garrison';
 export type PawnWeapon = 'sword' | 'lance' | 'bow' | 'staff';
 export type PawnState =
   | 'idle' | 'walk' | 'work' | 'carry' | 'flee'
-  | 'fight' | 'retreat' | 'kite' | 'heal'
+  | 'fight' | 'retreat' | 'kite' | 'heal' | 'resting'
   | 'wounded' | 'bleeding' | 'cooldown';
 export type ResourceKind = 'wood' | 'meat' | 'ore';
 export type BuildingKind = 'castle' | 'house' | 'barracks' | 'tower' | 'archery' | 'monastery';
