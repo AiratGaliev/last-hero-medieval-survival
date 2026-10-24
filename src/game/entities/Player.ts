@@ -87,7 +87,7 @@ export class Player extends Phaser.Physics.Arcade.Sprite {
     this.clearAttackImpactListeners();
     if (onHit) {
       let fired = false;
-      const impactIndex = attackImpactFrameIndex(this.scene.anims.get(key).frames.length);
+      const impactIndex = attackImpactFrameIndex(this.scene.anims.get(key)?.frames.length ?? 0);
       const fireImpact = (): void => {
         if (fired) return;
         fired = true;

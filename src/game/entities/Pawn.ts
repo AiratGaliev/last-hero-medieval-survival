@@ -264,7 +264,7 @@ export class Pawn extends Phaser.Physics.Arcade.Sprite {
    * Если лист отсутствует, применяется отдельный таймерный fallback; у штатных
    * анимаций попадание разрешает только animationupdate.
    */
-  playAttackOnce(onImpact?: () => void, fallbackMs = COMBAT_TIMING.PAWN_SWORD_WINDUP_MS): void {
+  playAttackOnce(onImpact?: () => void, fallbackMs: number = COMBAT_TIMING.PAWN_SWORD_WINDUP_MS): void {
     const p = this.prefix;
     const key = p === 'pawn-warrior' ? `${p}-attack1` : `${p}-atk`;
     const real = this.scene.anims.exists(key) ? key : `${p}-attack1`;
@@ -297,7 +297,7 @@ export class Pawn extends Phaser.Physics.Arcade.Sprite {
 
     if (onImpact) {
       let fired = false;
-      const impactIndex = attackImpactFrameIndex(this.scene.anims.get(real).frames.length);
+      const impactIndex = attackImpactFrameIndex(this.scene.anims.get(real)?.frames.length ?? 0);
       const fireImpact = (): void => {
         if (fired) return;
         fired = true;

@@ -646,7 +646,7 @@ export class Enemy extends Phaser.Physics.Arcade.Sprite {
       return;
     }
 
-    const impactIndex = attackImpactFrameIndex(this.scene.anims.get(key).frames.length);
+    const impactIndex = attackImpactFrameIndex(this.scene.anims.get(key)?.frames.length ?? 0);
     this.meleeImpactHandler = (animation, frame): void => {
       if (animation.key !== key || frame.index < impactIndex) return;
       this.clearMeleeImpactListeners();
