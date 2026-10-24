@@ -4506,4 +4506,6 @@ catalog» оказался не тестовым артефактом, а нас
 - Добавлены unit-регрессии на границу 5%, отсутствие/полное здоровье босса, победу, бесконечный режим и приоритет предложения монастыря. Добавлены Playwright-сценарии, которые проходят через реальный `GameScene.gameOver()`, а не только вставляют готовый `meta.storeOffer` в GameOverScene.
 - Комментарий `ShopScene` исправлен: магазин может запускаться как из меню, так и по явному CTA с GameOver; он не должен всплывать в ране или из SuccessionScene.
 - `docs/ROADMAP.md` и отдельное дополнение к аудиту разделяют source-level connection, корректность игровых условий и ещё не выполненную runtime/E2E-приёмку.
-- Проверки: в этом окружении локальные `npm run check`, `npm run test:unit`, `npm run build` и `npm run test:e2e` не запускались из-за DNS-ошибки при обращении к GitHub. Новые тесты не объявляются пройденными до запуска CI. Полный Playwright остаётся QA-гейтом, не частью обычного PR в `dev`.
+- Проверки: локальные `npm run check`, `npm run test:unit`, `npm run build` и `npm run test:e2e` из этого окружения не запускались из-за DNS-ошибки при обращении к GitHub.
+- CI Fast [run #40091917282](https://github.com/AiratGaliev/last-hero-medieval-survival/actions/runs/40091917282) на head SHA `fb89368eeb5b15ff90fd3b40b0f0f7390a982ad2` завершился `success`: typecheck/lint, Vitest **21/21 в 3 файлах**, production build.
+- Playwright-сценарии через `GameScene.gameOver()` остаются неисполненными; Fast CI не запускает их на PR в `dev`. Полный Playwright остаётся QA-гейтом, не частью обычного PR в `dev`.
