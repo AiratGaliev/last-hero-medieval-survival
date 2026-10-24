@@ -134,6 +134,7 @@ export class Enemy extends Phaser.Physics.Arcade.Sprite {
   private meleeRecoveryMs = 0;
   private meleeTargetPawn: Pawn | null = null;
   private meleeTargetsHero = false;
+  private meleeTargetsSiegePawn = false;
   private staggerRemainingMs = 0;
   private contactRecoveryMs = 0;
   private staggerAnimationPlayed = false;
@@ -413,7 +414,9 @@ export class Enemy extends Phaser.Physics.Arcade.Sprite {
         const pawn = this.ctx.nearPawn(this.x, this.y, 64);
         if (pawn) {
           this.meleeCd = 2000;
-          this.ctx.attackPawn(pawn, this.damage, true);
+          this.beginMeleeAttack(pawn, true);
+          body.setVelocity(0, 0);
+          return;
         }
       }
       this.buildingAtkCd -= delta;
@@ -568,6 +571,7 @@ export class Enemy extends Phaser.Physics.Arcade.Sprite {
     this.meleeRecoveryMs = 0;
     this.meleeTargetPawn = null;
     this.meleeTargetsHero = false;
+    this.meleeTargetsSiegePawn = false;
     this.atkCd = Math.max(this.atkCd, durationMs + 250);
     this.shootCd = Math.max(this.shootCd, durationMs + 250);
     this.meleeCd = Math.max(this.meleeCd, durationMs + 250);
@@ -609,9 +613,10 @@ export class Enemy extends Phaser.Physics.Arcade.Sprite {
     if (this.def.isElite || this.def.isBoss) this.drawHpBar();
   }
 
-  private beginMeleeAttack(targetPawn: Pawn | null): void {
+  private beginMeleeAttack(targetPawn: Pawn | null, siegePawn = false): void {
     this.meleeTargetPawn = targetPawn;
     this.meleeTargetsHero = targetPawn === null;
+    this.meleeTargetsSiegePawn = siegePawn;
     this.meleeWindupMs = COMBAT_TIMING.ENEMY_MELEE_WINDUP_MS;
     const tx = targetPawn ? targetPawn.x : this.ctx.playerX();
     this.setFlipX(this.faceDir(tx - this.x));
@@ -622,7 +627,7 @@ export class Enemy extends Phaser.Physics.Arcade.Sprite {
     const pawn = this.meleeTargetPawn;
     if (pawn) {
       if (pawn.active && !pawn.dead && Math.hypot(pawn.x - this.x, pawn.y - this.y) <= 82) {
-        this.ctx.attackPawn(pawn, this.damage, false);
+        this.ctx.attackPawn(pawn, this.damage, this.meleeTargetsSiegePawn);
       }
     } else if (this.meleeTargetsHero
       && Math.hypot(this.ctx.playerX() - this.x, this.ctx.playerY() - this.y) <= 82) {
@@ -630,6 +635,7 @@ export class Enemy extends Phaser.Physics.Arcade.Sprite {
     }
     this.meleeTargetPawn = null;
     this.meleeTargetsHero = false;
+    this.meleeTargetsSiegePawn = false;
     this.meleeRecoveryMs = COMBAT_TIMING.ENEMY_MELEE_RECOVERY_MS;
   }
 
