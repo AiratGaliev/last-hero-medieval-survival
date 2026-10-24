@@ -46,7 +46,7 @@ describe('SpatialHash', () => {
   });
 
   it('rejects an invalid cell size', () => {
-    expect(() => new SpatialHash(0)).toThrow(RangeError);
-    expect(() => new SpatialHash(Number.NaN)).toThrow(RangeError);
+    expect(() => new SpatialHash<{ x: number; y: number }>(0)).toThrow(RangeError);
+    expect(() => new SpatialHash<{ x: number; y: number }>(Number.NaN)).toThrow(RangeError);
   });
 });
