@@ -328,7 +328,7 @@ test('phase B: four universal workers, clean map and live Economy tick', async (
   expect(report.pawns.map(p => p.kind).sort()).toEqual(['builder', 'collector', 'collector', 'repairer']);
   expect(report.pawns.every(p => p.prefix === 'pawn')).toBe(true);
   expect(report.pawns.every(p => ['axe', 'pickaxe', 'knife', 'hammer']
-    .every(tool => p.tools.includes(tool))).toBe(true);
+    .every(tool => p.tools.includes(tool)))).toBe(true);
   expect(report.decorativeBuildings).toEqual([]);
   expect(report.yellowWorkerAnimationsPresent).toBe(false);
   expect(report.pawns.every(p => p.state === 'idle')).toBe(true);
