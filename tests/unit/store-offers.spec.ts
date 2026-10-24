@@ -11,8 +11,8 @@ const base: StoreOfferFacts = {
   storefrontUnlocked: true,
   passUnlocked: true,
   victory: false,
-  elapsedSeconds: 600,
-  matchDurationSeconds: 900,
+  endless: false,
+  bossHpRemainingPercent: null,
   monasteryCollapseVictims: 0,
   passLevelBefore: 20,
   passLevelAfter: 20,
@@ -34,11 +34,17 @@ describe('contextual store offer resolution', () => {
     })).toBe('monastery');
   });
 
-  it('offers the starter pack only for a defeat in the final five percent of a run', () => {
-    expect(resolveStoreOffer({ ...base, elapsedSeconds: 855 })).toBe('starter');
-    expect(resolveStoreOffer({ ...base, elapsedSeconds: 854 })).toBeNull();
-    expect(resolveStoreOffer({ ...base, victory: true, elapsedSeconds: 899 })).toBeNull();
-    expect(resolveStoreOffer({ ...base, elapsedSeconds: 899, starterAvailable: false })).toBeNull();
+  it('offers the starter pack only when a standard-run defeat leaves at most 5% boss HP', () => {
+    expect(resolveStoreOffer({ ...base, bossHpRemainingPercent: 5 })).toBe('starter');
+    expect(resolveStoreOffer({ ...base, bossHpRemainingPercent: 4.9 })).toBe('starter');
+    expect(resolveStoreOffer({ ...base, bossHpRemainingPercent: 5.01 })).toBeNull();
+    expect(resolveStoreOffer({ ...base, bossHpRemainingPercent: 100 })).toBeNull();
+    expect(resolveStoreOffer({ ...base, bossHpRemainingPercent: null })).toBeNull();
+    expect(resolveStoreOffer({ ...base, victory: true, bossHpRemainingPercent: 1 })).toBeNull();
+    expect(resolveStoreOffer({ ...base, endless: true, bossHpRemainingPercent: 1 })).toBeNull();
+    expect(resolveStoreOffer({
+      ...base, bossHpRemainingPercent: 5, starterAvailable: false,
+    })).toBeNull();
   });
 
   it('requires five victims from a single collapse, but education is independent from pack availability', () => {
@@ -56,10 +62,10 @@ describe('contextual store offer resolution', () => {
 
   it('uses a stable priority when multiple run events qualify', () => {
     expect(resolveStoreOffer({
-      ...base, elapsedSeconds: 899, monasteryCollapseVictims: 6, passLevelBefore: 29, passLevelAfter: 30,
+      ...base, bossHpRemainingPercent: 4, monasteryCollapseVictims: 6, passLevelBefore: 29, passLevelAfter: 30,
     })).toBe('monastery');
     expect(resolveStoreOffer({
-      ...base, elapsedSeconds: 899, passLevelBefore: 29, passLevelAfter: 30,
+      ...base, bossHpRemainingPercent: 4, passLevelBefore: 29, passLevelAfter: 30,
     })).toBe('starter');
   });
 });
