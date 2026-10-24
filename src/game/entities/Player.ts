@@ -1,6 +1,7 @@
 import Phaser from 'phaser';
 import { DEPTH, SHADOW_SCALE, SHADOW_BOX, SHADOW_SRC } from '../constants';
 import type { HeroDef } from '../data';
+import { COMBAT_TIMING, isFrontalHit } from '../systems/Combat';
 
 // ============ Игрок ============
 export class Player extends Phaser.Physics.Arcade.Sprite {
@@ -8,6 +9,7 @@ export class Player extends Phaser.Physics.Arcade.Sprite {
   maxHp: number;
   speed: number;
   iframesUntil = 0;
+  lastDamageWasGuarded = false;
   readonly hero: HeroDef;
   hpBar: Phaser.GameObjects.Graphics;
   private shadow: Phaser.GameObjects.Image;
@@ -49,8 +51,13 @@ export class Player extends Phaser.Physics.Arcade.Sprite {
     this.hpBar = scene.add.graphics().setDepth(DEPTH.HPBAR);
 
     this.on('animationcomplete', (anim: Phaser.Animations.Animation) => {
+      const body = this.body as Phaser.Physics.Arcade.Body;
+      if (anim.key === this.hero.anims.guard) {
+        if (body.velocity.length() > 10) this.play(this.hero.anims.run, true);
+        else this.play(this.hero.anims.idle, true);
+        return;
+      }
       if (anim.key === this.hero.anims.atk1 || anim.key === this.hero.anims.atk2) {
-        const body = this.body as Phaser.Physics.Arcade.Body;
         if (body.velocity.length() > 10) this.play(this.hero.anims.run, true);
         else this.play(this.hero.anims.idle, true);
       }
@@ -59,6 +66,7 @@ export class Player extends Phaser.Physics.Arcade.Sprite {
 
   playAttack(alt: boolean): void {
     const cur = this.anims.currentAnim?.key ?? '';
+    if (this.hero.anims.guard && cur === this.hero.anims.guard) return;
     if (alt) {
       // Добивающий взмах должен запускать attack2 даже если attack1 ещё играет.
       if (cur !== this.hero.anims.atk2) this.play(this.hero.anims.atk2, true);
@@ -71,23 +79,30 @@ export class Player extends Phaser.Physics.Arcade.Sprite {
 
   setAnimForVelocity(): void {
     const cur = this.anims.currentAnim?.key ?? '';
-    if (cur === this.hero.anims.atk1 || cur === this.hero.anims.atk2) return;
+    if (cur === this.hero.anims.guard || cur === this.hero.anims.atk1 || cur === this.hero.anims.atk2) return;
     const moving = (this.body as Phaser.Physics.Arcade.Body).velocity.length() > 10;
     const want = moving ? this.hero.anims.run : this.hero.anims.idle;
     if (cur !== want) this.play(want, true);
   }
 
-  damage(amount: number, now: number): boolean {
+  damage(amount: number, now: number, sourceX?: number): boolean {
     if (now < this.iframesUntil) return false;
+    const guard = this.hero.anims.guard;
+    const frontal = typeof sourceX === 'number' && isFrontalHit(this.flipX, this.x, sourceX);
+    this.lastDamageWasGuarded = !!guard && frontal;
+    const multiplier = this.lastDamageWasGuarded ? COMBAT_TIMING.FRONT_GUARD_DAMAGE_MULTIPLIER : 1;
     this.iframesUntil = now + 500;
-    this.hp = Math.max(0, this.hp - amount);
-    // Мигание
-    this.scene.tweens.add({
-      targets: this,
-      alpha: { from: 0.25, to: 1 },
-      duration: 90,
-      repeat: 4,
-    });
+    this.hp = Math.max(0, this.hp - Math.max(1, Math.round(amount * multiplier)));
+    if (this.lastDamageWasGuarded && guard) {
+      this.play(guard, true);
+    } else {
+      this.scene.tweens.add({
+        targets: this,
+        alpha: { from: 0.25, to: 1 },
+        duration: 90,
+        repeat: 4,
+      });
+    }
     this.drawHpBar();
     return this.hp <= 0;
   }
