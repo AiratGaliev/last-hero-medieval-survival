@@ -21,11 +21,17 @@ const base: StoreOfferFacts = {
 };
 
 describe('contextual store offer resolution', () => {
-  it('never bypasses the five-match storefront gate', () => {
-    expect(resolveStoreOffer({ ...base, storefrontUnlocked: false, monasteryCollapseVictims: 8 }))
+  it('does not bypass the paid storefront gate for starter and pass offers', () => {
+    expect(resolveStoreOffer({ ...base, storefrontUnlocked: false, elapsedSeconds: 899 }))
       .toBeNull();
     expect(resolveStoreOffer({ ...base, storefrontUnlocked: false, passLevelBefore: 29, passLevelAfter: 30 }))
       .toBeNull();
+  });
+
+  it('keeps the monastery education trigger available even before the paid storefront unlocks', () => {
+    expect(resolveStoreOffer({
+      ...base, storefrontUnlocked: false, monasteryCollapseVictims: 5, starterAvailable: false,
+    })).toBe('monastery');
   });
 
   it('offers the starter pack only for a defeat in the final five percent of a run', () => {
@@ -35,10 +41,10 @@ describe('contextual store offer resolution', () => {
     expect(resolveStoreOffer({ ...base, elapsedSeconds: 899, starterAvailable: false })).toBeNull();
   });
 
-  it('requires five victims from a single collapse and a currently available pack', () => {
+  it('requires five victims from a single collapse, but education is independent from pack availability', () => {
     expect(resolveStoreOffer({ ...base, monasteryCollapseVictims: 5 })).toBe('monastery');
     expect(resolveStoreOffer({ ...base, monasteryCollapseVictims: 4 })).toBeNull();
-    expect(resolveStoreOffer({ ...base, monasteryCollapseVictims: 8, starterAvailable: false })).toBeNull();
+    expect(resolveStoreOffer({ ...base, monasteryCollapseVictims: 8, starterAvailable: false })).toBe('monastery');
   });
 
   it('offers the premium track only when a non-premium player crosses level 30', () => {
