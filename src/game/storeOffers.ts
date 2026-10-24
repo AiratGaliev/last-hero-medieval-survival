@@ -11,8 +11,10 @@ export interface StoreOfferFacts {
   storefrontUnlocked: boolean;
   passUnlocked: boolean;
   victory: boolean;
-  elapsedSeconds: number;
-  matchDurationSeconds: number;
+  /** Бесконечный режим не запускает предложение стартового набора за near-miss. */
+  endless: boolean;
+  /** Остаток HP финального босса в процентах на момент поражения; null, если босса нет. */
+  bossHpRemainingPercent: number | null;
   /** Максимум жертв в одном событии обрушения, а не сумма нескольких событий. */
   monasteryCollapseVictims: number;
   passLevelBefore: number;
@@ -25,9 +27,10 @@ export interface StoreOfferFacts {
  * Детерминированный приоритет при совпадении условий:
  * обучающий триггер обрушения → near-miss → достижение L30.
  *
- * §J.6.4 не определяет знаменатель для «near-miss ≤5%». Здесь это явно
- * операционализировано как поражение в последних 5% стандартного рана
- * (не более 45 секунд до конца 15-минутного матча).
+ * Для триггера стартового набора «near-miss ≤5%» означает поражение в обычном
+ * режиме, пока финальный босс ещё жив и у него осталось не больше 5% HP.
+ * Оставшееся время рана не измеряет близость к победе: босс появляется на
+ * 15-й минуте, а финальная схватка может продолжаться после отметки 900 с.
  */
 export function resolveStoreOffer(facts: StoreOfferFacts): StoreOfferKind | null {
   // Образовательный триггер не зависит от доступности платной витрины:
@@ -36,14 +39,13 @@ export function resolveStoreOffer(facts: StoreOfferFacts): StoreOfferKind | null
 
   if (!facts.storefrontUnlocked) return null;
 
-  const duration = facts.matchDurationSeconds;
-  const remaining = duration - facts.elapsedSeconds;
+  const bossRemaining = facts.bossHpRemainingPercent;
   const nearMiss = !facts.victory
-    && Number.isFinite(duration)
-    && duration > 0
-    && Number.isFinite(facts.elapsedSeconds)
-    && remaining >= 0
-    && remaining <= duration * 0.05;
+    && !facts.endless
+    && typeof bossRemaining === 'number'
+    && Number.isFinite(bossRemaining)
+    && bossRemaining > 0
+    && bossRemaining <= 5;
 
   if (nearMiss && facts.starterAvailable) return 'starter';
 
