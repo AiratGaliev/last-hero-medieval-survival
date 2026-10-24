@@ -290,21 +290,7 @@ export class BootScene extends Phaser.Scene {
     }
     // ---- Гарнизон (§B.2): воины казарм/тирa/обители — префикс pawn-*
     // обязателен, иначе столкнётся с hero-* (§A.6)
-    this.load.spritesheet('pawn-warrior-idle', asset('tiny-swords', 'units/blue/warrior/warrior-idle.png'), { frameWidth: 192, frameHeight: 192 });
-    this.load.spritesheet('pawn-warrior-run', asset('tiny-swords', 'units/blue/warrior/warrior-run.png'), { frameWidth: 192, frameHeight: 192 });
-    this.load.spritesheet('pawn-warrior-attack1', asset('tiny-swords', 'units/blue/warrior/warrior-attack1.png'), { frameWidth: 192, frameHeight: 192 });
-    this.load.spritesheet('pawn-warrior-attack2', asset('tiny-swords', 'units/blue/warrior/warrior-attack2.png'), { frameWidth: 192, frameHeight: 192 });
-    this.load.spritesheet('pawn-lancer-idle', asset('tiny-swords', 'units/blue/lancer/lancer-idle.png'), { frameWidth: 320, frameHeight: 320 });
-    this.load.spritesheet('pawn-lancer-run', asset('tiny-swords', 'units/blue/lancer/lancer-run.png'), { frameWidth: 320, frameHeight: 320 });
-    this.load.spritesheet('pawn-lancer-atk', asset('tiny-swords', 'units/blue/lancer/lancer-right-attack.png'), { frameWidth: 320, frameHeight: 320 });
-    this.load.spritesheet('pawn-archer-idle', asset('tiny-swords', 'units/blue/archer/archer-idle.png'), { frameWidth: 192, frameHeight: 192 });
-    this.load.spritesheet('pawn-archer-run', asset('tiny-swords', 'units/blue/archer/archer-run.png'), { frameWidth: 192, frameHeight: 192 });
-    this.load.spritesheet('pawn-archer-atk', asset('tiny-swords', 'units/blue/archer/archer-shoot.png'), { frameWidth: 192, frameHeight: 192 });
-    this.load.spritesheet('pawn-monk-idle', asset('tiny-swords', 'units/blue/monk/idle.png'), { frameWidth: 192, frameHeight: 192 });
-    this.load.spritesheet('pawn-monk-run', asset('tiny-swords', 'units/blue/monk/run.png'), { frameWidth: 192, frameHeight: 192 });
-    this.load.spritesheet('pawn-monk-atk', asset('tiny-swords', 'units/blue/monk/heal.png'), { frameWidth: 192, frameHeight: 192 });
-
-    // ---- Золотые жилы (§B.3): 5 вариантов + пульс (6 кадров 128×128)
+    // Гарнизон использует текстуры героя; отдельные pawn-* анимации создаются ниже.
     for (let i = 1; i <= 5; i++) {
       this.load.image(`gold-vein-${i}`, asset('tiny-swords', `terrain/resources/gold-stones/gold-stone-${i}.png`));
       this.load.spritesheet(
@@ -601,19 +587,19 @@ export class BootScene extends Phaser.Scene {
     this.sheet('pawny-work-hammer', 'pawny-work-hammer', 3, 9);
 
     // ---- Гарнизон: анимации воинов (§B.2). Кадры проверены по ширине листов.
-    this.sheet('pawn-warrior-idle', 'pawn-warrior-idle', 8, 7);
-    this.sheet('pawn-warrior-run', 'pawn-warrior-run', 6, 10);
-    this.once('pawn-warrior-attack1', 'pawn-warrior-attack1', 4, 14);
-    this.once('pawn-warrior-attack2', 'pawn-warrior-attack2', 4, 14);
-    this.sheet('pawn-lancer-idle', 'pawn-lancer-idle', 12, 8);
-    this.sheet('pawn-lancer-run', 'pawn-lancer-run', 6, 10);
-    this.once('pawn-lancer-atk', 'pawn-lancer-atk', 3, 12);
-    this.sheet('pawn-archer-idle', 'pawn-archer-idle', 6, 7);
-    this.sheet('pawn-archer-run', 'pawn-archer-run', 4, 10);
-    this.once('pawn-archer-atk', 'pawn-archer-atk', 8, 14);
-    this.sheet('pawn-monk-idle', 'pawn-monk-idle', 6, 7);
-    this.sheet('pawn-monk-run', 'pawn-monk-run', 4, 10);
-    this.once('pawn-monk-atk', 'pawn-monk-atk', 11, 12);
+    this.sheet('pawn-warrior-idle', 'player-idle', 8, 7);
+    this.sheet('pawn-warrior-run', 'player-run', 6, 10);
+    this.once('pawn-warrior-attack1', 'player-atk1', 4, 14);
+    this.once('pawn-warrior-attack2', 'player-atk2', 4, 14);
+    this.sheet('pawn-lancer-idle', 'hero-lancer-idle', 12, 8);
+    this.sheet('pawn-lancer-run', 'hero-lancer-run', 6, 10);
+    this.once('pawn-lancer-atk', 'hero-lancer-atk', 3, 12);
+    this.sheet('pawn-archer-idle', 'hero-archer-idle', 6, 7);
+    this.sheet('pawn-archer-run', 'hero-archer-run', 4, 10);
+    this.once('pawn-archer-atk', 'hero-archer-atk', 8, 14);
+    this.sheet('pawn-monk-idle', 'hero-monk-idle', 6, 7);
+    this.sheet('pawn-monk-run', 'hero-monk-run', 4, 10);
+    this.once('pawn-monk-atk', 'hero-monk-atk', 11, 12);
 
     // ---- Золотые жилы: пульс (6 кадров 128×128 на вариант)
     for (let i = 1; i <= 5; i++) {
