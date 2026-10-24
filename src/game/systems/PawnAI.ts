@@ -1156,7 +1156,8 @@ export class PawnAI {
   }
 
   /** Безопасная точка у готового здания, которое сейчас не атакует осада. */
-  private civilianShelterPoint(p: Pawn): { x: number; y: number } {
+  /** Выбрать готовое здание, не атакуемое осадой, для укрытия гражданского. */
+  private civilianShelter(p: Pawn): { building: Building | null; point: { x: number; y: number } } {
     const threatened = new Set<unknown>();
     for (const enemy of this.enemySnapshot) {
       if (enemy.active && !enemy.dead && enemy.siege && enemy.buildingTarget) {
@@ -1178,23 +1179,25 @@ export class PawnAI {
 
     if (!shelter) {
       return {
-        x: Phaser.Math.Clamp(this.eco.castleX + 120, 64, WORLD.SIZE - 64),
-        y: Phaser.Math.Clamp(this.eco.castleY + 120, 64, WORLD.SIZE - 64),
+        building: null,
+        point: {
+          x: Phaser.Math.Clamp(this.eco.castleX + 120, 64, WORLD.SIZE - 64),
+          y: Phaser.Math.Clamp(this.eco.castleY + 120, 64, WORLD.SIZE - 64),
+        },
       };
     }
 
     const side = p.x <= shelter.x ? -1 : 1;
     return {
-      x: Phaser.Math.Clamp(shelter.x + side * 78, 64, WORLD.SIZE - 64),
-      y: Phaser.Math.Clamp(shelter.y + 58, 64, WORLD.SIZE - 64),
+      building: shelter,
+      point: {
+        x: Phaser.Math.Clamp(shelter.x + side * 78, 64, WORLD.SIZE - 64),
+        y: Phaser.Math.Clamp(shelter.y + 58, 64, WORLD.SIZE - 64),
+      },
     };
   }
 
-  /**
-   * Автоматическое восстановление гражданского:
-   * ниже 35% HP — к безопасному зданию; восстановление до 70% и назад к задаче.
-   * Явный приказ rest лечит до полного HP. Груз обрабатывается раньше этой ветки.
-   */
+  /** Автоматическое восстановление гражданского у безопасного здания. */
   private updateCivilianRecovery(p: Pawn, dtMs: number): boolean {
     const manualRest = p.order === 'rest';
     const required = manualRest || p.state === 'retreat' || p.state === 'resting'
@@ -1208,16 +1211,35 @@ export class PawnAI {
         p.workNode = null;
         p.taskProgress = 0;
       }
-      // Закрепляем убежище на весь цикл: выбор ближайшего здания каждый кадр
-      // приводил бы к метанию туда-сюда на границе двух равных маршрутов.
-      p.recoveryTarget = this.civilianShelterPoint(p);
+      // Закрепляем убежище на весь цикл, чтобы не менять путь на каждом кадре.
+      const selection = this.civilianShelter(p);
+      p.recoveryTarget = selection.point;
+      p.recoveryBuilding = selection.building;
       p.state = 'retreat';
     }
 
-    const target = p.recoveryTarget ?? this.civilianShelterPoint(p);
-    p.recoveryTarget = target;
+    // Если выбранное здание разрушилось/начало рушиться или стало целью осады,
+    // укрытие теряет безопасность: NPC выходит из него и выбирает новое место.
+    const currentBuilding = p.recoveryBuilding;
+    const targetedBySiege = currentBuilding && this.enemySnapshot.some((enemy) =>
+      enemy.active && !enemy.dead && enemy.siege && enemy.buildingTarget === currentBuilding,
+    );
+    if (currentBuilding && (!currentBuilding.alive || currentBuilding.underConstruction
+      || currentBuilding.collapsePending || targetedBySiege)) {
+      p.setSheltered(false);
+      p.recoveryBuilding = null;
+      p.recoveryTarget = null;
+    }
+
+    if (!p.recoveryTarget) {
+      const selection = this.civilianShelter(p);
+      p.recoveryTarget = selection.point;
+      p.recoveryBuilding = selection.building;
+    }
+    const target = p.recoveryTarget;
     const distance = Phaser.Math.Distance.Between(p.x, p.y, target.x, target.y);
     if (distance > 92) {
+      p.setSheltered(false);
       p.state = 'retreat';
       this.walkTo(p, target.x, target.y, dtMs, 0.95);
       return true;
@@ -1226,14 +1248,28 @@ export class PawnAI {
     p.state = 'resting';
     p.setVelocity(0, 0);
     p.playMove(false);
-    // Базовый отдых бесплатный и медленный; монастырь остаётся полноценной
-    // лечебницей с высокой скоростью и платой ресурсами.
+    if (p.recoveryBuilding) {
+      // Внутри здания спрайт скрывается, физическое тело отключается, а враг
+      // больше не выбирает жителя целью. Никакое лечение не отменяет разрушение.
+      p.setPosition(p.recoveryBuilding.x, p.recoveryBuilding.y);
+      p.setSheltered(true);
+    } else {
+      // Крайний fallback: если нет готового здания, отдыхать у замка, не скрывая NPC.
+      p.setSheltered(false);
+    }
+
+    // Базовый отдых бесплатный и медленный; монастырь остаётся специализированной
+    // лечебницей с более высокой скоростью восстановления и расходом дерева.
     p.healBy(Math.max(0, dtMs) * 3 / 1000);
 
     const resumeAt = manualRest ? p.maxHp : p.maxHp * 0.7;
     if (p.hp >= resumeAt) {
+      const exitPoint = target;
       p.state = 'idle';
+      p.setSheltered(false);
       p.recoveryTarget = null;
+      p.recoveryBuilding = null;
+      p.setPosition(exitPoint.x, exitPoint.y);
       if (manualRest) p.order = null;
       p.cooldown = 0.5;
     }

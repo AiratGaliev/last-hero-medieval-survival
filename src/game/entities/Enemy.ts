@@ -295,6 +295,7 @@ export class Enemy extends Phaser.Physics.Arcade.Sprite {
     }
     this.lastAnim = '';
     const pawnTarget = this.targetPawn && this.targetPawn.active && !this.targetPawn.dead
+      && !this.targetPawn.sheltered
       ? this.targetPawn
       : null;
     this.ctx.onEnemyShoot(this.x, this.y, 'bomb', pawnTarget);
@@ -665,7 +666,8 @@ export class Enemy extends Phaser.Physics.Arcade.Sprite {
     this.meleeImpactPending = false;
     const pawn = this.meleeTargetPawn;
     if (pawn) {
-      if (pawn.active && !pawn.dead && Math.hypot(pawn.x - this.x, pawn.y - this.y) <= 82) {
+      if (pawn.active && !pawn.dead && !pawn.sheltered
+        && Math.hypot(pawn.x - this.x, pawn.y - this.y) <= 82) {
         this.ctx.attackPawn(pawn, this.damage, this.meleeTargetsSiegePawn);
       }
     } else if (this.meleeTargetsHero
@@ -866,7 +868,7 @@ export class Enemy extends Phaser.Physics.Arcade.Sprite {
     const nx = dx / dist, ny = dy / dist;
 
     // Цель-пешка погибла — сброс на героя
-    if (this.targetPawn && (!this.targetPawn.active || this.targetPawn.dead)) {
+    if (this.targetPawn && (!this.targetPawn.active || this.targetPawn.dead || this.targetPawn.sheltered)) {
       this.targetPawn = null;
     }
 

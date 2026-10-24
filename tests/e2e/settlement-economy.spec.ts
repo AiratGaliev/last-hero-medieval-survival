@@ -11,6 +11,8 @@ type PawnRuntime = {
   maxHp: number;
   dead: boolean;
   active: boolean;
+  visible: boolean;
+  sheltered: boolean;
   carrying: string | null;
   carriedAmount: number;
   taskProgress: number;
@@ -4495,11 +4497,24 @@ test('phase R: low-health civilians retreat, recover at a shelter and resume the
     const targetY = shelter ? shelter.y + 58 : economy.castleY + 120;
 
     let sawResting = false;
+    let sawSheltered = false;
+    let shelteredWasHidden = false;
+    let shelterDamageBlocked = false;
+    let visibleAfterRecovery = false;
     let autoRecovered = false;
     for (let i = 0; i < 240; i++) {
       now += 100;
       ai.updateCivilian(worker, 100, now);
       if (worker.state === 'resting') sawResting = true;
+      if (worker.sheltered) {
+        sawSheltered = true;
+        shelteredWasHidden = shelteredWasHidden || !worker.visible;
+        const before = worker.hp;
+        const tookDamage = (worker as PawnRuntime & {
+          takeDamage(dmg: number, now: number): boolean;
+        }).takeDamage(999, now);
+        shelterDamageBlocked = !tookDamage && worker.hp === before;
+      }
       const body = worker as PawnRuntime & { body: { velocity: { x: number; y: number } } };
       worker.setPosition(worker.x + body.body.velocity.x * 0.1, worker.y + body.body.velocity.y * 0.1);
       if (worker.state === 'idle' && worker.hp >= worker.maxHp * 0.7) {
@@ -4521,6 +4536,7 @@ test('phase R: low-health civilians retreat, recover at a shelter and resume the
         }
       }
     }
+    visibleAfterRecovery = worker.visible;
     const autoOrderPreserved = worker.order === 'collect';
 
     // Ручной «ОТДЫХАТЬ» лечит до полного HP, затем очищает только этот приказ.
@@ -4557,6 +4573,10 @@ test('phase R: low-health civilians retreat, recover at a shelter and resume the
       startsRetreat,
       nodeReleased,
       sawResting,
+      sawSheltered,
+      shelteredWasHidden,
+      shelterDamageBlocked,
+      visibleAfterRecovery,
       autoRecovered,
       autoOrderPreserved,
       manualRestCompleted,
@@ -4570,6 +4590,10 @@ test('phase R: low-health civilians retreat, recover at a shelter and resume the
   expect(report.startsRetreat).toBe(true);
   expect(report.nodeReleased).toBe(true);
   expect(report.sawResting).toBe(true);
+  expect(report.sawSheltered).toBe(true);
+  expect(report.shelteredWasHidden).toBe(true);
+  expect(report.shelterDamageBlocked).toBe(true);
+  expect(report.visibleAfterRecovery).toBe(true);
   expect(report.autoRecovered).toBe(true);
   expect(report.autoOrderPreserved).toBe(true);
   expect(report.manualRestCompleted).toBe(true);
