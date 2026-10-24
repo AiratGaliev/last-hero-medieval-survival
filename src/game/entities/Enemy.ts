@@ -108,6 +108,7 @@ export class Enemy extends Phaser.Physics.Arcade.Sprite {
    */
   get aimedPawn(): Pawn | null { return this.targetPawn; }
   get isStaggered(): boolean { return this.staggerRemainingMs > 0; }
+  get isContactLocked(): boolean { return this.staggerRemainingMs > 0 || this.contactRecoveryMs > 0; }
   get usesTimedMelee(): boolean {
     return TIMED_MELEE_KINDS.has(this.kind) || this.targetPawn !== null
       || this.meleeWindupMs > 0 || this.meleeRecoveryMs > 0;
@@ -134,6 +135,7 @@ export class Enemy extends Phaser.Physics.Arcade.Sprite {
   private meleeTargetPawn: Pawn | null = null;
   private meleeTargetsHero = false;
   private staggerRemainingMs = 0;
+  private contactRecoveryMs = 0;
   private staggerAnimationPlayed = false;
 
   constructor(scene: Phaser.Scene, x: number, y: number, kind: EnemyKind, hpMult: number, dmgMult: number, ctx: EnemyContext) {
@@ -361,6 +363,7 @@ export class Enemy extends Phaser.Physics.Arcade.Sprite {
     const interceptRadius = this.ctx.siegeInterceptRadius?.() ?? SIEGE.INTERCEPT_R;
     const bossPulledByHero = persistentBossSiege && time < this.heroProvokedUntil;
     if (heroD < interceptRadius || bossPulledByHero) {
+      this.atkCd = Math.max(0, this.atkCd - delta);
       if (TIMED_MELEE_KINDS.has(this.kind) && heroD <= 70 && this.atkCd <= 0) {
         this.atkCd = 1500;
         this.beginMeleeAttack(null);
@@ -559,6 +562,7 @@ export class Enemy extends Phaser.Physics.Arcade.Sprite {
   stagger(durationMs: number): void {
     if (this.dead || !Number.isFinite(durationMs) || durationMs <= 0) return;
     this.staggerRemainingMs = Math.max(this.staggerRemainingMs, durationMs);
+    this.contactRecoveryMs = Math.max(this.contactRecoveryMs, durationMs + 250);
     this.staggerAnimationPlayed = false;
     this.meleeWindupMs = 0;
     this.meleeRecoveryMs = 0;
@@ -738,6 +742,7 @@ export class Enemy extends Phaser.Physics.Arcade.Sprite {
     }
 
     const dt = delta / 1000;
+    this.contactRecoveryMs = Math.max(0, this.contactRecoveryMs - delta);
 
     if (this.staggerRemainingMs > 0) {
       this.staggerRemainingMs = Math.max(0, this.staggerRemainingMs - delta);
