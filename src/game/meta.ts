@@ -61,7 +61,7 @@ export interface NodeEffects {
   buildCostMult: number;       // «Скидки казны» — цены зданий ×0.85
   startWood: number;           // «Стартовые припасы» — +15 дерева
   startOre: number;            // «Стартовые припасы» — +10 руды
-  extraCollector: number;      // «Дополнительный сборщик» — старт 3 сборщика
+  extraCollector: number;      // Legacy field: «Дополнительный рабочий» — +1 универсальный гражданский
   extraBuildSpots: number;     // «Шестое пятно» — +1 пятно под дом
   sheepYieldMult: number;      // «Пастбище» — мясо овцы ×1.25
   hireCostMult: number;        // «Сытые вербовщики» — наём воинов ×0.80

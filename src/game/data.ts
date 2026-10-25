@@ -716,7 +716,7 @@ export interface ResourceCost { wood?: number; ore?: number; meat?: number; }
 export interface PawnDef {
   kind: PawnKind;
   cls: PawnClass;
-  prefix: string;          // 'pawn' (синяя) / 'pawny' (жёлтая)
+  prefix: string;          // единый синий `pawn` для гражданских; гарнизон выбирает спец. силуэт
   speed: number;
   hp: number;
   /** Инструменты работы: work-анимация подбирается по ресурсу (§B.2). */
@@ -724,10 +724,13 @@ export interface PawnDef {
   weapon?: PawnWeapon;
 }
 
+const CIVILIAN_TOOLS: Array<'axe' | 'pickaxe' | 'knife' | 'hammer'> = ['axe', 'pickaxe', 'knife', 'hammer'];
+
 export const PAWNS: Record<PawnKind, PawnDef> = {
-  collector: { kind: 'collector', cls: 'civilian', prefix: 'pawn', speed: 180, hp: 40, tools: ['axe', 'pickaxe', 'knife'] },
-  builder:   { kind: 'builder',   cls: 'civilian', prefix: 'pawny', speed: 170, hp: 40, tools: ['hammer'] },
-  repairer:  { kind: 'repairer',  cls: 'civilian', prefix: 'pawny', speed: 170, hp: 40, tools: ['hammer'] },
+  // Legacy kind values stay for analytics/compatibility, not as profession gates.
+  collector: { kind: 'collector', cls: 'civilian', prefix: 'pawn', speed: 180, hp: 40, tools: [...CIVILIAN_TOOLS] },
+  builder:   { kind: 'builder',   cls: 'civilian', prefix: 'pawn', speed: 180, hp: 40, tools: [...CIVILIAN_TOOLS] },
+  repairer:  { kind: 'repairer',  cls: 'civilian', prefix: 'pawn', speed: 180, hp: 40, tools: [...CIVILIAN_TOOLS] },
   fighter:   { kind: 'fighter',   cls: 'garrison', prefix: 'pawn', speed: 150, hp: 120, weapon: 'sword' },
   healer:    { kind: 'healer',    cls: 'garrison', prefix: 'pawn', speed: 150, hp: 90, weapon: 'staff' },
 };

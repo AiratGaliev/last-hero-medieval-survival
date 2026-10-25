@@ -248,100 +248,56 @@ export class PawnAI {
       p.order = null;
     }
 
-    // --- 4. Строитель: свободное место + хватает ресурсов → строить ---
-    // ⚠️ Сначала продолжаем НАЧАТУЮ стройку — иначе строитель закладывал бы
-    // новое здание каждый кадр (двойное списание, риск §D.2).
-    if (p.kind === 'builder') {
-      const spot = this.pickBuildSpot(p);
-      // ⚠️ Раньше здесь был фолбэк «крупное здание не по карману → дом».
-      // Он ломал план поселения: строитель всегда уходил строить дом и
-      // казармы (нужны для преемственности, §F.3) не появлялись НИКОГДА.
-      // Теперь порядок задаёт Economy.nextBuildKind(), а если цель ещё
-      // недоступна по деньгам — строитель копит под неё (target ниже).
-      const target = spot;
-      if (target) {
-        const cost = BUILDING_PLANS[target.kind].cost;
-        const afford = eco.resources.wood >= (cost.wood ?? 0) && eco.resources.ore >= (cost.ore ?? 0);
-        if (afford) {
-          if (Phaser.Math.Distance.Between(p.x, p.y, target.x, target.y) < 70) {
-            if (eco.tryStartBuild(target.kind, p, target)) {
-              p.state = 'work';
-              p.taskProgress = 0;
-            }
-            return;
+    // --- 4. Единый рабочий цикл для всех гражданских ---
+    // Legacy kind values remain for analytics only. Every civilian can build,
+    // repair and gather; the AI selects jobs based on resources and settlement plan.
+    const concurrentRepairLimit = 1 + eco.card('assembly');
+    const activeRepairJobs = eco.repairJobs.filter((job) => job.pawn).length;
+    const damagedBuilding = activeRepairJobs < concurrentRepairLimit
+      ? this.mostDamagedBuilding()
+      : null;
+    const alreadyRepairing = damagedBuilding
+      && eco.repairJobs.some((job) => job.building === damagedBuilding);
+    if (damagedBuilding && !alreadyRepairing && eco.resources.wood >= 30
+      && eco.repair(damagedBuilding, p)) {
+      p.state = 'work';
+      p.taskProgress = 0;
+      return;
+    }
+
+    const concurrentBuildLimit = 1 + eco.card('assembly');
+    const activeBuildJobs = eco.buildJobs.filter((job) => job.pawn).length;
+    const target = activeBuildJobs < concurrentBuildLimit ? this.pickBuildSpot(p) : null;
+    if (target) {
+      const cost = BUILDING_PLANS[target.kind].cost;
+      const canAfford = eco.resources.wood >= (cost.wood ?? 0)
+        && eco.resources.ore >= (cost.ore ?? 0);
+      if (canAfford) {
+        if (Phaser.Math.Distance.Between(p.x, p.y, target.x, target.y) < 70) {
+          if (eco.tryStartBuild(target.kind, p, target)) {
+            p.state = 'work';
+            p.taskProgress = 0;
           }
-          p.state = 'walk';
-          this.walkTo(p, target.x, target.y, dtMs);
           return;
         }
+        p.state = 'walk';
+        this.walkTo(p, target.x, target.y, dtMs);
+        return;
       }
 
-      // Если строить нельзя из-за нехватки ресурсов или свободных пятен больше
-      // нет, строитель возвращается к сбору; иначе фаза E может застрять в idle.
-      const required = target ? BUILDING_PLANS[target.kind].cost : undefined;
-      const node = this.pickNodeFor(p, required);
-      if (node) {
-        this.gotoNode(p, node, dtMs);
+      // Anyone can fetch the materials for the next planned building.
+      const resource = this.pickNodeFor(p, cost);
+      if (resource) {
+        this.gotoNode(p, resource, dtMs);
         return;
       }
     }
 
-    // --- 5. Ремонтник: повреждённое здание (активировано фазой L) ---
-    if (p.kind === 'repairer') {
-      const b = this.mostDamagedBuilding();
-      if (b && eco.resources.wood >= 30 && eco.repair(b, p)) {
-        p.state = 'work';
-        p.taskProgress = 0;
-        return;
-      }
-    }
-
-    // --- 5.5 «Вече» (§H.5): при дефиците рабочие рук стройка/ремонт
-    // приоритетнее сбора. Сборщик подключается молотком, когда строитель/
-    // ремонтник уже заняты, а работы ещё остались (+1 лимит — в Economy).
-    if (p.kind === 'collector' && this.eco.card('assembly') > 0) {
-      const freeSpot = this.pickBuildSpot(p);
-      if (freeSpot) {
-        const cost = BUILDING_PLANS[freeSpot.kind].cost;
-        const afford = this.eco.resources.wood >= (cost.wood ?? 0)
-          && this.eco.resources.ore >= (cost.ore ?? 0);
-        const buildersBusy = this.eco.buildJobs.filter((j) => j.pawn).length;
-        const builderAlive = this.eco.pawns.some((x) => x.kind === 'builder' && !x.dead);
-        // Дефицит рук: строитель есть и занят, либо его вообще нет
-        if (afford && (!builderAlive || buildersBusy >= 1)
-          && Phaser.Math.Distance.Between(p.x, p.y, freeSpot.x, freeSpot.y) < 400) {
-          if (Phaser.Math.Distance.Between(p.x, p.y, freeSpot.x, freeSpot.y) < 70) {
-            if (this.eco.tryStartBuild(freeSpot.kind, p, freeSpot)) {
-              p.state = 'work';
-              p.taskProgress = 0;
-              return;
-            }
-          } else {
-            p.state = 'walk';
-            this.walkTo(p, freeSpot.x, freeSpot.y, dtMs);
-            return;
-          }
-        }
-      }
-      const damaged = this.mostDamagedBuilding();
-      if (damaged && this.eco.resources.wood >= 30) {
-        const repairersBusy = this.eco.repairJobs.filter((j) => j.pawn).length;
-        const repairerAlive = this.eco.pawns.some((x) => x.kind === 'repairer' && !x.dead);
-        if ((!repairerAlive || repairersBusy >= 1) && this.eco.repair(damaged, p)) {
-          p.state = 'work';
-          p.taskProgress = 0;
-          return;
-        }
-      }
-    }
-
-    // --- 6. Сборщик: узел по потребности (§B.6) + обход врагов ---
-    if (p.kind === 'collector') {
-      const node = this.pickNodeFor(p);
-      if (node) {
-        this.gotoNode(p, node, dtMs);
-        return;
-      }
+    // General resource gathering is the fallback for every civilian.
+    const resource = this.pickNodeFor(p);
+    if (resource) {
+      this.gotoNode(p, resource, dtMs);
+      return;
     }
 
     // --- 7. idle у замка ---

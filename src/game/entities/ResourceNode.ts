@@ -1,6 +1,7 @@
 import Phaser from 'phaser';
 import { DEPTH } from '../constants';
 import type { ResourceKind } from '../data';
+import { stumpTextureForTree } from '../treeStumps';
 
 // ============ Ресурсный узел: дерево / овца / золотая жила (TZ §B.3) ============
 //
@@ -101,9 +102,21 @@ export class ResourceNode {
   }
 
   destroy(): void {
+    if (!this.alive) return;
     this.alive = false;
     this.claimedBy = null;
-    // Дерево/овца исчезают без пня; жила — с дымком частиц (§B.3)
+    if (this.kind === 'tree') {
+      // Numeric suffix is a matched Tiny Swords asset pair, not random scenery.
+      const stumpKey = stumpTextureForTree(this.sprite.texture.key);
+      if (stumpKey) {
+        const stump = this.scene.add.image(this.x, this.y, stumpKey)
+          .setScale(Math.max(0.55, this.sprite.scaleX * 0.75));
+        // Keep the tree's ground baseline: its sprite is much taller than the stump.
+        stump.setY(this.y + this.sprite.displayHeight / 2 - stump.displayHeight / 2);
+        stump.setDepth(DEPTH.ENTITY_BASE + stump.y - 4);
+      }
+    }
+    // Истощённая жила остаётся на карте с дымком частиц (§B.3).
     if (this.kind === 'vein') {
       const puff = this.scene.add.sprite(this.x, this.y, 'fx-dust')
         .setDepth(DEPTH.FX - 10).setScale(1.4).setAlpha(0.7);

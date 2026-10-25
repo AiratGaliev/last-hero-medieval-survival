@@ -252,42 +252,32 @@ export class BootScene extends Phaser.Scene {
     this.load.image('ribbon-purple', asset('game', 'ribbon-purple.png'));
     this.load.image('ribbon-red', asset('game', 'ribbon-red.png'));
 
-    // ---- Жители: синяя и жёлтая фракции ----
-    // Синий collector использует axe/pickaxe/knife (молот — только у жёлтых
-    // builder/repairer, TZ §B.10): ключ pawn-work-hammer не регистрируется.
-    for (const [prefix, faction] of [['pawn', 'blue'], ['pawny', 'yellow']] as const) {
-      this.load.spritesheet(
-        prefix + '-idle', asset('tiny-swords', `units/${faction}/pawn/pawn-idle.png`),
+    // ---- Универсальные гражданские: единый синий набор спрайтов ----
+    // One character art set for every civilian job. Keep role-specific tools as animations,
+    // not as separate worker factions.
+    this.load.spritesheet('pawn-idle', asset('tiny-swords', 'units/blue/pawn/pawn-idle.png'), {
+      frameWidth: 192, frameHeight: 192,
+    });
+    this.load.spritesheet('pawn-run', asset('tiny-swords', 'units/blue/pawn/pawn-run.png'), {
+      frameWidth: 192, frameHeight: 192,
+    });
+    for (const tool of ['axe', 'knife', 'pickaxe', 'hammer'] as const) {
+      this.load.spritesheet(`pawn-work-${tool}`,
+        asset('tiny-swords', `units/blue/pawn/pawn-interact-${tool}.png`),
         { frameWidth: 192, frameHeight: 192 },
       );
-      // Ходьба без груза: раньше лист не грузился, и Pawn.playMove падал
-      // в фолбэк «Missing animation: pawn-run» — пешки шли статичной картинкой
-      this.load.spritesheet(
-        prefix + '-run', asset('tiny-swords', `units/${faction}/pawn/pawn-run.png`),
+    }
+    for (const res of ['wood', 'meat', 'gold'] as const) {
+      this.load.spritesheet(`pawn-carry-${res}`,
+        asset('tiny-swords', `units/blue/pawn/pawn-run-${res}.png`),
         { frameWidth: 192, frameHeight: 192 },
       );
-      for (const tool of ['axe', 'knife', 'pickaxe'] as const) {
-        this.load.spritesheet(
-          prefix + '-work-' + tool, asset('tiny-swords', `units/${faction}/pawn/pawn-interact-${tool}.png`),
-          { frameWidth: 192, frameHeight: 192 },
-        );
-      }
+      this.load.spritesheet(`pawn-carry-idle-${res}`,
+        asset('tiny-swords', `units/blue/pawn/pawn-idle-${res}.png`),
+        { frameWidth: 192, frameHeight: 192 },
+      );
     }
-    // Молот нужен только жёлтой фракции (стройка/ремонт, §B.2)
-    this.load.spritesheet('pawny-work-hammer', asset('tiny-swords', 'units/yellow/pawn/pawn-interact-hammer.png'), { frameWidth: 192, frameHeight: 192 });
-    // Carry-анимации пешек: ресурс виден на руках (§B.2)
-    for (const [prefix, faction] of [['pawn', 'blue'], ['pawny', 'yellow']] as const) {
-      for (const res of ['wood', 'meat', 'gold'] as const) {
-        this.load.spritesheet(
-          `${prefix}-carry-${res}`, asset('tiny-swords', `units/${faction}/pawn/pawn-run-${res}.png`),
-          { frameWidth: 192, frameHeight: 192 },
-        );
-        this.load.spritesheet(
-          `${prefix}-carry-idle-${res}`, asset('tiny-swords', `units/${faction}/pawn/pawn-idle-${res}.png`),
-          { frameWidth: 192, frameHeight: 192 },
-        );
-      }
-    }
+
     // ---- Гарнизон (§B.2): ключи анимаций сохраняют namespace pawn-* (§A.6).
     // Кадры используют общие листы hero/player без повторной загрузки PNG.
     for (let i = 1; i <= 5; i++) {
@@ -569,21 +559,17 @@ export class BootScene extends Phaser.Scene {
       ['axe', 6, 8],
       ['knife', 4, 8],
       ['pickaxe', 6, 8],
+      ['hammer', 3, 9],
     ];
-    for (const p of ['pawn', 'pawny']) {
-      this.sheet(p + '-idle', p + '-idle', 8, 7);
-      this.sheet(p + '-run', p + '-run', 6, 10);
-      for (const [tool, n, rate] of WORK_FRAMES) {
-        this.sheet(p + '-work-' + tool, p + '-work-' + tool, n, rate);
-      }
-      // Carry: ресурс в руках — run 6 кадров / idle 8 кадров (§B.2)
-      for (const res of ['wood', 'meat', 'gold'] as const) {
-        this.sheet(`${p}-carry-${res}`, `${p}-carry-${res}`, 6, 10);
-        this.sheet(`${p}-carry-idle-${res}`, `${p}-carry-idle-${res}`, 8, 7);
-      }
+    this.sheet('pawn-idle', 'pawn-idle', 8, 7);
+    this.sheet('pawn-run', 'pawn-run', 6, 10);
+    for (const [tool, n, rate] of WORK_FRAMES) {
+      this.sheet(`pawn-work-${tool}`, `pawn-work-${tool}`, n, rate);
     }
-    // Молот — только жёлтая фракция (стройка/ремонт, 3 кадра)
-    this.sheet('pawny-work-hammer', 'pawny-work-hammer', 3, 9);
+    for (const res of ['wood', 'meat', 'gold'] as const) {
+      this.sheet(`pawn-carry-${res}`, `pawn-carry-${res}`, 6, 10);
+      this.sheet(`pawn-carry-idle-${res}`, `pawn-carry-idle-${res}`, 8, 7);
+    }
 
     // ---- Гарнизон: анимации воинов (§B.2). Кадры проверены по ширине листов.
     this.sheet('pawn-warrior-idle', 'player-idle', 8, 7);

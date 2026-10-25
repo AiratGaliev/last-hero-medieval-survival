@@ -2,6 +2,7 @@ import { expect, test, type Page } from '@playwright/test';
 
 type PawnRuntime = {
   kind: string;
+  def?: { tools?: string[] };
   setPosition(x: number, y: number): unknown;
   prefix: string;
   state: string;
@@ -272,7 +273,7 @@ test('phase B: only the civilian targeted by a nearby enemy flees', async ({ pag
   expect(report.bystanderState).not.toBe('flee');
 });
 
-test('phase B: four workers, correct faction animations and live Economy tick', async ({ page }) => {
+test('phase B: four universal workers, clean map and live Economy tick', async ({ page }) => {
   const pageErrors: string[] = [];
   const consoleErrors: string[] = [];
   page.on('pageerror', error => pageErrors.push(error.message));
@@ -294,12 +295,10 @@ test('phase B: four workers, correct faction animations and live Economy tick', 
       originalTick(dtMs, now);
     };
     const animationKeys = [
-      'pawn-idle', 'pawn-run', 'pawny-idle', 'pawny-run',
-      'pawn-work-axe', 'pawn-work-knife', 'pawn-work-pickaxe', 'pawny-work-hammer',
+      'pawn-idle', 'pawn-run',
+      'pawn-work-axe', 'pawn-work-knife', 'pawn-work-pickaxe', 'pawn-work-hammer',
       'pawn-carry-wood', 'pawn-carry-idle-wood', 'pawn-carry-meat', 'pawn-carry-idle-meat',
-      'pawn-carry-gold', 'pawn-carry-idle-gold', 'pawny-carry-wood',
-      'pawny-carry-idle-wood', 'pawny-carry-meat', 'pawny-carry-idle-meat',
-      'pawny-carry-gold', 'pawny-carry-idle-gold',
+      'pawn-carry-gold', 'pawn-carry-idle-gold',
       'gold-vein-pulse-1', 'gold-vein-pulse-2', 'gold-vein-pulse-3',
       'gold-vein-pulse-4', 'gold-vein-pulse-5',
     ];
@@ -307,25 +306,36 @@ test('phase B: four workers, correct faction animations and live Economy tick', 
       pawns: economy.pawns.map(p => ({
         kind: p.kind,
         prefix: p.prefix,
+        tools: p.def?.tools ?? [],
         state: p.state,
         distanceToCastle: Math.hypot(p.x - economy.castleX, p.y - economy.castleY),
       })),
       resourcesHiddenAtStart: !scene.hud.resGroup.visible,
+      decorativeBuildings: (scene as GameSceneRuntime & {
+        children: { list: Array<{ texture?: { key: string } }> };
+      }).children.list
+        .map((object) => object.texture?.key)
+        .filter((key): key is string => key !== undefined
+          && ['house1', 'house2', 'house3', 'tower', 'monastery'].includes(key)),
       animations: Object.fromEntries(animationKeys.map(key => [key, animations.exists(key)])),
       blueHammerExists: animations.exists('pawn-work-hammer'),
+      yellowWorkerAnimationsPresent: animations.exists('pawny-idle')
+        || animations.exists('pawny-run') || animations.exists('pawny-work-hammer'),
       tickCalls,
     };
   });
 
   expect(report.pawns.map(p => p.kind).sort()).toEqual(['builder', 'collector', 'collector', 'repairer']);
-  expect(report.pawns.filter(p => p.kind === 'collector').every(p => p.prefix === 'pawn')).toBe(true);
-  expect(report.pawns.filter(p => p.kind === 'builder' || p.kind === 'repairer')
-    .every(p => p.prefix === 'pawny')).toBe(true);
+  expect(report.pawns.every(p => p.prefix === 'pawn')).toBe(true);
+  expect(report.pawns.every(p => ['axe', 'pickaxe', 'knife', 'hammer']
+    .every(tool => p.tools.includes(tool)))).toBe(true);
+  expect(report.decorativeBuildings).toEqual([]);
+  expect(report.yellowWorkerAnimationsPresent).toBe(false);
   expect(report.pawns.every(p => p.state === 'idle')).toBe(true);
   expect(report.pawns.every(p => p.distanceToCastle >= 80 && p.distanceToCastle <= 160)).toBe(true);
   expect(report.resourcesHiddenAtStart).toBe(true);
   expect(Object.entries(report.animations).filter(([, exists]) => !exists).map(([key]) => key)).toEqual([]);
-  expect(report.blueHammerExists).toBe(false);
+  expect(report.blueHammerExists).toBe(true);
 
   await continueInitialTutorial(page);
   await page.waitForTimeout(700);
@@ -424,6 +434,55 @@ test('phase B: player can walk past a civilian without a blocking pawn collider'
   expect(result.playerPawnDistance).toBeGreaterThan(30);
 });
 
+
+test('phase B: any civilian can start construction and repair', async ({ page }) => {
+  await startRun(page);
+  const report = await page.evaluate(() => {
+    const game = (window as RuntimeWindow).__tss!;
+    const scene = game.scene.getScene('Game') as GameSceneRuntime;
+    const economy = scene.economy;
+    economy.resources.wood = 1_000;
+    economy.resources.ore = 1_000;
+    const collector = economy.pawns.find((pawn) => pawn.kind === 'collector');
+    const builder = economy.pawns.find((pawn) => pawn.kind === 'builder');
+    const houseSpot = economy.freeSpots().find((spot) => spot.kind === 'house');
+    if (!collector || !builder || !houseSpot) throw new Error('Universal worker test needs all starting workers and a house spot');
+
+    collector.setPosition(houseSpot.x, houseSpot.y);
+    collector.order = 'build';
+    collector.cooldown = 0;
+    collector.arrivalMs = 0;
+    collector.carrying = null;
+    collector.workNode = null;
+    economy.pawnAI.updateCivilian(collector, 16, scene.time.now);
+    const buildJob = economy.buildJobs.find((job) => job.pawn === collector);
+    if (!buildJob) return { buildStarted: false, repairStarted: false };
+
+    buildJob.building.finishConstruction();
+    const buildIndex = economy.buildJobs.indexOf(buildJob);
+    if (buildIndex >= 0) economy.buildJobs.splice(buildIndex, 1);
+    buildJob.building.damage(20, 0);
+    builder.setPosition(buildJob.building.x, buildJob.building.y);
+    builder.order = 'repair';
+    builder.cooldown = 0;
+    builder.arrivalMs = 0;
+    builder.carrying = null;
+    builder.workNode = null;
+    economy.pawnAI.updateCivilian(builder, 16, scene.time.now + 16);
+    return {
+      buildStarted: true,
+      repairStarted: economy.repairJobs.some((job) => job.pawn === builder),
+      builderPrefix: builder.prefix,
+      collectorPrefix: collector.prefix,
+    };
+  });
+
+  expect(report.buildStarted).toBe(true);
+  expect(report.repairStarted).toBe(true);
+  expect(report.collectorPrefix).toBe('pawn');
+  expect(report.builderPrefix).toBe('pawn');
+});
+
 test('phases C-D: harvesting delivers resources and depleted veins can recharge', async ({ page }) => {
   await pinNeutralSeason(page);
   await startRun(page);
@@ -438,12 +497,20 @@ test('phases C-D: harvesting delivers resources and depleted veins can recharge'
       ore: scene.hud.resTexts.ore.text,
     });
     const initialHudResources = readHudResources();
-    const collector = economy.pawns.find(p => p.kind === 'collector');
-    const blocker = economy.pawns.find(p => p.kind === 'collector' && p !== collector);
+    // A legacy builder identity must still gather: kind is no longer a capability gate.
+    const collector = economy.pawns.find(p => p.kind === 'builder');
+    const blocker = economy.pawns.find(p => p !== collector);
     const initialResources = { ...economy.resources };
     const initialTreeCount = economy.nodes.filter(n => n.kind === 'tree' && n.alive).length;
     const initialSheepCount = economy.nodes.filter(n => n.kind === 'sheep' && n.alive).length;
     const tree = economy.nodes.find(n => n.kind === 'tree' && n.available);
+    const displayList = (scene as GameSceneRuntime & {
+      children: { list: Array<{ x: number; y: number; displayHeight?: number; texture?: { key: string }; active?: boolean }> };
+    }).children.list;
+    const treeVisual = tree && displayList.find((object) => object.x === tree.x && object.y === tree.y
+      && /^tree[1-4]$/.test(object.texture?.key ?? '') && object.active !== false);
+    const treeTextureKey = treeVisual?.texture?.key ?? null;
+    const treeDisplayHeight = treeVisual?.displayHeight ?? 0;
     const sheep = economy.nodes.find(n => n.kind === 'sheep' && n.available);
     const vein = economy.nodes.find(n => n.kind === 'vein' && n.available
       && Math.hypot(n.x - economy.castleX, n.y - economy.castleY) <= 1_000);
@@ -483,6 +550,12 @@ test('phases C-D: harvesting delivers resources and depleted veins can recharge'
     const carrying = collector.carrying;
     const carriedAmount = collector.carriedAmount;
     const treeDestroyed = !tree.alive;
+    const matchingStumpKey = treeTextureKey ? `stump${String(treeTextureKey).slice(-1)}` : null;
+    const stump = matchingStumpKey && displayList.find((object) =>
+      object.x === tree.x && object.texture?.key === matchingStumpKey && object.active !== false,
+    );
+    const stumpLeftAtTree = Boolean(stump)
+      && Math.abs((stump?.y ?? 0) - (tree.y + treeDisplayHeight / 2 - (stump?.displayHeight ?? 0) / 2)) < 1;
     const resourceCountBeforeDeposit = economy.resources.wood - woodBefore;
 
     // Перевозимый ресурс отображается и в неподвижном, и в ходовом цикле.
@@ -649,6 +722,9 @@ test('phases C-D: harvesting delivers resources and depleted veins can recharge'
       carryIdleAnimation,
       carryRunAnimation,
       treeDestroyed,
+      treeTextureKey,
+      matchingStumpKey,
+      stumpLeftAtTree,
       resourceCountBeforeDeposit,
       depositedWood,
       woodBefore,
@@ -696,6 +772,9 @@ test('phases C-D: harvesting delivers resources and depleted veins can recharge'
   expect(report.carryIdleAnimation).toBe('pawn-carry-idle-wood');
   expect(report.carryRunAnimation).toBe('pawn-carry-wood');
   expect(report.treeDestroyed).toBe(true);
+  expect(report.treeTextureKey).toMatch(/^tree[1-4]$/);
+  expect(report.matchingStumpKey).toBe(`stump${String(report.treeTextureKey).slice(-1)}`);
+  expect(report.stumpLeftAtTree).toBe(true);
   expect(report.resourceCountBeforeDeposit).toBe(0);
   expect(report.depositedWood).toBe(report.carriedAmount);
   expect(report.woodAfter).toBe(report.woodBefore + report.carriedAmount);
@@ -1209,7 +1288,7 @@ test('phases E-F: construction uses the approached spot and repair costs are gua
   expect(report.expandedBuildSpotCount).toBe(15);
   expect(report.expandedBuildSpotOverlaps).toEqual([]);
   expect(report.houseStarted).toBe(true);
-  expect(report.houseBuildAnimation).toBe('pawny-work-hammer');
+  expect(report.houseBuildAnimation).toBe('pawn-work-hammer');
   expect(report.houseCost).toBe(30);
   expect(report.houseX).toBe(report.expectedHouseX);
   expect(report.houseY).toBe(report.expectedHouseY);

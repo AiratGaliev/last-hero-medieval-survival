@@ -386,8 +386,7 @@ export class Economy extends Phaser.Events.EventEmitter {
 
   // ---------- Старт ----------
 
-  /** 4 стартовые пешки: 2 сборщика, строитель, ремонтник (§B.2).
-   *  «Дополнительный сборщик» (§H.16) добавляет ещё — вызвать после. */
+  /** Four legacy worker identities are retained for analytics; capabilities are shared. */
   spawnInitial(): void {
     this.spawnPawn('collector');
     this.spawnPawn('collector');
@@ -678,7 +677,7 @@ export class Economy extends Phaser.Events.EventEmitter {
 
   /**
    * Заложить стройку: spend() в момент СТАРТА (§D.2 — не по завершении),
-   * здание появляется недостроенным, строитель играет pawny-work-hammer.
+   * здание появляется недостроенным; любой гражданский играет pawn-work-hammer.
    */
   tryStartBuild(
     kind: BuildingKind,
