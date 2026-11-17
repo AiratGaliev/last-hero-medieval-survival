@@ -1,3 +1,44 @@
+# Текущий релизный курс — 2026-11-17
+
+> Этот блок — актуальное решение по первому релизу и имеет приоритет над историческими
+> срезами, фазовыми заметками и внешними гейтами ниже. Исторические записи сохраняются
+> как журнал, но не должны трактоваться как действующий release scope без повторного
+> подтверждения.
+
+## Первый канал выпуска
+
+- **Первая целевая площадка — Пикабу Игры.** Основная цель — завершить и выпустить
+  Last Hero, получить обратную связь и реальные показатели спроса.
+- **Yandex Games — вторичный/отложенный канал.** Существующая реализация сохраняется,
+  но Yandex Console/Sandbox, IAP и Metrica не блокируют Pikabu v1.
+- **Codogma Engine и редактор не являются prerequisites** для завершения или выпуска
+  этой игры. Runtime остаётся на Phaser 4 + TypeScript.
+- Для Pikabu нужен статический `dist/` на внешнем HTTPS-хостинге. Это не означает,
+  что для игрового процесса нужен собственный application backend.
+- Первая версия не требует IAP и глобального portal leaderboard. Реклама необязательна
+  и выключена по умолчанию до отдельной приёмки.
+
+## Platform Adapter — целевая архитектура, пока не реализована
+
+Текущий `src/platform/` — существующий Yandex-specific слой, а не универсальный adapter.
+Порядок миграции: contracts/registry + Web/mock provider → Yandex provider isolation →
+Pikabu provider → Pikabu Studio QA. Нормативное описание:
+[`docs/architecture/platform-adapters.md`](architecture/platform-adapters.md).
+
+- [LAS-22 — родительская задача Platform Adapter и Pikabu first release](https://linear.app/last-hero/issue/LAS-22/platform-introduce-provider-based-platform-adapter-and-make-pikabu-the)
+- [LAS-23 — контракты и изоляция Yandex provider](https://linear.app/last-hero/issue/LAS-23/architecture-define-platform-contracts-and-isolate-the-existing-yandex)
+- [LAS-24 — Pikabu provider](https://linear.app/last-hero/issue/LAS-24/platform-implement-pikabu-provider-for-first-release)
+- [LAS-25 — сборка, hosting, QA и submission Pikabu](https://linear.app/last-hero/issue/LAS-25/release-prepare-and-accept-the-pikabu-games-v1-submission)
+- [LAS-20 — финальный gameplay + Pikabu v1 acceptance gate](https://linear.app/last-hero/issue/LAS-20/release-complete-final-gameplay-and-pikabu-v1-acceptance-gate)
+
+## Правило релизного scope
+
+Старые фазы и чек-листы Roadmap/TZ не являются автоматически обязательством выпустить весь исторически задуманный продукт. Перед продвижением `dev → test` владелец подтверждает конкретный Pikabu v1 scope. В gate входят только его gameplay, quality, save, platform, content и moderation критерии. Все идеи Round 2, IAP, Yandex-specific integrations и дополнительные мета-системы остаются deferred, если не добавлены в scope отдельным решением.
+
+Текущий release gate — LAS-20. Yandex-only задачи [LAS-19](https://linear.app/last-hero/issue/LAS-19/deferred-yandex-games-external-acceptance-secondary-provider-not) и [LAS-15](https://linear.app/last-hero/issue/LAS-15/deferred-yandex-specific-analytics-and-cloud-history-acceptance) перенесены в Backlog.
+
+---
+
 ## Срез 2026-10-25 — деревья, карта и универсальные рабочие
 
 - Основа изменений — актуальный `dev` на момент создания среза: `b236fa18aeac9a28a5129d1de267c2377d86a5a2` (после PR #85).
