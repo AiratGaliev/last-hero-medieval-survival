@@ -23,7 +23,7 @@ release gate первой версии. Текущие платформенны�
 | Враги | 13 типов, включая элит, мидбосса и финального босса |
 | Достижения | 12 |
 | Лавка | 5 постоянных улучшений по 3 уровня |
-| Рекорды | общий зал Яндекса (для авторизованных) + локальная таблица (10 строк) |
+| Рекорды | локальная таблица (10 строк); portal leaderboard — optional capability, текущая реализация только для Yandex |
 
 Эволюция оружия требует 5-го уровня ствола **и** пассивку-партнёра
 (меч + мощь, лук + молниеносность, копьё + пир, молот + щит, бомба + удача,
@@ -199,7 +199,7 @@ npm run build
 
 - **CI Fast** (`.github/workflows/ci.yml`) — `npm ci`, `npm run check`, `npm run test:unit` и `npm run build` для PR в `dev`, `test`, `main`. Юнит-тесты Vitest выполняются в Node.js; Chromium не устанавливается, браузерные E2E не запускаются.
 - **E2E** (`.github/workflows/e2e.yml`) — Playwright для PR в `test` и `main`; при падении сохраняет диагностику Playwright.
-- **Release** (`.github/workflows/release.yml`) — текущая реализация всё ещё выполняет `npm run check` и `npm run build:yg` на `main`. Это Yandex-specific workflow и оно **не готовит Pikabu release**; его разделение/замена на Pikabu static bundle и hosting — часть LAS-25.
+- **Release** (`.github/workflows/release.yml`) — текущая реализация всё ещё выполняет `npm run check` и `npm run build:yg` на `main`. Текущий workflow Yandex-specific и **не готовит Pikabu release**; его разделение/замена на Pikabu static bundle и hosting — часть LAS-25.
 
 GitHub branch protection должна требовать статус `CI Fast / fast-checks` для всех трёх постоянных веток и `E2E / browser-e2e` для `test` и `main`; обязательны PR, запрет force-push и удаления постоянных веток. Назначьте правила защиты в **Settings → Rules → Rulesets** (либо **Settings → Branches**, если используется классическая защита). Одна документация не блокирует обход — настройки защиты должны быть включены в GitHub.
 
