@@ -61,7 +61,7 @@ Names may follow the existing project's conventions, but the ownership boundary 
 
 ### 4.2 Lifecycle
 
-The contract covers the game-ready signal, gameplay start/stop and host pause/resume notifications. Browser visibility and focus are handled independently of provider events.
+The contract covers the game-ready signal, application gameplay start/stop and optional host pause/resume notifications. Host lifecycle events are capability-specific; the adapter must not invent events a provider does not expose. Browser visibility and focus are handled independently of provider events.
 
 Pause ownership must be composable: a host pause, a hidden browser tab and an ad overlay are independent pause sources. One source must not resume the game while another source remains active. Audio muting is part of the lifecycle behavior and must be restored only when all mute sources are cleared.
 
@@ -105,11 +105,12 @@ Leaderboards and payments are separate optional capabilities. Their absence must
 
 - Load and initialize the Pikabu SDK only in the Pikabu game page or the Studio test environment. Official documentation explicitly says the SDK does not work when loaded on an arbitrary local website.
 - Local development and automated browser tests use the Web/mock provider; they must not wait for or fetch the Pikabu SDK.
-- Map `PkbSDK.init()`, game-ready/start/stop and host lifecycle events to the lifecycle contract.
+- Load the SDK once with `PkbSDK.init()` and call `sdk.gameStarted()` only after core resources are loaded and the first screen is ready. The documented Pikabu Events API currently lists `userAuthorized` and `storageSaveError`; it does **not** document Yandex-style host pause/resume events. Do not invent or subscribe to them.
 - Map `sdk.player` to the player snapshot. Re-read the ID after authorization because the SDK documents that a guest ID may change after account authorization.
 - Wrap `sdk.storage` including explicit `flush()`, save errors and the conflict/reload path.
-- Ads are optional and disabled by default for the initial validation release. If enabled later, check `isSupported` / `canShow()`, await `show()` and grant a reward only when its result says `reward: true`.
+- Ads are optional and disabled by default for the initial validation release. If enabled later, check `isSupported` / `canShow()`, await `show()` and grant a reward only when its result says `reward: true`. Pause gameplay/audio before the overlay and restore them in a guaranteed cleanup path.
 - Use Pikabu Studio reports for aggregate first-release statistics. Do not invent a custom analytics endpoint.
+- Wrap game-initiated authorization/payment overlays with application-owned pause/resume handling where applicable. The SDK's documented event list does not provide generic overlay-open/close callbacks; verify platform-initiated overlays in Studio QA and use browser visibility/focus signals where they occur.
 - Do not implement IAP or portal leaderboards in v1 unless the owner changes the scope explicitly.
 - Host the static `dist/` bundle on a controlled HTTPS origin. Pikabu's technical requirements currently say that uploading a game build to Pikabu's servers is not supported; a game-hosting service such as GamePush is an alternative if self-hosting is not available. This does not imply that the game needs an application backend.
 
@@ -160,3 +161,4 @@ The Web provider supports local development, browser preview and deterministic a
 - [Content requirements](https://games.pikabu.ru/sdk/docs/requirements/content)
 - [Moderation and publication](https://games.pikabu.ru/sdk/docs/studio/moderation)
 - [Studio statistics](https://games.pikabu.ru/sdk/docs/studio/stats)
+- [SDK events](https://games.pikabu.ru/sdk/docs/sdk/events)
