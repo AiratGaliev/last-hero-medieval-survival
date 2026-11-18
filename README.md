@@ -1,10 +1,13 @@
 # Последний герой: Средневековое выживание (The Last Hero: Medieval Survival)
 
-Bullet-heaven роглайт (клон Vampire Survivors) на **нативном Phaser 4** для
-**Yandex Games**. Ассеты — [Tiny Swords](https://pixelfrog-assets.itch.io/tiny-swords)
+Bullet-heaven роглайт на **Phaser 4 + TypeScript**. Первая целевая площадка релиза —
+**Пикабу Игры**. Yandex Games сохраняется как возможный вторичный канал и не является
+release gate первой версии. Текущие платформенные модули ещё Yandex-specific; переход
+на provider-based **Platform Adapter** описан в [архитектуре платформенных интеграций](docs/architecture/platform-adapters.md)
+и задачах Linear LAS-22–LAS-25. Ассеты — [Tiny Swords](https://pixelfrog-assets.itch.io/tiny-swords)
 от Pixel Frog.
 
-Документация: [`docs/TZ.md`](docs/TZ.md) · [`docs/TILEMAP.md`](docs/TILEMAP.md) · [`docs/ROADMAP.md`](docs/ROADMAP.md) · [`worklog.md`](worklog.md)
+Документация: [`docs/TZ.md`](docs/TZ.md) · [`docs/TILEMAP.md`](docs/TILEMAP.md) · [`docs/ROADMAP.md`](docs/ROADMAP.md) · [`docs/architecture/platform-adapters.md`](docs/architecture/platform-adapters.md) · [`worklog.md`](worklog.md)
 
 ---
 
@@ -20,7 +23,7 @@ Bullet-heaven роглайт (клон Vampire Survivors) на **нативно�
 | Враги | 13 типов, включая элит, мидбосса и финального босса |
 | Достижения | 12 |
 | Лавка | 5 постоянных улучшений по 3 уровня |
-| Рекорды | общий зал Яндекса (для авторизованных) + локальная таблица (10 строк) |
+| Рекорды | локальная таблица (10 строк); portal leaderboard — optional capability, текущая реализация только для Yandex |
 
 Эволюция оружия требует 5-го уровня ствола **и** пассивку-партнёра
 (меч + мощь, лук + молниеносность, копьё + пир, молот + щит, бомба + удача,
@@ -34,13 +37,16 @@ Bullet-heaven роглайт (клон Vampire Survivors) на **нативно�
 |---|---|
 | Игра | Phaser 4.2.1, TypeScript 5.9, Arcade Physics |
 | Сборка | Vite 8 (`npm run build` → `dist/`) |
-| Площадка | Yandex Games SDK (лежит в архиве, подключается относительным путём) |
-| Локализация | RU + EN, автоопределение через SDK |
+| Платформа первого релиза | Пикабу Игры; статический `dist/` размещается на внешнем HTTPS-хостинге |
+| Платформенная интеграция | Целевой Platform Adapter; текущий `src/platform/` ещё Yandex-specific |
+| Вторичный канал | Yandex Games — сохранённый, но отложенный provider |
+| Локализация | RU + EN; RU — язык запуска для Pikabu |
 | Линтер | ESLint 10 (flat config) + typescript-eslint |
 
-В рантайме **одна** зависимость — `phaser`. React, Next.js, Tailwind, shadcn/ui
-и Prisma в проекте нет; сервера бэкенда тоже нет — площадка запрещает игры,
-которым нужен собственный сервер.
+В рантайме **одна** обязательная зависимость — `phaser`. React, Next.js, Tailwind,
+shadcn/ui и Prisma в проекте нет. Для Pikabu v1 нужен статический хостинг production
+bundle; отдельный игровой backend в первоначальный scope не входит. Требование внешнего
+хостинга игровых файлов не следует путать с необходимостью backend-сервера.
 
 ---
 
@@ -63,7 +69,14 @@ npm run dev
 его на недоверенной сети. Обычный `npm run dev` остаётся локальным и использует
 встроенную проверку Host Vite.
 
-Сборка архива для загрузки в консоль:
+Сборка production bundle для первого релиза (статический `dist/`, размещается на HTTPS-хостинге):
+
+```bash
+npm run build
+```
+
+Сборка Yandex Games ZIP сохранена как вторичный/legacy pipeline и не является способом
+публикации Pikabu v1:
 
 ```bash
 npm run build:yg     # -> release/tiny-sword-survivors.zip
@@ -96,7 +109,7 @@ npm run build:yg     # -> release/tiny-sword-survivors.zip
 
 | Ветка | Назначение | Что в неё можно направлять |
 |---|---|---|
-| `main` | Стабильная версия и релиз Yandex Games | Только PR из `test`; исключение — аварийный `hotfix/*` по процедуре ниже |
+| `main` | Стабильная версия; первый release channel — Pikabu Games | Только PR из `test`; исключение — аварийный `hotfix/*` по процедуре ниже |
 | `test` | QA-кандидат на выпуск | Только PR из `dev` |
 | `dev` | Общая интеграционная ветка | Только PR из рабочих веток |
 | Рабочие ветки | Разработка отдельной задачи | Создаются от актуальной `dev`, затем направляются в `dev` |
@@ -135,11 +148,11 @@ feat/* | fix/* | refactor/* | test/* | docs/* | chore/*
 
 **Жёсткий gate перед созданием PR `dev → test`**
 
-> **PR `dev → test` нельзя создавать до полного завершения разработки, предусмотренной `docs/TZ.md` и `docs/ROADMAP.md`.** Должны быть реализованы все требования ТЗ и завершены все задачи Roadmap, входящие в согласованный объём проекта. Выполнение отдельной фазы, части задач или желание проверить промежуточный результат не является основанием для PR `dev → test`.
+> **PR `dev → test` разрешён только после завершения и проверки owner-approved scope Pikabu v1**, зафиксированного в текущем release-разделе `docs/ROADMAP.md`, требованиях продукта в `docs/TZ.md` и релизных задачах LAS-22–LAS-25 / LAS-20. Исторические фазы, пункты Round 2, IAP и Yandex-only внешние проверки не являются автоматическими блокерами Pikabu v1, если они явно не включены в утверждённый scope.
 >
-> Перед созданием этого PR проведите полный аудит обоих документов и сверьте каждый пункт с реальным кодом и тестами. Устраните обнаруженные несоответствия, проверьте соответствующие сценарии, а затем приведите статусы `docs/ROADMAP.md` и `worklog.md` в соответствие с фактическим состоянием проекта. Любой незавершённый или непроверенный пункт в согласованном объёме блокирует продвижение в `test`.
+> Перед созданием PR проведите аудит каждого пункта согласованного scope и сверьте его с кодом, тестами и внешними требованиями Pikabu. Устраните несоответствия, запустите требуемые CI/E2E и физическую mobile QA; затем обновите статусы текущего release-раздела Roadmap и worklog по фактическим доказательствам. Незавершённый или непроверенный пункт согласованного scope блокирует продвижение.
 >
-> Если какой-либо пункт требуется исключить из текущего объёма или перенести на будущее, это нельзя решать молча ради открытия PR: изменение объёма должно быть явно согласовано с владельцем проекта и отражено в документации до создания PR. Не используйте `dev → test` как промежуточный, накопительный или пофазовый PR. До прохождения gate разработка продолжается обычным маршрутом: рабочая ветка → PR в `dev`. Отдельная аварийная процедура `hotfix/*` остаётся без изменений.
+> Любое расширение или сокращение v1 scope должно быть явно согласовано с владельцем проекта и отражено в документации и Linear. Не используйте `dev → test` как промежуточный накопительный PR. До прохождения gate разработка продолжается по обычному маршруту: рабочая ветка → PR в `dev`. Аварийная процедура `hotfix/*` остаётся без изменений.
 
 - **Рабочая ветка → `dev`:** один PR на одну логически завершённую задачу. До слияния должен пройти быстрый CI. Браузерные E2E здесь автоматически не запускаются.
 - **`dev` → `test`:** только когда сформирован цельный кандидат на приёмку. PR запускает быстрый CI и весь `npm run test:e2e` на Chromium для desktop и mobile. Не обходите и не подменяйте эти проверки.
@@ -164,7 +177,7 @@ npm run build
 | `npm run test:unit` | Каждый PR в `dev`, `test`, `main` | Быстрые юнит-тесты Vitest из `tests/unit/`; запускаются в Node.js без браузера |
 | `npm run test:e2e` | Только PR в `test` и `main`; также вручную в Actions | Полная браузерная приёмка, не запускается для обычных PR в `dev` |
 | `npm run test:e2e:ui` | Автоматически не запускается | Только интерактивная локальная отладка Playwright; не добавлять в обычный CI |
-| `npm run build:yg` | Только релизный workflow на `main` | Создаёт и проверяет `release/tiny-sword-survivors.zip` |
+| `npm run build:yg` | Вторичный Yandex Games pipeline на `main` | Создаёт Yandex ZIP; не публикует Pikabu bundle |
 
 Рабочие ветки не запускают CI на каждый push: быстрые проверки выполняются в PR. Не запускайте E2E вручную после каждого изменения и не включайте `test:e2e` / `test:e2e:ui` в быстрый workflow. Тесты следует писать и обновлять вместе с кодом, а запускать на этапе приёмки.
 
@@ -186,7 +199,7 @@ npm run build
 
 - **CI Fast** (`.github/workflows/ci.yml`) — `npm ci`, `npm run check`, `npm run test:unit` и `npm run build` для PR в `dev`, `test`, `main`. Юнит-тесты Vitest выполняются в Node.js; Chromium не устанавливается, браузерные E2E не запускаются.
 - **E2E** (`.github/workflows/e2e.yml`) — Playwright для PR в `test` и `main`; при падении сохраняет диагностику Playwright.
-- **Release** (`.github/workflows/release.yml`) — выполняет `npm run check` и `npm run build:yg` только на `main` и публикует ZIP как артефакт GitHub Actions. Ручной запуск разрешён только при выборе ветки `main`.
+- **Release** (`.github/workflows/release.yml`) — текущая реализация всё ещё выполняет `npm run check` и `npm run build:yg` на `main`. Текущий workflow Yandex-specific и **не готовит Pikabu release**; его разделение/замена на Pikabu static bundle и hosting — часть LAS-25.
 
 GitHub branch protection должна требовать статус `CI Fast / fast-checks` для всех трёх постоянных веток и `E2E / browser-e2e` для `test` и `main`; обязательны PR, запрет force-push и удаления постоянных веток. Назначьте правила защиты в **Settings → Rules → Rulesets** (либо **Settings → Branches**, если используется классическая защита). Одна документация не блокирует обход — настройки защиты должны быть включены в GitHub.
 
@@ -211,11 +224,12 @@ npm run test:e2e
 | Параметр | Что делает |
 |---|---|
 | `?lang=ru` / `?lang=en` | Принудительный язык (для проверки перевода; по умолчанию определяется автоматически) |
-| `?ysdk=mock` | QA-режим: платформенный слой считает, что мы на Yandex Games, но реальный SDK не грузится |
+| `?ysdk=mock` | Legacy QA-режим текущего Yandex-specific provider; не является универсальным выбором платформы |
 
-> `?ysdk=mock` существует потому, что SDK Яндекса вне песочницы пытается
-> слать `postMessage` родительскому фрейму и сыплет ошибками. Mock позволяет
-> прогонять ветки лидерборда, рекламы и игрока без ошибок в консоли.
+> `?ysdk=mock` относится только к текущей Yandex-specific реализации. Он существует
+> потому, что SDK Яндекса вне песочницы пытается слать `postMessage` родительскому
+> фрейму и сыплет ошибками. Универсальный provider selection и тестовый Web/mock
+> adapter будут добавлены в рамках LAS-23.
 
 ---
 
@@ -233,7 +247,7 @@ npm run test:e2e
 │   │   │                     заливки полос, склейка мечей логотипа (16 PNG)
 │   │   └── font/            3 woff2 — Pixelify Sans (SIL OFL 1.1)
 │   ├── i18n/                ru.ts (эталон) + en.ts + выбор языка
-│   ├── platform/            изолированный слой Yandex Games
+│   ├── platform/            текущий Yandex-specific слой; target — docs/architecture/platform-adapters.md
 │   │   ├── sdk.ts           загрузка SDK, типы, QA-режим
 │   │   ├── player.ts        профиль, авторизация, имя
 │   │   ├── leaderboard.ts   общий зал (SDK) + локальная таблица
@@ -247,7 +261,7 @@ npm run test:e2e
 │       └── systems/         Weapons, Spawner, Projectiles, Pickups,
 │                            Effects, Audio, HUD, Bar, Joystick, Ui
 ├── public/
-│   └── vendor/yandex-sdk.js SDK площадки (копируется в архив как есть)
+│   └── vendor/yandex-sdk.js SDK Yandex provider (текущая legacy-сборка)
 ├── scripts/
 │   ├── build-archive.mjs    проверка требований + упаковка zip
 │   ├── sync-assets.mjs      импорт исходников Tiny Swords (правила имён + сверка хешей)
@@ -259,7 +273,17 @@ npm run test:e2e
 
 ---
 
-## Интеграция с Yandex Games
+## Платформенные интеграции
+
+Нормативная целевая архитектура — [Platform Adapter](docs/architecture/platform-adapters.md).
+**Она описывает целевое состояние; миграция ещё не выполнена.** Сейчас `src/platform/`
+содержит Yandex-specific реализацию. Перенос её за provider contracts и добавление
+Pikabu provider отслеживаются задачами LAS-22–LAS-24.
+
+### Yandex Games — существующая вторичная интеграция (отложена для v1)
+
+Следующий раздел описывает текущую реализацию Yandex provider, а не платформу первого
+релиза. Yandex Console/Sandbox acceptance находится в Backlog (LAS-19, LAS-15).
 
 ### Что уже сделано
 
